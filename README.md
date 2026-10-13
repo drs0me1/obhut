@@ -130,7 +130,7 @@ works too. **Repair:** Konsol → Ayarlar → Sistem → Sağlık, `sudo master-
 | [Folder shares](Data/docs/folder-shares.md) | WebDAV limits and what to tell recipients |
 | [Konsol redesign](Data/docs/redesign.md) | The task-based console and its phases |
 | [OKUBENI.txt](Data/OKUBENI.txt) | Step-by-step usage notes in Turkish |
-| [Changelog](Data/CHANGELOG.md) | Changes per version (`V2_VERSION` in `Data/install.sh`) |
+| [Changelog](Data/CHANGELOG.md) | Changes per release and build |
 
 ## Development
 
@@ -140,7 +140,10 @@ shellcheck -x -s bash kur.sh Data/install.sh Data/common.sh Data/scripts/*
 python3 -m unittest discover -s Data/tests -p 'test_*.py'
 ```
 
-Browser and live suites are described in [`Data/tests/README.md`](Data/tests/README.md). The
+Releases follow semantic versioning and are tagged `vX.Y.Z` (`OBHUT_SURUM` in `Data/install.sh`);
+every behavioural change also raises the build number (`V2_VERSION`) that servers compare when
+Konsol offers an update. Browser and live suites are described in
+[`Data/tests/README.md`](Data/tests/README.md). The
 redesigned console is rebuilt with `npm ci && npm run derle` in `Data/tools/konsol-ui`; a test checks
 that the committed build matches its sources. `kur.sh` installs whatever `main` holds, so `main`
 stays installable after every push. Working rules for contributors and assistants:

@@ -388,6 +388,9 @@
           "version": {
             "type": "string"
           },
+          "surum": {
+            "type": "string"
+          },
           "domain": {
             "type": "string"
           },
@@ -506,6 +509,7 @@
         "required": [
           "host",
           "version",
+          "surum",
           "domain",
           "os",
           "kernel",
@@ -1095,7 +1099,20 @@
           "kurulu": {
             "type": "string"
           },
+          "kurulu_surum": {
+            "type": "string"
+          },
           "son": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "son_surum": {
             "anyOf": [
               {
                 "type": "string"
@@ -1140,7 +1157,9 @@
         },
         "required": [
           "kurulu",
+          "kurulu_surum",
           "son",
+          "son_surum",
           "commit",
           "yeni",
           "denetlendi",

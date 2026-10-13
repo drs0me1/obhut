@@ -97,6 +97,10 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 - Keep version history in Git. `kur.sh` installs whatever `main` holds (**DD-228**):
   every push to `main` reaches the next install, so `main` must stay installable.
   There is no exported installer to rebuild.
+- Releases (**DD-260**): `OBHUT_SURUM` in `install.sh` is the semantic version people see; change it
+  only when the user asks for a release, then turn `[Unreleased]` into `## [X.Y.Z] — <date>` in
+  `CHANGELOG.md`, tag `vX.Y.Z` and publish the GitHub release. `V2_VERSION` stays the build number
+  that servers compare.
 - Bump `V2_VERSION` in `install.sh` on every behavioural change to the
   installer tree. Record user-facing changes under `[Unreleased]` in
   `CHANGELOG.md` and add a `DD-*` entry when rationale is non-obvious.

@@ -9,6 +9,7 @@ export interface Hata {
 export interface Kaynaklar {
   host: string;
   version: string;
+  surum: string;
   domain: string;
   os: string;
   kernel: string;
@@ -167,7 +168,9 @@ export interface GuncellemeIsi {
 
 export interface Guncelleme {
   kurulu: string;
+  kurulu_surum: string;
   son: string | null;
+  son_surum: string | null;
   commit: string | null;
   yeni: boolean;
   denetlendi: number | null;

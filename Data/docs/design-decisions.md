@@ -13,6 +13,29 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-260: Releases carry a semantic version beside the build number (v2-244, 1.0.0)
+
+- **Request (user, 2026-10-13):** "Düzgün bir sürüm numarası verelim; v2-243 çok fazla ileri gitti ve
+  çok major değişikliklere gidildi", with a tag and release notes; then "1.0.0", shown everywhere.
+- **Decision:** `OBHUT_SURUM` in `install.sh` is the version people see, in semantic versioning. It
+  changes only at a release, which is tagged `vX.Y.Z` and gets its `CHANGELOG.md` section and a
+  GitHub release. `V2_VERSION` stays the build number: it rises with every behavioural change and is
+  what servers compare when Konsol offers an update. 1.0.0 is the first tagged release under the
+  name Obhut; builds v2-145 to v2-244 make it up.
+- **Why two numbers:** every installed server's update check (`master_update.number`),
+  `master-guncelle` and `kur.sh` accept only the `YYYY.MM.DD-v2-<n>` build string. Replacing it would
+  leave each of them without an update offer, or need a bridge release first. With the build number
+  deciding, a commit without the new line is offered as before, and a newer release name on an older
+  build is never offered.
+- **Where it shows:** Konsol's version fact (the build number in its title), the update button and its
+  confirmation, the new interface's sidebar, the installer's first and last lines and
+  `master-panel check`. `/api/konsol/kaynaklar` gains `surum`; `/api/konsol/guncelleme` gains
+  `kurulu_surum` and `son_surum` (read from the offered commit's `install.sh`; null when absent). The
+  identity checks stay on the build number (`master-wg version` against `wireguard.command`, the Files
+  backend's `--version`).
+- **Rejected:** switching `V2_VERSION` itself to semantic versioning (strands installed servers);
+  2.0.0 or 3.0.0 (the user chose 1.0.0).
+
 ### DD-259: The redesign's first phase: route table, Erişim read model, live events, the shell at /yeni/ (v2-243)
 
 - **Request (user, 2026-10-13):** "commit ve push et, faz 1 geçelim tasarım onaylıyorum" (phase 1 of

@@ -5,7 +5,10 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-243"
+V2_VERSION="2026.08.06-v2-244"
+# DD-260: insanların gördüğü sürüm (anlamlı sürümleme; yalnız bir yayında değişir, vX.Y.Z etiketlenir).
+# V2_VERSION yapı numarasıdır: Konsol güncelleme önerirken sunucular onu karşılaştırır.
+OBHUT_SURUM="1.0.0"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -49,6 +52,7 @@ prompt() {
 write_state() {
     atomic_write "$STATE_FILE" 0600 <<EOF
 V2_VERSION=$V2_VERSION
+OBHUT_SURUM=$OBHUT_SURUM
 WAN_INTERFACE=$WAN_INTERFACE
 WAN_IPV4=$WAN_IPV4
 WAN_IPV6=$WAN_IPV6
@@ -1713,7 +1717,7 @@ summary_notes() {
 }
 
 print_summary() {
-    log INFO "Kurulum tamam — v$V2_VERSION"
+    log INFO "Kurulum tamam — Obhut $OBHUT_SURUM (yapı $V2_VERSION)"
     cat <<EOF
 
 WAN:          $WAN_INTERFACE $WAN_IPV4 ${WAN_IPV6:-"(IPv6 yok)"}
@@ -1740,7 +1744,7 @@ EOF
 }
 
 main() {
-    log INFO "Obhut $V2_VERSION başlıyor"
+    log INFO "Obhut $OBHUT_SURUM başlıyor (yapı $V2_VERSION)"
     stage_0
     stage_1
     stage_2

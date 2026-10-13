@@ -16,7 +16,7 @@ assert.match(csp, /font-src 'self'/, "the console CSP allows the local Outfit fo
 // Documentation values only (RFC 5737/6598 addresses, the DD examples' host and domain); shapes as in
 // tools/konsol-ui/src/api/sema.ts.
 const data = {
-  kaynaklar: { host: "sunucu", version: "2026.08.06-v2-242", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
+  kaynaklar: { host: "sunucu", version: "2026.08.06-v2-242", surum: "1.0.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
     cores: 4, interval: 10, read_at: 1791845000, sampled_at: 1791845000, cpu: [2.0], mem: { total: 8300000000, used: 700000000, graph: [8.0] },
     net: { wan: "203.0.113.10", wan6: "", iface: "eth0", tailscale: "100.64.0.2", tailscale6: "" }, root: "/srv", disk: { total: 250700000000, free: 238000000000 } },
   saglik: { status: "bad", read_at: 1791845000, checks: [
@@ -25,7 +25,7 @@ const data = {
   moduller: { items: [
     { id: "wireguard", runtime: "servis", installed: true, state: "calisiyor", live: "running", busy: false, progress: null, durdurulabilir: true, konsol: { ad: "WireGuard", sayfa: { rota: "wireguard" } }, sayfa: [] },
     { id: "torrent", runtime: "konteyner", installed: true, state: "calisiyor", live: "running", busy: false, progress: null, durdurulabilir: true, konsol: { ad: "qBittorrent" }, sayfa: [] }] },
-  guncelleme: { kurulu: "2026.08.06-v2-242", son: "2026.08.06-v2-242", commit: "0".repeat(40), yeni: false, denetlendi: 1791845000, hata: "",
+  guncelleme: { kurulu: "2026.08.06-v2-242", kurulu_surum: "1.0.0", son: "2026.08.06-v2-242", son_surum: "1.0.0", commit: "0".repeat(40), yeni: false, denetlendi: 1791845000, hata: "",
     is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true },
   bekleyen: { bekleyen: null },
   etkinlik: { items: [] },
@@ -186,7 +186,7 @@ const shot = async (page, name, fullPage = false) => {
     assert.equal(await chip.getAttribute("href"), "#/sistem");
     assert.equal(await page.getByTestId("tailscale").innerText(), "Tailscale bağlı");
     assert.match(await page.getByTestId("tailscale").getAttribute("class"), /is-ok/);
-    assert.equal(await page.getByTestId("version").innerText(), "Obhut v2-242 · güncel");
+    assert.equal(await page.getByTestId("version").innerText(), "Obhut 1.0.0 · güncel");
     assert.equal(await page.getByTestId("legacy").locator("p").innerText(), "Bu bölüm yeni arayüzde hazırlanıyor. Şimdilik eski Konsol'da:");
     assert.deepEqual(await page.getByTestId("legacy").locator("a").evaluateAll((as) => as.map((a) => [a.textContent.trim(), a.getAttribute("href")])), [["Ana Menü", "/#/genel"]]);
     assert.equal(await page.locator(".pending").count(), 0);
@@ -410,7 +410,7 @@ const shot = async (page, name, fullPage = false) => {
       const sheet = page.getByRole("dialog", { name: "Menü" });
       await sheet.waitFor();
       assert.deepEqual(await sheet.locator(".nav-label").allInnerTexts(), ["Genel Bakış", "Uygulamalar", "Erişim", "Dosyalar", "Sistem", "Gelişmiş"]);
-      assert.equal(await sheet.getByTestId("version").innerText(), "Obhut v2-242 · güncel");
+      assert.equal(await sheet.getByTestId("version").innerText(), "Obhut 1.0.0 · güncel");
       await shot(page, `390-${colorScheme}-sheet.png`);
       await page.keyboard.press("Escape");
       await sheet.waitFor({ state: "detached" });

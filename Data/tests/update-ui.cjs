@@ -79,7 +79,7 @@ let afterCheck = null, startFails = "", documents = 0;
     // Cancel sends nothing; the confirmation names both versions and the pinned commit.
     await button.click();
     assert.equal(await page.locator("#cf-title").textContent(), "Sunucu v2-212 sürümüne güncellensin mi?");
-    assert.equal(await page.locator("#cf-sub").textContent(), `Kurulu: ${OLD} → ${NEW}`);
+    assert.equal(await page.locator("#cf-sub").textContent(), "Kurulu: v2-211 → v2-212");
     assert.match(await page.locator("#cf-list").innerText(), /commit 0123456/);
     await page.screenshot({ path: path.join(shots, "confirm-1440.png") });
     await page.locator("#cf-cancel").click();
@@ -145,6 +145,15 @@ let afterCheck = null, startFails = "", documents = 0;
     assert(await button.isDisabled());
     assert.equal(await label(), "Yeni sürüm v2-213; güncelleme yalnız Tailscale adresinden başlatılır");
 
+    // DD-260: a release's own version replaces the build number wherever the backend knows it.
+    upd = { ...upd, kurulu_surum: "1.0.0", son_surum: "1.1.0", baslatilabilir: true };
+    await tick(61000);
+    assert.equal(await label(), "Yeni sürüm 1.1.0: güncelle");
+    await button.click();
+    assert.equal(await page.locator("#cf-title").textContent(), "Sunucu 1.1.0 sürümüne güncellensin mi?");
+    assert.equal(await page.locator("#cf-sub").textContent(), "Kurulu: 1.0.0 → 1.1.0");
+    await page.locator("#cf-cancel").click();
+
     // Phone and dark: the line wraps without page overflow; the button stays whole.
     upd.baslatilabilir = true;
     for (const [width, theme] of [[390, "dark"], [320, "light"]]) {
@@ -157,6 +166,6 @@ let afterCheck = null, startFails = "", documents = 0;
       await page.screenshot({ path: path.join(shots, `phone-${theme}-${width}.png`) });
     }
     assert.deepEqual(errors, []);
-    console.log("PASS: update button beside the clock — up to date, check now, new version, confirmation/cancel/refusal, pinned payload, running stage across restarts, failure and retry, reload after success, unreachable GitHub, internet locked, phone/dark. Screenshots: " + shots);
+    console.log("PASS: update button beside the clock — up to date, check now, new version, confirmation/cancel/refusal, pinned payload, running stage across restarts, failure and retry, reload after success, unreachable GitHub, internet locked, release versions, phone/dark. Screenshots: " + shots);
   } finally { await browser.close(); }
 })().catch((e) => { console.error(e); process.exit(1); });

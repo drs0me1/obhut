@@ -50,7 +50,7 @@ def ref(name):
 SCHEMAS = {
     "Hata": obj({"error": STR, "giris": BOOL}, optional=("giris",)),
     "Kaynaklar": obj({
-        "host": STR, "version": STR, "domain": STR, "os": STR, "kernel": STR, "uptime": INT, "cores": INT,
+        "host": STR, "version": STR, "surum": STR, "domain": STR, "os": STR, "kernel": STR, "uptime": INT, "cores": INT,
         "interval": INT, "read_at": INT, "sampled_at": null(INT), "cpu": arr(NUM),
         "mem": obj({"total": INT, "used": INT, "graph": arr(NUM)}),
         "net": obj({"wan": STR, "wan6": STR, "iface": STR, "tailscale": STR, "tailscale6": STR}),
@@ -88,7 +88,8 @@ SCHEMAS = {
     "Moduller": obj({"items": arr(ref("Modul"))}),
     "GuncellemeIsi": obj({"durum": enum("yok", "calisiyor", "tamam", "hata"), "hedef": STR, "mesaj": STR,
                           "bitis": null(INT), "asama": STR}),
-    "Guncelleme": obj({"kurulu": STR, "son": null(STR), "commit": null(STR), "yeni": BOOL, "denetlendi": null(INT),
+    "Guncelleme": obj({"kurulu": STR, "kurulu_surum": STR, "son": null(STR), "son_surum": null(STR), "commit": null(STR),
+                       "yeni": BOOL, "denetlendi": null(INT),
                        "hata": STR, "is": ref("GuncellemeIsi"), "baslatilabilir": BOOL}),
     "Erisim": obj({
         "read_at": INT, "alan": STR,

@@ -5931,3 +5931,30 @@ PY
     run ! grep -qE '^    local items="[^"]*(^| )tools( |")' "$V2_ROOT/../kur.sh"
     grep -qx 'node_modules/' "$V2_ROOT/../.gitignore"
 }
+
+@test "the release version people see sits beside the build number servers compare (DD-260)" {
+    local install="$V2_ROOT/install.sh" surum
+    surum="$(sed -n 's/^OBHUT_SURUM="\(.*\)"$/\1/p' "$install")"
+    # A semantic version, defined once, right after the build number.
+    grep -qxE '[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}' <<<"$surum"
+    [ "$(grep -c '^OBHUT_SURUM="' "$install")" -eq 1 ]
+    grep -A3 '^V2_VERSION="' "$install" | grep -q '^OBHUT_SURUM="'
+    # Kept in state for Konsol; the start and summary lines name both numbers.
+    grep -qx 'OBHUT_SURUM=$OBHUT_SURUM' "$install"
+    grep -qF 'log INFO "Obhut $OBHUT_SURUM başlıyor (yapı $V2_VERSION)"' "$install"
+    grep -qF 'log INFO "Kurulum tamam — Obhut $OBHUT_SURUM (yapı $V2_VERSION)"' "$install"
+    # The update check reads both from GitHub's install.sh; the build number decides what is offered.
+    python3 - "$V2_ROOT" "$surum" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + "/panel")
+import master_update as mu
+text = open(sys.argv[1] + "/install.sh", encoding="utf-8").read()
+assert mu.SURUM_LINE_RE.search(text).group(1) == sys.argv[2]
+assert mu.number(mu.INSTALL_LINE_RE.search(text).group(1)) is not None
+PY
+    # Both consoles show it and fall back to the build number from an older backend.
+    grep -qF 'shortVersion = s && s.surum || version.replace(' "$V2_ROOT/console/konsol.js"
+    grep -qF 'live.kaynaklar?.surum || live.guncelleme?.kurulu_surum || shortVersion(' "$V2_ROOT/tools/konsol-ui/src/components/SideNav.vue"
+    # The changelog has this release's section.
+    grep -qE "^## \[$surum\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$V2_ROOT/CHANGELOG.md"
+}

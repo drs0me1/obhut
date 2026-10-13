@@ -278,7 +278,7 @@ def cmd_check(args):
     if not isinstance(data, dict) or not isinstance(data.get("version"), str) \
             or not isinstance(data.get("read_at"), (int, float)):
         fail("panel yanıtı beklenen biçimde değil")
-    print("sürüm %s" % data["version"])
+    print("sürüm %s, yapı %s" % (data["surum"], data["version"]) if data.get("surum") else "sürüm %s" % data["version"])
 
 
 # --------------------------------------------------------------- sunucu
@@ -1300,6 +1300,8 @@ class Panel:
         return {
             "host": socket.gethostname().split(".")[0],
             "version": env.get("V2_VERSION", ""),
+            # DD-260: the version people see; "version" stays the build number.
+            "surum": env.get("OBHUT_SURUM", ""),
             "domain": env.get("LOCAL_DOMAIN", ""),
             "os": self.os_name(),
             "kernel": platform.release(),

@@ -273,8 +273,9 @@
   // DD-230: the address facts are Ana Menü's "Sunucu" widget; they are painted wherever it is shown.
   function serverFacts() {
     const { s, fresh } = resourceValues();
-    // DD-231: a 1×1 card: short labels; the version shows its last part ("v2-209"), the full string as title.
-    const version = s && s.version || "—", shortVersion = version.replace(/^.*-(v\d+-\d+)$/, "$1");
+    // DD-231: a 1×1 card: short labels; DD-260: the version people see ("1.0.0", or the build's last part
+    // "v2-209" from an older installer), the build number as title.
+    const version = s && s.version || "—", shortVersion = s && s.surum || version.replace(/^.*-(v\d+-\d+)$/, "$1");
     return [
       ["foot-ts", "TS", s && s.net.tailscale || "—", true],
       ["foot-wan", "WAN", s && s.net.wan || "—", true],
@@ -300,13 +301,15 @@
   // runs the update as its own systemd unit; the page only asks, confirms and follows its stage.
   let UPD = null, updAsked = 0, updSeen = "";
   const shortV = (v) => (v || "—").replace(/^.*-(v\d+-\d+)$/, "$1");
+  // DD-260: a release's own version when the backend knows it, else the build number's last part.
+  const installedV = (r) => r.kurulu_surum || shortV(r.kurulu), offeredV = (r) => r.son_surum || shortV(r.son);
   function loadUpdate(force) {
     updAsked = Date.now();
     return api("/api/konsol/guncelleme" + (force ? "?yenile=1" : "")).then((r) => {
       const was = UPD && UPD.is.durum;
       UPD = r;
       // The installer replaced Konsol's own files: a finished run reloads the page once.
-      if (was === "calisiyor" && r.is.durum === "tamam") { toast(`Güncelleme tamamlandı: ${shortV(r.kurulu)}. Sayfa yenileniyor…`); setTimeout(() => location.reload(), 2500); }
+      if (was === "calisiyor" && r.is.durum === "tamam") { toast(`Güncelleme tamamlandı: ${installedV(r)}. Sayfa yenileniyor…`); setTimeout(() => location.reload(), 2500); }
       if (was === "calisiyor" && r.is.durum === "hata") toast(`Güncelleme başarısız: ${r.is.mesaj || "ayrıntı Ayarlar → Günlük'te"}`);
       paintUpdate();
       return r;
@@ -326,13 +329,13 @@
     } else if (UPD.yeni) {
       const locked = !UPD.baslatilabilir;
       btn = h("button", { type: "button", class: "upd icon new", disabled: locked,
-        "aria-label": locked ? `Yeni sürüm ${shortV(UPD.son)}; güncelleme yalnız Tailscale adresinden başlatılır` : `Yeni sürüm ${shortV(UPD.son)}: güncelle`
+        "aria-label": locked ? `Yeni sürüm ${offeredV(UPD)}; güncelleme yalnız Tailscale adresinden başlatılır` : `Yeni sürüm ${offeredV(UPD)}: güncelle`
           + (job.durum === "hata" && job.mesaj ? ` · son deneme başarısız: ${job.mesaj}` : ""),
         onclick: askUpdate }, svg("refresh"));
     } else {
       btn = h("button", { type: "button", class: "upd icon" + (UPD.hata ? " err" : ""),
-        "aria-label": UPD.hata ? `Sürüm denetlenemedi: ${UPD.hata}` : `Sürüm güncel (${shortV(UPD.kurulu)}); yeniden denetle`,
-        onclick: () => loadUpdate(true).then((r) => { if (r) toast(r.yeni ? `Yeni sürüm var: ${shortV(r.son)}` : r.hata || `Sürüm güncel: ${shortV(r.kurulu)}`); }) },
+        "aria-label": UPD.hata ? `Sürüm denetlenemedi: ${UPD.hata}` : `Sürüm güncel (${installedV(UPD)}); yeniden denetle`,
+        onclick: () => loadUpdate(true).then((r) => { if (r) toast(r.yeni ? `Yeni sürüm var: ${offeredV(r)}` : r.hata || `Sürüm güncel: ${installedV(r)}`); }) },
         svg("refresh"));
     }
     const key = btn.className + btn.textContent + btn.getAttribute("aria-label") + btn.disabled;
@@ -343,7 +346,7 @@
   function askUpdate() {
     if (!UPD || !UPD.yeni) return;
     const offer = { surum: UPD.son, commit: UPD.commit };
-    ask({ title: `Sunucu ${shortV(UPD.son)} sürümüne güncellensin mi?`, sub: `Kurulu: ${UPD.kurulu} → ${UPD.son}`, calm: true,
+    ask({ title: `Sunucu ${offeredV(UPD)} sürümüne güncellensin mi?`, sub: `Kurulu: ${installedV(UPD)} → ${offeredV(UPD)}`, calm: true,
       items: [["download", `Kod GitHub'dan indirilir (commit ${UPD.commit.slice(0, 7)}).`],
         ["stack", "Sistem paketleri de güncellenir; birkaç dakika sürebilir."],
         ["refresh", "Konsol ve servisler yeniden başlar; bitince sayfa kendini yeniler."]].concat(

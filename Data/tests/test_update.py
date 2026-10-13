@@ -20,8 +20,8 @@ OLD, NEW, SHA = "2026.08.06-v2-211", "2026.08.06-v2-212", "0123456789abcdef01234
 
 
 class Fetcher:
-    def __init__(self, sha=SHA, version=NEW):
-        self.sha, self.version, self.calls, self.fail = sha, version, [], None
+    def __init__(self, sha=SHA, version=NEW, surum=None):
+        self.sha, self.version, self.surum, self.calls, self.fail = sha, version, surum, [], None
 
     def __call__(self, url, accept):
         self.calls.append((url, accept))
@@ -29,7 +29,8 @@ class Fetcher:
             raise self.fail
         if url.startswith("https://api.github.com/"):
             return self.sha + "\n"
-        return '#!/usr/bin/env bash\nset -Eeuo pipefail\n\nV2_VERSION="%s"\n' % self.version
+        text = '#!/usr/bin/env bash\nset -Eeuo pipefail\n\nV2_VERSION="%s"\n' % self.version
+        return text + ('# yorum\nOBHUT_SURUM="%s"\n' % self.surum if self.surum is not None else "")
 
 
 class Clock:
@@ -66,6 +67,23 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(self.fetch.calls, [
             ("https://api.github.com/repos/drs0me1/obhut/commits/main", "application/vnd.github.sha"),
             ("https://raw.githubusercontent.com/drs0me1/obhut/%s/Data/install.sh" % SHA, "text/plain")])
+
+    def test_release_versions_are_shown_beside_the_build_numbers_that_decide(self):
+        # DD-260: an installer without OBHUT_SURUM (any build before it) still offers by build number.
+        info = self.u.status(self.env, False)
+        self.assertEqual((info["kurulu_surum"], info["son_surum"], info["yeni"]), ("", None, True))
+        u = mu.Updates(Fetcher(surum="1.1.0"), Clock())
+        info = u.status(dict(self.env, OBHUT_SURUM="1.0.0"), False)
+        self.assertEqual((info["kurulu"], info["kurulu_surum"], info["son"], info["son_surum"], info["yeni"]),
+                         (OLD, "1.0.0", NEW, "1.1.0", True))
+        # The build number decides: a newer release name on an older build is not offered.
+        u = mu.Updates(Fetcher(version=OLD, surum="9.0.0"), Clock())
+        self.assertFalse(u.status(dict(self.env, OBHUT_SURUM="1.0.0"), False)["yeni"])
+        for bad in ("1.0", "v1.0.0", "1.0.0-beta", "1.0.0\nx", "1.0.0\n", "12345.0.0"):
+            with self.subTest(bad=bad):
+                self.assertEqual(mu.Updates(Fetcher(surum=bad), Clock()).status(dict(self.env, OBHUT_SURUM=bad), False)
+                                 ["kurulu_surum"], "")
+                self.assertIsNone(mu.Updates(Fetcher(surum=bad), Clock()).status(self.env, False)["son_surum"])
 
     def test_same_or_older_or_unknown_installed_version_is_not_offered_blindly(self):
         for installed, expected in [(NEW, False), ("2026.08.06-v2-213", False), ("test", False), (OLD, True)]:

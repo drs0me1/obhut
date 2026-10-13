@@ -129,6 +129,9 @@ the ones agreed on 2026-08-05:
     first install (no saved domain) and a missing Tailscale login. The result and output are in
     `GUNCELLEME_DURUM_FILE`/`GUNCELLEME_LOG_FILE` (0600); Konsol shows the stage and the last line
     of a failure. No automatic update and no rollback; the previous code is in Git.
+    Since **DD-260** a release also names itself with `OBHUT_SURUM` (semantic version, e.g. `1.0.0`):
+    Konsol shows it, and the update button and its confirmation name the offered release by it.
+    Only the build number (`v2-<n>`) decides what is offered.
   - Every run, re-runs included, performs `full-upgrade`; there is no question.
 - **Nothing from the operator's workstation reaches the server (DD-143, DD-228).**
   No WireGuard configuration, key or profile is read from `kurulum/` or uploaded,

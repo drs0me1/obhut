@@ -16,6 +16,10 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
 BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,100}$")
 INSTALL_LINE_RE = re.compile(r'^V2_VERSION="([^"\n]{1,64})"$', re.M)
+# DD-260: the version people see (semantic versioning) beside the build number above; servers still
+# compare build numbers, so a commit without this line is offered like before.
+SURUM_RE = re.compile(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}")
+SURUM_LINE_RE = re.compile(r'^OBHUT_SURUM="([0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4})"$', re.M)
 STAGE_RE = re.compile(r"Aşama ([0-9])/([0-9]) — ([^\n]{1,80})")
 CHECK_SECONDS = 6 * 3600       # a fresh answer is reused for six hours
 FAIL_SECONDS = 15 * 60         # an unreachable GitHub is asked again after a quarter hour
@@ -81,7 +85,7 @@ class Updates:
     def latest(self, env, force=False):
         repo, branch = env.get("GUNCELLEME_REPO", ""), env.get("GUNCELLEME_DAL", "")
         if not REPO_RE.match(repo) or not BRANCH_RE.match(branch) or ".." in branch:
-            return {"at": 0, "ok": False, "son": None, "commit": None, "hata": "Güncelleme deposu tanımlı değil; kurulumu terminalden yeniden çalıştırın."}
+            return {"at": 0, "ok": False, "son": None, "surum": None, "commit": None, "hata": "Güncelleme deposu tanımlı değil; kurulumu terminalden yeniden çalıştırın."}
         with self.lock:
             now = self.clock()
             cached = self.cache
@@ -90,15 +94,17 @@ class Updates:
                 cached = None
             if cached and cached.get("kaynak") == (repo, branch) and now - cached["at"] < (CHECK_SECONDS if cached["ok"] else FAIL_SECONDS):
                 return cached
-            result = {"at": now, "kaynak": (repo, branch), "ok": False, "son": None, "commit": None, "hata": ""}
+            result = {"at": now, "kaynak": (repo, branch), "ok": False, "son": None, "surum": None, "commit": None, "hata": ""}
             try:
                 sha = self.fetcher(API_URL % (repo, branch), "application/vnd.github.sha").strip()
                 if not SHA_RE.match(sha):
                     raise ValueError("commit")
-                found = INSTALL_LINE_RE.search(self.fetcher(RAW_URL % (repo, sha), "text/plain"))
+                text = self.fetcher(RAW_URL % (repo, sha), "text/plain")
+                found = INSTALL_LINE_RE.search(text)
                 if not found or number(found.group(1)) is None:
                     raise ValueError("sürüm")
-                result.update(ok=True, son=found.group(1), commit=sha)
+                surum = SURUM_LINE_RE.search(text)
+                result.update(ok=True, son=found.group(1), surum=surum.group(1) if surum else None, commit=sha)
             except (OSError, urllib.error.URLError, http.client.HTTPException, ValueError, UnicodeError):
                 result["hata"] = "GitHub'a ulaşılamadı ya da sürüm okunamadı; daha sonra yeniden denenir."
             self.cache = result
@@ -127,7 +133,9 @@ class Updates:
         info = self.latest(env, force)
         installed = env.get("V2_VERSION", "")
         mine, theirs = number(installed), number(info["son"])
-        return {"kurulu": installed, "son": info["son"], "commit": info["commit"],
+        surum = env.get("OBHUT_SURUM", "")
+        return {"kurulu": installed, "kurulu_surum": surum if SURUM_RE.fullmatch(surum) else "",
+                "son": info["son"], "son_surum": info.get("surum"), "commit": info["commit"],
                 "yeni": bool(info["ok"] and mine is not None and theirs is not None and theirs > mine),
                 "denetlendi": int(info["at"]) or None, "hata": info["hata"], "is": self.job(env, running)}
 

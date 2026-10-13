@@ -58,7 +58,10 @@ const tailscale = computed<{ level: Level | "unknown"; text: string; detail: str
   return { level: "unknown", text: `Tailscale ${UNKNOWN}`, detail: "" };
 });
 
-const version = computed(() => shortVersion(live.kaynaklar?.version || live.guncelleme?.kurulu));
+// DD-260: the version people see ("1.0.0"); an older backend gives only the build number ("v2-242").
+const version = computed(
+  () => live.kaynaklar?.surum || live.guncelleme?.kurulu_surum || shortVersion(live.kaynaklar?.version || live.guncelleme?.kurulu),
+);
 const update = computed<{ text: string; fresh: boolean } | null>(() => {
   const g = live.guncelleme;
   if (!g) return null;

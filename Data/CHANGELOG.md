@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-10-13
+
+The first tagged release under the name Obhut. From here on, releases follow semantic versioning and
+are tagged `vX.Y.Z`. The build number (`V2_VERSION`, shown as v2-NNN below) still rises with every
+change and is what servers compare when Konsol offers an update (DD-260). The entries below are the
+builds that make up 1.0.0; earlier builds are in
+[`docs/archive/CHANGELOG-before-v2-145.md`](docs/archive/CHANGELOG-before-v2-145.md).
+
+### 2026-10-13 — A release version beside the build number (v2-244)
+
+- Obhut has a version people read: **1.0.0**. Konsol shows it in the server facts and on the update
+  button and its confirmation ("Sunucu 1.1.0 sürümüne güncellensin mi?"), the new interface in its
+  sidebar, the installer in its first and last lines. The build number stays in the logs and in the
+  title of the version fact.
+- Updates are offered exactly as before: servers compare build numbers, so a server on any earlier
+  build sees this one as newer (DD-260).
+
 ### 2026-10-13 — The redesigned Konsol's first phase at /yeni/ (v2-243)
 
 - The redesigned Konsol starts at `http://panel.<domain>/yeni/`, beside the current one, which is
@@ -1723,3 +1740,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   are unchanged. No fresh Ubuntu/full fresh-install/reboot acceptance claim.
 
 Older entries (v2-144 and earlier) are archived verbatim in [`docs/archive/CHANGELOG-before-v2-145.md`](docs/archive/CHANGELOG-before-v2-145.md).
+
+[Unreleased]: https://github.com/drs0me1/obhut/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/drs0me1/obhut/releases/tag/v1.0.0
