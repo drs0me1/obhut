@@ -10,7 +10,7 @@ system/firewall/Caddy/Dnsmasq/logs, and installed qBittorrent owns its
 account/path form (DD-160).
 
 Files, per-folder WebDAV and ZIP/RAR are built in. All folder accounts are listed
-under Files → Paylaşımlar. The App Store has only WireGuard and qBittorrent as
+under Files → Paylaşımlar. The App Store has only WireGuard, qBittorrent and Gezgin as
 installable/removable applications. Tailscale, DNS/Caddy and the firewall remain
 protected base services; there is no arbitrary-package installation endpoint.
 

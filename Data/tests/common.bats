@@ -3826,6 +3826,16 @@ PY
     [ "$n" -ge 1 ]
 }
 
+@test "a new container package is in the guard as soon as it is registered (DD-217)" {
+    local body
+    # The guard counts only registered packages, and the install hooks run before the package's line exists.
+    grep -qF 'if not (registry and base and units) or not Path(registry).exists():' "$V2_ROOT/panel/master_container_network.py"
+    body="$(awk '/^cmd_kur\(\)/,/^}$/' "$V2_ROOT/scripts/master-modul")"
+    [ "$(grep -n '^    paket_kur$' <<<"$body" | cut -d: -f1)" -lt "$(grep -n 'registry_set "$id" calisiyor' <<<"$body" | cut -d: -f1)" ]
+    [ "$(grep -n 'registry_set "$id" calisiyor' <<<"$body" | cut -d: -f1)" -lt "$(grep -n '^    konteyner_korumasi' <<<"$body" | cut -d: -f1)" ]
+    [ "$(grep -n '^    konteyner_korumasi' <<<"$body" | cut -d: -f1)" -lt "$(grep -n 'kur bitti' <<<"$body" | cut -d: -f1)" ]
+}
+
 @test "pending module markers (DD-222): a run that fails between stage 4 and 7 is applied by the next run" {
     local fn repo="$TMP/repo" real="$V2_ROOT" stage4 stage7
     for fn in mark_module_pending render_package_dir paket_bildirim_oku paket_katalog module_state \
@@ -5492,15 +5502,16 @@ PY
     eval "$(awk '/^summary_modules\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     eval "$(awk '/^paket_bildirim_oku\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     eval "$(awk '/^paket_katalog\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    module_state() { case "$1" in torrent) echo calisiyor ;; paylasim) echo durduruldu ;; esac; }
+    module_state() { case "$1" in torrent | gezgin) echo calisiyor ;; paylasim) echo durduruldu ;; esac; }
     SERVER_ROOT=/srv LOCAL_DOMAIN=ayc TAILSCALE_IPV4=100.64.0.7 SHARE_PORT=61010 WG_NET_COUNT=1 WG_PEER_COUNT=2
     run summary_modules
     [ "$status" -eq 0 ]
-    [ "${#lines[@]}" -eq 4 ]
+    [ "${#lines[@]}" -eq 5 ]
     [ "${lines[0]}" = "  Dosya yöneticisi: kurulu değil" ]
     [ "${lines[1]}" = "  WireGuard: kurulu değil" ]
     [ "${lines[2]}" = "  qBittorrent: kurulu — http://torrent.ayc; ilk giriş bilgisi kartında" ]
-    [ "${lines[3]}" = "  Paylaşım: kurulu, durduruldu — Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni" ]
+    [ "${lines[3]}" = "  Gezgin: kurulu — http://gezgin.ayc; giriş Gezgin hesabıyla" ]
+    [ "${lines[4]}" = "  Paylaşım: kurulu, durduruldu — Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni" ]
     # DD-208: Podman is base infrastructure, printed with its version, not as an App Store line.
     grep -qF 'Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Podman)' "$V2_ROOT/install.sh"
     # DD-196: the WireGuard usage note is printed only with the package installed.
@@ -5878,7 +5889,7 @@ PY
             { echo "not installed: $module"; return 1; }
     done
     stage="$(awk '/^stage_4\(\) \{/,/^}$/' "$install")"
-    grep -qF 'for panel_module in master_api master_erisim master_olaylar; do' <<<"$stage"
+    grep -qF 'for panel_module in master_api master_erisim master_olaylar master_uygulamalar; do' <<<"$stage"
     grep -qF '[[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1' <<<"$(grep -A3 'for panel_module in' <<<"$stage")"
     # The event stream is never compressed (the encoder would hold small events back); everything else is.
     grep -qx $'\t@sikistir not path /api/konsol/olaylar' "$caddy"

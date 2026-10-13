@@ -65,9 +65,44 @@ const ICONS = {
   box: { shapes: [{ d: "M4 8l8-4 8 4v8l-8 4-8-4z" }, { d: "M4 8l8 4 8-4" }, { d: "M12 12v8" }] },
   theme: { shapes: [{ d: "M20 14.6A8.5 8.5 0 0 1 9.4 4a8.5 8.5 0 1 0 10.6 10.6z" }] },
   more: { filled: true, shapes: [{ cx: 5.5, cy: 12, r: 1.8 }, { cx: 12, cy: 12, r: 1.8 }, { cx: 18.5, cy: 12, r: 1.8 }] },
+  xcircle: { shapes: [{ cx: 12, cy: 12, r: 8.5 }, { d: "m9.2 9.2 5.6 5.6" }, { d: "m14.8 9.2-5.6 5.6" }] },
+  chevron: { shapes: [{ d: "m9 6 6 6-6 6" }] },
+  plus: { shapes: [{ d: "M12 5v14" }, { d: "M5 12h14" }] },
+  refresh: { shapes: [{ d: "M19.5 12a7.5 7.5 0 1 1-2.2-5.3" }, { d: "M19.5 4.5v4h-4" }] },
+  stop: { shapes: [{ x: 7, y: 7, width: 10, height: 10, rx: 1.5 }] },
+  play: { shapes: [{ d: "M8 5.5v13l10.5-6.5z" }] },
+  update: { shapes: [{ d: "M12 15V4" }, { d: "m7.5 8.5 4.5-4.5 4.5 4.5" }, { d: "M5 19.5h14" }] },
+  trash: { shapes: [{ d: "M4.5 7h15" }, { d: "M9.5 7V4.5h5V7" }, { d: "M6.5 7l1 12.5h9l1-12.5" }] },
+  download: { shapes: [{ d: "M12 4v11" }, { d: "m7.5 10.5 4.5 4.5 4.5-4.5" }, { d: "M5 19.5h14" }] },
+  shield: { shapes: [{ d: "M12 3.5 5 6v5.5c0 4.2 3 7.6 7 9 4-1.4 7-4.8 7-9V6z" }] },
+  share: {
+    shapes: [
+      { cx: 6.5, cy: 12, r: 2.5 },
+      { cx: 17.5, cy: 6, r: 2.5 },
+      { cx: 17.5, cy: 18, r: 2.5 },
+      { d: "m8.7 10.8 6.6-3.6" },
+      { d: "m8.7 13.2 6.6 3.6" },
+    ],
+  },
+  tailnet: {
+    shapes: [
+      { cx: 6, cy: 6, r: 2 },
+      { cx: 18, cy: 6, r: 2 },
+      { cx: 12, cy: 18, r: 2 },
+      { d: "M8 6h8" },
+      { d: "m7 8 4 8" },
+      { d: "m17 8-4 8" },
+    ],
+  },
+  lines: { shapes: [{ d: "M5 7h14" }, { d: "M5 12h14" }, { d: "M5 17h9" }] },
 } satisfies Record<string, IconDef>;
 
 export type IconName = keyof typeof ICONS;
+
+/** A name from outside the build (a package's konsol.json) as one of these icons, or the fallback. */
+export function iconOf(name: string, fallback: IconName = "box"): IconName {
+  return Object.prototype.hasOwnProperty.call(ICONS, name) ? (name as IconName) : fallback;
+}
 
 function shape(s: Shape) {
   if ("d" in s) return h("path", { d: s.d });

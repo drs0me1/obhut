@@ -64,8 +64,8 @@ the uncompressed stream in the Caddy snippet, the stream limits, the absent gate
 ## New Konsol shell at /yeni/ (v2-243, DD-259)
 
 `yeni-ui.cjs` drives the committed build in `console/yeni/` under the production CSP read from
-`templates/Caddyfile` (with `font-src 'self'` for the local Outfit font). It starts its own static
-server for `console/` on the address in `KONSOL_URL` (default `http://127.0.0.1:8768`); that server
+`templates/Caddyfile` (with `font-src 'self'` for the local Outfit font). Through `yeni-harness.cjs` it
+starts a static server for `console/` on the address in `KONSOL_URL` (default `http://127.0.0.1:8768`); that server
 also holds `/api/konsol/olaylar` open as an event stream so the suite can push events, while the other
 `/api/*` reads are fixtures. Any console error, CSP violation or page error fails it. It first checks
 that `console/yeni/kaynak.sha256` equals `kaynak-ozeti.sh`'s digest (the build matches its sources) and
@@ -92,6 +92,71 @@ writing that banner — a bundled package under another licence than MIT stops t
 `tools/konsol-ui` except `node_modules/`, in byte order of the path). `tools/konsol-ui/kaynak-ozeti.sh`
 prints the same digest with POSIX tools (`sha256sum`, or `shasum -a 256`), so a test can tell whether the
 committed build matches its sources without Node.
+
+## Redesign phase 2: Uygulamalar (v2-245, DD-261)
+
+`test_uygulamalar.py` feeds `master_uygulamalar.build()` the backend's own shapes (the package list, the
+container inventory, the Erişim view) and checks each answer against the `Uygulamalar` schema: every
+application in one list, a package with its container, access cells and update state, a Konsol
+container with its manual address, states and running operations, an image that can move but was not
+checked (`bilinmiyor`, not `sabit`), the built-ins and unreadable sources. Then the route on a temporary
+Unix socket and its gates, a container application's detail and log, the one action entry (packages to
+the engine, containers and image updates to the worker with the revision, built-ins refused), the
+repair route, and the background update check (at most once a minute, only for a stale cache, a failure
+kept in its thread). `test_api.py` also checks each route's status and request body in the OpenAPI
+description.
+
+## New interface phase 2: Genel Bakış, Uygulamalar and the application page (v2-245, DD-261)
+
+`yeni-harness.cjs` is the shared harness of the `/yeni/` suites: the static server for `console/` with
+the production CSP, the held-open event stream, fixture replies for `/api/*` (a `handlers` table answers
+by method, path and query before the plain fixtures; every request is logged with its parsed POST body),
+`newHttpsPage()` for a page whose origin is `https://` (Playwright answers every request, no TLS), the
+console/CSP/page-error collector and the build check (digest, licence banner). `yeni-ui.cjs` uses it
+unchanged in substance; since phase 2 its fixtures read `/api/konsol/uygulamalar` instead of `moduller`
+(the sidebar count and the palette's applications come from there) and it no longer expects placeholders
+on Genel Bakış and Uygulamalar.
+
+`yeni-uygulamalar-ui.cjs` drives the phase 2 pages on `KONSOL_URL` (default `http://127.0.0.1:8769`):
+Genel Bakış with problems first (each health check with "Denetle ve onar": a confirmation, then
+`POST /api/konsol/onarim` with exactly `{"kip":"onar"}`, a refused start shown in the dialog, the running
+and ended repair through `islemler`; each Erişim warning with "Düzelt"), the calm state, the locked repair
+on the internet channel with its reason, application cards without Files, "Aç" in a new tab (the internet
+name on an HTTPS origin), resources, the network card (read every 5 s only while the page is shown and the
+tab visible) and the server card; the palette opening an application's page; Uygulamalar with its summary,
+filter chips and counts (Dikkat: a failed state, an access warning or a newer image), a Turkish-aware
+search, the view in the address across a reload, empty states, the add panel, the infrastructure card and
+read errors, keyboard order and a visible focus ring; an application's page with its trail, tabs (arrow
+keys, Home/End, `?sekme=`), Erişim with "Teknik ayrıntı" in the address (`teknik=1`), Depolama, Ayarlar,
+Günlük with "Yenile" and the "Canlı" switch (`canli=1`, every 5 s while on); the exact
+`POST /api/konsol/uygulamalar/islem` bodies of every action (no `revizyon` when it is null, `veri` with
+Kaldır), the dialogs' focus trap, Esc and focus return, the typed `onayla`, error replies in the backend's
+words, jobs in the activity drawer whose end reads the page again, a removed application, built-ins, a
+package without a Konsol page and an unknown id; 1440, 390 and 320 px in both themes with no style
+attribute and no horizontal scroll. Screenshots go to a fresh temporary directory, printed at the end.
+
+```bash
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulamalar-ui.cjs
+```
+
+## Gezgin package (v2-245, DD-262)
+
+`test_gezgin_package.py` drives `magaza/gezgin/ayar.py` with faked commands: the install form (every
+field refused before the hash is made, the password only on Caddy's standard input, a hash that is not
+bcrypt refused, a 0600 seed with the hash only), `kur-uygula` and `kur-geri` (the name and the hash in
+`ilk.env` with `$` literal; the earlier file restored, or removed when there was none), seeds that are
+not private or not their shape, the CLI (no password printed, nothing to edit from the Podman page) and
+the data folder under `/var/lib`. The adapter: nothing editable, the protected mounts, a revision that
+follows the placed Quadlet and the registry line. The image update: an up-to-date channel, the new
+digest pinned everywhere with one restart, rollback on a failed restart, a stale revision and a missing
+channel. `yayin.py` against a local HTTP server: the probe needs `/health` 200 and an anonymous API
+call refused with 401, listing probes nothing, a closed port raises for the caller. The package files:
+every placeholder resolves, a pinned image and a unique port, the Quadlet's loopback publication, mounts
+and dropped capabilities, the form matching the worker's limits, the hook's refusal of a same-named
+container of another manager (with a fake `podman`), the account written before the first start and
+emptied after it, and the masked random password. `common.bats` checks every container package's
+Quadlet for the DD-223 lines, the installer summary's Gezgin line and that `master-modul kur` builds
+the container guard again after the registry line.
 
 ## Files favourites (v2-232, DD-250)
 

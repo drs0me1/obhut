@@ -18,7 +18,7 @@ The installer turns a fresh Debian 13
 (trixie) or Ubuntu 24.04/26.04 LTS host
 into a Tailscale exit-node with host dnsmasq + Caddy on the tailnet and a
 persistent firewall. Files, folder WebDAV and ZIP/RAR are built in; optional
-WireGuard and qBittorrent are installed from App Store (**DD-159**).
+WireGuard, qBittorrent and Gezgin are installed from App Store (**DD-159**, **DD-262**).
 There is no Docker (**DD-152**); Podman is base infrastructure, the App Store's container runtime
 (**DD-208**), and qBittorrent runs in it (**DD-209**). There is no
 reconcile / self-healing engine by design.
@@ -189,7 +189,9 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
   configuration and resource operations, **DD-211**, **DD-216**; no Docker). App Store containers
   retain their package lifecycle; generic definitions are private, digest-pinned Quadlets
   with managed bridge ingress. No implicit adoption, automatic image update or reconciliation.
-  The App Store catalogue is WireGuard and qBittorrent; qBittorrent is a container
+  The App Store catalogue is WireGuard, qBittorrent and Gezgin (the file manager: a container on its own
+  bridge `gezgin`, interface on 127.0.0.1:62983 only, the Files account, the first administrator from the
+  install form, **DD-262**); qBittorrent is a container
   application (`PAKET_CALISMA=konteyner`, quadlet + digest-pinned image, **DD-209**) on its own
   bridge `torrent`: interface (62947) published on 127.0.0.1 only, peer port 63851 on the WAN IPv4 address
   (TCP+UDP) only, no IPv6 peers (**DD-217**); both ports are changeable on the Podman page

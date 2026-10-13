@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-13 — Gezgin in the App Store; Genel Bakış and Uygulamalar in the new interface (v2-245)
+
+- Gezgin, the file manager, is in the App Store. Its install window asks for the first administrator;
+  Gezgin then opens at `http://gezgin.<domain>` with its own sign-in, and can be published on the
+  internet from Ayarlar → Caddy like qBittorrent. It sees the whole user area except Konsol's trash
+  and archive work. Removed without its data, it keeps its users, settings and link shares in
+  `/var/lib/gezgin` and comes back with them (DD-262).
+- The new interface at `/yeni/` has its own Genel Bakış, Uygulamalar and application pages: every
+  application (App Store packages, Konsol's containers, Files and WebDAV) in one list with its state,
+  how it is reached, its update state and its actions (DD-261).
+- The current Konsol links to the new interface at the bottom of its sidebar ("Yeni arayüzü dene").
+- Reading the application list starts the image update check when the last one is more than six
+  hours old; before, only the Podman page started it.
+- After an App Store container application is installed, the container guard includes it at once:
+  the firewall check no longer reports the guard as stale until the hourly check, and qBittorrent's
+  peer port is open right after its install (DD-262).
+
 ## [1.0.0] — 2026-10-13
 
 The first tagged release under the name Obhut. From here on, releases follow semantic versioning and

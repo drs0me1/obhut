@@ -2,14 +2,18 @@
      version card. The phone shows the same content in the "Daha fazla" sheet. -->
 <script setup lang="ts">
 import { computed } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
 import { Icon } from "./icons";
 import Wordmark from "./Wordmark.vue";
 import { SECTIONS, type SectionId } from "../sections";
-import { checkLevel, health, installedApps, live, type Level } from "../live";
+import { apps, checkLevel, health, live, type Level } from "../live";
 import { UNKNOWN, fold, shortVersion } from "../format";
 
 const emit = defineEmits<{ navigate: [to: SectionId] }>();
+
+// The section's own page is the current page; a page below it (an application) is in the current section.
+const route = useRoute();
+const current = (id: SectionId) => (route.name === id ? "page" : route.meta.section === id ? "true" : undefined);
 
 interface Badge {
   text: string;
@@ -28,8 +32,8 @@ const hostLine = computed(() => {
 
 const badges = computed<Partial<Record<SectionId, Badge>>>(() => {
   const out: Partial<Record<SectionId, Badge>> = {};
-  const apps = installedApps.value;
-  if (apps && apps.length) out.uygulamalar = { text: String(apps.length), level: "neutral", label: `${apps.length} kurulu uygulama` };
+  const list = apps.value;
+  if (list && list.length) out.uygulamalar = { text: String(list.length), level: "neutral", label: `${list.length} kurulu uygulama` };
   const warnings = live.uyarilar;
   if (!live.erisimYok && warnings && warnings.length) {
     out.erisim = {
@@ -79,7 +83,7 @@ const update = computed<{ text: string; fresh: boolean } | null>(() => {
     <nav class="side-nav" aria-label="Ana menü">
       <ul class="nav-list">
         <li v-for="s in main" :key="s.id">
-          <RouterLink :to="'/' + s.id" class="nav-item" :data-nav="s.id" @click="emit('navigate', s.id)">
+          <RouterLink :to="'/' + s.id" class="nav-item" :data-nav="s.id" :aria-current="current(s.id)" @click="emit('navigate', s.id)">
             <Icon :name="s.icon" />
             <span class="nav-label">{{ s.title }}</span>
             <template v-if="badges[s.id]">
@@ -92,7 +96,7 @@ const update = computed<{ text: string; fresh: boolean } | null>(() => {
       <div class="nav-divider" aria-hidden="true"></div>
       <ul class="nav-list">
         <li v-for="s in advanced" :key="s.id">
-          <RouterLink :to="'/' + s.id" class="nav-item" :data-nav="s.id" @click="emit('navigate', s.id)">
+          <RouterLink :to="'/' + s.id" class="nav-item" :data-nav="s.id" :aria-current="current(s.id)" @click="emit('navigate', s.id)">
             <Icon :name="s.icon" />
             <span class="nav-label">{{ s.title }}</span>
           </RouterLink>

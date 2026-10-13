@@ -39,7 +39,11 @@ class TableTests(unittest.TestCase):
                 self.assertEqual(path.read_text(encoding="utf-8"), out)
         document = json.loads((DATA / "docs/konsol-api.json").read_text(encoding="utf-8"))
         self.assertEqual(document["openapi"], "3.1.0")
-        self.assertEqual(sorted(document["paths"]), sorted(r.path for r in master_api.ROUTES))
+        self.assertEqual(sorted(document["paths"]), sorted({r.path for r in master_api.ROUTES}))
+        for route in master_api.ROUTES:
+            operation = document["paths"][route.path][route.method.lower()]
+            self.assertIn(str(route.status), operation["responses"])
+            self.assertEqual("requestBody" in operation, route.request is not None, route.name)
         refs = set()
 
         def walk(value):

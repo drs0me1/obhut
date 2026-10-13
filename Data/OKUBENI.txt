@@ -7,8 +7,8 @@ Kurulum sunucuda tek satırla başlar (v2-206, DD-228). Sunucuya kendiniz SSH il
   ör. ev yazarsanız panel adresi panel.ev olur). Yeniden kurulumda mevcut adı kullanır, sormaz;
   adı sonradan Konsol → Ayarlar'dan değiştirirsiniz. Sonra özeti gösterir ve E bekler.
   Tailscale: kurulum sırasında giriş bağlantısı gösterilir; tarayıcıda açıp onaylayın (auth key yok).
-  Hesap sorulmaz: Konsol hesabı Ayarlar'da, klasör hesapları Dosyalar'da, qBittorrent hesabı
-  App Store kurulum formunda belirlenir.
+  Hesap sorulmaz: Konsol hesabı Ayarlar'da, klasör hesapları Dosyalar'da, qBittorrent hesabı ve
+  Gezgin'in ilk yöneticisi App Store kurulum formunda belirlenir.
   Yeniden kurulum: aynı satırı yeniden çalıştırın.
   Güncelleme (v2-212, DD-233): GitHub'da yeni sürüm olunca Ana Menü'de saatin yanında "Güncelle"
   belirir; onaylayınca sunucu o sürümü indirip kurulumu kendisi yeniden çalıştırır, bitince sayfa
@@ -49,6 +49,16 @@ WireGuard — kurulum ağ yaratmaz (v2-109) ve v2-117'den beri WireGuard'ın ken
   diğer VPN ağları ve özel IP hedefleri kapalıdır. qBittorrent'e Tailscale'den erişin.
   Bu Mac WireGuard'a bağlıyken wireguard.command sunucuya ulaşamaz (SSH tünelden kapalı):
   menüyü kullanmadan önce Mac'te WireGuard'ı kapatın.
+
+Gezgin (v2-245, DD-262): dosya yöneticisi; App Store'dan kurulur (Podman konteyneri).
+  Kurulum penceresi ilk yöneticiyi sorar (parola en az 12 karakter); adres http://gezgin.<alan adı>.
+  Giriş Gezgin hesabıyla yapılır; Konsol'un oturumu onu açmaz. /srv'nin tamamını görür; Konsol'un çöpü
+  ve arşiv işleri orada boş görünür. Kaldırırken veriler silinmezse kullanıcılar, ayarlar ve bağlantı
+  paylaşımları /var/lib/gezgin'de kalır, yeniden kurulunca geri gelir (formdaki hesap o zaman açılmaz).
+
+Yeni arayüz (DD-258): http://panel.<alan adı>/yeni/ — şimdiki Konsol / adresinde kalır; kenar
+  çubuğunun altındaki "Yeni arayüzü dene" oraya götürür. Genel Bakış ve Uygulamalar yeni arayüzde
+  çalışır (v2-245); diğer sayfalar şimdilik şimdiki Konsol'u açar.
 
 Konsol (tarayıcıdan; v2-105):
   http://panel.<alan adı> — tek yönetim sayfası; yalnız Tailscale'e bağlı cihazdan açılır (WireGuard'dan ve internetten kapalı).

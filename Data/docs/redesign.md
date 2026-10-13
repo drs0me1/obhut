@@ -4,7 +4,9 @@ Status: direction accepted on 2026-10-13 (**DD-258**). Phase 0 is done: the clic
 private design canvas with the overview, the application list and an application page, Erişim with
 its WireGuard tab, the Yayınla flow, Dosyalar, Sistem, Gelişmiş, the command palette and two phone
 screens) was approved the same day. Phase 1 is in v2-243 (**DD-259**): the route table, `/erisim`,
-`/olaylar` and the shell at `/yeni/`, whose pages still open the current Konsol. Phase 2 is next.
+`/olaylar` and the shell at `/yeni/`. Phase 2 is in v2-245 (**DD-261**, **DD-262**): Genel Bakış,
+Uygulamalar and the application page with their read model and action route, and the Gezgin package.
+Phase 3 is next.
 
 This document is the plan. Each phase lands with its own `DD-*` entry, tests and a live check on the
 test host, and `main` stays installable at every step.
@@ -106,7 +108,8 @@ Shared behaviour:
 
 ## Gezgin
 
-- Gezgin becomes an App Store container package, `Data/magaza/gezgin`, like qBittorrent:
+- Gezgin becomes an App Store container package, `Data/magaza/gezgin`, like qBittorrent (done in
+  v2-245, **DD-262**; its data is a folder, `/var/lib/gezgin`, rather than a `gezgin-db` volume):
   digest-pinned image, its own bridge (DD-217), the Files account (DD-227), declared folders, a declared
   publication (one loopback port, a tailnet name, an optional public name) in place of today's manual
   address and direct tailnet ports, update checks applied only on the operator's confirmation
@@ -130,7 +133,7 @@ The new interface is built beside the current one at `/yeni/` on the same origin
 |---|---|
 | 0 | DD-258, this plan, the clickable prototype and the design tokens |
 | 1 | Route table and schemas, `/erisim`, `/olaylar`, the `konsol-ui` toolchain and its freshness test, the new shell at `/yeni/` (navigation, palette, top bar, activity drawer, pending-change banner, theme, mobile bar) |
-| 2 | Genel Bakış and Uygulamalar; the Gezgin package |
+| 2 | Genel Bakış and Uygulamalar; the Gezgin package (v2-245, DD-261, DD-262) |
 | 3 | Erişim, the Yayınla flow and the plan endpoint |
 | 4 | Dosyalar (rescue and root views), Sistem, Gelişmiş; `/yeni/` becomes `/`; the old shell and its scripts are removed |
 | 5 | PWA, the `obhut` tool, sharing moved to Gezgin after parity |

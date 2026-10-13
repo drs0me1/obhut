@@ -1,20 +1,17 @@
-/* Konsol's new shell at /yeni/ (DD-258, phase 1): the committed build under Data/console/yeni with the real
-   CSP from Data/templates/Caddyfile on every page response, fixture APIs, and the event stream served by
-   this suite's own static server so that it can stay open and push events. Fails on any console error,
-   CSP violation or page error. Never contacts a server.
+/* Konsol's new shell at /yeni/ (DD-258, phase 1; phase 2 pages in yeni-uygulamalar-ui.cjs): the committed
+   build under Data/console/yeni with the real CSP from Data/templates/Caddyfile on every page response,
+   fixture APIs, and the event stream served by the suite's own static server (yeni-harness.cjs) so that
+   it can stay open and push events. Fails on any console error, CSP violation or page error. Never
+   contacts a server.
    PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-ui.cjs */
-const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const assert = require("node:assert/strict");
-const fs = require("node:fs"), http = require("node:http"), os = require("node:os"), path = require("node:path");
-
-const root = path.join(__dirname, "../console");
-const shots = fs.mkdtempSync(path.join(os.tmpdir(), "konsol-yeni-ui-"));
-const base = new URL(process.env.KONSOL_URL || "http://127.0.0.1:8768");
-const csp = fs.readFileSync(path.join(__dirname, "../templates/Caddyfile"), "utf8").match(/Content-Security-Policy "([^"]+)"/)[1];
-assert.match(csp, /font-src 'self'/, "the console CSP allows the local Outfit font");
 
 // Documentation values only (RFC 5737/6598 addresses, the DD examples' host and domain); shapes as in
 // tools/konsol-ui/src/api/sema.ts.
+const cell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
+const app = (id, ad, extra) => ({ id, ad, tur: "paket", aciklama: "", modul: id.split(":")[1], konteyner: null, simge: null, durum: "calisiyor", islem: null,
+  tailscale: cell("yok"), internet: cell("yok"), kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null },
+  sayfa: null, eylemler: ["durdur", "yeniden-baslat", "kaldir"], revizyon: null, ...extra });
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.08.06-v2-242", surum: "1.0.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
     cores: 4, interval: 10, read_at: 1791845000, sampled_at: 1791845000, cpu: [2.0], mem: { total: 8300000000, used: 700000000, graph: [8.0] },
@@ -22,9 +19,15 @@ const data = {
   saglik: { status: "bad", read_at: 1791845000, checks: [
     { id: "units", name: "Servisler", status: "bad", detail: "Çalışmayan: konsol-eski.service" },
     { id: "tailscale", name: "Tailscale", status: "ok", detail: "çalışıyor" }] },
-  moduller: { items: [
-    { id: "wireguard", runtime: "servis", installed: true, state: "calisiyor", live: "running", busy: false, progress: null, durdurulabilir: true, konsol: { ad: "WireGuard", sayfa: { rota: "wireguard" } }, sayfa: [] },
-    { id: "torrent", runtime: "konteyner", installed: true, state: "calisiyor", live: "running", busy: false, progress: null, durdurulabilir: true, konsol: { ad: "qBittorrent" }, sayfa: [] }] },
+  // Files (yerlesik:dosya) is not counted: it has its own section.
+  uygulamalar: { read_at: 1791845000, katalog: [], hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 1, kullanilmayan_imaj: 0, birim: 0, ag: 1 },
+    items: [
+      app("paket:wireguard", "WireGuard", { simge: "shield", sayfa: "#/wireguard" }),
+      app("paket:torrent", "qBittorrent", { konteyner: "torrent", simge: "download", tailscale: cell("acik", ["torrent.ev"]), adres: { tailscale: "http://torrent.ev", internet: null },
+        sayfa: "#/torrent", revizyon: "r1" }),
+      app("yerlesik:dosya", "Dosyalar", { tur: "yerlesik", modul: null, sayfa: "#/dosyalar", eylemler: [] })] },
+  ag: { read_at: 1791845000, iface: "eth0", window: 600, sampled_at: 1791845000, rx: 1024, tx: 2048, points: [], apps: [] },
+  onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
   guncelleme: { kurulu: "2026.08.06-v2-242", kurulu_surum: "1.0.0", son: "2026.08.06-v2-242", son_surum: "1.0.0", commit: "0".repeat(40), yeni: false, denetlendi: 1791845000, hata: "",
     is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true },
   bekleyen: { bekleyen: null },
@@ -34,132 +37,19 @@ const data = {
       wireguard: { kurulu: true, not: "", aglar: [] }, sertifikalar: [] },
     uyarilar: [{ seviye: "warn", hizmet: "paylasim", metin: "Paylaşımlar internete şifresiz HTTP ile açık" }] },
 };
-const status = {};          // path → forced HTTP status for the next reads
-const calls = {};           // path → count
-const errors = [];
 let expectedFailures = [];  // URL fragments whose failed loads (401/404/502/503) are part of the scenario
-
-// ---- static server with the event stream
-const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
-  ".woff2": "font/woff2", ".svg": "image/svg+xml", ".png": "image/png", ".txt": "text/plain; charset=utf-8", ".sha256": "text/plain; charset=utf-8" };
-const stream = { mode: "live", clients: new Set(), connections: 0, lastConnect: 0, headers: [] };
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, base);
-  if (url.pathname === "/api/konsol/olaylar") {
-    stream.headers.push({ konsol: req.headers["x-konsol"], accept: req.headers.accept });
-    stream.connections += 1;
-    if (stream.mode !== "live") {
-      res.writeHead(stream.mode, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ error: "fixture" }));
-    }
-    res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
-    res.write("retry: 3000\n\n: canli\n\n");
-    stream.clients.add(res);
-    stream.lastConnect = Date.now();
-    req.on("close", () => stream.clients.delete(res));
-    return;
-  }
-  if (url.pathname.startsWith("/api/")) {
-    errors.push("API request reached the static server: " + url.pathname);
-    res.writeHead(404);
-    return res.end();
-  }
-  if (url.pathname === "/yeni") {
-    res.writeHead(308, { Location: "/yeni/" });
-    return res.end();
-  }
-  let file = "";
-  try {
-    file = path.normalize(path.join(root, decodeURIComponent(url.pathname) + (url.pathname.endsWith("/") ? "index.html" : "")));
-  } catch {
-    file = "";
-  }
-  if (!file.startsWith(root + path.sep)) {
-    res.writeHead(403);
-    return res.end();
-  }
-  fs.readFile(file, (err, body) => {
-    const headers = { "Content-Security-Policy": csp, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-cache",
-      "Content-Type": types[path.extname(file)] || "application/octet-stream" };
-    res.writeHead(err ? 404 : 200, headers);
-    res.end(err ? "bulunamadı" : body);
-  });
-});
-const push = (event, payload) => {
-  const text = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
-  for (const res of stream.clients) res.write(text);
-};
-const waitFor = async (predicate, what, ms = 5000) => {
-  const until = Date.now() + ms;
-  while (!predicate()) {
-    if (Date.now() > until) throw new Error("timed out: " + what);
-    await new Promise((r) => setTimeout(r, 20));
-  }
-};
-
-// ---- browser helpers
-let browser;
-async function newPage(options = {}, { clock = false } = {}) {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", reducedMotion: "no-preference", ...options });
-  const page = await context.newPage();
-  if (clock) await page.clock.install();
-  await page.addInitScript(() => {
-    document.addEventListener("securitypolicyviolation", (e) => console.error(`CSP violation: ${e.violatedDirective} ${e.blockedURI}`));
-  });
-  page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
-  page.on("console", (m) => {
-    if (m.type() !== "error" && !/Content Security Policy|Refused to/.test(m.text())) return;
-    const where = m.location()?.url || "";
-    if (/^Failed to load resource/.test(m.text()) && expectedFailures.some((f) => where.includes(f))) return;
-    errors.push(`console ${m.type()}: ${m.text()} ${where}`);
-  });
-  await page.route("**/api/**", async (route) => {
-    const request = route.request(), p = new URL(request.url()).pathname;
-    calls[p] = (calls[p] || 0) + 1;
-    if (request.headers()["x-konsol"] !== "1") errors.push("missing X-Konsol: " + p);
-    if (p === "/api/konsol/olaylar") return route.continue();
-    const key = p.replace(/^\/api\/konsol\//, "");
-    if (status[p]) {
-      const code = status[p];
-      return route.fulfill({ status: code, contentType: "application/json",
-        body: JSON.stringify(code === 401 ? { error: "Oturum gerekli; yeniden giriş yapın.", giris: true } : { error: "fixture" }) });
-    }
-    if (p === "/api/konsol/oturum") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ durum: "giris", kanal: "internet" }) });
-    if (p === "/api/konsol/oturum/giris") {
-      delete status["/api/konsol/kaynaklar"];  // signed in: the session works again
-      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ durum: "acik" }) });
-    }
-    if (!(key in data)) {
-      errors.push("unexpected endpoint: " + p);
-      return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
-    }
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(data[key]) });
-  });
-  return page;
-}
-const count = (name) => calls["/api/konsol/" + name] || 0;
-const noHorizontalScroll = (page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
+const h = require("./yeni-harness.cjs").create({ name: "konsol-yeni-ui", url: process.env.KONSOL_URL || "http://127.0.0.1:8768", data,
+  expected: () => expectedFailures });
+const { base, csp, shots, status, calls, errors, stream, push, waitFor, newPage, count, noHorizontalScroll, shot } = h;
 const clippedBarLabels = (page) => page.locator(".bottom-bar .bb-item span").evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 0.5).map((e) => e.textContent));
 const badge = (page, id) => page.locator(`.sidebar [data-badge="${id}"]`);
 const optionLabels = (page) => page.locator(".palette-option .palette-label").allInnerTexts();
-// Screenshots wait for the dialogs' enter/leave transitions to end.
-const shot = async (page, name, fullPage = false) => {
-  await page.waitForFunction(() => !document.querySelector('[class*="-enter-"], [class*="-leave-"]'));
-  await page.screenshot({ path: path.join(shots, name), fullPage });
-};
 
 (async () => {
   // The suite tests the committed build: it must match its sources and name the pinned packages it bundles.
-  const tools = path.join(__dirname, "../tools/konsol-ui");
-  const digest = require("node:child_process").execFileSync("sh", [path.join(tools, "kaynak-ozeti.sh")], { encoding: "utf8" }).trim();
-  assert.equal(fs.readFileSync(path.join(root, "yeni/kaynak.sha256"), "utf8"), digest + "\n", "console/yeni is built from the current sources (npm run derle)");
-  const pinned = JSON.parse(fs.readFileSync(path.join(tools, "package.json"), "utf8")).dependencies;
-  const bundle = fs.readFileSync(path.join(root, "yeni/app.js"), "utf8");
-  assert.match(bundle, /^\/\*! Konsol \(DD-258\)/);
-  assert(bundle.includes(` *   vue-router ${pinned["vue-router"]} — Copyright`) && bundle.includes(` *   @vue/runtime-core ${pinned.vue} — Copyright`), "licence banner");
+  h.checkBuild();
 
-  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(Number(base.port || 80), base.hostname, resolve); });
-  browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {}) });
+  await h.start();
   try {
     // ================= desktop, light, live stream
     let page = await newPage();
@@ -187,8 +77,9 @@ const shot = async (page, name, fullPage = false) => {
     assert.equal(await page.getByTestId("tailscale").innerText(), "Tailscale bağlı");
     assert.match(await page.getByTestId("tailscale").getAttribute("class"), /is-ok/);
     assert.equal(await page.getByTestId("version").innerText(), "Obhut 1.0.0 · güncel");
-    assert.equal(await page.getByTestId("legacy").locator("p").innerText(), "Bu bölüm yeni arayüzde hazırlanıyor. Şimdilik eski Konsol'da:");
-    assert.deepEqual(await page.getByTestId("legacy").locator("a").evaluateAll((as) => as.map((a) => [a.textContent.trim(), a.getAttribute("href")])), [["Ana Menü", "/#/genel"]]);
+    // Phase 2: Genel Bakış is built (yeni-uygulamalar-ui.cjs covers it) and starts with health.
+    assert.equal(await page.locator("#saglik-baslik").innerText(), "2 konu dikkat istiyor", "the same two topics as the chip");
+    assert.equal(await page.getByTestId("legacy").count(), 0, "no placeholder");
     assert.equal(await page.locator(".pending").count(), 0);
     assert.equal(await page.getByRole("button", { name: "İşlemler", exact: true }).count(), 1);
     assert.deepEqual(await page.locator("body *").evaluateAll((els) => els.filter((e) => e.hasAttribute("style")).map((e) => e.tagName)), [], "no style attributes");
@@ -233,9 +124,9 @@ const shot = async (page, name, fullPage = false) => {
     await page.keyboard.press("Escape");
     await drawer.waitFor({ state: "detached" });
     assert.equal(await page.evaluate(() => document.activeElement.classList.contains("activity-btn")), true, "focus returns to İşlemler");
-    const modulesBefore = count("moduller");
+    const modulesBefore = count("uygulamalar");
     push("islemler", { items: [{ ...job, durum: "tamam", adim: "", bitis: 1791845100 }] });
-    await waitFor(() => count("moduller") > modulesBefore, "a finished job reloads the applications");
+    await waitFor(() => count("uygulamalar") > modulesBefore, "a finished job reloads the applications");
     await page.getByRole("button", { name: "İşlemler", exact: true }).click();
     await drawer.locator(".empty").filter({ hasText: "Şu an çalışan işlem yok" }).waitFor();
     assert.equal(await drawer.locator('.job[data-durum="tamam"] .pill').innerText(), "Tamamlandı");
@@ -275,7 +166,7 @@ const shot = async (page, name, fullPage = false) => {
     assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Eylemler", "Eski arayüz"]);
     assert.deepEqual(await palette.locator('[aria-labelledby="palet-grup-1"] .palette-label').allInnerTexts(), ["WireGuard", "qBittorrent"]);
     assert.equal(await palette.locator('[aria-labelledby="palet-grup-3"] [role="option"]').count(), 9);
-    assert.equal(await palette.locator('[data-key="uygulama-wireguard"] .palette-hint').innerText(), "Uygulama · eski arayüz");
+    assert.equal(await palette.locator('[data-key="uygulama-paket:wireguard"] .palette-hint').innerText(), "Uygulama", "an application opens its own page (phase 2)");
     await shot(page, "1440-light-palette.png");
     await input.fill("İŞ");
     let labels = await optionLabels(page);
@@ -358,7 +249,7 @@ const shot = async (page, name, fullPage = false) => {
     assert.equal(await page.evaluate(() => document.documentElement.hasAttribute("data-theme")), false, "Sistem follows the system");
     assert.equal(await page.evaluate(() => localStorage.getItem("konsol.tema")), "sistem");
     assert.deepEqual(await page.getByTestId("legacy").locator("a").evaluateAll((as) => as.map((a) => a.getAttribute("href"))), ["/#/ayarlar", "/#/ayarlar/log"]);
-    for (const [hash, hrefs] of [["#/uygulamalar", ["/#/moduller", "/#/konteynerler"]], ["#/erisim", ["/#/ayarlar/web", "/#/ayarlar/dns", "/#/ayarlar/fw", "/#/wireguard"]],
+    for (const [hash, hrefs] of [["#/erisim", ["/#/ayarlar/web", "/#/ayarlar/dns", "/#/ayarlar/fw", "/#/wireguard"]],
       ["#/dosyalar", ["/#/dosyalar"]], ["#/gelismis", ["/#/ayarlar/fw"]]]) {
       await page.evaluate((h) => { location.hash = h; }, hash);
       await page.waitForFunction((h) => location.hash === h, hash);
@@ -455,7 +346,7 @@ const shot = async (page, name, fullPage = false) => {
     assert.equal(await page.locator(".desktop-tools .chip").innerText(), "1 konu");
     await waitFor(() => count("etkinlik") >= 1 && count("bekleyen") >= 1, "first reads");
     await page.waitForTimeout(100);
-    const c0 = { k: count("kaynaklar"), s: count("saglik"), e: count("etkinlik"), b: count("bekleyen"), m: count("moduller"), g: count("guncelleme") };
+    const c0 = { k: count("kaynaklar"), s: count("saglik"), e: count("etkinlik"), b: count("bekleyen"), m: count("uygulamalar"), g: count("guncelleme") };
     await page.clock.runFor(5000);
     await waitFor(() => count("etkinlik") === c0.e + 1 && count("bekleyen") === c0.b + 1, "5 s reads");
     assert.equal(count("kaynaklar"), c0.k, "resources wait 10 s");
@@ -469,7 +360,7 @@ const shot = async (page, name, fullPage = false) => {
     await page.getByTestId("countdown").filter({ hasText: "0:27" }).waitFor();
     data.bekleyen = { bekleyen: null };
     await page.clock.runFor(45000);
-    await waitFor(() => count("saglik") === c0.s + 1 && count("moduller") === c0.m + 1 && count("guncelleme") === c0.g + 1, "60 s reads");
+    await waitFor(() => count("saglik") === c0.s + 1 && count("uygulamalar") === c0.m + 1 && count("guncelleme") === c0.g + 1, "60 s reads");
     await page.locator(".pending").waitFor({ state: "detached" });
     assert.equal(stream.connections, connectionsBefore + 1, "a 404 stream is not asked again");
     assert.equal(count("ayarlar/durum"), 0, "the heavy settings status is not polled");
@@ -559,15 +450,13 @@ const shot = async (page, name, fullPage = false) => {
     assert.deepEqual(errors, []);
     console.log("PASS: /yeni/ shell (build matches its sources, licence banner) under the production CSP — sidebar counts (Uygulamalar 2, Sistem 1 danger, Erişim 1 warning), problem chip, " +
       "Tailscale and version card, event stream (X-Konsol fetch, multi-line data, unknown events, kapat → immediate reconnect), activity drawer " +
-      "(focus trap, Esc, focus return, finished job reloads apps), pending banner with local countdown and phases, palette (Ctrl+K/Meta+K, groups, " +
+      "(focus trap, Esc, focus return, finished job reloads the applications), pending banner with local countdown and phases, palette (Ctrl+K/Meta+K, groups, " +
       "İŞ/ıs/is, ↑↓, Enter to a page and to the current UI, theme action, Esc and focus return), theme radios kept across a reload, legacy links, " +
       "skip link, phone bottom bar and sheet, 1440/390/320 in light and dark, polling without a stream (404/503: 5/10/60 s, no settings status), " +
       "a failing stream (502: 3 s, 6 s, polling after the third failure, polling ends when the stream is back), " +
       "unknown values as —, 401 → sign-in, local Outfit font. Screenshots: " + shots);
   } finally {
-    await browser.close();
-    server.close();
-    for (const res of stream.clients) res.destroy();
+    await h.stop();
   }
 })().catch((err) => {
   console.error(err);

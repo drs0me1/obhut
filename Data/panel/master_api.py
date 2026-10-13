@@ -78,6 +78,51 @@ SCHEMAS = {
         "internet": ref("ErisimHucresi"), "yayinlar": arr(STR), "ayrinti": arr(obj({"baslik": STR, "deger": STR})),
     }),
     "Uyari": obj({"seviye": enum("warn", "bad"), "hizmet": STR, "metin": STR}),
+    "UygulamaHucresi": obj({"durum": ref("ErisimDurumu"), "adresler": arr(STR), "uyari": STR, "not": STR}),
+    "Uygulama": obj({
+        "id": STR, "ad": STR, "tur": enum("paket", "konteyner", "yerlesik"), "aciklama": STR,
+        "modul": null(STR), "konteyner": null(STR), "simge": null(STR),
+        "durum": enum("calisiyor", "durduruldu", "islemde", "hata", "bilinmiyor"),
+        "islem": null(obj({"eylem": STR, "adim": STR, "metin": STR})),
+        "tailscale": ref("UygulamaHucresi"), "internet": ref("UygulamaHucresi"),
+        "kaynak": obj({"cpu": null(NUM), "bellek": null(INT)}),
+        "guncelleme": enum("guncel", "yeni", "denetlenemedi", "bilinmiyor", "sabit"),
+        "adres": obj({"tailscale": null(STR), "internet": null(STR)}), "sayfa": null(STR),
+        "eylemler": arr(enum("baslat", "durdur", "yeniden-baslat", "kaldir", "guncelle")), "revizyon": null(STR),
+        "metinler": null(ref("UygulamaMetinleri")),
+    }),
+    "UygulamaMetinleri": obj({"durdur": STR, "kaldir": arr(arr(STR)), "veri_etiket": STR, "veri_kalir": STR, "veri_silinir": STR}),
+    "UygulamaAyrinti": obj({
+        "uygulama": ref("Uygulama"),
+        "konteyner": null(obj({
+            "imaj": STR, "ag": STR, "kullanici": STR, "baslangic": null(INT), "saglik": STR, "yeniden_baslama": INT,
+            "portlar": arr(obj({"host_ip": STR, "host_port": INT, "container_port": INT, "protocol": STR, "scope": STR})),
+            "baglamalar": arr(obj({"tur": STR, "kaynak": STR, "hedef": STR, "yazilabilir": BOOL, "ad": STR})),
+        })),
+        "erisim": null(ref("Hizmet")),
+    }),
+    "UygulamaGunlugu": obj({"satirlar": arr(STR), "kesik": BOOL}),
+    "UygulamaIslemi": obj({"id": STR, "eylem": enum("baslat", "durdur", "yeniden-baslat", "guncelle", "kaldir"),
+                           "revizyon": STR, "veri": BOOL}, optional=("revizyon", "veri")),
+    "UygulamaIslemiBasladi": obj({"id": STR, "eylem": STR, "is": null(STR)}),
+    "Ag": obj({"read_at": INT, "iface": STR, "window": INT, "sampled_at": null(INT), "rx": null(INT), "tx": null(INT),
+               "points": arr(arr(INT)),
+               "apps": arr(obj({"id": STR, "name": STR, "state": STR, "down": null(INT), "up": null(INT),
+                                "since": null(INT), "at": null(INT)}))}),
+    "OnarimAdimi": obj({"id": STR, "ad": STR, "durum": enum("ok", "onarildi", "sorun", "hata", "atlandi", "calisiyor"),
+                        "detay": STR}),
+    "Onarim": obj({"calisiyor": BOOL, "kurulu": BOOL, "baslatilabilir": BOOL,
+                   "rapor": null(obj({"durum": enum("calisiyor", "tamam", "hata"), "kip": enum("onar", "denetle"), "kaynak": STR,
+                                      "baslangic": INT, "bitis": null(INT), "adimlar": arr(ref("OnarimAdimi")), "yarida": BOOL},
+                                     optional=("yarida",)))}),
+    "OnarimIstegi": obj({"kip": enum("onar", "denetle")}, optional=("kip",)),
+    "OnarimBasladi": obj({"kip": STR}),
+    "Uygulamalar": obj({
+        "read_at": INT, "items": arr(ref("Uygulama")),
+        "katalog": arr(obj({"id": STR, "ad": STR, "aciklama": STR, "simge": null(STR)})),
+        "altyapi": obj({"podman": STR, "calisiyor": BOOL, "imaj": INT, "kullanilmayan_imaj": INT, "birim": INT, "ag": INT}),
+        "hatalar": arr(STR),
+    }),
     "KonsolBildirimi": open_obj({"ad": STR, "alt": STR, "simge": STR,
                                  "sayfa": open_obj({"rota": STR, "baslik": STR, "ustbilgi": STR})}),
     "Modul": obj({"id": STR, "runtime": STR, "installed": BOOL, "state": enum("calisiyor", "durduruldu", ""), "live": STR,
@@ -109,9 +154,9 @@ SCHEMAS = {
 
 
 class Route:
-    def __init__(self, method, path, name, summary, reply=None, events=None):
+    def __init__(self, method, path, name, summary, reply=None, events=None, request=None, query=None, status=200):
         self.method, self.path, self.name, self.summary = method, path, name, summary
-        self.reply, self.events = reply, events
+        self.reply, self.events, self.request, self.query, self.status = reply, events, request, query or {}, status
 
 
 ROUTES = (
@@ -126,6 +171,19 @@ ROUTES = (
     Route("GET", "/api/konsol/etkinlik", "etkinlik", "Süren ve yeni biten işlemler (olay akışı yokken)", ref("Islemler")),
     Route("GET", "/api/konsol/bekleyen", "bekleyen", "Onay ya da geri alma bekleyen ayar değişikliği", ref("Bekleyen")),
     Route("GET", "/api/konsol/moduller", "moduller", "App Store paketleri ve yerleşikler (DD-148, DD-200)", ref("Moduller")),
+    Route("GET", "/api/konsol/uygulamalar", "uygulamalar",
+          "Uygulamalar: paketler, Konsol konteynerleri ve yerleşikler tek listede (DD-261)", ref("Uygulamalar")),
+    Route("GET", "/api/konsol/uygulamalar/ayrinti", "uygulama_ayrinti", "Bir uygulamanın konteyneri, bağlı klasörleri ve erişimi",
+          ref("UygulamaAyrinti"), query={"id": STR}),
+    Route("GET", "/api/konsol/uygulamalar/gunluk", "uygulama_gunlugu", "Bir uygulamanın günlüğü (son satırlar)",
+          ref("UygulamaGunlugu"), query={"id": STR, "satir": INT}),
+    Route("POST", "/api/konsol/uygulamalar/islem", "uygulama_islemi",
+          "Bir uygulamayı başlat, durdur, yeniden başlat, güncelle ya da kaldır; ilerleme olay akışında (islemler)",
+          ref("UygulamaIslemiBasladi"), request=ref("UygulamaIslemi"), status=202),
+    Route("GET", "/api/konsol/ag", "ag", "WAN hız noktaları ve uygulamaların trafik toplamları (DD-206)", ref("Ag")),
+    Route("GET", "/api/konsol/onarim", "onarim", "Son denetim ve onarım raporu (DD-239)", ref("Onarim")),
+    Route("POST", "/api/konsol/onarim", "onarim_baslat", "Denetimi ya da onarımı başlatır; yalnız Tailscale'den",
+          ref("OnarimBasladi"), request=ref("OnarimIstegi"), status=202),
     Route("GET", "/api/konsol/guncelleme", "guncelleme",
           "Kurulu ve GitHub'daki son sürüm (DD-233); ?yenile yeniden sorar", ref("Guncelleme")),
 )
@@ -187,15 +245,19 @@ def openapi():
             content = {"text/event-stream": {"schema": STR}}
         else:
             content = {"application/json": {"schema": route.reply}}
-        responses = {"200": {"description": "Başarılı", "content": content},
+        responses = {str(route.status): {"description": "Başarılı", "content": content},
                      "403": {"description": "Host, köken ya da X-Konsol denetimi",
                              "content": {"application/json": {"schema": ref("Hata")}}}}
         if route.events:
             responses["503"] = {"description": "Bu kanaldaki akış sınırı dolu; sayfa yenilemeye geçer",
                                 "content": {"application/json": {"schema": ref("Hata")}}}
         op = {"operationId": route.name, "summary": route.summary,
-              "parameters": [{"name": "X-Konsol", "in": "header", "required": True, "schema": enum("1")}],
+              "parameters": [{"name": "X-Konsol", "in": "header", "required": True, "schema": enum("1")}]
+              + [{"name": key, "in": "query", "required": key == "id", "schema": schema} for key, schema in route.query.items()],
               "responses": responses}
+        if route.request:
+            op["requestBody"] = {"required": True, "content": {"application/json": {"schema": route.request}}}
+            responses["400"] = {"description": "İstek biçimi geçersiz", "content": {"application/json": {"schema": ref("Hata")}}}
         if route.events:
             op["x-olaylar"] = dict(route.events)
         paths.setdefault(route.path, {})[route.method.lower()] = op

@@ -509,15 +509,25 @@ Contract in §5–§7 and `folder-shares.md`.
   - The redesigned Konsol (**DD-258**, **DD-259**) is served beside these pages at `/yeni/`, behind the
     same session check and CSP (plus `font-src 'self'` for its local Outfit font). The installer
     places the committed build of `tools/konsol-ui` (Vue 3 + TypeScript + Vite; nothing is built on
-    the server) from `console/yeni/` and removes files an older build left. Its pages open the
-    current Konsol until a later phase replaces them. Its backend routes come from the table in
+    the server) from `console/yeni/` and removes files an older build left. Genel Bakış, Uygulamalar
+    and an application's page are its own (**DD-261**); its other pages open the current Konsol
+    until a later phase replaces them. Its backend routes come from the table in
     `master_api.py`: `/api/konsol/erisim` (read-only reachability of every service from this server,
     Tailscale, WireGuard and the internet, with warnings; it changes and probes nothing new),
     `/api/konsol/olaylar` (Server-Sent Events for resources, health, operations and the pending
     change; changed topics only, a 15 s heartbeat, a stream ends after 10 minutes, at most 4
     streams per channel and then 503, the public name's publication and session asked again every
-    30 s) and `/api/konsol/etkinlik` and `/api/konsol/bekleyen` (the same data for polling). All of
-    them need `X-Konsol`; the page reads the stream with fetch. On the public name an ended session
+    30 s) and `/api/konsol/etkinlik` and `/api/konsol/bekleyen` (the same data for polling). Phase 2
+    (**DD-261**) adds `/api/konsol/uygulamalar` (every application with its state, Tailscale and
+    internet cells, resources, image update state, addresses, actions and revision, and a package's
+    own stop and removal words; a stale
+    image-update cache is refreshed in the background, never on the request's time),
+    `/api/konsol/uygulamalar/ayrinti`, `/api/konsol/uygulamalar/gunluk` and
+    `POST /api/konsol/uygulamalar/islem` (one action entry for packages and containers: 202 when it
+    starts, 409 for a built-in, a busy application or a stale revision), and moves `/api/konsol/ag`
+    and `/api/konsol/onarim` into the table unchanged. A table route that declares its request refuses
+    another shape with 400. All of them need `X-Konsol`; the page reads the stream with fetch. The
+    current Konsol's sidebar links to `/yeni/`. On the public name an ended session
     sends the page to `/giris.html?geri=yeni`, which returns to `/yeni/` after signing in.
   - Pages (**DD-160**, **DD-200**, **DD-204**, **DD-212/213**, **DD-216**): Ana Menü is the
     landing page, with only installed application tiles and the network widget.
@@ -1007,8 +1017,8 @@ Contract in §5–§7 and `folder-shares.md`.
 
 - A clean install includes Files, folder WebDAV and archive tools. Optional applications
   are installed/removed from Konsol → App Store. The catalogue is the set of packages
-  under `Data/magaza/<id>/` whose manifest is not built-in: today `wireguard` and
-  `torrent`. Both support start/stop. Stopping WireGuard (**DD-229**) records its
+  under `Data/magaza/<id>/` whose manifest is not built-in: today `wireguard`,
+  `torrent` and `gezgin`. All three support start/stop. Stopping WireGuard (**DD-229**) records its
   enabled networks in `WG_STOPPED_FILE`, disables them and marks the package `durduruldu`, so
   the firewall drops its UDP ports, forwarding and NAT; it stays down across reboots and
   installer re-runs, and `master-wg` refuses to open or add a network until Start, which
@@ -1041,7 +1051,8 @@ Contract in §5–§7 and `folder-shares.md`.
   container guard's interface naming (`KONTEYNER_BRIDGE_PREFIX` plus the first ten hex digits
   of the name's SHA-256) and the label `io.master-stack.paket=<id>`, refuses a same-named
   network that is not the package's, refreshes the guard after placing or removing the quadlet,
-  and removes the network with `kaldir`. The guard drops every forwarded packet into such a
+  once more after an install registers the package (the guard counts only registered packages,
+  **DD-262**), and removes the network with `kaldir`. The guard drops every forwarded packet into such a
   bridge except replies and what the registered package's placed quadlet publishes as an IPv4
   `address:port:port/protocol` on the server's WAN or Tailscale address; a loopback publication
   needs no forward path, and no IPv6 ingress is opened. qBittorrent runs on its own bridge
@@ -1056,6 +1067,22 @@ Contract in §5–§7 and `folder-shares.md`.
   lines and `TORRENTING_PORT` there, sets the profile's `Session\Port`, records the override and
   reapplies the container guard before the restart (**DD-221**). The Podman page labels a
   publication on the WAN address as internet access and shows the bridge's name.
+- **Gezgin (DD-262).** The file manager is a container application on its own bridge `gezgin`
+  with one publication, its interface on `127.0.0.1:GEZGIN_UI_PORT` (62983), reached on the tailnet
+  as `gezgin.<domain>`; the image is pinned by digest and follows the `1.0` channel only on the
+  operator's confirmation. The process runs as the Files account with every capability dropped and
+  `no-new-privileges`. `SERVER_ROOT` is mounted whole at `/srv` (Gezgin's own trash, uploads and
+  archive folders at its root are the package's declared folders); Konsol's trash and archive folders
+  are covered there by an empty read-only folder. Its data lives in `GEZGIN_DATA_DIR`
+  (`/var/lib/gezgin`). The install form asks for the first administrator (a user name; a password of
+  12 to 72 bytes); only the bcrypt hash, made by the base's Caddy from standard input, reaches the
+  seed and `ilk.env`, which Podman reads at the first start and the hook empties once that start is
+  verified. A kept database keeps its users and the form's account is not created. Install, start,
+  restart and apply refuse while a Konsol container definition named `gezgin`, or a `gezgin` container
+  of another unit, exists. The publication row needs a running Gezgin that refuses an anonymous API
+  call; Gezgin has no setting that bypasses its sign-in. Gezgin's WebDAV shares stay off. `kaldir`
+  keeps the data and the image, `--veri` removes both; the user area is never touched. There is no
+  Konsol page or API: Konsol opens Gezgin's address, and Konsol's session does not sign in to it.
 - **Install form (DD-210).** A package may declare an install form: `konsol.json`
   `form` (generic fields `metin`/`parola`/`klasor`, texts, the package API's read and
   write routes) and the manifest's `PAKET_KUR_AYAR` (its worker). App Store's "Kur" then

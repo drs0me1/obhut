@@ -756,6 +756,9 @@ cmd_kur() {
     paket_kur
     arkauc_yollari_hazirla
     registry_set "$id" calisiyor
+    # DD-217: the container guard counts only registered packages, and the hooks placed the Quadlet
+    # before this line existed; built again now, a new package's bridge gets its rules at once.
+    konteyner_korumasi || warn "$FAIL; saatlik denetim ya da Denetle ve onar yeniden kurar"
     progress "$id" kur bitti 0 "kuruldu"
     printf '%s\tcalisiyor\n' "$id"
 }

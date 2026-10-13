@@ -1,0 +1,6 @@
+# Modül: Gezgin (DD-262). master-modul bunu CADDY_MODULES_DIR/gezgin.caddy olarak koyar.
+# Arayüz yalnız 127.0.0.1'de dinler; tailnet'e bu ad açar. Gezgin'in kendi girişi vardır; Caddy'nin
+# yazdığı X-Forwarded-For'u (özel adresten gelen istekte) istemci adresi sayar.
+http://gezgin.__LOCAL_DOMAIN__ {
+	reverse_proxy 127.0.0.1:__GEZGIN_UI_PORT__
+}

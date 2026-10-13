@@ -13,6 +13,122 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-262: Gezgin is an App Store container package (v2-245)
+
+- **Request (user, 2026-10-13):** DD-258's plan ("Gezgin becomes an App Store container package") and
+  "faz 2 ye başlayalım o zaman".
+- **Package (`magaza/gezgin/`), like qBittorrent (DD-209):** the image `ghcr.io/drs0me1/gezgin` pinned by
+  the digest of its 1.0.0 index (amd64 and arm64). Konsol checks the `1.0` tag and moves the pin only on
+  the operator's confirmation (DD-214). Its own bridge `gezgin` (DD-217) carries one publication,
+  `127.0.0.1:62983` (DD-219: outside Linux's outgoing range, away from the 610xx block), and Caddy serves
+  `gezgin.<domain>` on the tailnet. The process runs as the Files account (DD-227) with every capability
+  dropped and `no-new-privileges`: Gezgin's image already runs unprivileged and needs none.
+- **The user area is one mount:** Gezgin keeps its trash, unfinished uploads and archive jobs in its own
+  folders at the root (`.gezgin-cop`, `.gezgin-yukleme`, `.gezgin-arsiv`) and moves items there by
+  rename, which fails across bind mounts, so `SERVER_ROOT` is mounted whole at `/srv`. Inside the
+  container Konsol's trash (`.cop`) and archive work (`.arsiv`) are covered by an empty, read-only,
+  root-owned folder: Gezgin shows two empty folders and cannot write there. The three Gezgin folders
+  are the package's declared folders (DD-203): Files does not offer or share them and WebDAV hides them.
+- **Application data in `/var/lib/gezgin`** (`database` and `config` belong to the Files account, 0700;
+  the folder itself is root's, 0750), not a named volume: removal with data is a plain folder removal.
+- **The first administrator comes from the install form (DD-210):** a user name and a password of 12 to
+  72 bytes (bcrypt reads at most 72). Python's standard library has no bcrypt and Gezgin's own `hash`
+  command takes the password as an argument, so the base's Caddy hashes it from standard input
+  (`caddy hash-password`, cost 14); the seed holds only the hash. `kur-uygula` writes the name and the
+  hash to `/var/lib/gezgin/ilk.env` (root, 0600), which Podman reads itself (`EnvironmentFile=`, so the
+  hash's `$` stays literal). Gezgin's quick setup takes a hash there, never a password, and creates the
+  account only while its database is empty. Once the first start is verified (an anonymous API call
+  gets 401) the hook empties the file. A database kept from an earlier install keeps its users and the
+  form's account is not created; the form says so. Without a form Gezgin would print a random password
+  in its log; Konsol's log view masks that line.
+- **Verification** (install, start, restart, apply): the unit is active, the process runs as the Files
+  account, the mounts are exactly the five above, `/health` answers on loopback, `podman port` lists
+  only the loopback publication and nothing listens on the port off loopback; then the tailnet name
+  through Caddy and DNS.
+- **A same-named container of another manager stops the package:** Quadlet replaces a container of the
+  same name, so a Konsol definition called `gezgin`, or a running `gezgin` container of another unit
+  (the hand-made setup before this package), must be removed first. Konsol already refuses the name
+  for new definitions: a package's container name is reserved.
+- **Internet publication (DD-191, DD-199):** Settings → Caddy has a Gezgin row to the loopback port.
+  Nothing in Gezgin bypasses its sign-in: user name and password is its only method (a database naming
+  another one refuses to start), there is no self sign-up, and failed sign-ins from outside private
+  ranges spend a per-address budget. Gezgin takes the client from `X-Forwarded-For` only when the peer
+  is private, which the loopback publication's bridge gateway is, and Caddy writes that header. So the
+  check (`yayin.py`) has nothing to read while the row is on; turning the row on proves that `/health`
+  answers and an anonymous API call is refused.
+- **No Konsol page or API:** Gezgin is managed in its own interface, opened in a new tab; Konsol's
+  session does not open it. Gezgin's WebDAV shares stay off (no `GEZGIN_WEBDAV_PORT`); Konsol's folder
+  WebDAV keeps sharing until DD-258's phase 5.
+- **Removal:** `kaldir` keeps `/var/lib/gezgin` and the image; with data it removes both (users,
+  settings, link shares). The user area and Gezgin's folders in it are never touched.
+- **Live check on the test host:** install through the API with the form and sign-in with its account;
+  stop, start, restart and the update action through the new action route; the publication probe;
+  removal without data, a reinstall with another account (the kept user signs in, the new one does not
+  exist) and removal with data.
+- **Found by it, for every container package:** right after an install the firewall check called the
+  container guard stale. The guard (DD-217) counts only registered packages, and `master-modul kur`
+  writes the registry line after the hooks that placed the Quadlet and built the guard; until the
+  hourly check or a repair rebuilt it, the new bridge had no rules of its own (for qBittorrent: its
+  peer port stayed closed). `cmd_kur` now builds the guard once more after the registry line; a
+  failure there is a warning, since the application already runs and the check shows it.
+- **Rejected:** mounting only the downloads and media folders (Gezgin's trash and uploads would cross
+  mounts); a named Podman volume for the data (removal and backups by name instead of by path); a
+  vendored bcrypt in Python; framing Gezgin or a trusted-header sign-in (DD-258).
+
+### DD-261: The redesign's second phase: Genel Bakış, Uygulamalar and the application page (v2-245)
+
+- **Request (user, 2026-10-13):** "faz 2 ye başlayalım o zaman. adres kısmını tam anlamamışım" (phase 2
+  of DD-258, [`redesign.md`](redesign.md)).
+- **`GET /api/konsol/uygulamalar` (`panel/master_uygulamalar.py`):** every application in one list:
+  App Store packages, Konsol's own containers and the built-ins (Files, WebDAV). Each has its state
+  (`calisiyor`, `durduruldu`, `islemde`, `hata`, `bilinmiyor`), a running operation, its Tailscale and
+  internet cells from the Erişim read model (DD-259), CPU and memory from the Podman inventory, the
+  image update state, its addresses, the current interface's page (`#/torrent`) while the new one has
+  none, the actions it accepts and the revision a change must carry. A package also brings its own
+  stop and removal words from its `konsol.json` (`metinler`: what stopping interrupts, what removal
+  takes away, the data switch's label, what it deletes and what stays), so the new dialogs say what
+  App Store said. The answer adds the catalogue of packages not installed, Podman's counts (images,
+  unused images, units, networks) and `hatalar`: a source that cannot be read adds a line instead of
+  failing the list. It joins what the backend already reads and changes nothing.
+- **Image update state:** `guncel`, `yeni` and `denetlenemedi` come from DD-214's cached check;
+  `bilinmiyor` is an image that can move but has not been checked yet, `sabit` one that cannot move.
+  Only the Podman page asked for the check, so the list now starts it in a background thread when the
+  cache is older than its six hours, at most once a minute; a request never waits for a registry.
+- **`GET /api/konsol/uygulamalar/ayrinti?id=`** (one application with its container: image, network,
+  user, ports, mounts, start time and restarts, plus its Erişim row) and **`GET
+  /api/konsol/uygulamalar/gunluk?id=&satir=`** (the container's journal, or the package's own log).
+- **`POST /api/konsol/uygulamalar/islem`, one action entry:** `{id, eylem, revizyon?, veri?}` with
+  `baslat`, `durdur`, `yeniden-baslat`, `guncelle` and `kaldir`. Packages go to the store engine as from
+  App Store (DD-149); containers and image updates go to the container worker with the revision (a
+  stale one is 409, DD-211); built-ins refuse with 409. The answer is 202 with the operation's id when
+  there is one.
+- **Requests are checked too:** a table route may declare its request's shape, and the backend refuses
+  another shape with 400 before the handler. `/api/konsol/ag` and `/api/konsol/onarim` (the report and
+  starting a check or repair), which the overview reads, moved into the table unchanged.
+- **The new interface's pages** replace the shell's links to the current Konsol for these views.
+  Genel Bakış puts problems first: each failing health check with "Denetle ve onar" (asked first, then
+  `{"kip": "onar"}`; locked on the internet name, as before) and each Erişim warning with "Düzelt";
+  then the applications as cards with "Aç" and "Ayrıntı", the resources, the network (read every 5 s
+  only while the page is shown) and the server's facts. Uygulamalar is a table with filters, search and
+  the view in the address, the add panel (the catalogue opens App Store, an image or an existing
+  container the Podman page, for now) and Podman's counts. An application's page has its actions,
+  each asked first where it stops or changes something (removal needs the typed `onayla` and offers
+  the package's data switch with its own words), and the tabs Özet, Erişim, Depolama, Ayarlar and
+  Günlük in the address (`sekme`, `teknik`, `canli`). "Aç" prefers the address of the channel the
+  page is on and falls back to the other. Files is left out of these lists: Dosyalar is its own
+  section. The shell's counts and palette read the new list instead of `moduller`. One Vue component
+  per kind (status pill, tabs, dialog and sheet with a focus trap, typed confirmation, card, empty
+  state, usage bar).
+- **The address:** the current Konsol stays at `/` until phase 4; its sidebar footer now links to
+  `/yeni/` ("Yeni arayüzü dene") on both channels.
+- **Known gap:** CPU and memory stay empty on servers because `podman stats` cannot enter a container's
+  network namespace from the hardened backend (`RestrictNamespaces=yes`). Reading the cgroups directly
+  is a separate change; the sandbox is not relaxed for it.
+- **Rejected:** separate action routes per kind of application (the page would have to know which
+  manager owns an application); waiting for the registry inside the list request; widening
+  `RestrictNamespaces` for `podman stats`; general words in the removal dialog where the package says
+  exactly what goes.
+
 ### DD-260: Releases carry a semantic version beside the build number (v2-244, 1.0.0)
 
 - **Request (user, 2026-10-13):** "Düzgün bir sürüm numarası verelim; v2-243 çok fazla ileri gitti ve

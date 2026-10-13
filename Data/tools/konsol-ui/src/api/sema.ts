@@ -119,6 +119,166 @@ export interface Uyari {
   metin: string;
 }
 
+export interface UygulamaHucresi {
+  durum: ErisimDurumu;
+  adresler: string[];
+  uyari: string;
+  not: string;
+}
+
+export interface Uygulama {
+  id: string;
+  ad: string;
+  tur: "paket" | "konteyner" | "yerlesik";
+  aciklama: string;
+  modul: string | null;
+  konteyner: string | null;
+  simge: string | null;
+  durum: "calisiyor" | "durduruldu" | "islemde" | "hata" | "bilinmiyor";
+  islem: {
+    eylem: string;
+    adim: string;
+    metin: string;
+  } | null;
+  tailscale: UygulamaHucresi;
+  internet: UygulamaHucresi;
+  kaynak: {
+    cpu: number | null;
+    bellek: number | null;
+  };
+  guncelleme: "guncel" | "yeni" | "denetlenemedi" | "bilinmiyor" | "sabit";
+  adres: {
+    tailscale: string | null;
+    internet: string | null;
+  };
+  sayfa: string | null;
+  eylemler: ("baslat" | "durdur" | "yeniden-baslat" | "kaldir" | "guncelle")[];
+  revizyon: string | null;
+  metinler: UygulamaMetinleri | null;
+}
+
+export interface UygulamaMetinleri {
+  durdur: string;
+  kaldir: string[][];
+  veri_etiket: string;
+  veri_kalir: string;
+  veri_silinir: string;
+}
+
+export interface UygulamaAyrinti {
+  uygulama: Uygulama;
+  konteyner: {
+    imaj: string;
+    ag: string;
+    kullanici: string;
+    baslangic: number | null;
+    saglik: string;
+    yeniden_baslama: number;
+    portlar: {
+      host_ip: string;
+      host_port: number;
+      container_port: number;
+      protocol: string;
+      scope: string;
+    }[];
+    baglamalar: {
+      tur: string;
+      kaynak: string;
+      hedef: string;
+      yazilabilir: boolean;
+      ad: string;
+    }[];
+  } | null;
+  erisim: Hizmet | null;
+}
+
+export interface UygulamaGunlugu {
+  satirlar: string[];
+  kesik: boolean;
+}
+
+export interface UygulamaIslemi {
+  id: string;
+  eylem: "baslat" | "durdur" | "yeniden-baslat" | "guncelle" | "kaldir";
+  revizyon?: string;
+  veri?: boolean;
+}
+
+export interface UygulamaIslemiBasladi {
+  id: string;
+  eylem: string;
+  is: string | null;
+}
+
+export interface Ag {
+  read_at: number;
+  iface: string;
+  window: number;
+  sampled_at: number | null;
+  rx: number | null;
+  tx: number | null;
+  points: number[][];
+  apps: ({
+    id: string;
+    name: string;
+    state: string;
+    down: number | null;
+    up: number | null;
+    since: number | null;
+    at: number | null;
+  })[];
+}
+
+export interface OnarimAdimi {
+  id: string;
+  ad: string;
+  durum: "ok" | "onarildi" | "sorun" | "hata" | "atlandi" | "calisiyor";
+  detay: string;
+}
+
+export interface Onarim {
+  calisiyor: boolean;
+  kurulu: boolean;
+  baslatilabilir: boolean;
+  rapor: {
+    durum: "calisiyor" | "tamam" | "hata";
+    kip: "onar" | "denetle";
+    kaynak: string;
+    baslangic: number;
+    bitis: number | null;
+    adimlar: OnarimAdimi[];
+    yarida?: boolean;
+  } | null;
+}
+
+export interface OnarimIstegi {
+  kip?: "onar" | "denetle";
+}
+
+export interface OnarimBasladi {
+  kip: string;
+}
+
+export interface Uygulamalar {
+  read_at: number;
+  items: Uygulama[];
+  katalog: ({
+    id: string;
+    ad: string;
+    aciklama: string;
+    simge: string | null;
+  })[];
+  altyapi: {
+    podman: string;
+    calisiyor: boolean;
+    imaj: number;
+    kullanilmayan_imaj: number;
+    birim: number;
+    ag: number;
+  };
+  hatalar: string[];
+}
+
 export interface KonsolBildirimi {
   ad?: string;
   alt?: string;
@@ -239,5 +399,12 @@ export const YOLLAR = {
   etkinlik: "/api/konsol/etkinlik",
   bekleyen: "/api/konsol/bekleyen",
   moduller: "/api/konsol/moduller",
+  uygulamalar: "/api/konsol/uygulamalar",
+  uygulama_ayrinti: "/api/konsol/uygulamalar/ayrinti",
+  uygulama_gunlugu: "/api/konsol/uygulamalar/gunluk",
+  uygulama_islemi: "/api/konsol/uygulamalar/islem",
+  ag: "/api/konsol/ag",
+  onarim: "/api/konsol/onarim",
+  onarim_baslat: "/api/konsol/onarim",
   guncelleme: "/api/konsol/guncelleme",
 } as const;

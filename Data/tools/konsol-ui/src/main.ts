@@ -7,6 +7,8 @@ import { startLive } from "./live";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/shell.css";
+import "./styles/ui.css";
+import "./styles/pages.css";
 
 initTheme();
 createApp(App).use(router).mount("#app");

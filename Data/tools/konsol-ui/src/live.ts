@@ -3,7 +3,7 @@
 // health, running jobs and the pending settings change. When the stream is unavailable (404, 503, no
 // ReadableStream) or keeps failing, the same data is polled: resources every 10 s, health every 60 s, jobs
 // and the pending change every 5 s. Applications, the update check and Erişim's warnings are read every
-// 60 s in both modes, and again whenever a job ends. Hidden pages do not poll.
+// 60 s in both modes, and again whenever a job starts or ends. Hidden pages do not poll.
 import { computed, reactive } from "vue";
 import {
   YOLLAR,
@@ -14,13 +14,13 @@ import {
   type Islem,
   type Islemler,
   type Kaynaklar,
-  type Modul,
-  type Moduller,
   type Saglik,
   type SaglikDurumu,
+  type Uygulamalar,
   type Uyari,
 } from "./api/sema";
 import { ApiError, getJson } from "./api/http";
+import { isApp } from "./api/konsol";
 import { openEvents } from "./api/olaylar";
 
 export type Connection = "baslangic" | "canli" | "yeniden" | "yoklama";
@@ -28,13 +28,16 @@ export type Level = "ok" | "warning" | "danger";
 
 export const live = reactive({
   kaynaklar: null as Kaynaklar | null,
+  /** The server's clock minus this browser's, in seconds (from kaynaklar.read_at). */
+  offset: 0,
   saglik: null as Saglik | null,
   islemler: null as Islem[] | null,
   /** undefined: not read yet; null: no pending change. */
   bekleyen: undefined as BekleyenDegisiklik | null | undefined,
   /** Date.now() when bekleyen.seconds was read; the banner counts down from there. */
   bekleyenAt: 0,
-  moduller: null as Modul[] | null,
+  /** Applications (DD-261): packages, Konsol's containers and the built-ins in one list. */
+  uygulamalar: null as Uygulamalar | null,
   guncelleme: null as Guncelleme | null,
   /** Erişim's warnings; null while unknown. */
   uyarilar: null as Uyari[] | null,
@@ -43,14 +46,14 @@ export const live = reactive({
   connection: "baslangic" as Connection,
 });
 
-type Key = "kaynaklar" | "saglik" | "islemler" | "bekleyen" | "moduller" | "guncelleme" | "erisim";
+type Key = "kaynaklar" | "saglik" | "islemler" | "bekleyen" | "uygulamalar" | "guncelleme" | "erisim";
 
 const PATHS: Record<Key, string> = {
   kaynaklar: YOLLAR.kaynaklar,
   saglik: YOLLAR.saglik,
   islemler: YOLLAR.etkinlik,
   bekleyen: YOLLAR.bekleyen,
-  moduller: YOLLAR.moduller,
+  uygulamalar: YOLLAR.uygulamalar,
   guncelleme: YOLLAR.guncelleme,
   erisim: YOLLAR.erisim,
 };
@@ -71,7 +74,9 @@ let jobSignature: string | null = null;
 
 const apply: Record<Key, (data: unknown) => void> = {
   kaynaklar(data) {
-    if (isObject(data)) live.kaynaklar = data as unknown as Kaynaklar;
+    if (!isObject(data)) return;
+    live.kaynaklar = data as unknown as Kaynaklar;
+    if (typeof data.read_at === "number" && Number.isFinite(data.read_at)) live.offset = data.read_at - Date.now() / 1000;
   },
   saglik(data) {
     if (isObject(data) && Array.isArray(data.checks)) {
@@ -86,9 +91,9 @@ const apply: Record<Key, (data: unknown) => void> = {
     // A job that started, ended or failed may change the application list, the version or health.
     const signature = items.map((j) => `${j.tur}:${j.id}:${j.durum}`).sort().join("|");
     if (jobSignature !== null && signature !== jobSignature) {
-      void refresh("moduller");
-      if (/(^|\|)guncelleme:/.test(signature + "|" + jobSignature)) void refresh("guncelleme");
-      if (/(^|\|)onarim:/.test(signature + "|" + jobSignature)) void refresh("saglik");
+      void refresh("uygulamalar", true);
+      if (/(^|\|)guncelleme:/.test(signature + "|" + jobSignature)) void refresh("guncelleme", true);
+      if (/(^|\|)onarim:/.test(signature + "|" + jobSignature)) void refresh("saglik", true);
     }
     jobSignature = signature;
   },
@@ -98,10 +103,16 @@ const apply: Record<Key, (data: unknown) => void> = {
     live.bekleyen = isObject(value) && isText(value.phase) ? value : null;
     live.bekleyenAt = Date.now();
   },
-  moduller(data) {
-    if (isObject(data) && Array.isArray(data.items)) {
-      live.moduller = (data as unknown as Moduller).items.filter((m): m is Modul => isObject(m) && isText(m.id));
-    }
+  uygulamalar(data) {
+    if (!isObject(data) || !Array.isArray(data.items)) return;
+    const value = data as unknown as Uygulamalar;
+    live.uygulamalar = {
+      ...value,
+      items: value.items.filter(isApp),
+      katalog: Array.isArray(value.katalog) ? value.katalog.filter((k) => isObject(k) && isText(k.id) && isText(k.ad)) : [],
+      altyapi: isObject(value.altyapi) ? value.altyapi : { podman: "", calisiyor: false, imaj: 0, kullanilmayan_imaj: 0, birim: 0, ag: 0 },
+      hatalar: Array.isArray(value.hatalar) ? value.hatalar.filter(isText) : [],
+    };
   },
   guncelleme(data) {
     if (isObject(data)) live.guncelleme = data as unknown as Guncelleme;
@@ -115,11 +126,18 @@ const apply: Record<Key, (data: unknown) => void> = {
 };
 
 // A read that started before a newer stream event arrived must not overwrite it.
-const generation: Record<Key, number> = { kaynaklar: 0, saglik: 0, islemler: 0, bekleyen: 0, moduller: 0, guncelleme: 0, erisim: 0 };
+const generation: Record<Key, number> = { kaynaklar: 0, saglik: 0, islemler: 0, bekleyen: 0, uygulamalar: 0, guncelleme: 0, erisim: 0 };
 const inflight = new Set<Key>();
+// A read asked for because something changed (a job started or ended) while the same read is under way
+// runs once more when it ends, so it cannot miss the change; a timer's read is simply skipped.
+const again = new Set<Key>();
 
-async function refresh(key: Key): Promise<void> {
-  if (inflight.has(key) || (key === "erisim" && live.erisimYok)) return;
+async function refresh(key: Key, changed = false): Promise<void> {
+  if (key === "erisim" && live.erisimYok) return;
+  if (inflight.has(key)) {
+    if (changed) again.add(key);
+    return;
+  }
   inflight.add(key);
   const before = generation[key];
   try {
@@ -132,11 +150,17 @@ async function refresh(key: Key): Promise<void> {
     }
   } finally {
     inflight.delete(key);
+    if (again.delete(key)) void refresh(key, true);
   }
 }
 
+/** Reads the application list now (a page opened, or an operation was started from it). */
+export function refreshApps(): Promise<void> {
+  return refresh("uygulamalar", true);
+}
+
 // Timers: the slow reads run always; the fast ones only while the stream is not delivering.
-const ALWAYS: [Key, number][] = [["moduller", 60000], ["guncelleme", 60000], ["erisim", 60000]];
+const ALWAYS: [Key, number][] = [["uygulamalar", 60000], ["guncelleme", 60000], ["erisim", 60000]];
 const FALLBACK: [Key, number][] = [["kaynaklar", 10000], ["saglik", 60000], ["islemler", 5000], ["bekleyen", 5000]];
 const timers = new Map<Key, number>();
 let polling: "" | "yok" | "kopuk" = "";
@@ -211,6 +235,9 @@ export function startLive(): void {
 
 // ---- derived values
 
+/** The server's clock now, in Unix seconds. */
+export const serverNow = (): number => Date.now() / 1000 + live.offset;
+
 export const health = computed(() => {
   const s = live.saglik;
   if (!s) return null;
@@ -235,7 +262,8 @@ export const problems = computed(() => {
   return { count, level };
 });
 
-export const installedApps = computed(() => (live.moduller ? live.moduller.filter((m) => m.installed === true) : null));
+/** The applications the operator manages: every item but Files, which has its own section (Dosyalar). */
+export const apps = computed(() => (live.uygulamalar ? live.uygulamalar.items.filter((a) => a.id !== "yerlesik:dosya") : null));
 
 export const runningJobs = computed(() => (live.islemler ?? []).filter((j) => j.durum === "calisiyor"));
 export const finishedJobs = computed(() => (live.islemler ?? []).filter((j) => j.durum !== "calisiyor"));

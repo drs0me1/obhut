@@ -5,6 +5,7 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { Icon } from "./icons";
 import { trapTab } from "./focus";
+import StatusPill from "./ui/StatusPill.vue";
 import { finishedJobs, live, runningJobs } from "../live";
 import { closeSurface, ui } from "../ui";
 import { clock } from "../format";
@@ -60,7 +61,7 @@ function onKeydown(event: KeyboardEvent): void {
             <li v-for="j in runningJobs" :key="j.tur + ':' + j.id" class="job" data-durum="calisiyor">
               <div class="job-line">
                 <strong class="job-name">{{ j.ad }}</strong>
-                <span class="pill pill-accent">{{ state(j) }}</span>
+                <StatusPill tone="accent">{{ state(j) }}</StatusPill>
               </div>
               <span class="job-meta">{{ kind(j) }}<template v-if="j.adim"> · {{ j.adim }}</template></span>
             </li>
@@ -72,7 +73,7 @@ function onKeydown(event: KeyboardEvent): void {
               <li v-for="j in finishedJobs" :key="j.tur + ':' + j.id" class="job" :data-durum="j.durum">
                 <div class="job-line">
                   <strong class="job-name">{{ j.ad }}</strong>
-                  <span class="pill" :class="j.durum === 'hata' ? 'pill-danger' : 'pill-ok'">{{ state(j) }}</span>
+                  <StatusPill :tone="j.durum === 'hata' ? 'danger' : 'ok'">{{ state(j) }}</StatusPill>
                 </div>
                 <span class="job-meta">{{ kind(j) }}<template v-if="j.adim"> · {{ j.adim }}</template><template v-if="j.bitis"> · {{ clock(j.bitis) }}</template></span>
               </li>

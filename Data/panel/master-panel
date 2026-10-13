@@ -57,6 +57,7 @@ import master_containers
 import master_container_manager
 import master_erisim
 import master_olaylar
+import master_uygulamalar
 import master_settings
 import master_shares
 import master_publications
@@ -64,6 +65,9 @@ import master_update
 
 # DD-148: modül kimliği ve Konsol'dan istenebilen eylemler (master-modul ile aynı küme).
 MODULE_ID_RE = re.compile(r"^[a-z]{2,16}$")
+# DD-261: an application of the Uygulamalar view: a package, a container or a built-in.
+CONTAINER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
+APP_ID_RE = re.compile(r"^(paket:[a-z]{2,16}|konteyner:[A-Za-z0-9][A-Za-z0-9_.-]{0,62}|yerlesik:[a-z]{2,16})$")
 MODULE_ACTIONS = ("kur", "baslat", "durdur", "yeniden-baslat", "kaldir")
 # DD-200: paketin bildirdiği Konsol dosyaları (düz dosya adları; klasör yolu kabul edilmez).
 API_FILE_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}\.py$")
@@ -157,6 +161,8 @@ NET_STEP_SECONDS = 1.5
 NET_WINDOW_SECONDS = 120
 NET_POINTS = 160
 TRAFFIC_CACHE_SECONDS = 2
+# DD-261: at most one background image-update check (DD-214) a minute from the read model.
+UPDATE_KICK_SECONDS = 60
 IFACE_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,15}$")
 # DD-206: Genel bakış düzeni (kare sırası, widget genişliği ve görünürlüğü) KONSOL_AUTH_DIR/duzen.json.
 # Yalnız biçim denetlenir: anahtarlar Konsol'un ve paketlerin kare ve widget adlarıdır, tanımadığını
@@ -569,6 +575,9 @@ class Panel:
         self.traffic_cache = (-TRAFFIC_CACHE_SECONDS, None)
         self.traffic_errors = set()
         self.containers = master_container_manager.Service(self)
+        # DD-261: the read model starts a stale image-update check (DD-214) in the background.
+        self.update_kick_lock = threading.Lock()
+        self.update_kick_at = -UPDATE_KICK_SECONDS
         # DD-259: App Store operations seen running, kept a while after they finish (activity drawer).
         self.module_jobs = {}
         self.jobs_lock = threading.Lock()
@@ -1964,6 +1973,103 @@ class Panel:
         return master_erisim.build(env, self.settings(), shares, containers, tailscale, self.package_networks(env),
                                    packages, names, time.time(), errors)
 
+    def uygulamalar(self, erisim=None):
+        """GET /api/konsol/uygulamalar (DD-261): packages, Konsol's containers and the built-ins in one list,
+        with how each is reached (the Erişim view). A source that fails adds an error line."""
+        env = read_env(self.args.state)
+        errors = []
+        try:
+            modules = self.modules()
+        except RuntimeError as err:
+            modules = None
+            errors.append(str(err) or "Uygulama listesi okunamadı.")
+        containers = None
+        if env.get("KONTEYNER_STATE_DIR"):
+            try:
+                containers = self.containers.view().liste()
+            except master_containers.ContainerError as err:
+                errors.append(str(err))
+        erisim = erisim if erisim is not None else self.erisim()
+        errors += [e for e in erisim.get("hatalar", []) if e not in errors]
+        if containers is not None:
+            self.update_check_soon()
+        return master_uygulamalar.build(modules, containers, erisim, time.time(), errors)
+
+    def update_check_soon(self):
+        """DD-261: the read model shows image updates from the cached check (DD-214), which only the Podman
+        page asked for. A cache older than its lifetime is refreshed in a background thread, at most once a
+        minute; a request never waits for a registry."""
+        service = self.containers
+        with self.update_kick_lock:
+            now = time.monotonic()
+            if (service.update_at and time.time() - service.update_at < master_container_manager.UPDATE_TTL) or \
+                    now - self.update_kick_at < UPDATE_KICK_SECONDS:
+                return
+            self.update_kick_at = now
+        threading.Thread(target=self.update_check_run, name="guncelleme-denetimi", daemon=True).start()
+
+    def update_check_run(self):
+        try:
+            self.containers.updates()
+        except (master_containers.ContainerError, OSError, ValueError, KeyError):
+            pass  # the Podman page shows the error; the next listing after a minute tries again
+
+    def package_container(self, mid):
+        """The container an App Store package runs (DD-209), or None."""
+        apps = master_container_manager.app_specs(read_env(self.args.state))
+        return next((name for name, app in apps.items() if app["module_id"] == mid), None)
+
+    def uygulama_ayrinti(self, sid):
+        """GET /api/konsol/uygulamalar/ayrinti: one application with its container, mounts and access."""
+        if not APP_ID_RE.match(sid or ""):
+            raise ApiError(400, "Uygulama kimliği geçersiz.")
+        erisim = self.erisim()
+        listing = self.uygulamalar(erisim)
+        item = next((i for i in listing["items"] if i["id"] == sid), None)
+        if item is None:
+            raise ApiError(404, "Uygulama bulunamadı.")
+        box = None
+        if item["konteyner"]:
+            try:
+                row = self.containers.view().ayrinti(item["konteyner"])
+            except master_containers.ContainerError as err:
+                raise ApiError(err.status, str(err))
+            box = {"imaj": str(row.get("image") or ""), "ag": str(row.get("network") or ""), "kullanici": str(row.get("user") or ""),
+                   "baslangic": row.get("started") if isinstance(row.get("started"), int) else None,
+                   "saglik": str(row.get("health") or ""), "yeniden_baslama": int(row.get("restarts") or 0),
+                   "portlar": [{"host_ip": str(p.get("host_ip", "")), "host_port": p["host_port"], "container_port": p["container_port"],
+                                "protocol": str(p.get("protocol", "tcp")), "scope": str(p.get("scope", ""))}
+                               for p in row.get("ports") or [] if isinstance(p, dict)],
+                   "baglamalar": [{"tur": str(m.get("type", "")), "kaynak": str(m.get("source", "")), "hedef": str(m.get("destination", "")),
+                                   "yazilabilir": bool(m.get("rw")), "ad": str(m.get("name") or "")}
+                                  for m in row.get("mounts") or [] if isinstance(m, dict)]}
+        row_id = {"paket": item["id"], "konteyner": item["id"]}.get(item["tur"], "paylasim" if sid == "yerlesik:paylasim" else "")
+        access = next((r for r in erisim["hizmetler"] if r["id"] == row_id), None)
+        return {"uygulama": item, "konteyner": box, "erisim": access}
+
+    def uygulama_gunlugu(self, sid, lines):
+        """GET /api/konsol/uygulamalar/gunluk: a container's journal or podman log, a package's engine log."""
+        if not APP_ID_RE.match(sid or ""):
+            raise ApiError(400, "Uygulama kimliği geçersiz.")
+        kind, _, key = sid.partition(":")
+        name = key if kind == "konteyner" else self.package_container(key) if kind == "paket" else None
+        if name:
+            try:
+                value = self.containers.view().gunluk(name, lines)
+            except master_containers.ContainerError as err:
+                raise ApiError(err.status, str(err))
+            return {"satirlar": [str(l) for l in value.get("lines", [])], "kesik": bool(value.get("truncated"))}
+        if kind == "paket":
+            if not self.module_state(key):
+                raise ApiError(404, "Bu uygulama kurulu değil.")
+            count = int(lines) if str(lines).isdigit() and 0 < int(lines) <= 1000 else 200
+            rc, out, message = self.modul("gunluk", key, str(count))
+            if rc != 0:
+                raise ApiError(502, message or "Günlük okunamadı.")
+            rows = [l for l in out.splitlines() if l.strip()]
+            return {"satirlar": rows[-count:], "kesik": len(rows) > count}
+        raise ApiError(404, "Yerleşik uygulamaların günlüğü Ayarlar → Günlük bölümündedir.")
+
     def pending(self):
         """The settings change waiting for confirmation or rollback (the page's banner)."""
         if not read_env(self.args.state).get("SETTINGS_FILE"):
@@ -2411,9 +2517,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except (master_shares.ShareError, OSError, ValueError, KeyError):
                 self.error(503, "Paylaşım kaydı okunamadı; kurulumu kontrol edin.")
             return
-        if path == "/api/konsol/ag":
-            self.json(200, self.panel.network())
-            return
         if path == "/api/konsol/duzen":
             self.json(200, {"duzen": self.panel.layout()})
             return
@@ -2427,11 +2530,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.error(err.status, str(err))
                 return
             self.send(200, text.encode("utf-8"), "text/plain; charset=utf-8")
-            return
-        if path == "/api/konsol/onarim":
-            info = self.panel.repair_info()
-            info["baslatilabilir"] = self.channel() != "internet"  # DD-239: like the update, tailnet only
-            self.json(200, info)
             return
         m = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk|islem|guncellemeler)$", path)
         if m:
@@ -2522,6 +2620,77 @@ class Handler(http.server.BaseHTTPRequestHandler):
     # -- DD-259: master_api's routes (a test checks every route has its method)
     def api_erisim(self, query):
         self.json(200, self.panel.erisim())
+
+    def api_uygulamalar(self, query):
+        self.json(200, self.panel.uygulamalar())
+
+    def api_uygulama_ayrinti(self, query):
+        try:
+            self.json(200, self.panel.uygulama_ayrinti(query.get("id", [""])[0]))
+        except ApiError as err:
+            self.error(err.code, err.message)
+
+    def api_uygulama_gunlugu(self, query):
+        try:
+            self.json(200, self.panel.uygulama_gunlugu(query.get("id", [""])[0], query.get("satir", ["200"])[0]))
+        except ApiError as err:
+            self.error(err.code, err.message)
+
+    def api_uygulama_islemi(self, user, data):
+        """One entry for an application's lifecycle (DD-261): a package goes to its engine (DD-148), a
+        container and a package's image update to the container broker (DD-211, DD-214)."""
+        sid, eylem = data["id"], data["eylem"]
+        kind, _, key = sid.partition(":")
+        try:
+            if kind == "paket" and MODULE_ID_RE.match(key) and eylem != "guncelle":
+                if key not in [m["id"] for m in self.panel.modules() if m.get("installed")]:
+                    raise ApiError(404, "Bu uygulama kurulu değil.")
+                code, message = self.panel.module_spawn(key, eylem, bool(data.get("veri")))
+                self.audit(user, "modul-" + eylem, key + (" +veri" if eylem == "kaldir" and data.get("veri") else ""), code == 202)
+                if code != 202:
+                    raise ApiError(code, message)
+                self.json(202, {"id": sid, "eylem": eylem, "is": None})
+                return
+            if kind == "paket" and MODULE_ID_RE.match(key):
+                name = self.panel.package_container(key)
+                if not name:
+                    raise ApiError(409, "Bu uygulamanın güncellenecek bir imajı yok.")
+            elif kind == "konteyner" and CONTAINER_NAME_RE.match(key):
+                name = key
+            else:
+                raise ApiError(409 if kind == "yerlesik" else 404,
+                               "Yerleşik uygulama buradan durdurulmaz ya da kaldırılmaz." if kind == "yerlesik" else "Uygulama bulunamadı.")
+            action = {"baslat": "start", "durdur": "stop", "yeniden-baslat": "restart", "kaldir": "remove",
+                      "guncelle": "image-update"}[eylem]
+            result = self.panel.containers.submit({"action": action, "name": name, "revision": data.get("revizyon", "")})
+            self.audit(user, "konteyner-" + result["action"], result["name"], True)
+            self.json(202, {"id": sid, "eylem": eylem, "is": result.get("id")})
+        except ApiError as err:
+            self.error(err.code, err.message)
+        except master_containers.ContainerError as err:
+            self.error(err.status, str(err))
+        except RuntimeError as err:
+            self.error(502, str(err))
+
+    def api_ag(self, query):
+        self.json(200, self.panel.network())
+
+    def api_onarim(self, query):
+        info = self.panel.repair_info()
+        info["baslatilabilir"] = self.channel() != "internet"  # DD-239: like the update, tailnet only
+        self.json(200, info)
+
+    def api_onarim_baslat(self, user, data):
+        if self.channel() == "internet":
+            self.error(403, "Onarım yalnız Tailscale adresinden başlatılır.")
+            return
+        try:
+            kip = self.panel.repair_start(data.get("kip", "onar"))
+        except master_update.UpdateError as err:
+            self.error(err.status, str(err))
+            return
+        self.audit(user, "onarim", kip, True)
+        self.json(202, {"kip": kip})
 
     def api_kaynaklar(self, query):
         self.json(200, self.panel.system())
@@ -2650,6 +2819,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if data is None:
             self.error(400, "istek gövdesi JSON olmalı")
             return
+        # DD-259/261: the table's routes; a body that does not have the declared shape is refused.
+        route = master_api.find("POST", path)
+        if route is not None:
+            try:
+                master_api.check(route.request, data)
+            except master_api.SchemaError as err:
+                self.error(400, "İstek biçimi geçersiz: %s" % err)
+                return
+            getattr(self, "api_" + route.name)(user, data)
+            return
         if path in ("/api/konsol/oturum/kur", "/api/konsol/oturum/giris",
                     "/api/konsol/oturum/cikis", "/api/konsol/hesap/parola"):
             self.account_post(path, data)
@@ -2686,18 +2865,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self.audit(user, "favori", detail, True)
             self.json(200, {"favoriler": items})
-            return
-        if path == "/api/konsol/onarim":
-            if self.channel() == "internet":
-                self.error(403, "Onarım yalnız Tailscale adresinden başlatılır.")
-                return
-            try:
-                kip = self.panel.repair_start(data.get("kip", "onar"))
-            except master_update.UpdateError as err:
-                self.error(err.status, str(err))
-                return
-            self.audit(user, "onarim", kip, True)
-            self.json(202, {"kip": kip})
             return
         if path == "/api/konsol/yeniden-baslat":
             # DD-246: like the update and the repair, only from a Tailscale device (or root on the socket).

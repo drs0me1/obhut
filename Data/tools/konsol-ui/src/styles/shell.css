@@ -76,7 +76,8 @@
   color: var(--ink);
 }
 
-.nav-item[aria-current="page"] {
+.nav-item[aria-current="page"],
+.nav-item[aria-current="true"] {
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-weight: 600;
@@ -802,6 +803,7 @@
   }
 
   .bb-item[aria-current="page"],
+  .bb-item[aria-current="true"],
   .bb-item.is-active {
     color: var(--bar-active);
     font-weight: 600;

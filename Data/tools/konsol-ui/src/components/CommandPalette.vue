@@ -1,13 +1,16 @@
-<!-- Command palette (DD-258): ⌘K / Ctrl+K or the search field. Pages, installed applications, actions and the
-     current interface's views, matched with Turkish case rules ("İŞ" finds "iş", "ıs" does not find "is").
-     A combobox over a listbox: focus stays in the field, ↑/↓ move, Enter opens, Esc closes. -->
+<!-- Command palette (DD-258): ⌘K / Ctrl+K or the search field. Pages, the applications (each opens its own
+     page), actions and the current interface's views, matched with Turkish case rules ("İŞ" finds "iş", "ıs"
+     does not find "is"). A combobox over a listbox: focus stays in the field, ↑/↓ move, Enter opens, Esc
+     closes. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Icon, type IconName } from "./icons";
 import { trapTab } from "./focus";
 import { SECTIONS, LEGACY_VIEWS } from "../sections";
-import { installedApps } from "../live";
+import { apps } from "../live";
+import { KIND_TEXT, appIcon } from "../apps";
+import { appRoute } from "../router";
 import { THEMES, setTheme, theme, type ThemeChoice } from "../theme";
 import { closeSurface, openSurface, ui } from "../ui";
 import { fold } from "../format";
@@ -25,8 +28,6 @@ interface Item {
 }
 
 const GROUPS = ["Sayfalar", "Uygulamalar", "Eylemler", "Eski arayüz"] as const;
-// The current interface's rule for an application page's route (konsol.json "sayfa.rota").
-const ROUTE_RE = /^[a-z]{2,16}$/;
 
 const router = useRouter();
 const query = ref("");
@@ -45,18 +46,15 @@ const items = computed<Item[]>(() => {
     words: s.keywords,
     run: { kind: "route", to: "/" + s.id },
   }));
-  for (const app of installedApps.value ?? []) {
-    const name = app.konsol?.ad || app.id;
-    const route = app.konsol?.sayfa?.rota;
-    const legacy = typeof route === "string" && ROUTE_RE.test(route);
+  for (const app of apps.value ?? []) {
     list.push({
       key: "uygulama-" + app.id,
       group: "Uygulamalar",
-      label: name,
-      hint: legacy ? "Uygulama · eski arayüz" : "Uygulama",
-      icon: "box",
-      words: app.id,
-      run: legacy ? { kind: "href", href: "/#/" + route } : { kind: "route", to: "/uygulamalar" },
+      label: app.ad,
+      hint: "Uygulama",
+      icon: appIcon(app),
+      words: `${app.id} ${KIND_TEXT[app.tur]}`,
+      run: { kind: "route", to: router.resolve(appRoute(app.id)).path },
     });
   }
   const themeWords: Record<ThemeChoice, string> = { sistem: "görünüm otomatik", acik: "görünüm aydınlık light", koyu: "görünüm karanlık dark" };

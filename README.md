@@ -25,7 +25,7 @@ the documentation is in English.
 - **Files and sharing.** A Finder-style file manager with trash, a text editor and server-side
   ZIP/RAR jobs; per-folder WebDAV accounts with separate Tailscale and internet switches, read-only
   or read-write access and expiry.
-- **Applications.** An App Store of declared packages (WireGuard, qBittorrent) and a Podman page for
+- **Applications.** An App Store of declared packages (WireGuard, qBittorrent, Gezgin) and a Podman page for
   your own containers, with digest-pinned images and explicit port exposure.
 - **Optional public names.** Konsol, an application or WebDAV can get an HTTPS name with a
   Let's Encrypt certificate on port 443 — per service, only when you switch it on.
@@ -85,7 +85,7 @@ works too. **Repair:** Konsol → Ayarlar → Sistem → Sağlık, `sudo master-
 | **Ana Menü** (home) | Server, speed and traffic widgets, installed applications, the update notice |
 | **Dosyalar** (Files) | Browse, upload, move, trash, edit text, create and extract archives; a root view of `/` on the tailnet |
 | **Paylaşımlar** (Shares) | One WebDAV account per folder; Tailscale and internet access, read-only/read-write, expiry |
-| **App Store** | Install, start, stop and remove WireGuard and qBittorrent; each then opens its own page (networks and devices, account and download folder) |
+| **App Store** | Install, start, stop and remove WireGuard, qBittorrent and Gezgin; WireGuard and qBittorrent then open their own page (networks and devices, account and download folder), Gezgin its own file manager |
 | **Podman** | Containers, images, volumes and networks; ports and mounts with explicit exposure |
 | **Ayarlar** (Settings) | System and health, firewall, Caddy names and public HTTPS, DNS, logs |
 | **`/yeni/`** | The redesigned console, built beside the current one ([plan](Data/docs/redesign.md)) |

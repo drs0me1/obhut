@@ -1,0 +1,70 @@
+{
+  "ad": "Gezgin",
+  "alt": "Sunucudaki dosyalarınızı tarayıcıdan yönetin.",
+  "simge": "folder",
+  "ton": "t-files",
+  "aciklama": "Dosya yöneticisi: klasörler, yükleme, çöp, sık kullanılanlar, bağlantı paylaşımları ve arşivler. Sunucudaki Podman'da konteyner olarak, Dosyalar hesabıyla çalışır; kendi kullanıcıları ve girişi vardır.",
+  "neler": [
+    [
+      "box",
+      "ghcr.io/drs0me1/gezgin imajı __GEZGIN_SURUM__, özetiyle sabit; Konsol yeni sürümü denetler, siz onaylayınca günceller"
+    ],
+    [
+      "globe",
+      "gezgin.__LOCAL_DOMAIN__ adı eklenir (arayüz yalnız sunucuda dinler); internet adı Ayarlar → Caddy'den isteğe bağlı"
+    ],
+    [
+      "folder",
+      "Kullanıcı alanı __SERVER_ROOT__ görünür; Konsol'un çöpü ve arşiv işleri görünmez. Uygulama verisi __GEZGIN_DATA_DIR__"
+    ],
+    [
+      "lock",
+      "Giriş Gezgin hesabıyla; Konsol'un oturumu Gezgin'i açmaz"
+    ]
+  ],
+  "notlar": [
+    "Podman konteyneri · __GEZGIN_CONTAINER__",
+    "arayüz yalnız sunucu"
+  ],
+  "gunluk_kaynak": "journalctl -u __GEZGIN_CONTAINER__.service",
+  "kaldir": {
+    "neler": [
+      [
+        "box",
+        "Konteyner durur ve açılışta başlamaz; imaj sunucuda kalır."
+      ],
+      [
+        "globe",
+        "gezgin.__LOCAL_DOMAIN__ adı kalkar."
+      ]
+    ],
+    "veri_etiket": "Kullanıcıları, ayarları, paylaşımları ve imajı da sil",
+    "veri_kalir": "kullanıcılar, ayarlar ve bağlantı paylaşımları __GEZGIN_DATA_DIR__ altında kalır; yeniden kurulunca Gezgin onlarla açılır.",
+    "veri_silinir": "Kullanıcılar, ayarlar, bağlantı paylaşımları ve konteyner imajı da silinir. Kullanıcı alanındaki dosyalara ve Gezgin'in oradaki çöpüne dokunulmaz."
+  },
+  "durdur_notu": "Gezgin'deki oturumlar, süren yüklemeler ve bağlantı paylaşımları durur; başlatınca paylaşımlar yeniden açılır.",
+  "form": {
+    "kur_baslik": "Gezgin'i kur",
+    "kur_alt": "İlk yönetici hesabı",
+    "kur_not": "Hesap Gezgin'in ilk açılışında oluşturulur; parola sunucuda yalnız özet olarak saklanır. Önceki kurulumun verileri korunduysa Gezgin eski kullanıcılarıyla açılır ve bu hesap oluşturulmaz.",
+    "alanlar": [
+      {
+        "ad": "username",
+        "tur": "metin",
+        "etiket": "Kullanıcı adı",
+        "varsayilan": "yonetici",
+        "desen": "[A-Za-z0-9._@\\-]{1,64}",
+        "en_cok": 64,
+        "ipucu": "Harf, rakam ve . _ @ - kullanılabilir."
+      },
+      {
+        "ad": "password",
+        "tur": "parola",
+        "etiket": "Parola",
+        "en_az": 12,
+        "en_cok": 72,
+        "ipucu": "En az 12 karakter. Gezgin internete açılırsa bu parola onu korur."
+      }
+    ]
+  }
+}
