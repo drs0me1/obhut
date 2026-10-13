@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-10-13
+
+Gezgin, the file manager, joins the App Store; the redesigned Konsol at `/yeni/` gets its first own
+pages (Genel Bakış, Uygulamalar and the application page); Konsol shows containers' CPU and memory.
+The entries below are the builds that make up 1.1.0. Servers compare build numbers, so a server on
+1.0.0 or on any of these builds sees this release as newer.
+
+### 2026-10-13 — Release 1.1.0 (v2-247)
+
+- The release is named 1.1.0 in Konsol, the new interface and the installer. Nothing else changes.
+
 ### 2026-10-13 — Container CPU and memory on the Podman page (v2-246)
 
 - Konsol's Podman page shows each running container's CPU and memory; the new interface's
@@ -1770,5 +1781,6 @@ builds that make up 1.0.0; earlier builds are in
 
 Older entries (v2-144 and earlier) are archived verbatim in [`docs/archive/CHANGELOG-before-v2-145.md`](docs/archive/CHANGELOG-before-v2-145.md).
 
-[Unreleased]: https://github.com/drs0me1/obhut/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/drs0me1/obhut/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/drs0me1/obhut/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/drs0me1/obhut/releases/tag/v1.0.0
