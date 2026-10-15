@@ -86,6 +86,36 @@ const BOXES = {
     baglamalar: [{ tur: "bind", kaynak: "/srv", hedef: "/srv", yazilabilir: true, ad: "" }, { tur: "volume", kaynak: "/v/gezgin-db", hedef: "/db", yazilabilir: true, ad: "gezgin-db" }] }),
   "konteyner:notlar": box({ imaj: "docker.io/library/nginx@sha256:" + "c".repeat(64), ag: "konsol" }),
 };
+// Phase 4a: the application page reads its container's own detail (konteynerler/ayrinti), Uygulamalar reads
+// Podman's counts (konteynerler/liste), Ayarlar the package list, its account and its settings form's values;
+// yeni-uygulama-ekle-ui.cjs covers them, here they only have to answer.
+const crow = (o) => ({ id: "", image: "", state: "running", unit: "", network: "", ports: [], started: null, restarts: 0, health: "", live: true, source: "konsol",
+  module_id: null, revision: null, actions: [], restricted_reason: "", cpu_percent: null, memory_bytes: null, busy: null, listening: null, update: null, ...o });
+const CONTAINERS = {
+  torrent: crow({ name: "torrent", id: "a1b2c3d4e5f6", image: "lscr.io/linuxserver/qbittorrent@sha256:" + "a".repeat(64), unit: "torrent.service", network: "torrent",
+    source: "appstore", module_id: "torrent", revision: "rev-torrent-7", health: "healthy", actions: ["stop", "restart", "remove", "image-update", "save"],
+    ports: [{ host_ip: "127.0.0.1", host_port: 62947, container_port: 8080, protocol: "tcp", scope: "local" }],
+    update: { state: "var", channel: "lscr.io/linuxserver/qbittorrent:latest", error: "", checked_at: 1791844000 },
+    config: { listener_port: 62947, peer_port: 63851, save: "/srv/indirilenler/torrent" }, editable: ["listener_port", "peer_port", "save"], protected_mounts: [],
+    effective_autostart: true, user: "1000:1000", command: "" }),
+  gezgin: crow({ name: "gezgin", id: "b2c3d4e5f6a1", image: "ghcr.io/example/gezgin@sha256:" + "b".repeat(64), unit: "gezgin.service", network: "gezgin", source: "appstore",
+    module_id: "gezgin", revision: "rev-gezgin-1", actions: ["stop", "restart", "remove", "image-update"], config: { listener_port: 62983 }, editable: [], protected_mounts: [],
+    effective_autostart: true, user: "1000:1000", command: "" }),
+  notlar: crow({ name: "notlar", image: "docker.io/library/nginx@sha256:" + "c".repeat(64), state: "stopped", live: false, unit: "konsol-notlar.service", network: "konsol",
+    actions: ["start", "save", "remove", "image-update"], revision: "rev-notlar-1",
+    config: { name: "notlar", image: "docker.io/library/nginx@sha256:" + "c".repeat(64), image_ref: "docker.io/library/nginx:1.27-alpine", network: "bridge", ports: [], mounts: [],
+      environment: [], command: [], autostart: true, manual_stop: false, restart: "on-failure", cpus: "", memory: "", user: "downloads" },
+    editable: ["ports", "mounts", "environment", "command", "autostart", "restart", "cpus", "memory", "image", "network", "user"], protected_mounts: [], effective_autostart: true,
+    user: "", command: "" }),
+};
+const PACKAGES = [
+  { id: "torrent", runtime: "konteyner", installed: true, state: "calisiyor", live: "running", busy: false, progress: null, durdurulabilir: true,
+    konsol: { ad: "qBittorrent", alt: "Torrent indirmelerini yönetin.", simge: "download", form: { ayar_baslik: "qBittorrent ayarları", oku: "/durum", yaz: "/ayar",
+      alanlar: [{ ad: "username", tur: "metin", etiket: "Kullanıcı adı" }, { ad: "password", tur: "parola", etiket: "Parola", en_az: 8 },
+        { ad: "save", tur: "klasor", etiket: "İndirme klasörü" }] } } },
+  { id: "gezgin", runtime: "konteyner", installed: true, state: "calisiyor", live: "running", busy: false, progress: null, durdurulabilir: true,
+    konsol: { ad: "Gezgin", alt: "Sunucudaki dosyalarınızı tarayıcıdan yönetin.", simge: "folder", form: { alanlar: [{ ad: "username", tur: "metin", etiket: "Kullanıcı adı" }] } } },
+];
 const LOG = Array.from({ length: 30 }, (_, i) => `2026-10-13T01:${String(10 + i).padStart(2, "0")}:00+03:00 torrent[812]: satır ${i + 1}`);
 const BUSY = "Bir uygulama işlemi sürüyor; bitince yeniden deneyin.";
 
@@ -95,6 +125,15 @@ const h = require("./yeni-harness.cjs").create({ name: "konsol-yeni-uygulamalar-
 const { base, push, waitFor, newPage, count, posts, noHorizontalScroll, styleAttributes, shot } = h;
 
 // ---- dynamic replies
+h.handlers["/api/konsol/konteynerler/ayrinti"] = ({ query }) => (CONTAINERS[query.get("ad")] ? { body: CONTAINERS[query.get("ad")] } : { status: 404, body: { error: "Konteyner bulunamadı" } });
+h.handlers["/api/konsol/konteynerler/liste"] = () => ({ body: { read_at: 1791845000, runtime: { version: "5.4.2", ok: true, error: "" }, containers: Object.values(CONTAINERS),
+  images: [], volumes: [], networks: [], storage: { images: 3, containers: 3, size: 1610612736 }, resource_errors: {} } });
+h.handlers["/api/konsol/konteynerler/islem"] = ({ method, query }) => (method === "GET"
+  ? { body: { id: query.get("id"), action: "image-update", name: "torrent", state: "done", step: "", result: { changed: true, version: "5.1.2" } } } : undefined);
+h.handlers["/api/konsol/moduller"] = () => ({ body: { items: PACKAGES } });
+h.handlers["/api/konsol/uygulamalar/hesap"] = ({ query }) => (query.get("id") === "paket:torrent"
+  ? { body: { user: "admin", temp: false, host: "torrent.ev" } } : { status: 404, body: { error: "bu modülde hesap yok" } });
+h.dynamic.push([/^\/api\/uygulama\/torrent\/durum$/, () => ({ body: { username: "admin", save: "/srv/indirilenler/torrent" } })]);
 h.handlers["/api/konsol/uygulamalar/ayrinti"] = ({ query }) => {
   const id = query.get("id");
   const item = data.uygulamalar.items.find((a) => a.id === id);
@@ -376,11 +415,12 @@ async function noStyles(page, where) {
     await page.reload();
     const add = page.getByTestId("add-app");
     await add.getByText("Katalogdaki uygulamaların hepsi kurulu.").waitFor();
-    assert.equal(await add.getByRole("link", { name: "App Store'u aç" }).getAttribute("href"), "/#/moduller");
-    assert.equal(await add.locator('[data-secenek="imaj"]').getAttribute("href"), "/#/konteynerler");
-    assert.equal(await add.locator('[data-secenek="benimse"]').getAttribute("href"), "/#/konteynerler");
+    // Since phase 4a the add flows open over this page (yeni-uygulama-ekle-ui.cjs drives them).
+    assert.equal(await add.getByRole("link", { name: "Kataloğu aç" }).getAttribute("href"), "#/uygulamalar?ekle=katalog");
+    assert.equal(await add.locator('[data-secenek="imaj"] a').getAttribute("href"), "#/uygulamalar?ekle=imaj");
+    assert.equal(await add.locator('[data-secenek="benimse"] a').getAttribute("href"), "#/uygulamalar?ekle=sahiplen");
     assert.equal(await page.getByTestId("infra-line").innerText(), "Podman 5.4.2 · 3 imaj · 2 birim · 3 ağ · 1 kullanılmayan imaj");
-    assert.equal(await page.getByTestId("infra").getByRole("link", { name: "Podman'ı aç" }).getAttribute("href"), "/#/konteynerler");
+    assert.equal(await page.getByTestId("infra").getByRole("link", { name: "İmajlar" }).getAttribute("href"), "#/gelismis?sekme=podman&kaynak=imajlar");
     await page.getByRole("button", { name: "Uygulama ekle" }).click();
     assert.equal(await active(page), "Uygulama ekle", "the button leads to the panel");
     assert.equal(await page.evaluate(() => document.activeElement.tagName), "H2");
@@ -399,8 +439,8 @@ async function noStyles(page, where) {
     await page.reload();
     await page.getByTestId("app-errors").getByText("Podman kullanılamıyor.").waitFor();
     assert.equal(await page.getByTestId("app-errors").getByRole("heading").innerText(), "Bazı bilgiler okunamadı");
-    await add.getByText("1 uygulama kurulabilir; kurulum App Store'da.").waitFor();
-    assert.equal(await add.getByRole("link", { name: "Örnek" }).getAttribute("href"), "/#/moduller");
+    await add.getByText("1 uygulama kurulabilir.").waitFor();
+    assert.equal(await add.getByRole("link", { name: "Örnek" }).getAttribute("href"), "#/uygulamalar?ekle=katalog&paket=ornek");
     await shot(page, "1440-light-uygulamalar-hatalar.png", true);
     data.uygulamalar = { ...data.uygulamalar, hatalar: [], katalog: [] };
 
@@ -478,9 +518,14 @@ async function noStyles(page, where) {
     await page.waitForURL((u) => u.hash === "#/uygulamalar/paket:torrent?sekme=depolama&teknik=1");
     assert.deepEqual(await page.getByTestId("folders").locator(".mount").allInnerTexts(),
       ["/srv/indirilenler\nOkuma-yazma · konteynerde /downloads", "/srv/kitaplik\nSalt okunur · konteynerde /library"]);
+    assert.equal(await page.getByTestId("save-folder").innerText(), "Kayıt klasörü /srv/indirilenler/torrent; uygulamanın ayarıdır, Ayarlar'dan değişir.", "phase 4a");
     assert.deepEqual(await page.getByTestId("volumes").locator(".mount").allInnerTexts(), ["torrent-config\nOkuma-yazma · konteynerde /config"]);
+    // Since phase 4a the settings are here (yeni-uygulama-ekle-ui.cjs drives them).
     await tabs.filter({ hasText: "Ayarlar" }).click();
-    assert.equal(await page.getByTestId("settings-link").getAttribute("href"), "/#/torrent");
+    await page.getByTestId("adapter").waitFor();
+    await page.getByTestId("package-settings").waitFor();
+    await page.getByTestId("account-card").getByTestId("account-user").filter({ hasText: "admin" }).waitFor();
+    assert.equal(await page.getByTestId("settings-link").count(), 0, "no link to the current interface's page");
     // Günlük.
     const logReads = count("uygulamalar/gunluk");
     await tabs.filter({ hasText: "Günlük" }).click();
@@ -591,7 +636,7 @@ async function noStyles(page, where) {
     await page.goto(url("#/uygulamalar/konteyner:notlar"));
     await page.locator("main h1").filter({ hasText: "notlar" }).waitFor();
     await page.getByTestId("app-state").filter({ hasText: "Durdurulmuş" }).waitFor();
-    assert.deepEqual(await actions(), ["baslat", "kaldir"]);
+    assert.deepEqual(await actions(), ["baslat", "imaj-guncelle", "kaldir"], "its image can be pulled again (phase 4a)");
     await button("baslat").click();
     await waitFor(() => lastPost("uygulamalar/islem")?.eylem === "baslat", "start posted");
     assert.deepEqual(lastPost("uygulamalar/islem"), { id: "konteyner:notlar", eylem: "baslat" }, "no revizyon when it is null");
@@ -634,15 +679,17 @@ async function noStyles(page, where) {
     await page.goto(url("#/uygulamalar/paket:gezgin"));
     await page.locator("main h1").filter({ hasText: "Gezgin" }).waitFor();
     await page.getByTestId("app-actions").waitFor();
-    assert.deepEqual(await actions(), ["ac", "yeniden-baslat", "durdur", "kaldir"]);
+    assert.deepEqual(await actions(), ["ac", "yeniden-baslat", "durdur", "imaj-guncelle", "kaldir"]);
     assert.deepEqual([await button("ac").getAttribute("href"), await button("ac").getAttribute("target")], ["http://gezgin.ev", "_blank"]);
     await page.getByTestId("started").waitFor();
     assert.equal(await page.getByTestId("app-version").count(), 0, "an image not checked yet shows no version line");
     assert.equal(await page.getByTestId("app-health").innerText(), "Denetim tanımlı değil");
     assert.deepEqual([await page.getByTestId("app-cpu").innerText(), await page.getByTestId("app-memory").innerText()], ["—", "—"], "unknown resources");
     await page.getByText("Kaynak kullanımı şu an okunamıyor.").waitFor();
+    expectedFailures = ["/api/konsol/uygulamalar/hesap"];  // a package without an account answers 404
     await page.getByRole("tab", { name: "Ayarlar" }).click();
     await page.getByText("Bu uygulamanın ayrı bir ayar sayfası yok").waitFor();
+    expectedFailures = [];
 
     await page.goto(url("#/uygulamalar/yerlesik:paylasim"));
     await page.locator("main h1").filter({ hasText: "Paylaşımlar" }).waitFor();

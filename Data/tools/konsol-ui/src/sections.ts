@@ -118,3 +118,18 @@ export const LEGACY_VIEWS: readonly (LegacyLink & { keywords: string })[] = [
   { href: "/#/ayarlar", label: "Ayarlar → Sistem", keywords: "ayarlar sağlık onarım hesap güncelleme" },
   { href: "/#/ayarlar/log", label: "Ayarlar → Günlük", keywords: "ayarlar log kayıt işlem geçmişi" },
 ];
+
+/** Uygulamalar' add flows (phase 4a), opened over the list with ?ekle= (a package's install with &paket=,
+    one container's adoption with &ad=); the palette lists each one. */
+export const ADD_FLOWS = [
+  { id: "katalog", label: "Katalogdan uygulama kur", keywords: "app store mağaza paket kur katalog ekle" },
+  { id: "imaj", label: "İmajdan konteyner oluştur", keywords: "konteyner podman imaj yeni oluştur docker ekle" },
+  { id: "sahiplen", label: "Var olan konteyneri yönetime al", keywords: "benimse sahiplen konteyner podman dışarıda yönet" },
+] as const;
+
+export type AddFlow = (typeof ADD_FLOWS)[number]["id"];
+
+/** The address of an add flow over Uygulamalar. */
+export function addRoute(flow: AddFlow, extra: Record<string, string> = {}): string {
+  return "/uygulamalar?" + new URLSearchParams({ ekle: flow, ...extra }).toString();
+}

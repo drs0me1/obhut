@@ -1,7 +1,8 @@
 <!-- An application's Erişim: the four cells of its row in Erişim's read model (this server, Tailscale,
      WireGuard, the internet) with their addresses and notes, the technical lines behind "Teknik ayrıntı"
      (open state in the address, ?teknik=1), and the way to change it: the Yayınla flow over this page
-     (?yayinla=<id>). WireGuard itself is changed on Erişim's WireGuard tab. -->
+     (?yayinla=<id>). WireGuard itself is changed on Erişim's WireGuard tab. A container's network and
+     ports follow (PortsCard: its published ports by scope, or on the host network the sockets it listens on). -->
 <script setup lang="ts">
 import { computed } from "vue";
 import { RouterLink, useRouter } from "vue-router";
@@ -12,9 +13,11 @@ import { CELL_TEXT, CELL_TONE } from "../../apps";
 import { candidateOfApp } from "../../access";
 import { accessRoute } from "../../sections";
 import { updateQuery, useQueryFlag } from "../../query";
+import PortsCard from "../uygulama/PortsCard.vue";
+import type { ContainerDetail } from "../../api/podman";
 import type { ErisimHucresi, Hizmet, Uygulama } from "../../api/sema";
 
-const props = defineProps<{ row: Hizmet | null; app: Pick<Uygulama, "id" | "ad"> }>();
+const props = withDefaults(defineProps<{ row: Hizmet | null; app: Pick<Uygulama, "id" | "ad">; box?: ContainerDetail | null }>(), { box: null });
 const router = useRouter();
 
 const technical = useQueryFlag("teknik");
@@ -84,4 +87,5 @@ function publish(): void {
       <button type="button" class="btn btn-secondary" data-testid="access-publish" @click="publish">Yayınla</button>
     </EmptyState>
   </section>
+  <PortsCard v-if="box" :box="box" />
 </template>

@@ -41,6 +41,9 @@ let expectedFailures = [];  // URL fragments whose failed loads (401/404/502/503
 const h = require("./yeni-harness.cjs").create({ name: "konsol-yeni-ui", url: process.env.KONSOL_URL || "http://127.0.0.1:8768", data,
   expected: () => expectedFailures });
 const { base, csp, shots, status, calls, errors, stream, push, waitFor, newPage, count, noHorizontalScroll, shot } = h;
+// Phase 4a: Uygulamalar reads Podman's own counts (yeni-uygulama-ekle-ui.cjs covers them); not a Genel read.
+h.handlers["/api/konsol/konteynerler/liste"] = () => ({ body: { read_at: 1791845000, runtime: { version: "5.4.2", ok: true, error: "" }, containers: [],
+  images: [], volumes: [], networks: [], storage: { images: 1, containers: 1, size: null }, resource_errors: {} } });
 const clippedBarLabels = (page) => page.locator(".bottom-bar .bb-item span").evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 0.5).map((e) => e.textContent));
 const badge = (page, id) => page.locator(`.sidebar [data-badge="${id}"]`);
 const optionLabels = (page) => page.locator(".palette-option .palette-label").allInnerTexts();

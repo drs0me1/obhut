@@ -8,7 +8,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Icon, type IconName } from "./icons";
 import { trapTab } from "./focus";
-import { ACCESS_TABS, LEGACY_VIEWS, SECTIONS, accessRoute } from "../sections";
+import { ACCESS_TABS, ADD_FLOWS, LEGACY_VIEWS, SECTIONS, accessRoute, addRoute } from "../sections";
 import { apps } from "../live";
 import { KIND_TEXT, appIcon } from "../apps";
 import { appRoute } from "../router";
@@ -79,6 +79,9 @@ const items = computed<Item[]>(() => {
     words: "yayın adres alan adı internet tailscale https aç paylaş",
     run: { kind: "route", to: accessRoute("genel", "sec") },
   });
+  for (const f of ADD_FLOWS) {
+    list.push({ key: "ekle-" + f.id, group: "Eylemler", label: f.label, hint: "Uygulamalar", icon: "plus", words: f.keywords, run: { kind: "route", to: addRoute(f.id) } });
+  }
   list.push({
     key: "islemler",
     group: "Eylemler",

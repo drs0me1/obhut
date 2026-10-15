@@ -112,6 +112,8 @@ const ICONS = {
   key: { shapes: [{ cx: 8, cy: 15.5, r: 3.5 }, { d: "M10.5 13 19 4.5" }, { d: "M16 7.5l2.5 2.5" }] },
   power: { shapes: [{ d: "M12 4v7" }, { d: "M7.5 6.8a7 7 0 1 0 9 0" }] },
   copy: { shapes: [{ x: 8.5, y: 8.5, width: 11, height: 11, rx: 2 }, { d: "M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2" }] },
+  eye: { shapes: [{ d: "M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" }, { cx: 12, cy: 12, r: 3 }] },
+  eyeOff: { shapes: [{ d: "M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" }, { cx: 12, cy: 12, r: 3 }, { d: "M4 4l16 16" }] },
 } satisfies Record<string, IconDef>;
 
 export type IconName = keyof typeof ICONS;

@@ -198,6 +198,46 @@ names) and that the installer ships `master_yayin.py`.
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_yayin.py'
 ```
 
+## New interface phase 4a: adding applications and their settings (DD-258)
+
+`yeni-uygulama-ekle-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8774`) drives Uygulamalar' add flows
+and the application page's container views through `yeni-harness.cjs`, with every request body compared
+exactly and every job's end pushed as an `islemler` event. Uygulamalar: the add card (catalogue links,
+the number of adoptable containers, no links to the current interface's App Store or Podman) and Altyapı
+(unhealthy, update-available and storage counts from `GET /api/konsol/konteynerler/liste`, links to
+Gelişmiş's Podman lists). Katalogdan (`?ekle=katalog&paket=<id>`): only packages not installed, a
+package's own words, its install form drawn from the `konsol.json` declaration (the declared default, an
+unrendered `__X__` default treated as none, required, pattern, length, the repeated password, the folder
+picker with free space, entering a folder, Esc closing only the picker), a refusal keeping the draft, an
+older finished job of the same package not counted as this install's end, the progress line, the
+application's page on success, a package without a form and a failed job. Bir imajdan (`?ekle=imaj`):
+the checks of every field (image, name, ports with scope and the internet acknowledgement, duplicates,
+volumes and server folders, the writable-bind account rule, environment with secrets, command, limits),
+the review with internet ports called out and "Oluşturunca başlat", a refusal, a failed job keeping the
+draft and the new application's page. Var olanı yönetime al (`?ekle=sahiplen&ad=<name>`): only foreign
+containers with the server's reasons, the preview job and its record, every scope chosen again, the
+account rule, the typed word, the exact adoption request, unsupported options blocking and a failed
+preview. The application page: a Konsol container's Özet (source, unit, ID, tag, update state with
+channel and time, `?yenile=1`, limits, command, environment without secret values, how it starts), the
+ports by scope and a host container's listening sockets, Depolama, Günlük (`?satir=`, `?ara=` with marked
+matches and Turkish case rules), Güncelle and İmajı güncelle with their results, the definition editor
+(the draft surviving tab switches and reads, the field-by-field diff and consequences, a stale revision
+with "Güncel tanımı yükle", the save with a kept secret, a failed job, start after saving a stopped one,
+the leave guard), adopting from the page, an App Store adapter (checks, picker, diff, save), the
+package's settings form (no password read, only changed fields, a blank password kept, a refusal), the
+first-login account (the password fetched only on request, shown for 30 s with Playwright's clock, hidden
+with the browser tab, copied without being shown), a package without settings, the palette's add
+entries, and 1440/390/320 px in both themes with no horizontal scroll or overflowing card.
+
+`yeni-ui.cjs` and `yeni-uygulamalar-ui.cjs` changed only where phase 4a meant them to: Uygulamalar reads
+Podman's counts, the add card and Altyapı lead to the new flows and Gelişmiş, an application page reads
+its container's detail, a container offers "İmajı güncelle", and Ayarlar holds the settings instead of a
+link to the current interface.
+
+```bash
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulama-ekle-ui.cjs
+```
+
 ## Gezgin package (v2-245, DD-262)
 
 `test_gezgin_package.py` drives `magaza/gezgin/ayar.py` with faked commands: the install form (every

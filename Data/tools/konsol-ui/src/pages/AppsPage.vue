@@ -1,7 +1,10 @@
 <!-- Uygulamalar (DD-258, phase 2): App Store packages, Konsol's containers and the built-ins in one list
      (GET /api/konsol/uygulamalar, DD-261). The filter (?suzgec=) and the search (?ara=) are in the address.
-     A table on wide screens, cards on narrow ones (a container query, so the sidebar's width counts). Adding
-     an application still happens in the current interface (App Store, Podman). -->
+     A table on wide screens, cards on narrow ones (a container query, so the sidebar's width counts).
+     "Uygulama ekle" (phase 4a) opens its flows over the list, each in the address: the catalogue
+     (?ekle=katalog, a package with &paket=), a container from an image (?ekle=imaj) and adopting one made
+     outside Konsol (?ekle=sahiplen, one with &ad=). Altyapı counts what Podman holds (GET
+     /api/konsol/konteynerler/liste) and leads to its images, volumes and networks in Gelişmiş. -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
@@ -11,12 +14,17 @@ import AccessChips from "../components/AccessChips.vue";
 import Card from "../components/ui/Card.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import StatusPill from "../components/ui/StatusPill.vue";
+import CatalogFlow from "./uygulama/CatalogFlow.vue";
+import CreateFlow from "./uygulama/CreateFlow.vue";
+import AdoptFlow from "./uygulama/AdoptFlow.vue";
 import { apps, live, refreshApps } from "../live";
-import { KIND_TEXT, appState, hasUpdateState, needsAttention, openTarget, resourceText, updateText } from "../apps";
+import { KIND_TEXT, appState, hasUpdateState, needsAttention, openTarget, podmanRoute, resourceText, updateText } from "../apps";
 import { appRoute } from "../router";
+import { addRoute } from "../sections";
 import { usePageHead } from "../page";
 import { useQueryParam } from "../query";
-import { UNKNOWN, fold } from "../format";
+import { UNKNOWN, bytes, fold } from "../format";
+import { readInventory, type Inventory } from "../api/podman";
 import type { Uygulama } from "../api/sema";
 
 type Filter = "tumu" | "calisan" | "durmus" | "dikkat";
@@ -103,6 +111,41 @@ const infra = computed(() => {
   ].join(" · ");
 });
 const errors = computed(() => live.uygulamalar?.hatalar ?? []);
+const podmanUp = computed(() => live.uygulamalar?.altyapi.calisiyor !== false);
+
+// Podman's own counts (health, updates, storage) and the containers made outside Konsol: read with the page
+// and again when a job ends (not with every minute's list: the inventory inspects every container).
+const inventory = ref<Inventory | null>(null);
+const inventoryError = ref("");
+let inventorySeq = 0;
+async function loadInventory(): Promise<void> {
+  const mine = ++inventorySeq;
+  try {
+    const value = await readInventory();
+    if (mine !== inventorySeq) return;
+    inventory.value = value;
+    inventoryError.value = "";
+  } catch (err) {
+    if (mine === inventorySeq) inventoryError.value = err instanceof Error ? err.message : String(err);
+  }
+}
+watch(
+  () => (live.islemler ?? []).filter((j) => j.durum !== "calisiyor").map((j) => `${j.tur}:${j.id}:${j.bitis}`).join("|"),
+  (now, before) => {
+    if (now !== before) void loadInventory();
+  },
+);
+const counts2 = computed(() => {
+  const inv = inventory.value;
+  if (!inv || !inv.runtime.ok) return null;
+  const cs = inv.containers;
+  return {
+    unhealthy: cs.filter((c) => c.health === "unhealthy").length,
+    updates: cs.filter((c) => c.update?.state === "var").length,
+    size: inv.storage.size,
+  };
+});
+const adoptable = computed(() => (inventory.value?.containers ?? []).filter((c) => c.source === "external" && c.actions.includes("adopt")).length);
 
 const addPanel = ref<InstanceType<typeof Card> | null>(null);
 function showAdd(): void {
@@ -113,7 +156,10 @@ function showAdd(): void {
   el.scrollIntoView({ block: "start", behavior: "smooth" });
 }
 
-onMounted(() => void refreshApps());
+onMounted(() => {
+  void refreshApps();
+  void loadInventory();
+});
 </script>
 
 <template>
@@ -212,29 +258,49 @@ onMounted(() => void refreshApps());
       <Card ref="addPanel" title="Uygulama ekle" data-testid="add-app">
         <div class="add-option" data-secenek="katalog">
           <strong>Katalogdan</strong>
-          <span v-if="catalogue.length">{{ catalogue.length }} uygulama kurulabilir; kurulum App Store'da.</span>
+          <span v-if="catalogue.length">{{ catalogue.length }} uygulama kurulabilir.</span>
           <span v-else>Katalogdaki uygulamaların hepsi kurulu.</span>
           <ul v-if="catalogue.length" class="catalog">
             <li v-for="k in catalogue" :key="k.id">
-              <a href="/#/moduller">{{ k.ad }}</a><span v-if="k.aciklama"> · {{ k.aciklama }}</span>
+              <RouterLink :to="addRoute('katalog', { paket: k.id })">{{ k.ad }}</RouterLink><span v-if="k.aciklama"> · {{ k.aciklama }}</span>
             </li>
           </ul>
-          <a class="btn btn-secondary btn-sm" href="/#/moduller">App Store'u aç</a>
+          <RouterLink class="btn btn-secondary btn-sm" :to="addRoute('katalog')" data-testid="open-catalog">Kataloğu aç</RouterLink>
         </div>
-        <a class="add-option add-link" href="/#/konteynerler" data-secenek="imaj">
+        <div class="add-option" data-secenek="imaj">
           <strong>Bir imajdan</strong>
-          <span>Konteyneri Dosyalar hesabıyla, sabitlenmiş imajla çalıştırır</span>
-        </a>
-        <a class="add-option add-link" href="/#/konteynerler" data-secenek="benimse">
-          <strong>Var olanı benimse</strong>
-          <span>Podman'da Konsol dışında kurulmuş bir konteyneri yönetime alır</span>
-        </a>
+          <span>Bir kayıt defterindeki imajı Konsol tanımıyla, sabitlenmiş özetle çalıştırır.</span>
+          <RouterLink v-if="podmanUp" class="btn btn-secondary btn-sm" :to="addRoute('imaj')" data-testid="open-create">Konteyner oluştur</RouterLink>
+          <span v-else class="warn-text">Podman çalışmıyor; önce Sistem'deki onarımı deneyin.</span>
+        </div>
+        <div class="add-option" data-secenek="benimse">
+          <strong>Var olanı yönetime al</strong>
+          <span>{{ inventory ? (adoptable ? `Podman'da Konsol dışında kurulmuş ${adoptable} konteyner yönetime alınabilir.` : "Konsol dışında kurulmuş, yönetime alınabilecek konteyner yok.") : "Podman'da Konsol dışında kurulmuş bir konteyneri Konsol'un yönetimine alır." }}</span>
+          <RouterLink v-if="podmanUp" class="btn btn-secondary btn-sm" :to="addRoute('sahiplen')" data-testid="open-adopt">Konteyner seç</RouterLink>
+        </div>
       </Card>
       <Card title="Altyapı" data-testid="infra">
         <p class="card-text" data-testid="infra-line">{{ infra ?? UNKNOWN }}</p>
-        <p class="meter-note">İmajlar, birimler ve ağlar günlük kullanımda gerekmez; şimdilik Podman sayfasında durur.</p>
-        <a class="btn btn-secondary btn-sm fit" href="/#/konteynerler">Podman'ı aç</a>
+        <dl v-if="counts2" class="facts infra-counts" data-testid="infra-counts">
+          <dt>Sağlıksız</dt>
+          <dd data-testid="infra-unhealthy" :class="{ 'warn-text': counts2.unhealthy }">{{ counts2.unhealthy }}</dd>
+          <dt>Güncelleme var</dt>
+          <dd data-testid="infra-updates">{{ counts2.updates }}</dd>
+          <dt>Depolama</dt>
+          <dd data-testid="infra-size">{{ bytes(counts2.size) }}</dd>
+        </dl>
+        <p v-else-if="inventoryError" class="meter-note warn-text">{{ inventoryError }}</p>
+        <p class="meter-note">İmajlar, birimler ve ağlar günlük kullanımda gerekmez; Gelişmiş'te durur.</p>
+        <div class="infra-links">
+          <RouterLink class="btn btn-secondary btn-sm" :to="podmanRoute('imajlar')">İmajlar</RouterLink>
+          <RouterLink class="btn btn-secondary btn-sm" :to="podmanRoute('birimler')">Birimler</RouterLink>
+          <RouterLink class="btn btn-secondary btn-sm" :to="podmanRoute('aglar')">Ağlar</RouterLink>
+        </div>
       </Card>
     </div>
+
+    <CatalogFlow />
+    <CreateFlow />
+    <AdoptFlow />
   </div>
 </template>
