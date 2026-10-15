@@ -1169,3 +1169,10 @@ select.input {
   color: var(--ok-ink);
   font-weight: 600;
 }
+
+/* CopyButton (DD-266): the button and, when the clipboard fails, its note beside it. */
+.copy-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

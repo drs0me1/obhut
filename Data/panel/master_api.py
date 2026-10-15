@@ -104,8 +104,9 @@ SCHEMAS = {
         "erisim": null(ref("Hizmet")),
     }),
     "UygulamaGunlugu": obj({"satirlar": arr(STR), "kesik": BOOL}),
-    "UygulamaIslemi": obj({"id": STR, "eylem": enum("baslat", "durdur", "yeniden-baslat", "guncelle", "kaldir"),
-                           "revizyon": STR, "veri": BOOL}, optional=("revizyon", "veri")),
+    # DD-266: "kur" installs a catalogue package (id paket:<id>); its install form goes as `form`.
+    "UygulamaIslemi": obj({"id": STR, "eylem": enum("kur", "baslat", "durdur", "yeniden-baslat", "guncelle", "kaldir"),
+                           "revizyon": STR, "veri": BOOL, "form": open_obj({})}, optional=("revizyon", "veri", "form")),
     "UygulamaIslemiBasladi": obj({"id": STR, "eylem": STR, "is": null(STR)}),
     "Ag": obj({"read_at": INT, "iface": STR, "window": INT, "sampled_at": null(INT), "rx": null(INT), "tx": null(INT),
                "points": arr(arr(INT)),
@@ -206,13 +207,73 @@ SCHEMAS = {
     # The Podman page's own requests pass unchanged (a revision may be null, an image action names the image).
     "KonteynerIstegi": open_obj({"action": STR, "name": STR, "image": STR, "revision": null(STR), "config": open_obj({})}),
     "KonteynerIsi": open_obj({"id": STR, "action": STR, "name": STR, "state": STR, "step": STR}),
+    # DD-266 (phase 4a): the Podman reads, moved into the table unchanged (docs/design/container-manager-api.md).
+    # Rows stay open objects: the list and the detail share them and add fields of their own.
+    "KonteynerPortu": open_obj({"host_ip": STR, "host_port": INT, "container_port": INT, "protocol": STR, "scope": STR}),
+    "KonteynerGuncellemesi": open_obj({"state": STR, "channel": STR, "error": STR, "checked_at": INT}),
+    "KonteynerSatiri": open_obj({
+        "id": STR, "name": STR, "image": STR, "state": STR, "status": STR, "unit": STR, "network": STR,
+        "ports": arr(ref("KonteynerPortu")), "created": null(INT), "started": null(INT), "exit_code": INT, "restarts": INT,
+        "health": STR, "live": BOOL, "source": enum("appstore", "konsol", "external"), "management_id": STR,
+        "module_id": null(STR), "revision": null(STR), "actions": arr(STR), "restricted_reason": STR,
+        "cpu_percent": null(NUM), "memory_bytes": null(INT), "busy": null(STR),
+        "listening": null(arr(obj({"address": STR, "port": INT, "protocol": STR, "scope": STR}))),
+        "update": null(ref("KonteynerGuncellemesi")),
+    }),
+    "KonteynerListesi": open_obj({
+        "read_at": INT, "runtime": obj({"version": STR, "ok": BOOL, "error": STR}),
+        "containers": arr(ref("KonteynerSatiri")),
+        "images": arr(open_obj({"id": STR, "name": STR, "size": null(INT), "created": null(INT), "used_by": arr(STR),
+                                "managed": BOOL, "pinned": BOOL})),
+        "volumes": arr(open_obj({"name": STR, "driver": STR, "size": null(INT), "used_by": arr(STR), "managed": BOOL})),
+        "networks": arr(open_obj({"name": STR, "id": STR, "driver": STR, "subnets": arr(STR), "used_by": arr(STR),
+                                  "managed": BOOL, "internal": BOOL})),
+        "storage": open_obj({"images": INT, "containers": INT, "size": null(INT)}),
+        "resource_errors": open_obj({}),
+    }),
+    # The detail is a row with its mounts, config, editable fields and effective start (the editor's input).
+    "KonteynerAyrintisi": open_obj({
+        "name": STR, "state": STR, "image": STR, "revision": null(STR), "actions": arr(STR),
+        "mounts": arr(open_obj({"type": STR, "source": STR, "destination": STR, "rw": BOOL, "name": STR})),
+        "config": open_obj({}), "editable": arr(STR), "protected_mounts": arr(STR), "effective_autostart": BOOL,
+        "user": STR, "command": STR,
+    }),
+    "KonteynerGunlugu": open_obj({"name": STR, "lines": arr(STR), "truncated": BOOL}),
+    "KonteynerGuncellemeleri": obj({"checked_at": INT, "items": open_obj({}), "cached": BOOL}),
+    # DD-266: Sistem.
+    "Oturum": obj({"durum": enum("kurulum", "acik", "giris"), "kullanici": STR, "oturum_gun": INT,
+                   "kanal": enum("yerel", "tailscale", "internet")}, optional=("kullanici", "oturum_gun")),
+    "HesapKur": obj({"kullanici": STR, "parola": STR}),
+    "ParolaDegistir": obj({"eski": STR, "yeni": STR}, optional=("eski",)),
+    "HesapSonucu": obj({"durum": enum("kuruldu", "degisti", "cikis")}),
+    "Bos": obj({}),
+    "YenidenBaslatma": obj({"sure": INT}),
+    "GuncellemeIstegi": obj({"surum": STR, "commit": STR}),
+    "GuncellemeBasladi": obj({"surum": STR}),
+    "KayitSatiri": obj({"at": INT, "source": STR, "user": STR, "client": STR, "action": STR, "detail": STR, "ok": BOOL}),
+    "Kayitlar": obj({"items": arr(ref("KayitSatiri"))}),
+    "Klasorler": obj({"items": arr(obj({"path": STR, "free": INT}))}),
+    "UygulamaHesabi": obj({"user": STR, "temp": BOOL, "host": STR, "pass": STR}, optional=("pass",)),
+    # DD-266: Gelişmiş, the effective configuration as the server holds it (read-only).
+    "YapilandirmaDosyasi": obj({"file": STR, "text": STR}),
+    "Gelismis": obj({
+        "read_at": INT,
+        "caddy": obj({"entries": arr(obj({"address": STR, "routes": arr(open_obj({})), "source": STR,
+                                          "access": enum("tailscale", "wan"), "scheme": STR})),
+                      "raw": arr(ref("YapilandirmaDosyasi"))}),
+        "dnsmasq": obj({"listen": arr(STR), "domains": arr(STR), "dhcp": BOOL, "names": arr(open_obj({})),
+                        "raw": arr(ref("YapilandirmaDosyasi"))}),
+    }),
 }
 
 
 class Route:
-    def __init__(self, method, path, name, summary, reply=None, events=None, request=None, query=None, status=200):
+    """text: the reply is plain text (a log), its schema a string."""
+
+    def __init__(self, method, path, name, summary, reply=None, events=None, request=None, query=None, status=200, text=False):
         self.method, self.path, self.name, self.summary = method, path, name, summary
         self.reply, self.events, self.request, self.query, self.status = reply, events, request, query or {}, status
+        self.text = text
 
 
 ROUTES = (
@@ -265,6 +326,44 @@ ROUTES = (
     Route("POST", "/api/konsol/konteynerler/islem", "konteyner_islemi",
           "Konteyner işlemi (DD-211); iş arka planda sürer, ilerleme olay akışında", ref("KonteynerIsi"),
           request=ref("KonteynerIstegi"), status=202),
+    # DD-266 (phase 4a): the Podman reads, the Sistem routes and Gelişmiş. Routes the current Konsol also
+    # uses keep their paths and answers.
+    Route("GET", "/api/konsol/konteynerler/liste", "konteyner_listesi",
+          "Konteynerler, imajlar, birimler ve ağlar (DD-211)", ref("KonteynerListesi")),
+    Route("GET", "/api/konsol/konteynerler/ayrinti", "konteyner_ayrintisi",
+          "Bir konteynerin ayrıntısı ve düzenlenebilir tanımı", ref("KonteynerAyrintisi"), query={"ad": STR}),
+    Route("GET", "/api/konsol/konteynerler/gunluk", "konteyner_gunlugu",
+          "Bir konteynerin günlüğü (100, 200, 500 ya da 1000 satır)", ref("KonteynerGunlugu"), query={"ad": STR, "satir": INT}),
+    Route("GET", "/api/konsol/konteynerler/guncellemeler", "konteyner_guncellemeleri",
+          "İmaj güncelleme durumu (DD-214); ?yenile en çok dakikada bir yeniden sorar", ref("KonteynerGuncellemeleri"),
+          query={"yenile": STR}),
+    Route("GET", "/api/konsol/konteynerler/islem", "konteyner_isi", "Bir konteyner işinin durumu", ref("KonteynerIsi"),
+          query={"id": STR}),
+    Route("GET", "/api/konsol/uygulamalar/hesap", "uygulama_hesabi",
+          "Bir paketin ilk giriş hesabı (PAKET_HESAP); geçici parola yalnız ?parola=1 ile", ref("UygulamaHesabi"),
+          query={"id": STR, "parola": STR}),
+    Route("GET", "/api/konsol/ayarlar/klasorler", "klasorler", "Klasör seçici: bir klasörün alt klasörleri ve boş yer",
+          ref("Klasorler"), query={"path": STR}),
+    Route("GET", "/api/konsol/oturum", "oturum", "Konsol hesabı ve bu oturum (DD-194, DD-205)", ref("Oturum")),
+    Route("POST", "/api/konsol/oturum/kur", "oturum_kur", "Konsol hesabını oluşturur; yalnız Tailscale'den",
+          ref("HesapSonucu"), request=ref("HesapKur")),
+    Route("POST", "/api/konsol/oturum/cikis", "oturum_cikis", "Bu tarayıcının oturumunu kapatır", ref("HesapSonucu"),
+          request=ref("Bos")),
+    Route("POST", "/api/konsol/hesap/parola", "hesap_parola",
+          "Konsol parolasını değiştirir; internetten eski parola istenir, Tailscale'den diğer oturumlar kapanır",
+          ref("HesapSonucu"), request=ref("ParolaDegistir")),
+    Route("POST", "/api/konsol/guncelleme", "guncelleme_baslat",
+          "Güncellemeyi başlatır (DD-233); yalnız Tailscale'den", ref("GuncellemeBasladi"), request=ref("GuncellemeIstegi"),
+          status=202),
+    Route("POST", "/api/konsol/yeniden-baslat", "yeniden_baslat", "Sunucuyu yeniden başlatır (DD-246); yalnız Tailscale'den",
+          ref("YenidenBaslatma"), request=ref("Bos"), status=202),
+    Route("GET", "/api/konsol/onarim/gunluk", "onarim_gunlugu", "Denetim ve onarım günlüğü (72s ya da 7g, düz metin)",
+          STR, query={"sure": STR}, text=True),
+    Route("GET", "/api/konsol/islemler", "islemler", "Konsol günlüğü: son yedi günün işlemleri, yeniden eskiye",
+          ref("Kayitlar")),
+    Route("GET", "/api/konsol/gelismis", "gelismis",
+          "Gelişmiş: etkin Caddy ve dnsmasq yapılandırması (salt okunur); ?yenile önbelleği atlar", ref("Gelismis"),
+          query={"yenile": STR}),
 )
 
 
@@ -322,6 +421,8 @@ def openapi():
     for route in ROUTES:
         if route.events:
             content = {"text/event-stream": {"schema": STR}}
+        elif route.text:
+            content = {"text/plain": {"schema": STR}}
         else:
             content = {"application/json": {"schema": route.reply}}
         responses = {str(route.status): {"description": "Başarılı", "content": content},

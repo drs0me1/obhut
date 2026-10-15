@@ -203,9 +203,12 @@ export interface UygulamaGunlugu {
 
 export interface UygulamaIslemi {
   id: string;
-  eylem: "baslat" | "durdur" | "yeniden-baslat" | "guncelle" | "kaldir";
+  eylem: "kur" | "baslat" | "durdur" | "yeniden-baslat" | "guncelle" | "kaldir";
   revizyon?: string;
   veri?: boolean;
+  form?: {
+    [key: string]: unknown;
+  };
 }
 
 export interface UygulamaIslemiBasladi {
@@ -634,6 +637,240 @@ export interface KonteynerIsi {
   [key: string]: unknown;
 }
 
+export interface KonteynerPortu {
+  host_ip?: string;
+  host_port?: number;
+  container_port?: number;
+  protocol?: string;
+  scope?: string;
+  [key: string]: unknown;
+}
+
+export interface KonteynerGuncellemesi {
+  state?: string;
+  channel?: string;
+  error?: string;
+  checked_at?: number;
+  [key: string]: unknown;
+}
+
+export interface KonteynerSatiri {
+  id?: string;
+  name?: string;
+  image?: string;
+  state?: string;
+  status?: string;
+  unit?: string;
+  network?: string;
+  ports?: KonteynerPortu[];
+  created?: number | null;
+  started?: number | null;
+  exit_code?: number;
+  restarts?: number;
+  health?: string;
+  live?: boolean;
+  source?: "appstore" | "konsol" | "external";
+  management_id?: string;
+  module_id?: string | null;
+  revision?: string | null;
+  actions?: string[];
+  restricted_reason?: string;
+  cpu_percent?: number | null;
+  memory_bytes?: number | null;
+  busy?: string | null;
+  listening?: {
+    address: string;
+    port: number;
+    protocol: string;
+    scope: string;
+  }[] | null;
+  update?: KonteynerGuncellemesi | null;
+  [key: string]: unknown;
+}
+
+export interface KonteynerListesi {
+  read_at?: number;
+  runtime?: {
+    version: string;
+    ok: boolean;
+    error: string;
+  };
+  containers?: KonteynerSatiri[];
+  images?: ({
+    id?: string;
+    name?: string;
+    size?: number | null;
+    created?: number | null;
+    used_by?: string[];
+    managed?: boolean;
+    pinned?: boolean;
+    [key: string]: unknown;
+  })[];
+  volumes?: ({
+    name?: string;
+    driver?: string;
+    size?: number | null;
+    used_by?: string[];
+    managed?: boolean;
+    [key: string]: unknown;
+  })[];
+  networks?: {
+    name?: string;
+    id?: string;
+    driver?: string;
+    subnets?: string[];
+    used_by?: string[];
+    managed?: boolean;
+    internal?: boolean;
+    [key: string]: unknown;
+  }[];
+  storage?: {
+    images?: number;
+    containers?: number;
+    size?: number | null;
+    [key: string]: unknown;
+  };
+  resource_errors?: {
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+export interface KonteynerAyrintisi {
+  name?: string;
+  state?: string;
+  image?: string;
+  revision?: string | null;
+  actions?: string[];
+  mounts?: {
+    type?: string;
+    source?: string;
+    destination?: string;
+    rw?: boolean;
+    name?: string;
+    [key: string]: unknown;
+  }[];
+  config?: {
+    [key: string]: unknown;
+  };
+  editable?: string[];
+  protected_mounts?: string[];
+  effective_autostart?: boolean;
+  user?: string;
+  command?: string;
+  [key: string]: unknown;
+}
+
+export interface KonteynerGunlugu {
+  name?: string;
+  lines?: string[];
+  truncated?: boolean;
+  [key: string]: unknown;
+}
+
+export interface KonteynerGuncellemeleri {
+  checked_at: number;
+  items: {
+    [key: string]: unknown;
+  };
+  cached: boolean;
+}
+
+export interface Oturum {
+  durum: "kurulum" | "acik" | "giris";
+  kullanici?: string;
+  oturum_gun?: number;
+  kanal: "yerel" | "tailscale" | "internet";
+}
+
+export interface HesapKur {
+  kullanici: string;
+  parola: string;
+}
+
+export interface ParolaDegistir {
+  eski?: string;
+  yeni: string;
+}
+
+export interface HesapSonucu {
+  durum: "kuruldu" | "degisti" | "cikis";
+}
+
+export interface Bos {
+}
+
+export interface YenidenBaslatma {
+  sure: number;
+}
+
+export interface GuncellemeIstegi {
+  surum: string;
+  commit: string;
+}
+
+export interface GuncellemeBasladi {
+  surum: string;
+}
+
+export interface KayitSatiri {
+  at: number;
+  source: string;
+  user: string;
+  client: string;
+  action: string;
+  detail: string;
+  ok: boolean;
+}
+
+export interface Kayitlar {
+  items: KayitSatiri[];
+}
+
+export interface Klasorler {
+  items: {
+    path: string;
+    free: number;
+  }[];
+}
+
+export interface UygulamaHesabi {
+  user: string;
+  temp: boolean;
+  host: string;
+  pass?: string;
+}
+
+export interface YapilandirmaDosyasi {
+  file: string;
+  text: string;
+}
+
+export interface Gelismis {
+  read_at: number;
+  caddy: {
+    entries: ({
+      address: string;
+      routes: {
+        [key: string]: unknown;
+      }[];
+      source: string;
+      access: "tailscale" | "wan";
+      scheme: string;
+    })[];
+    raw: YapilandirmaDosyasi[];
+  };
+  dnsmasq: {
+    listen: string[];
+    domains: string[];
+    dhcp: boolean;
+    names: {
+      [key: string]: unknown;
+    }[];
+    raw: YapilandirmaDosyasi[];
+  };
+}
+
 export interface Olaylar {
   kaynaklar: Kaynaklar;
   saglik: Saglik;
@@ -668,4 +905,20 @@ export const YOLLAR = {
   yayinlar: "/api/konsol/yayinlar",
   yayin_plani: "/api/konsol/yayinlar/plan",
   konteyner_islemi: "/api/konsol/konteynerler/islem",
+  konteyner_listesi: "/api/konsol/konteynerler/liste",
+  konteyner_ayrintisi: "/api/konsol/konteynerler/ayrinti",
+  konteyner_gunlugu: "/api/konsol/konteynerler/gunluk",
+  konteyner_guncellemeleri: "/api/konsol/konteynerler/guncellemeler",
+  konteyner_isi: "/api/konsol/konteynerler/islem",
+  uygulama_hesabi: "/api/konsol/uygulamalar/hesap",
+  klasorler: "/api/konsol/ayarlar/klasorler",
+  oturum: "/api/konsol/oturum",
+  oturum_kur: "/api/konsol/oturum/kur",
+  oturum_cikis: "/api/konsol/oturum/cikis",
+  hesap_parola: "/api/konsol/hesap/parola",
+  guncelleme_baslat: "/api/konsol/guncelleme",
+  yeniden_baslat: "/api/konsol/yeniden-baslat",
+  onarim_gunlugu: "/api/konsol/onarim/gunluk",
+  islemler: "/api/konsol/islemler",
+  gelismis: "/api/konsol/gelismis",
 } as const;

@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 import test_resources
@@ -82,14 +83,24 @@ class RouteReplyTests(Fixture):
         Handler.panel = self.p
         _server, self.sock = test_resources.start_unix(self, Handler)
 
-    def get(self, name):
+    def get(self, name, query=""):
         route = next(r for r in master_api.ROUTES if r.name == name)
-        status, headers, body = test_resources.unix_get(self.sock, route.path, {"X-Konsol": "1"})
+        status, headers, body = test_resources.unix_get(self.sock, route.path + query, {"X-Konsol": "1"})
         self.assertEqual(status, 200, body)
         self.assertEqual(headers["Content-Type"], "application/json; charset=utf-8")
         answer = json.loads(body)
         master_api.check(route.reply, answer)
         return answer
+
+    def post(self, name, data):
+        route = next(r for r in master_api.ROUTES if r.name == name)
+        status, _headers, body = test_resources.unix_get(
+            self.sock, route.path, {"X-Konsol": "1", "Content-Type": "application/json"}, method="POST",
+            body=json.dumps(data).encode())
+        answer = json.loads(body)
+        if status == route.status:
+            master_api.check(route.reply, answer)
+        return status, answer
 
     def test_the_table_routes_answer_with_their_shapes(self):
         self.assertEqual(self.get("kaynaklar")["domain"], "test")
@@ -112,6 +123,82 @@ class RouteReplyTests(Fixture):
              patch.object(self.p, "unit_active", return_value=False):
             update = self.get("guncelleme")
         self.assertEqual((update["son"], update["baslatilabilir"], update["is"]["durum"]), ("2026.08.06-v2-300", True, "yok"))
+
+    def test_phase_4a_routes_answer_with_their_shapes(self):
+        # DD-266: Sistem. No account yet, and the Unix socket is the local channel.
+        self.assertEqual(self.get("oturum"), {"durum": "kurulum", "kanal": "yerel"})
+        rows = [{"at": 1, "source": "panel", "user": "-", "client": "100.64.0.9", "action": "duzen", "detail": "x", "ok": True}]
+        with patch.object(self.p, "actions", return_value=rows):
+            self.assertEqual(self.get("islemler"), {"items": rows})
+        with patch.object(self.p, "repair_log", return_value="satır 1\n") as log:
+            status, headers, body = test_resources.unix_get(self.sock, "/api/konsol/onarim/gunluk?sure=7g", {"X-Konsol": "1"})
+        self.assertEqual((status, headers["Content-Type"], body.decode()), (200, "text/plain; charset=utf-8", "satır 1\n"))
+        log.assert_called_once_with("7g")
+        with patch.object(panel.master_settings, "Manager") as manager:
+            manager.return_value.folders.return_value = [{"path": "/srv/downloads", "free": 5}]
+            self.assertEqual(self.get("klasorler", "?path=/srv")["items"][0]["path"], "/srv/downloads")
+        manager.return_value.folders.assert_called_once_with("/srv")
+        # Gelişmiş: the settings view's Caddy and dnsmasq parts.
+        view = {"read_at": 3, "web": {"entries": [{"address": "panel.test:80", "routes": [{"path": "/", "to": "x"}], "source": "base",
+                                                    "access": "tailscale", "scheme": "http"}],
+                                       "raw": [{"file": "/etc/caddy/Caddyfile", "text": "panel.test:80 {}"}]},
+                "dns": {"listen": ["100.64.0.1"], "domains": ["test"], "names": [], "dhcp": False, "raw": []}}
+        with patch.object(self.p, "settings", return_value=view) as settings:
+            self.assertEqual(self.get("gelismis", "?yenile=1"), {"read_at": 3, "caddy": view["web"], "dnsmasq": view["dns"]})
+        settings.assert_called_once_with(fresh=True)
+        # Podman reads go to the same view as the current Konsol's.
+        row = {"id": "abc", "name": "notlar", "image": "docker.io/library/nginx:alpine", "state": "running", "status": "Up",
+               "unit": "konsol-notlar.service", "network": "konsol", "created": 1, "started": 2, "exit_code": 0, "restarts": 0,
+               "ports": [{"host_ip": "127.0.0.1", "host_port": 8090, "container_port": 80, "protocol": "tcp", "scope": "local"}],
+               "mounts": 1, "health": "", "live": True, "source": "konsol", "management_id": "konsol:notlar", "module_id": None,
+               "revision": "r1", "actions": ["stop", "restart", "save", "remove", "image-update"], "restricted_reason": "",
+               "cpu_percent": None, "memory_bytes": 1024, "busy": None, "listening": None,
+               "update": {"state": "guncel", "channel": "alpine", "error": "", "checked_at": 5}}
+        listing = {"read_at": 1, "runtime": {"version": "5.4.2", "ok": True, "error": ""}, "containers": [row],
+                   "images": [{"id": "i1", "name": "docker.io/library/nginx:alpine", "size": 10, "created": 1, "used_by": ["notlar"],
+                               "managed": True, "pinned": False}],
+                   "volumes": [{"name": "v", "driver": "local", "size": None, "used_by": [], "managed": True}],
+                   "networks": [{"name": "konsol", "id": "n1", "driver": "bridge", "subnets": ["10.89.1.0/24"], "used_by": ["notlar"],
+                                 "managed": True, "internal": False}],
+                   "storage": {"images": 1, "containers": 1, "size": None}, "resource_errors": {}}
+        detail = dict(row, mounts=[{"type": "volume", "source": "v", "destination": "/data", "rw": True, "name": "v"}],
+                      config={"name": "notlar"}, editable=["ports"], protected_mounts=[], effective_autostart=True,
+                      user="", command="nginx")
+        fake = unittest.mock.Mock()
+        fake.liste.return_value, fake.ayrinti.return_value = listing, detail
+        fake.gunluk.return_value = {"name": "notlar", "lines": ["a"], "truncated": False}
+        with patch.object(panel.Handler, "container_view", return_value=fake):
+            self.assertEqual(self.get("konteyner_listesi"), listing)
+            self.assertEqual(self.get("konteyner_ayrintisi", "?ad=notlar")["command"], "nginx")
+            self.assertEqual(self.get("konteyner_gunlugu", "?ad=notlar&satir=500")["lines"], ["a"])
+        fake.gunluk.assert_called_once_with("notlar", "500")
+        status, _headers, body = test_resources.unix_get(self.sock, "/api/konsol/konteynerler/ayrinti?ad=../x", {"X-Konsol": "1"})
+        self.assertEqual(status, 400, body)
+
+    def test_a_package_account_and_an_install_from_the_table(self):
+        self.package("torrent", manifest_extra='PAKET_HESAP="1"\n')
+        with patch.object(self.p, "modul", return_value=(0, "admin\tgecici\tgizli-deneme\n", "")) as modul:
+            self.assertEqual(self.get("uygulama_hesabi", "?id=paket:torrent"), {"user": "admin", "temp": True, "host": ""})
+            modul.assert_called_with("hesap", "torrent")
+            self.assertEqual(self.get("uygulama_hesabi", "?id=paket:torrent&parola=1")["pass"], "gizli-deneme")
+            modul.assert_called_with("hesap", "torrent", "--parola")
+        for bad in ("?id=torrent", "?id=konteyner:torrent", "?id=paket:yok"):
+            status, _headers, _body = test_resources.unix_get(self.sock, "/api/konsol/uygulamalar/hesap" + bad, {"X-Konsol": "1"})
+            self.assertEqual(status, 404, bad)
+        # "kur" installs a catalogue package with its form, as App Store does.
+        with patch.object(self.p, "modules", return_value=[{"id": "torrent", "installed": False}]), \
+             patch.object(self.p, "module_install", return_value=(202, "")) as install:
+            self.assertEqual(self.post("uygulama_islemi", {"id": "paket:torrent", "eylem": "kur", "form": {"kullanici": "admin"}}),
+                             (202, {"id": "paket:torrent", "eylem": "kur", "is": None}))
+            install.assert_called_once_with("torrent", {"kullanici": "admin"})
+            self.assertEqual(self.post("uygulama_islemi", {"id": "paket:yok", "eylem": "kur"})[0], 404)
+            self.assertEqual(self.post("uygulama_islemi", {"id": "konteyner:x", "eylem": "kur"})[0], 404)
+        # The account routes keep their shapes; a body of another shape is refused before the handler.
+        self.assertEqual(self.post("oturum_cikis", {}), (200, {"durum": "cikis"}))
+        status, answer = self.post("oturum_cikis", {"x": 1})
+        self.assertEqual(status, 400)
+        self.assertIn("İstek biçimi geçersiz", answer["error"])
+        self.assertEqual(self.post("hesap_parola", {"yeni": 5})[0], 400)
 
     def test_a_real_health_reply_has_the_declared_shape(self):
         # Commands that do not exist on the test machine read as failed checks, not as a broken reply.

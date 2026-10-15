@@ -708,6 +708,65 @@
             }
           }
         }
+      },
+      "post": {
+        "operationId": "guncelleme_baslat",
+        "summary": "Güncellemeyi başlatır (DD-233); yalnız Tailscale'den",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuncellemeBasladi"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuncellemeIstegi"
+              }
+            }
+          }
+        }
       }
     },
     "/api/konsol/ayarlar/plan": {
@@ -1262,6 +1321,779 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/KonteynerIstegi"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "konteyner_isi",
+        "summary": "Bir konteyner işinin durumu",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KonteynerIsi"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/konteynerler/liste": {
+      "get": {
+        "operationId": "konteyner_listesi",
+        "summary": "Konteynerler, imajlar, birimler ve ağlar (DD-211)",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KonteynerListesi"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/konteynerler/ayrinti": {
+      "get": {
+        "operationId": "konteyner_ayrintisi",
+        "summary": "Bir konteynerin ayrıntısı ve düzenlenebilir tanımı",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "ad",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KonteynerAyrintisi"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/konteynerler/gunluk": {
+      "get": {
+        "operationId": "konteyner_gunlugu",
+        "summary": "Bir konteynerin günlüğü (100, 200, 500 ya da 1000 satır)",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "ad",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "satir",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KonteynerGunlugu"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/konteynerler/guncellemeler": {
+      "get": {
+        "operationId": "konteyner_guncellemeleri",
+        "summary": "İmaj güncelleme durumu (DD-214); ?yenile en çok dakikada bir yeniden sorar",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "yenile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KonteynerGuncellemeleri"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/uygulamalar/hesap": {
+      "get": {
+        "operationId": "uygulama_hesabi",
+        "summary": "Bir paketin ilk giriş hesabı (PAKET_HESAP); geçici parola yalnız ?parola=1 ile",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "parola",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UygulamaHesabi"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/ayarlar/klasorler": {
+      "get": {
+        "operationId": "klasorler",
+        "summary": "Klasör seçici: bir klasörün alt klasörleri ve boş yer",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Klasorler"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/oturum": {
+      "get": {
+        "operationId": "oturum",
+        "summary": "Konsol hesabı ve bu oturum (DD-194, DD-205)",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oturum"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/oturum/kur": {
+      "post": {
+        "operationId": "oturum_kur",
+        "summary": "Konsol hesabını oluşturur; yalnız Tailscale'den",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HesapSonucu"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HesapKur"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/oturum/cikis": {
+      "post": {
+        "operationId": "oturum_cikis",
+        "summary": "Bu tarayıcının oturumunu kapatır",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HesapSonucu"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Bos"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/hesap/parola": {
+      "post": {
+        "operationId": "hesap_parola",
+        "summary": "Konsol parolasını değiştirir; internetten eski parola istenir, Tailscale'den diğer oturumlar kapanır",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HesapSonucu"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParolaDegistir"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/yeniden-baslat": {
+      "post": {
+        "operationId": "yeniden_baslat",
+        "summary": "Sunucuyu yeniden başlatır (DD-246); yalnız Tailscale'den",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YenidenBaslatma"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Bos"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/onarim/gunluk": {
+      "get": {
+        "operationId": "onarim_gunlugu",
+        "summary": "Denetim ve onarım günlüğü (72s ya da 7g, düz metin)",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "sure",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/islemler": {
+      "get": {
+        "operationId": "islemler",
+        "summary": "Konsol günlüğü: son yedi günün işlemleri, yeniden eskiye",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Kayitlar"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/gelismis": {
+      "get": {
+        "operationId": "gelismis",
+        "summary": "Gelişmiş: etkin Caddy ve dnsmasq yapılandırması (salt okunur); ?yenile önbelleği atlar",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "yenile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Gelismis"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
               }
             }
           }
@@ -2281,6 +3113,7 @@
           "eylem": {
             "type": "string",
             "enum": [
+              "kur",
               "baslat",
               "durdur",
               "yeniden-baslat",
@@ -2293,6 +3126,12 @@
           },
           "veri": {
             "type": "boolean"
+          },
+          "form": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
           }
         },
         "required": [
@@ -4267,6 +5106,896 @@
         },
         "required": [],
         "additionalProperties": true
+      },
+      "KonteynerPortu": {
+        "type": "object",
+        "properties": {
+          "host_ip": {
+            "type": "string"
+          },
+          "host_port": {
+            "type": "integer"
+          },
+          "container_port": {
+            "type": "integer"
+          },
+          "protocol": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "KonteynerGuncellemesi": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "checked_at": {
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "KonteynerSatiri": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "network": {
+            "type": "string"
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KonteynerPortu"
+            }
+          },
+          "created": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exit_code": {
+            "type": "integer"
+          },
+          "restarts": {
+            "type": "integer"
+          },
+          "health": {
+            "type": "string"
+          },
+          "live": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "appstore",
+              "konsol",
+              "external"
+            ]
+          },
+          "management_id": {
+            "type": "string"
+          },
+          "module_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "restricted_reason": {
+            "type": "string"
+          },
+          "cpu_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "memory_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "busy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "listening": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string"
+                    },
+                    "port": {
+                      "type": "integer"
+                    },
+                    "protocol": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "address",
+                    "port",
+                    "protocol",
+                    "scope"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "update": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KonteynerGuncellemesi"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "KonteynerListesi": {
+        "type": "object",
+        "properties": {
+          "read_at": {
+            "type": "integer"
+          },
+          "runtime": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "version",
+              "ok",
+              "error"
+            ],
+            "additionalProperties": false
+          },
+          "containers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KonteynerSatiri"
+            }
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "size": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "created": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "used_by": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "managed": {
+                  "type": "boolean"
+                },
+                "pinned": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": true
+            }
+          },
+          "volumes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "driver": {
+                  "type": "string"
+                },
+                "size": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "used_by": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "managed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": true
+            }
+          },
+          "networks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "driver": {
+                  "type": "string"
+                },
+                "subnets": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "used_by": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "managed": {
+                  "type": "boolean"
+                },
+                "internal": {
+                  "type": "boolean"
+                }
+              },
+              "required": [],
+              "additionalProperties": true
+            }
+          },
+          "storage": {
+            "type": "object",
+            "properties": {
+              "images": {
+                "type": "integer"
+              },
+              "containers": {
+                "type": "integer"
+              },
+              "size": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [],
+            "additionalProperties": true
+          },
+          "resource_errors": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "KonteynerAyrintisi": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "mounts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "destination": {
+                  "type": "string"
+                },
+                "rw": {
+                  "type": "boolean"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "additionalProperties": true
+            }
+          },
+          "config": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "editable": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "protected_mounts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "effective_autostart": {
+            "type": "boolean"
+          },
+          "user": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "KonteynerGunlugu": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "KonteynerGuncellemeleri": {
+        "type": "object",
+        "properties": {
+          "checked_at": {
+            "type": "integer"
+          },
+          "items": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "cached": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "checked_at",
+          "items",
+          "cached"
+        ],
+        "additionalProperties": false
+      },
+      "Oturum": {
+        "type": "object",
+        "properties": {
+          "durum": {
+            "type": "string",
+            "enum": [
+              "kurulum",
+              "acik",
+              "giris"
+            ]
+          },
+          "kullanici": {
+            "type": "string"
+          },
+          "oturum_gun": {
+            "type": "integer"
+          },
+          "kanal": {
+            "type": "string",
+            "enum": [
+              "yerel",
+              "tailscale",
+              "internet"
+            ]
+          }
+        },
+        "required": [
+          "durum",
+          "kanal"
+        ],
+        "additionalProperties": false
+      },
+      "HesapKur": {
+        "type": "object",
+        "properties": {
+          "kullanici": {
+            "type": "string"
+          },
+          "parola": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kullanici",
+          "parola"
+        ],
+        "additionalProperties": false
+      },
+      "ParolaDegistir": {
+        "type": "object",
+        "properties": {
+          "eski": {
+            "type": "string"
+          },
+          "yeni": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "yeni"
+        ],
+        "additionalProperties": false
+      },
+      "HesapSonucu": {
+        "type": "object",
+        "properties": {
+          "durum": {
+            "type": "string",
+            "enum": [
+              "kuruldu",
+              "degisti",
+              "cikis"
+            ]
+          }
+        },
+        "required": [
+          "durum"
+        ],
+        "additionalProperties": false
+      },
+      "Bos": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "YenidenBaslatma": {
+        "type": "object",
+        "properties": {
+          "sure": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sure"
+        ],
+        "additionalProperties": false
+      },
+      "GuncellemeIstegi": {
+        "type": "object",
+        "properties": {
+          "surum": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "surum",
+          "commit"
+        ],
+        "additionalProperties": false
+      },
+      "GuncellemeBasladi": {
+        "type": "object",
+        "properties": {
+          "surum": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "surum"
+        ],
+        "additionalProperties": false
+      },
+      "KayitSatiri": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "integer"
+          },
+          "source": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          },
+          "client": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "at",
+          "source",
+          "user",
+          "client",
+          "action",
+          "detail",
+          "ok"
+        ],
+        "additionalProperties": false
+      },
+      "Kayitlar": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KayitSatiri"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "Klasorler": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "free": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "path",
+                "free"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "UygulamaHesabi": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "string"
+          },
+          "temp": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string"
+          },
+          "pass": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "temp",
+          "host"
+        ],
+        "additionalProperties": false
+      },
+      "YapilandirmaDosyasi": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "Gelismis": {
+        "type": "object",
+        "properties": {
+          "read_at": {
+            "type": "integer"
+          },
+          "caddy": {
+            "type": "object",
+            "properties": {
+              "entries": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string"
+                    },
+                    "routes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                        "additionalProperties": true
+                      }
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "access": {
+                      "type": "string",
+                      "enum": [
+                        "tailscale",
+                        "wan"
+                      ]
+                    },
+                    "scheme": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "address",
+                    "routes",
+                    "source",
+                    "access",
+                    "scheme"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "raw": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/YapilandirmaDosyasi"
+                }
+              }
+            },
+            "required": [
+              "entries",
+              "raw"
+            ],
+            "additionalProperties": false
+          },
+          "dnsmasq": {
+            "type": "object",
+            "properties": {
+              "listen": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "domains": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "dhcp": {
+                "type": "boolean"
+              },
+              "names": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {},
+                  "required": [],
+                  "additionalProperties": true
+                }
+              },
+              "raw": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/YapilandirmaDosyasi"
+                }
+              }
+            },
+            "required": [
+              "listen",
+              "domains",
+              "dhcp",
+              "names",
+              "raw"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "read_at",
+          "caddy",
+          "dnsmasq"
+        ],
+        "additionalProperties": false
       }
     }
   }

@@ -2598,16 +2598,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # DD-259: routes of the new interface come from master_api's table (shapes and OpenAPI).
         route = master_api.find("GET", path)
         if route is not None:
+            self.request_user = user  # for a read that writes an audit line (a package's password shown)
             getattr(self, "api_" + route.name)(query)
-            return
-        if path == "/api/konsol/oturum":
-            try:
-                # DD-205: the user name is shown to the tailnet (trusted device), not to an anonymous internet visitor.
-                self.json(200, dict(self.panel.auth().status(self.cookie_token(), reveal=self.channel() != "internet"), kanal=self.channel()))
-            except master_auth.AuthError as err:
-                self.error(err.status, str(err))
-            except OSError:
-                self.error(503, "Konsol hesap kaydı okunamadı; kurulumu yeniden çalıştırın.")
             return
         if path == "/api/konsol/paylasim":
             try:
@@ -2621,47 +2613,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/konsol/favoriler":
             self.json(200, {"favoriler": self.panel.favorites(self.channel())})
             return
-        if path == "/api/konsol/onarim/gunluk":
-            try:
-                text = self.panel.repair_log(query.get("sure", ["72s"])[0])
-            except master_update.UpdateError as err:
-                self.error(err.status, str(err))
-                return
-            self.send(200, text.encode("utf-8"), "text/plain; charset=utf-8")
-            return
-        m = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk|islem|guncellemeler)$", path)
-        if m:
-            try:
-                if m.group(1) == "islem":
-                    self.json(200, self.panel.containers.operation(query.get("id", [""])[0]))
-                    return
-                # DD-214: image update status from registry manifests; cached, ?yenile=1 asks again.
-                if m.group(1) == "guncellemeler":
-                    if not read_env(self.panel.args.state).get("KONTEYNER_STATE_DIR"):
-                        raise master_containers.ContainerError(503, "Konteyner yönetimi henüz hazır değil; kurulumu yeniden çalıştırın.")
-                    self.json(200, self.panel.containers.updates(force="yenile" in query))
-                    return
-                # Older state files retain their read-only view until the installer provisions
-                # the manager's private store and workers.
-                view = (self.panel.containers.view() if read_env(self.panel.args.state).get("KONTEYNER_STATE_DIR") else
-                        master_containers.Containers(lambda argv, timeout: self.panel.run_tool(argv, timeout=timeout)))
-                if m.group(1) == "liste":
-                    body = view.liste()
-                else:
-                    name = master_containers.name_of(query.get("ad", [""])[0])
-                    body = view.ayrinti(name) if m.group(1) == "ayrinti" else view.gunluk(name, query.get("satir", ["200"])[0])
-            except master_containers.ContainerError as err:
-                self.error(err.status, str(err))
-                return
-            self.json(200, body)
-            return
         if path == "/api/konsol/ayarlar":
             self.json(200, self.panel.settings(fresh="yenile" in query))
             return
-        if path in ("/api/konsol/ayarlar/durum", "/api/konsol/ayarlar/klasorler"):
+        if path == "/api/konsol/ayarlar/durum":
             try:
-                manager = master_settings.Manager(self.panel.args.state)
-                self.json(200, {"items": manager.folders(query.get("path", [None])[0])} if path.endswith("klasorler") else manager.status())
+                self.json(200, master_settings.Manager(self.panel.args.state).status())
             except (master_settings.SettingsError, OSError, KeyError, ValueError) as err:
                 self.error(400, str(err) if isinstance(err, master_settings.SettingsError) else "Ayarlar okunamadı.")
             return
@@ -2677,37 +2634,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self.send(200, out.encode("utf-8"), "text/plain; charset=utf-8")
             return
-        # DD-149: modül hesabı (root'a özel dosyadan). Parola yalnız ?parola=1 ile, açıkça
-        # istenince döner ve günlüğe yalnız "gösterildi" olarak geçer; değer hiçbir yere yazılmaz.
         m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/hesap$", path)
         if m:
-            # DD-200: hesap yalnız bildirimi PAKET_HESAP=1 olan kurulu pakette; satır biçimi motorun
-            # sözleşmesidir: kullanıcı, gecici|ayarli [, geçici parola]. Adres yayın bildiriminden.
-            mid = m.group(1)
-            env = read_env(self.panel.args.state)
-            manifest = master_settings.read_manifests(env).get(mid, {})
-            if manifest.get("PAKET_HESAP") != "1" or not self.panel.module_state(mid, env):
-                self.error(404, "bu modülde hesap yok")
-                return
-            reveal = query.get("parola") == ["1"]
-            rc, out, message = self.panel.modul("hesap", mid, *(["--parola"] if reveal else []))
-            fields = out.rstrip("\n").split("\t") if rc == 0 else []
-            temp = len(fields) >= 2 and fields[1] == "gecici"
-            if len(fields) not in (2, 3) or (reveal and temp and len(fields) != 3):
-                self.error(404, message or "hesap yok")
-                return
-            host = ""
-            info = master_publications.packages(env).get(mid)
-            if info and env.get("LOCAL_DOMAIN"):
-                host = "%s.%s" % (info["local"], env["LOCAL_DOMAIN"])
-            body = {"user": fields[0], "temp": temp, "host": host}
-            if reveal and temp:
-                body["pass"] = fields[2]
-                self.audit(user, "modul-hesap", mid, True)
-            self.json(200, body)
-            return
-        if path == "/api/konsol/islemler":
-            self.json(200, {"items": self.panel.actions()})
+            self.package_account(user, m.group(1), query.get("parola") == ["1"])
             return
         m = re.match(r"^/api/uygulama/([a-z]{2,16})(/.*)?$", path)
         if m:
@@ -2779,6 +2708,141 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.audit(user, "konteyner-" + result["action"], result["name"], True)
         self.json(202, result)
 
+    # DD-266 (phase 4a): the Podman reads, unchanged from the current Konsol's routes.
+    def container_read(self, read):
+        try:
+            self.json(200, read())
+        except master_containers.ContainerError as err:
+            self.error(err.status, str(err))
+
+    def container_view(self):
+        # Older state files retain their read-only view until the installer provisions the manager's
+        # private store and workers.
+        if read_env(self.panel.args.state).get("KONTEYNER_STATE_DIR"):
+            return self.panel.containers.view()
+        return master_containers.Containers(lambda argv, timeout: self.panel.run_tool(argv, timeout=timeout))
+
+    def api_konteyner_listesi(self, query):
+        self.container_read(lambda: self.container_view().liste())
+
+    def api_konteyner_ayrintisi(self, query):
+        self.container_read(lambda: self.container_view().ayrinti(master_containers.name_of(query.get("ad", [""])[0])))
+
+    def api_konteyner_gunlugu(self, query):
+        self.container_read(lambda: self.container_view().gunluk(master_containers.name_of(query.get("ad", [""])[0]),
+                                                                 query.get("satir", ["200"])[0]))
+
+    def api_konteyner_guncellemeleri(self, query):
+        # DD-214: image update status from registry manifests; cached, ?yenile=1 asks again.
+        def read():
+            if not read_env(self.panel.args.state).get("KONTEYNER_STATE_DIR"):
+                raise master_containers.ContainerError(503, "Konteyner yönetimi henüz hazır değil; kurulumu yeniden çalıştırın.")
+            return self.panel.containers.updates(force="yenile" in query)
+        self.container_read(read)
+
+    def api_konteyner_isi(self, query):
+        self.container_read(lambda: self.panel.containers.operation(query.get("id", [""])[0]))
+
+    # DD-149: a package's account (from a root-only file). The password goes out only with ?parola=1,
+    # asked for in so many words, and the audit says only that it was shown; it is written nowhere.
+    def package_account(self, user, mid, reveal):
+        # DD-200: only an installed package whose manifest says PAKET_HESAP=1; the line is the engine's
+        # contract: user, gecici|ayarli [, temporary password]. The address comes from the publication.
+        env = read_env(self.panel.args.state)
+        manifest = master_settings.read_manifests(env).get(mid, {})
+        if manifest.get("PAKET_HESAP") != "1" or not self.panel.module_state(mid, env):
+            self.error(404, "bu modülde hesap yok")
+            return
+        rc, out, message = self.panel.modul("hesap", mid, *(["--parola"] if reveal else []))
+        fields = out.rstrip("\n").split("\t") if rc == 0 else []
+        temp = len(fields) >= 2 and fields[1] == "gecici"
+        if len(fields) not in (2, 3) or (reveal and temp and len(fields) != 3):
+            self.error(404, message or "hesap yok")
+            return
+        host = ""
+        info = master_publications.packages(env).get(mid)
+        if info and env.get("LOCAL_DOMAIN"):
+            host = "%s.%s" % (info["local"], env["LOCAL_DOMAIN"])
+        body = {"user": fields[0], "temp": temp, "host": host}
+        if reveal and temp:
+            body["pass"] = fields[2]
+            self.audit(user, "modul-hesap", mid, True)
+        self.json(200, body)
+
+    def api_uygulama_hesabi(self, query):
+        kind, _, mid = query.get("id", [""])[0].partition(":")
+        if kind != "paket" or not MODULE_ID_RE.match(mid):
+            self.error(404, "bu uygulamada hesap yok")
+            return
+        self.package_account(self.request_user, mid, query.get("parola") == ["1"])
+
+    def api_klasorler(self, query):
+        try:
+            self.json(200, {"items": master_settings.Manager(self.panel.args.state).folders(query.get("path", [None])[0])})
+        except (master_settings.SettingsError, OSError, KeyError, ValueError) as err:
+            self.error(400, str(err) if isinstance(err, master_settings.SettingsError) else "Ayarlar okunamadı.")
+
+    # DD-266: Sistem — the account and this session, the update, the reboot, the repair log, the audit log.
+    def api_oturum(self, query):
+        try:
+            # DD-205: the user name is shown to the tailnet (trusted device), not to an anonymous internet visitor.
+            self.json(200, dict(self.panel.auth().status(self.cookie_token(), reveal=self.channel() != "internet"), kanal=self.channel()))
+        except master_auth.AuthError as err:
+            self.error(err.status, str(err))
+        except OSError:
+            self.error(503, "Konsol hesap kaydı okunamadı; kurulumu yeniden çalıştırın.")
+
+    def api_oturum_kur(self, user, data):
+        self.account_post("/api/konsol/oturum/kur", data)
+
+    def api_oturum_cikis(self, user, data):
+        self.account_post("/api/konsol/oturum/cikis", data)
+
+    def api_hesap_parola(self, user, data):
+        self.account_post("/api/konsol/hesap/parola", data)
+
+    def api_guncelleme_baslat(self, user, data):
+        if self.channel() == "internet":
+            self.error(403, "Güncelleme yalnız Tailscale adresinden başlatılır.")
+            return
+        try:
+            version = self.panel.update_start(data)
+        except master_update.UpdateError as err:
+            self.error(err.status, str(err))
+            return
+        self.audit(user, "guncelleme", version, True)
+        self.json(202, {"surum": version})
+
+    def api_yeniden_baslat(self, user, data):
+        # DD-246: like the update and the repair, only from a Tailscale device (or root on the socket).
+        if self.channel() == "internet":
+            self.error(403, "Yeniden başlatma yalnız Tailscale adresinden istenir.")
+            return
+        try:
+            delay = self.panel.reboot_start()
+        except master_update.UpdateError as err:
+            self.audit(user, "yeniden-baslat", str(err), False)
+            self.error(err.status, str(err))
+            return
+        self.audit(user, "yeniden-baslat", "%d sn" % delay, True)
+        self.json(202, {"sure": delay})
+
+    def api_onarim_gunlugu(self, query):
+        try:
+            text = self.panel.repair_log(query.get("sure", ["72s"])[0])
+        except master_update.UpdateError as err:
+            self.error(err.status, str(err))
+            return
+        self.send(200, text.encode("utf-8"), "text/plain; charset=utf-8")
+
+    def api_islemler(self, query):
+        self.json(200, {"items": self.panel.actions()})
+
+    # DD-266: Gelişmiş — the effective Caddy and dnsmasq configuration, from the settings view's cache.
+    def api_gelismis(self, query):
+        view = self.panel.settings(fresh="yenile" in query)
+        self.json(200, {"read_at": view["read_at"], "caddy": view["web"], "dnsmasq": view["dns"]})
+
     def api_uygulamalar(self, query):
         self.json(200, self.panel.uygulamalar())
 
@@ -2800,6 +2864,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         sid, eylem = data["id"], data["eylem"]
         kind, _, key = sid.partition(":")
         try:
+            if eylem == "kur":
+                # DD-266: a catalogue package, installed as from App Store (DD-148), with its form (DD-210).
+                if kind != "paket" or not MODULE_ID_RE.match(key) or key not in [m["id"] for m in self.panel.modules()]:
+                    raise ApiError(404, "Bu paket App Store'da yok.")
+                code, message = self.panel.module_install(key, data.get("form"))
+                self.audit(user, "modul-kur", key, code == 202)
+                if code != 202:
+                    raise ApiError(code, message)
+                self.json(202, {"id": sid, "eylem": eylem, "is": None})
+                return
             if kind == "paket" and MODULE_ID_RE.match(key) and eylem != "guncelle":
                 if key not in [m["id"] for m in self.panel.modules() if m.get("installed")]:
                     raise ApiError(404, "Bu uygulama kurulu değil.")
@@ -2987,8 +3061,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             getattr(self, "api_" + route.name)(user, data)
             return
-        if path in ("/api/konsol/oturum/kur", "/api/konsol/oturum/giris",
-                    "/api/konsol/oturum/cikis", "/api/konsol/hesap/parola"):
+        if path == "/api/konsol/oturum/giris":
             self.account_post(path, data)
             return
         if path == "/api/konsol/duzen":
@@ -3023,32 +3096,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self.audit(user, "favori", detail, True)
             self.json(200, {"favoriler": items})
-            return
-        if path == "/api/konsol/yeniden-baslat":
-            # DD-246: like the update and the repair, only from a Tailscale device (or root on the socket).
-            if self.channel() == "internet":
-                self.error(403, "Yeniden başlatma yalnız Tailscale adresinden istenir.")
-                return
-            try:
-                delay = self.panel.reboot_start()
-            except master_update.UpdateError as err:
-                self.audit(user, "yeniden-baslat", str(err), False)
-                self.error(err.status, str(err))
-                return
-            self.audit(user, "yeniden-baslat", "%d sn" % delay, True)
-            self.json(202, {"sure": delay})
-            return
-        if path == "/api/konsol/guncelleme":
-            if self.channel() == "internet":
-                self.error(403, "Güncelleme yalnız Tailscale adresinden başlatılır.")
-                return
-            try:
-                version = self.panel.update_start(data)
-            except master_update.UpdateError as err:
-                self.error(err.status, str(err))
-                return
-            self.audit(user, "guncelleme", version, True)
-            self.json(202, {"surum": version})
             return
         share_actions = {"kaydet": "save", "durum": "pause", "kaldir": "remove"}
         if path in {"/api/konsol/paylasim/" + name for name in share_actions}:

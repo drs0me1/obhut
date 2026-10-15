@@ -3608,8 +3608,12 @@ PY
     # The base read mapper stays read-only; manager writes have one gated route and an external worker.
     grep -qF 'atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"' "$V2_ROOT/install.sh"
     grep -qF 'konteynerler.css konteynerler.js giris.html giris.js giris.css duzenleyici.js obhut.svg obhut.png; do' "$V2_ROOT/install.sh"
-    grep -qF 'm = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk|islem|guncellemeler)$", path)' "$V2_ROOT/panel/master-panel"
-    [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 1 ]
+    # DD-266: the reads are table routes too, on the same view; no Podman path is matched by hand.
+    for read in liste ayrinti gunluk guncellemeler islem; do
+        grep -qF "Route(\"GET\", \"/api/konsol/konteynerler/$read\"," "$V2_ROOT/panel/master_api.py"
+    done
+    grep -qF 'return self.panel.containers.view()' "$V2_ROOT/panel/master-panel"
+    [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 0 ]
     # DD-265: the one write route is declared in the route table and goes to the same broker.
     grep -qF 'Route("POST", "/api/konsol/konteynerler/islem", "konteyner_islemi",' "$V2_ROOT/panel/master_api.py"
     grep -qF 'self.panel.containers.submit(data)' "$V2_ROOT/panel/master-panel"
