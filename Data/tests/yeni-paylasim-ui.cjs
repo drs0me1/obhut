@@ -674,9 +674,9 @@ async function openShares(page, extra = "") {
     await page.getByTestId("share-boundary-toggle").click();
     assert.doesNotMatch(await page.getByTestId("share-boundary-more").innerText(), /şifrelemeden/);
     // The transports not published: the switches of closed connections wait; the way to Erişim.
-    const closedWan = { available: false, address: "", domain: "", mode: "off", scheme: "", port: 443, reason: "İnternet paylaşımı kapalı. Ayarlar → Caddy bölümünde HTTPS alan adı kaydedin." };
+    const closedWan = { available: false, address: "", domain: "", mode: "off", scheme: "", port: 443, reason: "İnternet paylaşımı kapalı. Erişim → Adresler bölümünde HTTPS alan adı kaydedin." };
     shares = view({ wan: closedWan, tail_enabled: false, items: view().items.map((s) => (s.id === A ? { ...s, connections: {
-      tailscale: conn({ enabled: false, active: false, available: false, reason: "Ayarlar → Caddy bölümünde Tailscale erişimi kapalı.", url: "" }),
+      tailscale: conn({ enabled: false, active: false, available: false, reason: "Erişim → Adresler bölümünde Tailscale erişimi kapalı.", url: "" }),
       wan: conn({ enabled: false, active: false, available: false, reason: closedWan.reason, url: "" }) } } : s)) });
     await page.reload();
     await card(page, A).waitFor();

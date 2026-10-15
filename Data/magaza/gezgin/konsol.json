@@ -11,7 +11,7 @@
     ],
     [
       "globe",
-      "gezgin.__LOCAL_DOMAIN__ adı eklenir (arayüz yalnız sunucuda dinler); internet adı Ayarlar → Caddy'den isteğe bağlı"
+      "gezgin.__LOCAL_DOMAIN__ adı eklenir (arayüz yalnız sunucuda dinler); internet adı Erişim → Adresler'den isteğe bağlı"
     ],
     [
       "folder",

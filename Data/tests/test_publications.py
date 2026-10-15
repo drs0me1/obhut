@@ -120,7 +120,7 @@ class PublicationTests(unittest.TestCase):
         self.assertIn("Tailscale", str(err.exception))
         with self.assertRaises(settings.SettingsError) as err:
             self.m.apply(self.panel())
-        self.assertIn("Konsol hesabı bölümünde", str(err.exception))
+        self.assertIn("Sistem → Hesap bölümünde", str(err.exception))
         self.assertFalse((self.root / "sites/panel-wan.caddy").exists())
         with self.assertRaises(settings.SettingsError):
             self.m.validate(self.panel(domain="dav.example.net"))
@@ -164,7 +164,7 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(self.wan_firewall()[0], "0")
         row = pubs.status(self.env)[0]
         self.assertEqual(row["status"], "error")
-        self.assertIn("Konsol hesabı bölümünde oluşturun", row["message"])
+        self.assertIn("Sistem → Hesap bölümünde oluşturun", row["message"])
 
     def legacy_http(self):
         # A fresh install: no HTTPS setting and no WebDAV row, so WebDAV is in legacy consent-gated HTTP mode.

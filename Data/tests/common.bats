@@ -2500,7 +2500,7 @@ assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progres
     [ "$(pc /api/uygulama/wireguard/state -H 'X-Konsol: 1')" = 404 ]
     grep -q 'WireGuard kurulu değil' "$TMP/body"
     [ "$(pc /api/uygulama/wireguard/nets "${json[@]}" --data '{"port":"61011","dns":"1.1.1.1","label":""}')" = 409 ]
-    grep -q 'WireGuard kurulu değil; Konsol → App Store' "$TMP/body"
+    grep -q "WireGuard kurulu değil; Uygulamalar'daki katalogdan kurun" "$TMP/body"
     [ "$(pc /api/uygulama/wireguard/nets/wg0/peers/iphone/add "${json[@]}" --data '{}')" = 409 ]
     [ "$(pc /api/uygulama/wireguard/nets/wg0/peers/iphone/profile -H 'X-Konsol: 1')" = 404 ]
     [ "$(cat "$TMP/mwg-calls" 2>/dev/null | wc -l | tr -d ' ')" = "$before" ]
@@ -2767,7 +2767,7 @@ EOF
     # DD-205: no setup code anywhere — the summary names the passwordless tailnet and the Settings card.
     run ! grep -qE 'konsol_login_summary|ilk giriş kodu|master_auth.py" --state "\$STATE_FILE" kod' "$V2_ROOT/install.sh"
     grep -qF "Tailscale'den parolasız" "$V2_ROOT/install.sh"
-    grep -qF 'Ayarlar → Sistem → Konsol hesabı' "$V2_ROOT/install.sh"
+    grep -qF 'önce Sistem → Hesap' "$V2_ROOT/install.sh"
     run ! grep -qE '"kod"|sub.add_parser\("kod"' "$auth"
     [ -x "$V2_ROOT/scripts/master-konsol" ]
 }
@@ -5309,7 +5309,7 @@ PY
     [ "${lines[3]}" = "  Gezgin: kurulu — http://gezgin.ayc; giriş Gezgin hesabıyla" ]
     [ "${lines[4]}" = "  Paylaşım: kurulu, durduruldu — Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni" ]
     # DD-208: Podman is base infrastructure, printed with its version, not as an App Store line.
-    grep -qF 'Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Podman)' "$V2_ROOT/install.sh"
+    grep -qF 'Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Gelişmiş → Podman)' "$V2_ROOT/install.sh"
     # DD-196: the WireGuard usage note is printed only with the package installed.
     awk '/^print_summary\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx '\$(summary_modules)\$(summary_notes)'
     run ! grep -q "Paylaşım: Konsol → Modüller'den kurulur" "$V2_ROOT/install.sh"
@@ -5451,7 +5451,7 @@ assert [r for r in routes if r[1] != "redirect"] == [
     ("/api/uygulama/* /api/konsol/*", "proxy", "unix//run/master-panel/api.sock"),
     ("/api/sistem/*", "proxy", "unix//run/master-sistem-dosya/api.sock"), ("/api/*", "proxy", "127.0.0.1:61009"), ("", "files", "")], web["panel.ayc"]
 # DD-267: the interface's old /yeni and /yeni/* addresses are redirected before the routes.
-assert [r[1] for r in routes[:2]] == ["redirect", "redirect"] and len(routes) == 6, routes
+assert routes[:2] == [("/yeni", "redirect", "/"), ("/yeni/*", "redirect", "/")] and len(routes) == 6, routes
 assert "health.ayc" not in web
 assert web["paylas.ayc"]["source"] == "paylasim" and web["100.64.0.7:61010"]["source"] == "paylasim"
 assert web["torrent.ayc"]["routes"][0]["to"] == "127.0.0.1:61006"

@@ -3,7 +3,7 @@
 
 Tailscale adresinde oturum sorulmaz: cihazı Tailscale doğrular, kök backend Caddy'nin oturum
 sorusuna orada hep "geç" der. Hesap (kullanıcı adı + parola) internet adresinin anahtarıdır;
-operatör onu Tailscale'den Ayarlar → Sistem → Konsol hesabı bölümünde oluşturur. Parola yalnız
+operatör onu Tailscale'den Sistem → Hesap bölümünde oluşturur. Parola yalnız
 scrypt özeti, oturum belirteci yalnız SHA-256 özeti olarak saklanır. Kök backend (master-panel)
 bu modülü içe aktarır; `master-konsol` (root CLI) aynı dosyaları aynı kilitle değiştirir:
 durum, sıfırlama ve kısa ömürlü otomasyon oturumu.
@@ -54,7 +54,7 @@ PUBLIC_BLOCK_SECONDS = 900
 # check needs 16 MiB, and one HTTP/2 connection can carry many requests.
 HASH_SLOTS = 2
 HASH_WAIT_SECONDS = 10
-NO_ACCOUNT = "Konsol hesabı yok; Tailscale adresinden Ayarlar → Sistem → Konsol hesabı bölümünde oluşturun."
+NO_ACCOUNT = "Konsol hesabı yok; Tailscale adresinden Sistem → Hesap bölümünde oluşturun."
 BAD_LOGIN = "Kullanıcı adı veya parola hatalı."
 
 
@@ -444,7 +444,7 @@ def main():
         elif args.action == "sifirla":
             store.reset()
             print("Konsol hesabı ve tüm oturumlar silindi; internet adresi kapandı.")
-            print("Yeni hesap: Tailscale'den http://panel.%s → Ayarlar → Sistem → Konsol hesabı."
+            print("Yeni hesap: Tailscale'den http://panel.%s → Sistem → Hesap."
                   % env.get("LOCAL_DOMAIN", ""))
         elif args.action == "oturum-ac":
             print(store.automation_session(args.sure))

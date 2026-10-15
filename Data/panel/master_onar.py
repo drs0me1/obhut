@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """DD-239/DD-241: master-onar — the operator's check-and-repair run (root).
 
-Started from Konsol (Ayarlar → Sistem → Sağlık, as its own unit) or over SSH (`sudo master-onar`).
+Started from Konsol (Sistem → Sağlık, as its own unit) or over SSH (`sudo master-onar`).
 Nothing here runs on a schedule except the hourly firewall-only check (`--duvar`). Fixed, bounded steps
 over what the installer itself set up; it puts the installer's own settings back (its sysctl files,
 the Tailscale flags it sets, its units and timers, its file modes) and never writes new configuration,
@@ -286,7 +286,7 @@ class Repair:
         now = self.iface_ipv4(iface)
         if now == saved:
             return "ok", "WAN adresi değişmemiş (%s)" % saved
-        return "sorun", "Kayıtlı %s, şimdiki %s; kurulumu yeniden çalıştırın (Ana Menü → Güncelle ya da curl satırı)" % (saved, now or "yok")
+        return "sorun", "Kayıtlı %s, şimdiki %s; kurulumu yeniden çalıştırın (Sistem → Güncellemeler ya da curl satırı)" % (saved, now or "yok")
 
     # -- units
     def timers(self):
@@ -541,7 +541,7 @@ class Repair:
             return "sorun", "podman çalışmıyor (%s)" % last_line(err)
         table = self.env.get("KONTEYNER_NFT_TABLE", "")
         if table and run(["nft", "list", "table", "inet", table], timeout=15)[0] != 0:
-            return "sorun", "Konteyner koruma tablosu (inet %s) yok; Podman sayfasından ya da kurulumla yeniden kurulur" % table
+            return "sorun", "Konteyner koruma tablosu (inet %s) yok; bir konteyner işlemi ya da kurulum yeniden kurar" % table
         return "ok", "Podman çalışıyor" + (", konteyner koruması yerinde" if table else "")
 
     def wireguard(self):
@@ -586,7 +586,7 @@ class Repair:
             pass
         if state.get("durum") == "calisiyor" and unit_props([self.env.get("GUNCELLEME_UNIT", "master-guncelle.service")]).get(
                 self.env.get("GUNCELLEME_UNIT", "master-guncelle.service"), {}).get("ActiveState") != "active":
-            notes.append("güncelleme yarıda kalmış (%s); Ana Menü → Güncelle ile yeniden deneyin" % state.get("hedef", "?"))
+            notes.append("güncelleme yarıda kalmış (%s); Sistem → Güncellemeler'den yeniden deneyin" % state.get("hedef", "?"))
         pending = self.env.get("SETTINGS_PENDING_FILE", "")
         if pending and os.path.exists(pending):
             notes.append("Ayarlar'da onay ya da geri alma bekleyen bir işlem var")

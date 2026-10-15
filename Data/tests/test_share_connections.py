@@ -236,7 +236,7 @@ class ShareConnectionTests(unittest.TestCase):
         self.publish.reset_mock()
         with self.assertRaises(shares.ShareError) as error:
             self.manager.change("save", {"id": created["id"], "connections": {"tailscale": {"enabled": True}}})
-        self.assertIn("Ayarlar → Caddy", str(error.exception))
+        self.assertIn("Erişim → Adresler", str(error.exception))
         self.restart.assert_not_called()
         self.save(connections={"tailscale": {"enabled": False}})
         self.restart.reset_mock()

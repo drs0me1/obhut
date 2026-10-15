@@ -925,7 +925,7 @@ reapply_modules() {
         if "$SBIN_DIR/master-modul" uygula "$id" >/dev/null; then
             rm -f -- "${MODULES_PENDING_DIR:?}/$id"
         else
-            log WARN "Uygulama $id yeniden uygulanamadı; bir sonraki kurulum yeniden dener. Konsol → App Store'dan bakın"
+            log WARN "Uygulama $id yeniden uygulanamadı; bir sonraki kurulum yeniden dener. Konsol → Uygulamalar'dan bakın"
         fi
     done
     # DD-196/201: kurulu olmayan bir paketin bildirdiği araç ya da birim eki sunucuda durmaz
@@ -1734,11 +1734,11 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-Konsol: http://panel.${LOCAL_DOMAIN} (Dosyalar, App Store ve Ayarlar; Tailscale'den parolasız)
-  İnternetten HTTPS isteğe bağlı: önce Ayarlar → Sistem → Konsol hesabı (kullanıcı adı + parola),
-  sonra Ayarlar → Caddy → Panel (DNS A kaydı gerekir).
-  Kaynak kullanımı sol menüde; sistem bilgisi ve günlük Ayarlar içinde.
-Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Podman)
+Konsol: http://panel.${LOCAL_DOMAIN} (Genel Bakış, Uygulamalar, Erişim, Dosyalar, Sistem; Tailscale'den parolasız)
+  İnternetten HTTPS isteğe bağlı: önce Sistem → Hesap (kullanıcı adı + parola),
+  sonra Erişim → Adresler → Konsol (DNS A kaydı gerekir).
+  Sağlık, güncelleme ve günlük Sistem'de; uygulamalar Uygulamalar'da.
+Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Gelişmiş → Podman)
 Yerleşik Dosyalar/WebDAV ve App Store uygulamaları ($(paket_katalog_adlar)):
 $(summary_modules)$(summary_notes)
 Tailscale IP: refresh-tailnet-config → Caddy

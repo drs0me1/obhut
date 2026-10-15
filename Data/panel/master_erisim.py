@@ -149,7 +149,7 @@ def add_container(row, item, env, labels, partial, warnings):
                 warnings.append(warning("warn", row["id"], "%s: %s doğrudan internete açık; şifreleme ve giriş uygulamanın kendisinde."
                                         % (row["ad"], text), "uygulama", row["id"]))
         else:
-            warnings.append(warning("warn", row["id"], "%s: %s adresindeki yayın tanınmıyor; Podman sayfasından denetleyin."
+            warnings.append(warning("warn", row["id"], "%s: %s adresindeki yayın tanınmıyor; uygulamanın sayfasından denetleyin."
                                     % (row["ad"], text), "uygulama", row["id"]))
 
 
@@ -177,7 +177,7 @@ def share_row(env, pub, shares, wireguard, warnings):
                                 "%d klasör" % len(active["tailscale"]))
     else:
         reason = ("WebDAV hizmeti çalışmıyor." if not shares.get("running") else
-                  "Ayarlar → Caddy bölümünde Tailscale erişimi kapalı." if not shares.get("tail_enabled") else
+                  "Erişim → Adresler bölümünde Tailscale erişimi kapalı." if not shares.get("tail_enabled") else
                   "Tailscale'den paylaşılan klasör yok.")
         row["tailscale"] = cell("kapali", (), reason)
     wan = shares.get("wan") or {}

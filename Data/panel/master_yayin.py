@@ -107,7 +107,7 @@ def candidates(env, rows, packages, containers, wan_ready=True):
             out.append(item("konteyner:" + c["name"], "konteyner", c["name"], row, konteyner=info, internet_engel=no_wan))
         else:
             reason = "" if local or own else ("Konsol dışında yönetilen bu konteynerin yalnız bu sunucuda dinleyen portu yok; "
-                                              "önce Podman sayfasından sahiplenin.")
+                                              "önce Uygulamalar'da yönetime alın.")
             out.append(item("konteyner:" + c["name"], "konteyner", c["name"], None, konteyner=info,
                             yerel_ad=None, kullanilabilir=not reason, neden=reason, internet_engel=no_wan))
     for sid, row in sorted(manual.items()):
@@ -167,8 +167,8 @@ def plan(env, request, cands, settings_plan, container_detail, pick_port):
             require(bool(number(inner)), "Uygulamanın konteyner içinde dinlediği portu yazın (ör. 8080).")
             row = container_detail(box["ad"])
             config = copy.deepcopy(row.get("config") or {})
-            require(bool(config) and "save" in (row.get("actions") or []), "Bu konteynerin ayarları buradan değiştirilemez; Podman sayfasından bakın.")
-            require(config.get("network") != "none", "Ağsız bir konteyner port yayımlayamaz; önce Podman sayfasından bir ağ seçin.")
+            require(bool(config) and "save" in (row.get("actions") or []), "Bu konteynerin ayarları buradan değiştirilemez; uygulamanın Ayarlar sekmesine bakın.")
+            require(config.get("network") != "none", "Ağsız bir konteyner port yayımlayamaz; önce uygulamanın Ayarlar sekmesinden bir ağ seçin.")
             port = pick_port()
             config["ports"] = list(config.get("ports") or []) + [
                 {"scope": "local", "host_port": port, "container_port": inner, "protocol": "tcp", "public_ack": False}]

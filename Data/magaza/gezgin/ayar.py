@@ -374,7 +374,7 @@ def main():
             elif args.action == "konteyner-guncelle":
                 result = konteyner_guncelle(env, data, args.state)
             else:
-                raise ContainerEditError("Gezgin'in Podman sayfasında düzenlenecek ayarı yok; ayarları Gezgin'in içindedir.", 400)
+                raise ContainerEditError("Gezgin'in Konsol'da düzenlenecek konteyner ayarı yok; ayarları Gezgin'in içindedir.", 400)
         print(json.dumps(result, ensure_ascii=False))
     except (settings.SettingsError, ValueError, KeyError, TypeError, OSError, RecursionError) as err:
         message = str(err) if isinstance(err, settings.SettingsError) else "Gezgin işlemi uygulanamadı."

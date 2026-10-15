@@ -163,7 +163,7 @@ TRAFFIC_CACHE_SECONDS = 2
 # DD-261: at most one background image-update check (DD-214) a minute from the read model.
 UPDATE_KICK_SECONDS = 60
 IFACE_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,15}$")
-# DD-246: Ayarlar → Sistem → "Yeniden başlat": a transient timer runs `systemctl reboot` a few seconds later.
+# DD-246: Sistem → Sunucu → "Yeniden başlat": a transient timer runs `systemctl reboot` a few seconds later.
 REBOOT_UNIT = "master-yeniden-baslat"
 REBOOT_DELAY_SECONDS = 5
 
@@ -461,7 +461,14 @@ def parse_caddy(text, ts_ip, source, snippets=None):
         elif tokens[0] == "respond":
             cur["routes"].append({"path": ctx[-1], "kind": "respond", "to": " ".join(tokens[1:]).split('"')[1] if '"' in line else ""})
         elif tokens[0] == "redir" and len(tokens) >= 2:
-            cur["routes"].append({"path": ctx[-1], "kind": "redirect", "to": tokens[1]})
+            # `redir [matcher] <to> [code]`: a path or a named matcher before the target is the route's path.
+            if len(tokens) >= 3 and tokens[1].startswith("/"):
+                path, to = tokens[1], tokens[2]
+            elif len(tokens) >= 3 and tokens[1].startswith("@"):
+                path, to = matchers.get(tokens[1][1:]) or tokens[1], tokens[2]
+            else:
+                path, to = ctx[-1], tokens[1]
+            cur["routes"].append({"path": path, "kind": "redirect", "to": to})
     return sites
 
 
@@ -936,7 +943,7 @@ class Panel:
                 return 400, "bu uygulama kurulum bilgisi almaz"
             return self.module_spawn(mid, "kur", False)
         if not isinstance(form, dict):
-            return 400, "Kurulum bilgileri gerekli; App Store'daki pencereden kurun."
+            return 400, "Kurulum bilgileri gerekli; Uygulamalar'daki katalogdan kurun."
         here = os.path.realpath(os.path.join(env.get("MODULES_DIR", ""), mid))
         script = os.path.join(here, script_name)
         if not API_FILE_RE.match(script_name) or not os.path.realpath(script).startswith(here + os.sep) or not env.get("RUNTIME_DIR"):
@@ -2089,7 +2096,7 @@ class Panel:
                 raise ApiError(502, message or "Günlük okunamadı.")
             rows = [l for l in out.splitlines() if l.strip()]
             return {"satirlar": rows[-count:], "kesik": len(rows) > count}
-        raise ApiError(404, "Yerleşik uygulamaların günlüğü Ayarlar → Günlük bölümündedir.")
+        raise ApiError(404, "Yerleşik uygulamaların günlüğü Sistem → Günlük bölümündedir.")
 
     def pending(self):
         """The settings change waiting for confirmation or rollback (the page's banner)."""
@@ -2773,7 +2780,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if eylem == "kur":
                 # DD-266: a catalogue package, installed as from App Store (DD-148), with its form (DD-210).
                 if kind != "paket" or not MODULE_ID_RE.match(key) or key not in [m["id"] for m in self.panel.modules()]:
-                    raise ApiError(404, "Bu paket App Store'da yok.")
+                    raise ApiError(404, "Bu paket katalogda yok.")
                 code, message = self.panel.module_install(key, data.get("form"))
                 self.audit(user, "modul-kur", key, code == 202)
                 if code != 202:
@@ -2924,7 +2931,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if api is None:
             name = manifest.get("PAKET_AD") or mid
             if self.command == "POST":
-                self.error(409, "%s kurulu değil; Konsol → App Store'dan kurun" % name)
+                self.error(409, "%s kurulu değil; Uygulamalar'daki katalogdan kurun" % name)
             else:
                 self.error(404, "%s kurulu değil" % name)
             return

@@ -91,7 +91,7 @@ class CandidateTests(unittest.TestCase):
                          "a UDP port is not a web interface")
         outside = by_id(items, "konteyner:dis")
         self.assertEqual((outside["kullanilabilir"], outside["konteyner"]["kaynak"]), (False, "dis"))
-        self.assertIn("sahiplenin", outside["neden"])
+        self.assertIn("yönetime alın", outside["neden"])
 
     def test_no_public_address_blocks_every_internet_name(self):
         items = cands(wan=False)
@@ -164,7 +164,7 @@ class PlanTests(unittest.TestCase):
 
     def test_refusals_and_a_failing_check(self):
         for request, text in ((self.request("konteyner:yok"), "bulunamadı"),
-                              (self.request("konteyner:dis"), "sahiplenin"),
+                              (self.request("konteyner:dis"), "yönetime alın"),
                               (self.request("konteyner:medya", yerel="Medya!"), "Tailscale adı"),
                               (self.request("konteyner:medya", ad=""), None)):
             with self.subTest(request=request):

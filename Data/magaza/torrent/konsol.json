@@ -8,7 +8,7 @@
     ["box", "linuxserver/qbittorrent imajı __TORRENT_SURUM__, özetiyle sabit; Konsol yeni sürümü denetler, siz onaylayınca günceller"],
     ["globe", "torrent.__LOCAL_DOMAIN__ adı eklenir (arayüz yalnız sunucuda dinler)"],
     ["folder", "İndirme yeri __DOWNLOADS_PATH__, profil __TORRENT_PROFILE_DIR__"],
-    ["info", "Eş portu (TCP+UDP) yalnız sunucunun WAN IPv4 adresinde internete açılır; Tailscale'de ve başka adreste port yok. Numarası Podman sayfasında görünür ve orada değiştirilebilir"]
+    ["info", "Eş portu (TCP+UDP) yalnız sunucunun WAN IPv4 adresinde internete açılır; Tailscale'de ve başka adreste port yok. Numarası uygulamanın Ayarlar sekmesinde görünür ve orada değiştirilebilir"]
   ],
   "notlar": ["Podman konteyneri · __TORRENT_CONTAINER__", "arayüz yalnız sunucu"],
   "gunluk_kaynak": "journalctl -u __TORRENT_CONTAINER__.service",

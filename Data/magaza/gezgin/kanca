@@ -38,7 +38,7 @@ paket_birim() {
 gezgin_eski_yok() {
     local unit
     [[ -z "${KONTEYNER_STATE_DIR:-}" || ! -e "$KONTEYNER_STATE_DIR/definitions/$GEZGIN_CONTAINER.json" ]] ||
-        fail_step "Konsol'da '$GEZGIN_CONTAINER' adlı bir konteyner tanımı var; önce Podman sayfasından kaldırın"
+        fail_step "Konsol'da '$GEZGIN_CONTAINER' adlı bir konteyner tanımı var; önce Uygulamalar'dan kaldırın"
     podman container exists "$GEZGIN_CONTAINER" >/dev/null 2>&1 || return 0
     unit="$(podman container inspect --format '{{index .Config.Labels "PODMAN_SYSTEMD_UNIT"}}' "$GEZGIN_CONTAINER" 2>/dev/null || true)"
     [[ "$unit" == "$(gezgin_unit_name)" ]] ||
@@ -173,7 +173,7 @@ gezgin_drop_data() {
 
 paket_kur() {
     paket_gerekli
-    [[ -n "${KUR_TOHUM:-}" ]] || fail_step "kurulum bilgileri yok; Konsol → App Store'daki pencereden kurun"
+    [[ -n "${KUR_TOHUM:-}" ]] || fail_step "kurulum bilgileri yok; Konsol → Uygulamalar'daki katalogdan kurun"
     gezgin_eski_yok
     progress_step 1 "İmaj indiriliyor"
     paket_imaj_cek || fail_step "$FAIL"

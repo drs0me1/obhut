@@ -74,7 +74,7 @@ function candidates() {
       onerilen_port: 8096 }) }),
     cand({ id: "konteyner:kutu", tur: "konteyner", ad: "kutu", konteyner: box({ ad: "kutu", onerilen_port: null }) }),
     cand({ id: "konteyner:dis", tur: "konteyner", ad: "dis", kullanilabilir: false,
-      neden: "Konsol dışında yönetilen bu konteynerin yalnız bu sunucuda dinleyen portu yok; önce Podman sayfasından sahiplenin.",
+      neden: "Konsol dışında yönetilen bu konteynerin yalnız bu sunucuda dinleyen portu yok; önce Uygulamalar'da yönetime alın.",
       konteyner: box({ ad: "dis", kaynak: "dis", port_eklenebilir: false }) }),
     cand({ id: "elle:yazici", tur: "elle", ad: "Yazıcı", servis: "elle-yazici", yerel_ad: "yazici.ev", tailscale: true, hedef: "127.0.0.1:631", mesaj: "Hedef yanıt vermiyor." }),
     cand({ id: "paylasim", tur: "paylasim", ad: "WebDAV paylaşımları", servis: "paylasim", yerel_ad: "paylas.ev", tailscale: true, durum: "http", mesaj: "HTTPS alan adı tanımlanmadı.",
@@ -359,7 +359,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     assert.match(await torrentRow.locator('[data-hucre="durum"]').innerText(), new RegExp(`Sertifika hazır[\\s\\S]*Sertifika: ${KEY_DATE}`));
     assert.equal(await pubs.locator('tr[data-yayin="konteyner:medya"] [data-eylem="duzenle"]').innerText(), "Yayınla", "not published yet");
     assert(await pubs.locator('tr[data-yayin="konteyner:dis"] [data-eylem="duzenle"]').isDisabled(), "unavailable");
-    assert.match(await pubs.locator('tr[data-yayin="konteyner:dis"]').innerText(), /sahiplenin/);
+    assert.match(await pubs.locator('tr[data-yayin="konteyner:dis"]').innerText(), /yönetime alın/);
     assert.equal(await pubs.locator('[data-eylem="kaldir"]').count(), 2, "manual addresses (one joined to its container) can be removed");
     assert.equal(await page.getByTestId("dns-hint").locator(".mono").innerText(), "203.0.113.10");
     // Local names: one row per name, the locked one disabled, the operator's record, forwarding.
@@ -556,7 +556,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await options.first().waitFor();
     assert.deepEqual(await options.evaluateAll((ls) => ls.map((l) => l.dataset.aday)), [...candidates().map((c) => c.id), "yeni"]);
     assert(await flow.locator('[data-aday="konteyner:dis"] input').isDisabled(), "an unavailable candidate cannot be chosen");
-    assert.match(await flow.locator('[data-aday="konteyner:dis"]').innerText(), /sahiplenin/);
+    assert.match(await flow.locator('[data-aday="konteyner:dis"]').innerText(), /yönetime alın/);
     await flow.getByTestId("flow-go").click();
     await flow.getByText("Yayımlanacak olanı seçin.").waitFor();
     await flow.locator('[data-aday="panel"]').click();

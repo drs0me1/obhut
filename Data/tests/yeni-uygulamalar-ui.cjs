@@ -141,7 +141,7 @@ h.handlers["/api/konsol/uygulamalar/ayrinti"] = ({ query }) => {
   return { body: { uygulama: item, konteyner: BOXES[id] ?? null, erisim: ACCESS[id] ?? null } };
 };
 h.handlers["/api/konsol/uygulamalar/gunluk"] = ({ query }) => (query.get("id").startsWith("yerlesik:")
-  ? { status: 404, body: { error: "Yerleşik uygulamaların günlüğü Ayarlar → Günlük bölümündedir." } }
+  ? { status: 404, body: { error: "Yerleşik uygulamaların günlüğü Sistem → Günlük bölümündedir." } }
   : { body: { satirlar: LOG, kesik: true } });
 const islemReplies = [];  // replies for the next POSTs, before the default 202
 let jobSeq = 0;
@@ -703,7 +703,7 @@ async function noStyles(page, where) {
     assert.equal(await shareInternet.locator(".warn-text").innerText(), "Şifresiz HTTP");
     expectedFailures = ["/api/konsol/uygulamalar/gunluk"];
     await page.getByRole("tab", { name: "Günlük" }).click();
-    await page.getByTestId("log-error").filter({ hasText: "Yerleşik uygulamaların günlüğü Ayarlar → Günlük bölümündedir." }).waitFor();
+    await page.getByTestId("log-error").filter({ hasText: "Yerleşik uygulamaların günlüğü Sistem → Günlük bölümündedir." }).waitFor();
     assert.equal(await page.getByRole("link", { name: "Sistem → Günlük" }).getAttribute("href"), "#/sistem?sekme=gunluk");
     await page.goto(url("#/uygulamalar/yerlesik:dosya"));
     await page.locator("main h1").filter({ hasText: "Dosyalar" }).waitFor();

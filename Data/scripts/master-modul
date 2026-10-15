@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Mağaza motoru (DD-148, DD-196, DD-197). Temiz kurulum yalnız temeli kurar; uygulamaları
-# Konsol → App Store buradan kurar, başlatır, durdurur ve kaldırır. Konsol'un root arka ucu bu
+# Konsol (Uygulamalar) buradan kurar, başlatır, durdurur ve kaldırır. Konsol'un root arka ucu bu
 # betiği `systemd-run` ile ayrı bir birim olarak çalıştırır: işlem sayfa kapansa da sürer ve
 # ilerleme RUNTIME_DIR/modul-<id>.ilerleme dosyasından okunur. Aynı anda tek işlem yapılır (kilit).
 #
@@ -716,7 +716,7 @@ kur_tohumu_al() { # ID
     trap 'rm -f -- "$KUR_TOHUM" "$KUR_TOHUM.onceki"' EXIT
     [[ -f "$KUR_TOHUM" && ! -L "$KUR_TOHUM" && -O "$KUR_TOHUM" &&
         -n "$(find "$KUR_TOHUM" -maxdepth 0 -type f -perm 0600 -mmin -10 2>/dev/null)" ]] ||
-        fail_step "kurulum bilgileri yok ya da eskidi; Konsol → App Store'daki pencereden kurun"
+        fail_step "kurulum bilgileri yok ya da eskidi; Konsol → Uygulamalar'daki katalogdan kurun"
 }
 
 cmd_kur() {

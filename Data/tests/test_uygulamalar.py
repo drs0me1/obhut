@@ -269,7 +269,7 @@ class DetailAndActionTests(Fixture):
             answer = self.get("/api/konsol/uygulamalar/gunluk?id=paket:wireguard&satir=2")
         modul.assert_called_once_with("gunluk", "wireguard", "2")
         self.assertEqual(answer, {"satirlar": ["b", "c"], "kesik": True})
-        self.assertIn("Ayarlar", self.get("/api/konsol/uygulamalar/gunluk?id=yerlesik:dosya", 404)["error"])
+        self.assertIn("Sistem → Günlük", self.get("/api/konsol/uygulamalar/gunluk?id=yerlesik:dosya", 404)["error"])
 
     def test_one_action_entry_for_packages_and_containers(self):
         with patch.object(self.p, "module_spawn", return_value=(202, "")) as spawn:

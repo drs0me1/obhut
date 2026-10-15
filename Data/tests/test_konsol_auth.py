@@ -312,7 +312,7 @@ class CliTests(unittest.TestCase):
             code, out, _ = self.run_cli("sifirla")
             self.assertEqual(code, 0)
             self.assertIn("http://panel.ev", out)
-            self.assertIn("Ayarlar → Sistem", out)
+            self.assertIn("Sistem → Hesap", out)
             self.assertNotRegex(out, r"[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}")
             self.assertIsNone(self.store.account())
             self.assertEqual(self.run_cli("durum")[1].strip(), auth.NO_ACCOUNT)

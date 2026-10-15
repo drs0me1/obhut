@@ -4,7 +4,7 @@
 # DD-217: konteyner kendi köprü ağındadır (__TORRENT_NETWORK__) ve yalnız aşağıdaki PublishPort satırları
 # açıktır: arayüz yalnız 127.0.0.1'de (Caddy ve yayın oraya gider), eş portu yalnız WAN IPv4 adresinde
 # (TCP+UDP). Tailscale'de ve başka adreste port yoktur; köprüye gelen başka trafiği Konsol'un yönlendirme
-# koruması düşürür. DD-221: Podman sayfasında değişen arayüz ya da eş portu bu satırları (ve eş portunda
+# koruması düşürür. DD-221: uygulamanın Ayarlar sekmesinde değişen arayüz ya da eş portu bu satırları (ve eş portunda
 # TORRENTING_PORT'u) kalıcı seçimle birlikte günceller; kurulum aynı değerle yeniden yazar. Konteyner yalnız profili
 # (/config) ve indirme klasörünü aynı yolla görür; çöp ve paylaşım kökü ona hiç görünmez. Konsol'da
 # indirme klasörü dışında seçilen bir dizin __TORRENT_CONTAINER__.container.d/90-konsol.conf ile eklenir.

@@ -214,7 +214,7 @@ PY
 
 paket_kur() {
     paket_gerekli
-    [[ -n "${KUR_TOHUM:-}" ]] || fail_step "kurulum bilgileri yok; Konsol → App Store'daki pencereden kurun"
+    [[ -n "${KUR_TOHUM:-}" ]] || fail_step "kurulum bilgileri yok; Konsol → Uygulamalar'daki katalogdan kurun"
     torrent_eski_yok
     progress_step 1 "İmaj indiriliyor"
     paket_imaj_cek || fail_step "$FAIL"

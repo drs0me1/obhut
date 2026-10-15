@@ -359,7 +359,7 @@ class Manager:
                 elif state != "calisiyor":
                     reason = "WebDAV hizmeti çalışmıyor."
                 elif not transport:
-                    reason = "Ayarlar → Caddy bölümünde Tailscale erişimi kapalı." if scope == "tailscale" else wan["reason"]
+                    reason = "Erişim → Adresler bölümünde Tailscale erişimi kapalı." if scope == "tailscale" else wan["reason"]
                 elif expired:
                     reason = "Süresi doldu; yeniden süre seçin."
                 else:
@@ -400,7 +400,7 @@ class Manager:
             available = False
             reason = "Sunucunun internet IPv4 adresi değişti (%s artık bu sunucuda değil); kurulumu yeniden çalıştırın." % address
         if cfg["mode"] == "off":
-            available, reason = False, "İnternet paylaşımı kapalı. Ayarlar → Caddy bölümünde HTTPS alan adı kaydedin."
+            available, reason = False, "İnternet paylaşımı kapalı. Erişim → Adresler bölümünde HTTPS alan adı kaydedin."
         elif available and cfg["mode"] == "http":
             # One WAN port for Caddy publications (contract §3.1): while a package or Konsol is
             # published over HTTPS (TCP 443), legacy plaintext WebDAV on SHARE_PORT stays closed.
@@ -412,7 +412,7 @@ class Manager:
             if conflict:
                 available = False
                 reason = ("Bir uygulamanın veya Panel'in internet yayını açıkken WebDAV internet erişimi için HTTPS alan adı gerekir; "
-                          "Ayarlar → Caddy bölümünde kaydedin.")
+                          "Erişim → Adresler bölümünde kaydedin.")
         return {"available": available, "address": address if available else "",
                 **cfg, "reason": reason}
 
@@ -529,7 +529,7 @@ class Manager:
                             raise ShareError("Süre 1, 7, 30 gün veya süresiz olabilir.")
                         expires = now + days * 86400 if days else None
                     if scope == "tailscale" and enabled and not policy["enabled"] and not self.tail_available():
-                        raise ShareError("Ayarlar → Caddy bölümünde WebDAV için Tailscale erişimi kapalı; önce orada açın.")
+                        raise ShareError("Erişim → Adresler bölümünde WebDAV için Tailscale erişimi kapalı; önce orada açın.")
                     if scope == "wan" and enabled and not policy["enabled"]:
                         info = self.wan_info()
                         if not info["available"]:
