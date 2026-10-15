@@ -17,5 +17,5 @@ export function tailscaleAdmin(page: "machines" | "dns"): string {
 
 /** Konsol on the tailnet (http://panel.<domain>), optionally at a view of this interface. */
 export function tailnetKonsol(domain: string, hash = ""): string {
-  return address("http", "panel." + domain, hash ? "/yeni/" + hash : "/");
+  return address("http", "panel." + domain, hash ? "/" + hash : "/");
 }

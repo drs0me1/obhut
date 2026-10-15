@@ -1357,35 +1357,32 @@ ensure_panel() {
 # Caddy directly serves the console's static assets.
 ensure_console_pages() {
     local f rel
+    local -A keep=()
+    # Kökteki her dosyayı yönetir; yanlış bir değerle başka bir klasörü budamasın.
+    [[ "$CONSOLE_WEB_DIR" == /usr/local/share/master-stack/* ]] || die "CONSOLE_WEB_DIR beklenmedik: $CONSOLE_WEB_DIR"
+    [[ -f "$V2_ROOT/console/yeni/index.html" ]] || die "Konsol arayüzü eksik: console/yeni/index.html"
     install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR"
-    for f in index.html konsol.css konsol.js ayarlar.css ayarlar.js dosyalar.css dosyalar.js panel.css arsiv.js \
-        konteynerler.css konteynerler.js giris.html giris.js giris.css duzenleyici.js obhut.svg obhut.png; do
+    # DD-267: Konsol arayüzü (tools/konsol-ui'den derlenip console/yeni'de tutulur) kökte; yanında giriş
+    # sayfası, metin düzenleyici ve simgeler. Yalnız web dosyaları konur, gizli dosyalar (ör. macOS'un ._
+    # eşleri) konmaz. Bu sürümde olmayan her dosya silinir: eski arayüz (DD-160), /yeni/ kopyası ve
+    # paketlerin eski sayfaları (uygulama/<id>/) ilk çalıştırmada gider.
+    for f in giris.html giris.js giris.css duzenleyici.js obhut.svg obhut.png; do
         atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
+        keep[$f]=1
     done
-    # DD-259: yeni arayüz (tools/konsol-ui'den derlenip console/yeni'de tutulur), bugünkünün yanında
-    # /yeni/ adresinde. Yalnız web dosyaları konur, gizli dosyalar (ör. macOS'un ._ eşleri) konmaz;
-    # yeni derlemede olmayan eski dosyalar silinir.
-    [[ -f "$V2_ROOT/console/yeni/index.html" ]] || die "Konsol'un yeni arayüzü eksik: console/yeni/index.html"
-    install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR/yeni"
     while IFS= read -r -d '' f; do
         rel="${f#"$V2_ROOT/console/yeni/"}"
-        install -d -m 0755 -o root -g root "$(dirname -- "$CONSOLE_WEB_DIR/yeni/$rel")"
-        atomic_write "$CONSOLE_WEB_DIR/yeni/$rel" 0644 <"$f"
+        [[ -z "${keep[$rel]:-}" ]] || die "Konsol arayüzündeki $rel giriş sayfasının dosyasıyla çakışıyor"
+        install -d -m 0755 -o root -g root "$(dirname -- "$CONSOLE_WEB_DIR/$rel")"
+        atomic_write "$CONSOLE_WEB_DIR/$rel" 0644 <"$f"
+        keep[$rel]=1
     done < <(find "$V2_ROOT/console/yeni" -type f ! -name '.*' \( -name '*.html' -o -name '*.js' -o -name '*.css' \
         -o -name '*.woff2' -o -name '*.svg' -o -name '*.png' -o -name '*.txt' \) -print0)
     while IFS= read -r -d '' f; do
-        rel="${f#"$CONSOLE_WEB_DIR/yeni/"}"
-        [[ "${rel##*/}" != .* && -f "$V2_ROOT/console/yeni/$rel" ]] || rm -f -- "$f"
-    done < <(find "$CONSOLE_WEB_DIR/yeni" -type f -print0)
-    # DD-267: paketlerin eski arayüz sayfaları (DD-200, uygulama/<id>/) kalktı; klasörün tamamı bir kez
-    # silinir. Yalnız gerçek bir klasörse ve başka bir dosya sistemine inmeden.
-    if [[ -d "$CONSOLE_WEB_DIR/uygulama" && ! -L "$CONSOLE_WEB_DIR/uygulama" ]]; then
-        if rm -rf --one-file-system -- "$CONSOLE_WEB_DIR/uygulama"; then
-            log INFO "Konsol: paketlerin eski sayfa dosyaları kaldırıldı ($CONSOLE_WEB_DIR/uygulama)"
-        else
-            log WARN "Konsol'un eski paket sayfaları tamamen silinemedi ($CONSOLE_WEB_DIR/uygulama); elle bakın"
-        fi
-    fi
+        rel="${f#"$CONSOLE_WEB_DIR/"}"
+        [[ -n "${keep[$rel]:-}" ]] || rm -f -- "$f"
+    done < <(find "$CONSOLE_WEB_DIR" -mindepth 1 \( -type f -o -type l \) -print0)
+    find "$CONSOLE_WEB_DIR" -mindepth 1 -depth -type d -empty -delete
 }
 
 ensure_files_panel() {

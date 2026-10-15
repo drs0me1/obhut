@@ -4,8 +4,8 @@
 "use strict";
 (() => {
   const $ = (id) => document.getElementById(id);
-  // DD-259: the redesigned interface (/yeni/) sends ?geri=yeni and gets its own address back.
-  const home = new URLSearchParams(location.search).get("geri") === "yeni" ? "/yeni/" : "/";
+  // DD-267: Konsol is at / (an older ?geri=yeni from the interface's /yeni/ days lands there too).
+  const home = "/";
   const back = () => location.replace(home + (location.hash.startsWith("#/") ? location.hash : ""));
   async function call(path, body) {
     const init = { method: body ? "POST" : "GET", headers: { "X-Konsol": "1" }, credentials: "same-origin", cache: "no-store" };
@@ -43,7 +43,7 @@
     if (state.durum === "acik" || (state.kanal && state.kanal !== "internet")) { back(); return; }
     $("login-access").textContent = "Sunucu yönetimi · internet (HTTPS)";
     if (state.durum === "kurulum") {
-      show("", "Konsol hesabı yok. Tailscale adresinden Ayarlar → Sistem → Konsol hesabı bölümünde oluşturun; internet adresi o hesapla açılır.");
+      show("", "Konsol hesabı yok. Tailscale adresinden Sistem → Hesap bölümünde oluşturun; internet adresi o hesapla açılır.");
       return;
     }
     show("giris", "Kullanıcı adınız ve parolanızla giriş yapın.");

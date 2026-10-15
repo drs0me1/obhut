@@ -134,7 +134,7 @@ h.dynamic.push([/^\/api\/uygulama\/wireguard\/nets\/(wg\d)\/peers\/([^/]+)\/(rem
 }]);
 
 // ---- helpers
-const url = (hash) => new URL("/yeni/" + hash, base).href;
+const url = (hash) => new URL("/" + hash, base).href;
 const queryOf = async (page) => new URLSearchParams((await page.evaluate(() => location.hash)).split("?")[1] ?? "");
 const wgPosts = (suffix) => h.requests.filter((r) => r.method === "POST" && r.path === BASE + suffix).map((r) => r.body);
 const wgGets = (suffix) => h.requests.filter((r) => r.method === "GET" && r.path.startsWith(BASE) && r.path.endsWith(suffix)).length;
@@ -559,7 +559,7 @@ const panel = (page) => page.locator(".modal-sheet");
     }
 
     assert.deepEqual(h.errors, []);
-    console.log("PASS: /yeni/ phase 3 WireGuard under the production CSP — networks as tabs (label, port, x/y bağlı, Kapalı, ?ag= across a " +
+    console.log("PASS: Konsol phase 3 WireGuard under the production CSP — networks as tabs (label, port, x/y bağlı, Kapalı, ?ag= across a " +
       "reload), the network card (summary, on at once, off asked first), devices (state, DNS provider and keepalive, addresses, last seen, " +
       "traffic, on/off at once), QR and profile only on a click with cache no-store and revoked object URLs (QR on load, profile after 10 s), " +
       "add device (duplicate and name checks, DNS presets, keepalive chips, MTU, the QR afterwards), DNS and keepalive (custom DNS, invalid " +

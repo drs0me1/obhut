@@ -157,7 +157,7 @@ const onarimReplies = [];
 h.handlers["/api/konsol/onarim"] = ({ method }) => (method === "POST" ? onarimReplies.shift() ?? { status: 202, body: { kip: "onar" } } : undefined);
 
 // ---- helpers
-const url = (hash) => new URL("/yeni/" + hash, base).href;
+const url = (hash) => new URL("/" + hash, base).href;
 const hashOf = (page) => page.evaluate(() => location.hash);
 const active = (page) => page.evaluate(() => {
   const e = document.activeElement;
@@ -751,7 +751,7 @@ async function noStyles(page, where) {
     // ================= over HTTPS (the public name) "Aç" leads to the internet address
     expectedFailures = ["/api/konsol/olaylar"];
     page = await h.newHttpsPage("konsol.example.test");
-    await page.goto("https://konsol.example.test/yeni/#/genel");
+    await page.goto("https://konsol.example.test/#/genel");
     await page.locator(".app-card").first().waitFor();
     assert.equal(await page.locator('.app-card[data-uygulama="paket:gezgin"] [data-eylem="ac"]').getAttribute("href"), "https://gezgin.example.com");
     assert.equal(await page.locator('.app-card[data-uygulama="paket:torrent"] [data-eylem="ac"]').getAttribute("href"), "http://torrent.ev",
@@ -819,7 +819,7 @@ async function noStyles(page, where) {
     }
 
     assert.deepEqual(h.errors, []);
-    console.log("PASS: /yeni/ phase 2 under the production CSP — Genel Bakış (problems with their fix, repair confirmation, POST {kip:onar}, error, " +
+    console.log("PASS: Konsol phase 2 under the production CSP — Genel Bakış (problems with their fix, repair confirmation, POST {kip:onar}, error, " +
       "running and ended repair, calm state, locked repair with its reason, apps without Files, Aç over HTTP and HTTPS, resources, network, server), " +
       "network reads every 5 s only while shown and visible, palette opens application pages, Uygulamalar (summary, filter chips with counts, " +
       "Turkish-aware search, URL state and reload, empty states, add panel, infrastructure, errors, keyboard order and focus ring), application " +

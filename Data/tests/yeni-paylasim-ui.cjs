@@ -140,7 +140,7 @@ h.dynamic.push([/^\/api\//, (req) => {
 }]);
 
 // ---- helpers
-const UI = "/yeni/";
+const UI = "/";
 const url = (hash) => new URL(UI + hash, base).href;
 const SHARES_URL = "#/dosyalar?sekme=paylasimlar";
 const hashOf = (page) => page.evaluate(() => location.hash);
@@ -871,7 +871,7 @@ async function openShares(page, extra = "") {
     }
 
     assert.deepEqual(h.errors, []);
-    console.log("PASS: /yeni/ phase 4b Paylaşımlar under the production CSP — the boundary notice (detail in the address), n/max, the transports " +
+    console.log("PASS: Konsol phase 4b Paylaşımlar under the production CSP — the boundary notice (detail in the address), n/max, the transports " +
       "(Tailscale, plain HTTP, HTTPS, closed), one card per share (state, folder, account copy) with its two connections (switch, permission, " +
       "duration and renewal from today, expiry, reasons, address copy, Infuse fields, the way to Erişim when not published), the exact bodies " +
       "(enabled, permission with ack_write, days, ack_wan_http only over HTTP), the questions and declining them, refusals in the server's " +

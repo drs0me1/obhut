@@ -2408,12 +2408,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         DD-205: the tailnet site asks for no sign-in — gate() already required another Tailscale
         device (DD-180) — and sends its sign-in page back to Konsol. The internet site (and a
         caller without Caddy's forwarding headers) needs a session, except for the sign-in page."""
-        page, _, query = (self.headers.get("X-Forwarded-Uri") or "").partition("?")
-        # DD-259: the redesigned interface at /yeni/ keeps its address through the sign-in page; the
-        # page names it with the one value geri=yeni, never with an address.
-        new_ui = page == "/yeni" or page.startswith("/yeni/") or (
-            page == "/giris.html" and urllib.parse.parse_qs(query).get("geri") == ["yeni"])
-        home, login = ("/yeni/", "/giris.html?geri=yeni") if new_ui else ("/", "/giris.html")
+        page = (self.headers.get("X-Forwarded-Uri") or "").partition("?")[0]
+        # DD-267: Konsol is at / and its sign-in page returns there (the #view stays in the browser).
+        home, login = "/", "/giris.html"
         if self.channel() == "tailscale":
             if page == "/giris.html":
                 self.send(302, extra={"Location": home})

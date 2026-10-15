@@ -1,4 +1,4 @@
-/* Shared harness of the /yeni/ suites (DD-258): a static server for the committed build in Data/console with
+/* Shared harness of Konsol's suites (DD-258): a static server for the committed build in Data/console with
    the real CSP from Data/templates/Caddyfile on every page response, its own /api/konsol/olaylar event
    stream (held open so a suite can push events), fixture replies for every other /api/* request through
    Playwright routes, a log of those requests (POST bodies included), and a collector that fails the suite on
@@ -33,15 +33,20 @@ assert.match(csp, /font-src 'self'/, "the console CSP allows the local Outfit fo
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".woff2": "font/woff2", ".svg": "image/svg+xml", ".png": "image/png", ".txt": "text/plain; charset=utf-8", ".sha256": "text/plain; charset=utf-8" };
 
-/** The file under console/ for a request path, or "" when it would leave that folder. */
+/** The file for a request path as the installer lays the console out (DD-267): the build in console/yeni
+    at the root, the sign-in page and the editor bundle beside it; "" when it would leave those folders. */
 function staticFile(pathname) {
-  let file = "";
+  let rel = "";
   try {
-    file = path.normalize(path.join(root, decodeURIComponent(pathname) + (pathname.endsWith("/") ? "index.html" : "")));
+    rel = decodeURIComponent(pathname) + (pathname.endsWith("/") ? "index.html" : "");
   } catch {
     return "";
   }
-  return file.startsWith(root + path.sep) ? file : "";
+  for (const dir of [path.join(root, "yeni"), root]) {
+    const file = path.normalize(path.join(dir, rel));
+    if (file.startsWith(dir + path.sep) && fs.existsSync(file) && fs.statSync(file).isFile()) return file;
+  }
+  return path.join(root, "yeni", "bulunamadi");
 }
 
 function staticHeaders(file) {
@@ -94,8 +99,9 @@ function create({ name, url, data, expected = () => [] }) {
       res.writeHead(404);
       return res.end();
     }
-    if (u.pathname === "/yeni") {
-      res.writeHead(308, { Location: "/yeni/" });
+    // DD-267: Konsol left /yeni/ for /; Caddy sends an old link there (the #view stays in the browser).
+    if (u.pathname === "/yeni" || u.pathname.startsWith("/yeni/")) {
+      res.writeHead(308, { Location: "/" });
       return res.end();
     }
     const file = staticFile(u.pathname);

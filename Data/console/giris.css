@@ -1,20 +1,57 @@
-/* Konsol girişi (DD-194). Renkler ve düğmeler konsol.css'ten gelir. */
+/* Konsol girişi (DD-194, DD-205). Self-contained since DD-267: the sign-in page loads before a session
+   exists, so it cannot use Konsol's own stylesheet behind the session check. The colours are Konsol's
+   design tokens (tools/konsol-ui/src/styles/tokens.css); /tema.js applies the chosen theme first. */
+@font-face {
+  font-family: "Outfit";
+  src: url("/fonts/Outfit-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+:root {
+  color-scheme: light;
+  --ground: #f3f5f7; --surface: #ffffff; --line: #dce3e8; --ink: #14232e; --muted: #52616d;
+  --accent: #1f6f8b; --accent-strong: #155266; --on-accent: #ffffff; --danger-ink: #a3241a; --focus: #1f6f8b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0f1519; --surface: #172028; --line: #2a3742; --ink: #e6ecf1; --muted: #9aa8b5;
+    --accent: #6fc3dc; --accent-strong: #9ad8ea; --on-accent: #0f1519; --danger-ink: #f4a097; --focus: #6fc3dc;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0f1519; --surface: #172028; --line: #2a3742; --ink: #e6ecf1; --muted: #9aa8b5;
+  --accent: #6fc3dc; --accent-strong: #9ad8ea; --on-accent: #0f1519; --danger-ink: #f4a097; --focus: #6fc3dc;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
 .login { min-height: 100vh; display: grid; align-content: center; justify-items: center; gap: 18px; padding: 32px 16px; }
-.login .brand { text-align: center; justify-items: center; }
+.login .brand { display: grid; justify-items: center; gap: 6px; text-align: center; }
 /* DD-256: the Ôbhut wordmark, inline so it follows the theme through currentColor. */
 .login .wordmark-svg { display: block; height: 40px; width: auto; color: var(--ink); }
+.login .brand small { color: var(--muted); font-size: 13px; }
+.card { display: grid; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
 .login-card { width: min(100%, 400px); padding: 22px; gap: 14px; }
-.login-card h1 { font-size: 24px; }
+.login-card h1 { margin: 0; font: 600 24px/1.2 "Outfit", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+.hint-s { margin: 0; color: var(--muted); font-size: 13px; }
+.err-s { margin: 0; color: var(--danger-ink); font-size: 14px; }
+.err-s[hidden] { display: none; }
 .login-form { display: grid; gap: 8px; }
 .login-form[hidden] { display: none; }
 .login-form label { font-size: 13px; font-weight: 600; margin-top: 4px; }
 .login-form input {
-  width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px;
+  width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
   background: var(--surface); color: var(--ink); font: inherit; font-size: 16px; min-width: 0;
 }
 .login-form input:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
-.login-form .btn { margin-top: 8px; width: 100%; min-height: 44px; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 18px;
+  border: 0; border-radius: 12px; font: inherit; font-weight: 600; cursor: pointer;
+}
+.btn-primary { background: var(--accent); color: var(--on-accent); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-strong); }
+.btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.login-form .btn { margin-top: 8px; width: 100%; }
 .login-form .btn:disabled { opacity: .6; cursor: progress; }
 .login-foot { width: min(100%, 400px); text-align: center; overflow-wrap: anywhere; }
-.login .mono { color: var(--ink); }
-@media (prefers-reduced-motion: reduce) { .btn { transition: none; } }

@@ -63,9 +63,9 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
   try {
     // ================= desktop, light, live stream
     let page = await newPage();
-    const fontResponse = page.waitForResponse((r) => r.url().endsWith("/yeni/fonts/Outfit-Variable.woff2"));
-    await page.goto(new URL("/yeni/", base).href);
-    await page.waitForURL((u) => u.pathname === "/yeni/" && u.hash === "#/genel");
+    const fontResponse = page.waitForResponse((r) => r.url().endsWith("/fonts/Outfit-Variable.woff2"));
+    await page.goto(new URL("/", base).href);
+    await page.waitForURL((u) => u.pathname === "/" && u.hash === "#/genel");
     const h1 = page.locator("main h1");
     assert.equal(await h1.innerText(), "Genel Bakış");
     assert.equal(await page.title(), "Genel Bakış · Konsol");
@@ -237,7 +237,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert.deepEqual(await optionLabels(page), ["Dosyalar", "Dosyalar → Çöp kutusu"], "the trash is Dosyalar' tab (phase 4b)");
     await page.keyboard.press("Escape");
     await palette.waitFor({ state: "detached" });
-    await page.goto(new URL("/yeni/#/sistem?sekme=gorunum", base).href);
+    await page.goto(new URL("/#/sistem?sekme=gorunum", base).href);
 
     // Theme on the Sistem page, kept across a reload.
     await h1.filter({ hasText: "Sistem" }).waitFor();
@@ -277,7 +277,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     // ================= desktop and phone, both themes (system setting), screenshots and geometry
     for (const colorScheme of ["light", "dark"]) {
       page = await newPage({ colorScheme });
-      await page.goto(new URL("/yeni/#/genel", base).href);
+      await page.goto(new URL("/#/genel", base).href);
       await badge(page, "uygulamalar").waitFor();
       push("bekleyen", { bekleyen: { id: "p3", phase: "awaiting", seconds: 58 } });
       await page.locator(".pending").waitFor();
@@ -288,7 +288,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       await page.context().close();
 
       page = await newPage({ colorScheme, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
-      await page.goto(new URL("/yeni/#/genel", base).href);
+      await page.goto(new URL("/#/genel", base).href);
       await page.locator(".mobile-top .chip").filter({ hasText: /^2$/ }).waitFor();
       assert.equal(await page.locator(".sidebar").isVisible(), false, "no sidebar on a phone");
       assert.equal(await page.locator(".desktop-tools").isVisible(), false);
@@ -348,7 +348,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     for (const k of Object.keys(calls)) delete calls[k];
     const connectionsBefore = stream.connections;
     page = await newPage({}, { clock: true });
-    await page.goto(new URL("/yeni/#/genel", base).href);
+    await page.goto(new URL("/#/genel", base).href);
     await page.locator('.app[data-baglanti="yoklama"]').waitFor();
     await badge(page, "sistem").waitFor();
     assert.equal(await badge(page, "erisim").count(), 0, "no Erişim count without the read model");
@@ -381,7 +381,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     stream.mode = 503;
     expectedFailures = ["/api/konsol/olaylar", "/api/konsol/erisim"];
     page = await newPage();
-    await page.goto(new URL("/yeni/#/genel", base).href);
+    await page.goto(new URL("/#/genel", base).href);
     await page.locator('.app[data-baglanti="yoklama"]').waitFor();
     await page.context().close();
 
@@ -392,7 +392,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     expectedFailures = ["/api/konsol/olaylar"];
     const failingFrom = stream.connections;
     page = await newPage({}, { clock: true });
-    await page.goto(new URL("/yeni/#/genel", base).href);
+    await page.goto(new URL("/#/genel", base).href);
     await page.locator('.app[data-baglanti="yeniden"]').waitFor();
     const settle = () => page.waitForTimeout(150);
     await settle();
@@ -425,7 +425,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     expectedFailures = ["/api/konsol/"];
     for (const k of Object.keys(calls)) delete calls[k];
     page = await newPage();
-    await page.goto(new URL("/yeni/#/genel", base).href);
+    await page.goto(new URL("/#/genel", base).href);
     await page.locator('.app[data-baglanti="yoklama"]').waitFor();
     await waitFor(() => Object.keys(data).every((key) => count(key) >= 1), "every read tried");
     await page.waitForTimeout(200);
@@ -442,22 +442,22 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     for (const key of Object.keys(data)) delete status["/api/konsol/" + key];
 
     // An ended internet session (401) goes to the sign-in page, which returns to this interface and the
-    // same view (DD-259: ?geri=yeni, the only value the page takes).
+    // same view (DD-267: Konsol is at /, so the sign-in page needs no return value).
     stream.mode = "live";
     status["/api/konsol/kaynaklar"] = 401;
     expectedFailures = ["/api/konsol/kaynaklar", "/api/konsol/erisim"];
     page = await newPage();
-    await page.goto(new URL("/yeni/#/sistem", base).href);
-    await page.waitForURL((u) => u.pathname === "/giris.html" && u.search === "?geri=yeni" && u.hash === "#/sistem");
+    await page.goto(new URL("/#/sistem", base).href);
+    await page.waitForURL((u) => u.pathname === "/giris.html" && u.search === "" && u.hash === "#/sistem");
     await page.locator("#form-login").waitFor();
     await page.fill("#login-user", "yonetici");
     await page.fill("#login-pass", "fixture-password");
     await page.click("#login-submit");
-    await page.waitForURL((u) => u.pathname === "/yeni/" && u.hash === "#/sistem");
+    await page.waitForURL((u) => u.pathname === "/" && u.hash === "#/sistem");
     await page.context().close();
 
     assert.deepEqual(errors, []);
-    console.log("PASS: /yeni/ shell (build matches its sources, licence banner) under the production CSP — sidebar counts (Uygulamalar 2, Sistem 1 danger, Erişim 1 warning), problem chip, " +
+    console.log("PASS: Konsol shell (build matches its sources, licence banner) under the production CSP — sidebar counts (Uygulamalar 2, Sistem 1 danger, Erişim 1 warning), problem chip, " +
       "Tailscale and version card, event stream (X-Konsol fetch, multi-line data, unknown events, kapat → immediate reconnect), activity drawer " +
       "(focus trap, Esc, focus return, finished job reloads the applications), pending banner with local countdown and phases, palette (Ctrl+K/Meta+K, groups, " +
       "İŞ/ıs/is, ↑↓, Enter to a page, no old-interface group, theme action, Esc and focus return), theme radios kept across a reload, an old address, " +

@@ -872,7 +872,7 @@ assert not missing, missing
     grep -qx 'CPUWeight=50' "$V2_ROOT/magaza/torrent/qbittorrent.container"
 }
 
-@test "resilience: capped rollback with discard, stale WAN site, watchdog resets, health card" {
+@test "resilience: capped rollback with discard, stale WAN site, watchdog resets, health endpoint" {
     local s6 rt="$V2_ROOT/scripts/refresh-tailnet-config" body
     # DD-182: five automatic attempts with backoff, then "stuck" until the operator retries or discards.
     grep -qx 'ROLLBACK_ATTEMPTS = 5' "$V2_ROOT/panel/master_settings.py"
@@ -881,9 +881,6 @@ assert not missing, missing
     grep -qF 'Route("POST", "/api/konsol/ayarlar/birak", "ayarlar_birak",' "$V2_ROOT/panel/master_api.py"
     grep -qF 'self.settings_action(user, "rollback", data)' "$V2_ROOT/panel/master-panel"
     grep -qF 'self.settings_action(user, "discard", data)' "$V2_ROOT/panel/master-panel"
-    grep -qF '"/api/konsol/ayarlar/birak", { id: pending.id, confirm: "onayla" }' "$V2_ROOT/console/ayarlar.js"
-    grep -qF 'finish("geri-al") }, "Yeniden dene")' "$V2_ROOT/console/ayarlar.js"
-    grep -q '^\.as-rollback\.stuck ' "$V2_ROOT/console/ayarlar.css"
     grep -qF 'geri alma takıldıysa: Yeniden dene ya da Bırak' "$V2_ROOT/install.sh"
     # A WAN share site bound to an address the provider took away goes before Caddy restarts.
     s6="$(awk '/^stage_6\(\)/,/^ensure_panel\(\)/' "$V2_ROOT/install.sh")"
@@ -896,15 +893,10 @@ assert not missing, missing
     [ "$(grep -cx 'recover_firewall_if_broken' "$rt")" -eq 3 ]
     [ "$(awk '/^recover_firewall_if_broken$/ {n++; if (n == 2) {print NR; exit}}' "$rt")" -gt \
         "$(awk '/^if ! wait_for_tailscale_ready; then$/ {print NR; exit}' "$rt")" ]
-    # Health card: read-only endpoint (DD-259: in the route table), shown on Settings → Sistem,
-    # refreshed with the page poll.
+    # Health: a read-only endpoint (DD-259: in the route table) with a short cache.
     grep -qF 'Route("GET", "/api/konsol/saglik", "saglik",' "$V2_ROOT/panel/master_api.py"
     grep -qF 'self.json(200, self.panel.health())' <<<"$(grep -A1 'def api_saglik(self, query):' "$V2_ROOT/panel/master-panel")"
     grep -qx 'HEALTH_CACHE_SECONDS = 30' "$V2_ROOT/panel/master-panel"
-    grep -qF 'api("/api/konsol/saglik")' "$V2_ROOT/console/konsol.js"
-    grep -qF 'if (current === "ayarlar" && settingsTab === "system") loadHealth();' "$V2_ROOT/console/konsol.js"
-    grep -q '^\.hm\.bad ' "$V2_ROOT/console/konsol.css"
-    run ! grep -qE 'innerHTML[ =]|localStorage[.(]' <<<"$(awk '/function healthCard\(\)/,/^  }$/' "$V2_ROOT/console/konsol.js")"
 }
 
 @test "refresh timer recovers a broken firewall unit" {
@@ -1529,17 +1521,17 @@ EOF
     grep -qF "local repo=\"$GUNCELLEME_REPO\"" "$V2_ROOT/../kur.sh"
     [ "$GUNCELLEME_DURUM_FILE" = "$LOG_DIR/guncelleme.durum" ]
     [ "$GUNCELLEME_LOG_FILE" = "$LOG_DIR/guncelleme.log" ]
-    # The start is Tailscale-only and pinned; the page shows the offer only beside the clock.
+    # The start is Tailscale-only and pinned.
     grep -qF 'self.error(403, "Güncelleme yalnız Tailscale adresinden başlatılır.")' "$V2_ROOT/panel/master-panel"
-    grep -qF 'h("span", { id: "home-update", class: "home-update" })' "$V2_ROOT/console/konsol.js"
 }
 
 @test "Konsol pages carry the Obhut mark as their icon and the files ship with the console" {
     # DD-256: the Ô mark is both pages' icon (SVG, light/dark aware) with a PNG for iOS home screens.
+    # DD-267: Konsol's page is the build's index.html (Vite writes these links with a space before ">").
     local page svg="$V2_ROOT/console/obhut.svg" png="$V2_ROOT/console/obhut.png"
-    for page in index.html giris.html; do
-        grep -qF '<link rel="icon" type="image/svg+xml" href="/obhut.svg">' "$V2_ROOT/console/$page"
-        grep -qF '<link rel="apple-touch-icon" href="/obhut.png">' "$V2_ROOT/console/$page"
+    for page in yeni/index.html giris.html; do
+        grep -qE '<link rel="icon" type="image/svg\+xml" href="/obhut\.svg" ?>' "$V2_ROOT/console/$page"
+        grep -qE '<link rel="apple-touch-icon" href="/obhut\.png" ?>' "$V2_ROOT/console/$page"
     done
     # The SVG is self-contained: its only URL is the SVG namespace; no script, no external image.
     run ! grep -qiE '<script|<image|xlink|href=' "$svg"
@@ -1559,16 +1551,7 @@ EOF
     [ "$(grep -oE ' d="[^"]*"' "$giris" | sort)" = "$(grep -oE ' d="[^"]*"' "$V2_ROOT/docs/obhut-yazi.svg" | sort)" ]
     [ "$(grep -o ' d="' "$giris" | wc -l | tr -d ' ')" -eq 5 ]
     grep -qF '.login .wordmark-svg { display: block; height: 40px; width: auto; color: var(--ink); }' "$V2_ROOT/console/giris.css"
-    # Konsol's sidebar and mobile header carry the same wordmark; the host name and the panel
-    # address keep their elements (konsol.js writes them), and the old text wordmark is gone.
-    local index="$V2_ROOT/console/index.html"
-    [ "$(grep -c '<svg class="wordmark-svg" viewBox="0 -1066.4 2732 1077.4" role="img" aria-label="Obhut">' "$index")" -eq 2 ]
-    [ "$(sed -n 's/.*\(<svg class="wordmark-svg".*<\/svg>\).*/\1/p' "$index" | grep -o ' d="' | wc -l | tr -d ' ')" -eq 10 ]
-    [ "$(sed -n 's/.*\(<svg class="wordmark-svg".*<\/svg>\).*/\1/p' "$index" | grep -oE ' d="[^"]*"' | sort -u)" = "$(grep -oE ' d="[^"]*"' "$V2_ROOT/docs/obhut-yazi.svg" | sort -u)" ]
-    grep -qF '<small><span id="brand-host">sunucu</span> · <span id="brand-sub">Konsol</span></small>' "$index"
-    grep -qF '<small id="brand-host-m">sunucu</small>' "$index"
-    run ! grep -qF 'class="wordmark"' "$index" "$giris"
-    run ! grep -qE '^\.wordmark \{|\.wordmark \.dot' "$V2_ROOT/console/konsol.css" "$V2_ROOT/console/panel.css"
+    run ! grep -qF 'class="wordmark"' "$giris"
 }
 
 @test "stage 7 checks DNS on Tailscale IP and publish surface" {
@@ -1617,7 +1600,7 @@ EOF
     code="$(grep -hvE '^[[:space:]]*#' "$V2_ROOT/config/defaults.env" \
         "$V2_ROOT/templates/Caddyfile" "$V2_ROOT/templates/dnsmasq.conf" \
         "$V2_ROOT/install.sh" "$V2_ROOT/common.sh" "$V2_ROOT/scripts/firewall.sh" "$V2_ROOT/magaza/wireguard/master-wg" \
-        "$V2_ROOT/panel/master-panel" "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/index.html" \
+        "$V2_ROOT/panel/master-panel" "$V2_ROOT/console/yeni/app.js" "$V2_ROOT/console/yeni/index.html" \
         "$V2_ROOT/config/kurulum.env.example")"
     run ! grep -qi 'filebrowser' <<<"$code"
     run ! grep -q '61007' <<<"$code"
@@ -2552,33 +2535,12 @@ assert "torrent.ayc" in items["torrent"]["konsol"]["neler"][1][1]
 PY
 }
 
-@test "console always includes Files while application pages follow the installed packages" {
-    local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
-    grep -q 'href="#/dosyalar" data-route="dosyalar"' "$html"
-    # DD-200: the shell names no application; links, sections and App Store texts come from packages.
-    run ! grep -qi 'wireguard' "$js" "$html" "$V2_ROOT/console/konsol.css"
-    run ! grep -q 'data-route="torrent"' "$html"
-    # DD-216: applications have no sidebar entry; their pages open from Ana Menü's tiles, which stays marked.
-    run ! grep -qE 'paintNav|installed-label|"data-app": r\.id' "$js" "$html"
-    grep -qF 'const navKey = apps[key] ? "genel" : key;' "$js"
-    grep -qF 'window.Konsol = Object.freeze({ sayfa: registerPage });' "$js"
-    grep -qF 'const url = `/uygulama/${enc(m.id)}/${f}`;' "$js"
-    # A page whose package is absent is not opened; the backends are not asked.
-    grep -qF 'if (MODS && apps[key] && !apps[key].installed) {' "$js"
-    grep -qF 'api("/api/konsol/kaynaklar", { signal: controller.signal })' "$js"
-    grep -qF 'if (PAGES[current] && PAGES[current].page.poll) PAGES[current].page.poll();' "$js"
-    # Built-ins never enter the optional application catalogue.
-    run ! grep -qF 'requires: "dosya",' "$js"
-    # Konsol modules are opened from the row, never stopped from details.
-    run ! grep -qF 'dosya: () => {' "$js"
-    grep -qF '"data-go":meta.rota ? "#/" + meta.rota : "#/moduller"' "$js"
-    grep -qF '!m.durdurulabilir ? null : h("button"' "$js"
-    # Host measurements remain independent of optional applications.
-    grep -qF 'fresh && s.disk?.total > 0' "$js"
-    # DD-204 brought an overview back (data-view="genel"); the dock/window shell and the old pages stay gone.
-    run ! grep -qE 'data-view="(uygulamalar|gunluk)"|desktop-dock|window-min' "$html"
-    # DD-267: packages ship no page of the old interface; the WireGuard package keeps its API module.
-    [ ! -e "$V2_ROOT/magaza/wireguard/sayfa.js" ] && [ ! -e "$V2_ROOT/magaza/wireguard/sayfa.css" ]
+@test "packages ship no page of the old interface; the WireGuard package keeps its API module (DD-267)" {
+    # DD-200's package pages (sayfa.js/css under uygulama/<id>/) went with the old shell.
+    local f
+    for f in "$V2_ROOT"/magaza/*/sayfa.js "$V2_ROOT"/magaza/*/sayfa.css; do
+        [ ! -e "$f" ]
+    done
     run ! grep -q '^PAKET_SAYFA=' "$V2_ROOT/magaza/wireguard/paket.env"
     grep -qx 'PAKET_API="api.py"' "$V2_ROOT/magaza/wireguard/paket.env"
 }
@@ -2746,33 +2708,43 @@ EOF
     [ "$(awk '/^http:\/\/panel.__LOCAL_DOMAIN__ \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile")" = \
         "$(printf 'http://panel.__LOCAL_DOMAIN__ {\n\timport konsol tailscale\n}')" ]
     site="$(awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile")"
-    grep -qxF "$(printf '\t@korumali not path /giris.js /giris.css /konsol.css /api/konsol/oturum /api/konsol/oturum/*')" <<<"$site"
+    # DD-267: the sign-in page is self-contained; its theme script, font and icons are open beside its own files.
+    grep -qxF "$(printf '\t@korumali not path /giris.js /giris.css /tema.js /fonts/Outfit-Variable.woff2 /obhut.svg /obhut.png /api/konsol/oturum /api/konsol/oturum/*')" <<<"$site"
     # DD-205: the backend answers by Caddy's channel — the tailnet needs no cookie, its /giris.html is a redirect
     # to Konsol, the internet needs a session except for the sign-in page; the account is made without a code.
     grep -qF 'if self.channel() == "tailscale":' "$backend"
     grep -qF 'self.send(302, extra={"Location": home})' "$backend"
-    # DD-259: home is / or, for the redesigned interface (/yeni/, ?geri=yeni), /yeni/; never an address from the request.
-    grep -qF 'home, login = ("/yeni/", "/giris.html?geri=yeni") if new_ui else ("/", "/giris.html")' "$backend"
+    # DD-267: home is always / and the sign-in page /giris.html; never an address from the request.
+    grep -qF 'home, login = "/", "/giris.html"' "$backend"
+    run ! grep -q 'parse_qs' <<<"$(awk '/    def session_gate\(self\):/,/    def account_post\(/' "$backend")"
     grep -qF 'if user or page == "/giris.html":' "$backend"
     grep -qF 'reveal=self.channel() != "internet"' "$backend"
     grep -qF 'store.create(data.get("kullanici"), data.get("parola"))' "$backend"
     grep -qF 'store.set_password(data.get("yeni"))' "$backend"
     run ! grep -qE 'SETUP_FILE|kurulum-kodu|issue_code|normalize_code|CODE_ALPHABET' "$auth"
     run ! grep -qE 'form-setup|setup-code|Kurulum kodu' "$V2_ROOT/console/giris.html" "$V2_ROOT/console/giris.js"
-    grep -q 'id="logout" hidden' "$V2_ROOT/console/index.html"
-    grep -qF '$("logout").hidden = !publicChannel();' "$V2_ROOT/console/konsol.js"
     grep -qxF "$(printf '\tforward_auth @korumali unix/__PANEL_SOCKET__ {')" <<<"$site"
     grep -qxF "$(printf '\t\turi /oturum-denetle')" <<<"$site"
     # forward_auth precedes the routes, so no handle block can bypass it.
     [ "$(grep -n 'forward_auth' <<<"$site" | cut -d: -f1)" -lt "$(grep -n '@kok path' <<<"$site" | cut -d: -f1)" ]
-    # The sign-in page loads only open files, and nothing from elsewhere or inline.
-    [ "$(grep -oE '(href|src)="[^"]+"' "$V2_ROOT/console/giris.html" | LC_ALL=C sort -u | tr '\n' ' ')" = 'href="/giris.css" href="/konsol.css" href="/obhut.png" href="/obhut.svg" src="/giris.js" ' ]
+    # The sign-in page loads only open files, and nothing from elsewhere or inline (DD-267: no Konsol stylesheet).
+    [ "$(grep -oE '(href|src)="[^"]+"' "$V2_ROOT/console/giris.html" | LC_ALL=C sort -u | tr '\n' ' ')" = 'href="/giris.css" href="/obhut.png" href="/obhut.svg" src="/giris.js" src="/tema.js" ' ]
     run ! grep -qiE '<style|style=|onclick=|https?://' "$V2_ROOT/console/giris.html"
     run ! grep -qE 'localStorage|sessionStorage|innerHTML' "$V2_ROOT/console/giris.js"
-    # Every console file is installed (the sign-in page once 404'd on a real host).
+    # Everything it loads, its stylesheet's font included, is open before a session and ships with the
+    # console: the sign-in page's own files or the build's (installed at the same root).
+    local open asset
+    open="$(grep -F '@korumali not path' <<<"$site" | tr -s ' \t' '\n')"
+    for asset in $(grep -oE '(href|src)="/[^"]+"' "$V2_ROOT/console/giris.html" | cut -d'"' -f2) \
+        $(grep -oE 'url\("?/[^")]+' "$V2_ROOT/console/giris.css" | sed -E 's/^url\("?//'); do
+        grep -qxF -- "$asset" <<<"$open"
+        [ -f "$V2_ROOT/console/${asset#/}" ] || [ -f "$V2_ROOT/console/yeni/${asset#/}" ]
+    done
+    # Every file of the sign-in page and the editor is installed beside the build (the sign-in page once
+    # 404'd on a real host).
     local pages f
     pages="$(awk '/^ensure_console_pages\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    for f in "$V2_ROOT"/console/*; do grep -qw "${f##*/}" <<<"$pages"; done
+    for f in "$V2_ROOT"/console/*; do [ -d "$f" ] || grep -qw "${f##*/}" <<<"$pages"; done
     grep -qx 'KONSOL_AUTH_DIR="/etc/master-stack/konsol"' "$V2_ROOT/config/defaults.env"
     grep -qx 'KONSOL_AUTH_DIR=$KONSOL_AUTH_DIR' "$V2_ROOT/install.sh"
     run ! grep -q 'KONSOL' "$V2_ROOT/config/kurulum.env.example"
@@ -2877,10 +2849,6 @@ EOF
     grep -qF "grep -qx \$'wireguard\\tcalisiyor'" "$V2_ROOT/scripts/refresh-tailnet-config"
     awk '/    def uygulama_gunlugu\(self, sid, lines\):/,/^    def pending\(self\):/' "$V2_ROOT/panel/master-panel" |
         grep -qF 'raise ApiError(404, "Bu uygulama kurulu değil.")'
-    # Konsol's log labels each event by its real source; only WireGuard actions say WireGuard.
-    grep -qF 'e.action.includes(":") ? e.action.split(":")[0]' "$V2_ROOT/console/konsol.js"
-    run ! grep -qF 'e.source === "panel" ? "wg" : "fs"' "$V2_ROOT/console/konsol.js"
-    grep -qF '"parola-degis": () => "Konsol parolası değiştirildi"' "$V2_ROOT/console/konsol.js"
 }
 
 @test "system view: root unit on its own socket, tailnet-only Caddy route, stage 7 channel proof" {
@@ -2975,19 +2943,13 @@ EOF
     # Exported with the runtime, Caddy on the tailnet only, nothing on the WireGuard edge.
     grep -qE '^    local items="[^"]*(^| )panel( |")' "$V2_ROOT/../kur.sh"
     [ ! -e "$V2_ROOT/templates/Caddyfile.wg" ]
-    # The console page loads nothing from elsewhere and runs no inline code.
-    run ! grep -qiE '<style|style=|onclick=|https?://' "$V2_ROOT/console/index.html"
-    run ! grep -qE 'https?://' "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/konsol.css" "$V2_ROOT/console/panel.css"
-    grep -q '"X-Konsol": "1"' "$V2_ROOT/console/konsol.js"
-    run ! grep -qE 'wg-tabs|wgadd|na-create' "$V2_ROOT/console/index.html"
-    run ! grep -qiE 'yedek|backup' "$V2_ROOT/console/index.html" "$V2_ROOT/console/konsol.js" "$V2_ROOT/panel/master-panel" "$unit"
+    # No backup feature in the backend, its unit or Konsol's sources (the page's CSP is checked with the build).
+    run ! grep -qiE 'yedek|backup' "$V2_ROOT/panel/master-panel" "$unit"
+    run ! grep -rqiE 'yedek|backup' "$V2_ROOT/tools/konsol-ui/src"
     run ! grep -q 'WG_BACKUP_MARK' "$V2_ROOT/config/defaults.env" "$V2_ROOT/install.sh" "$V2_ROOT/../wireguard.command"
     # Stage 0 refuses a wg0 or WebDAV port that a panel network already uses.
     # DD-143: port çakışması artık ağı kuran yerde denetlenir (master-wg net-add).
     grep -q 'UDP $port kullanılıyor' "$V2_ROOT/magaza/wireguard/master-wg"
-    # Home has its own five-second tick; other pages keep ten seconds. Both stop when hidden.
-    grep -qF 'if (document.hidden || current === "genel") return;' "$V2_ROOT/console/konsol.js"
-    grep -qF 'if (document.hidden || current !== "genel") return;' "$V2_ROOT/console/konsol.js"
 }
 
 files_panel_start() {
@@ -3250,47 +3212,9 @@ PY
     grep -q '“arsiv.bin” zaten var' "$TMP/body"
     grep -q 'self.drain(length)' "$V2_ROOT/files-panel/master-files-panel"
     grep -q 'UPLOAD_DRAIN_MAX = ' "$V2_ROOT/files-panel/master-files-panel"
-    # The console does not even send a file whose name is already in the folder.
-    grep -q 'state: clash ? "err" : "wait", error: clash ? "zaten var; üzerine yazılmaz" : ""' "$V2_ROOT/console/konsol.js"
     # Yükleme kilidi bütün akış boyunca tutulmaz: yalnız son taşıma kilitli.
     grep -q 'self.run(user, "yükle", put, lock=False' "$V2_ROOT/files-panel/master-files-panel"
     grep -q 'with self.lock:' "$V2_ROOT/files-panel/master-files-panel"
-}
-
-@test "console uploads into the list itself, selects many rows and searches the folder" {
-    # DD-145: ayrı yükleme alanı yok; hedef liste, ilerleme satırın içinde.
-    local js="$V2_ROOT/console/konsol.js" css="$V2_ROOT/console/konsol.css"
-    grep -q 'xhr.open("POST", u.api(`/api/upload?path=${enc(u.path)}&name=${enc(u.name)}`))' "$js"
-    grep -q 'xhr.setRequestHeader("X-Konsol", "1")' "$js"
-    grep -q 'xhr.upload.addEventListener("progress"' "$js"
-    # Bırakma hedefi liste; perde ya da ayrı kuyruk kartı yok.
-    grep -q 'panel.addEventListener("drop"' "$js"
-    grep -q '"tr up"' "$js" || grep -q 'class: "tr up' "$js"
-    grep -q '\.fs-t\.dragging' "$css"
-    grep -q '\.droptip' "$css"
-    run ! grep -qi 'dropveil\|queue-card' "$js" "$css"
-    # Çoklu seçim tek istekte çöpe/taşımaya gider.
-    grep -q 'names: items.map((i) => i.name)' "$js"
-    [ "$(grep -c 'names: items.map((i) => i.name)' "$js")" -ge 2 ]
-    # Arama yalnız satırları yeniler; klasör değişince seçim ve arama sıfırlanır.
-    grep -q 'oninput: (e) => { fsQuery = e.target.value; renderRows(); renderDetail(); }' "$js"
-    # DD-243: the path bar shows no count or size (it resized the bar at every folder).
-    run ! grep -qE 'updateMeta|fs-meta|pf-meta' "$js" "$V2_ROOT/console/konsol.css"
-    grep -qF '.fx-main > .fx-detail { height:82px; overflow:hidden;' "$V2_ROOT/console/dosyalar.css"
-    # DD-244: a "Seç" mode beside Yükle; the detail actions are words; no data: images under the page's CSP.
-    grep -qF 'h("button", { type: "button", class: "btn btn-sm fx-pick", id: "fs-pick", "aria-pressed": "false", onclick: togglePick }, svg("check"), "Seç"),' "$js"
-    grep -qF 'if (fsPicking || (e && (e.shiftKey || e.ctrlKey || e.metaKey))) { toggleSel(item.name, !!(e && e.shiftKey)); return; }' "$js"
-    grep -qF '.fx-main > .fx-detail .fx-acts .btn svg { display:none; }' "$V2_ROOT/console/dosyalar.css"
-    run ! grep -q 'data:image' "$V2_ROOT/console/dosyalar.css"
-    grep -qF '.fx-main > .fs-body, .fx-side { border-radius:var(--radius); border:1px solid var(--glass-line);' "$V2_ROOT/console/dosyalar.css"
-    grep -q 'fsSel.clear();' "$js"
-    # qBittorrent'in yazdığı klasör seçilemez.
-    grep -q 'const locked = inTemp(here) || inTemp(pathText(fsPath));' "$js"
-    grep -q 'locked ? null : h("button", { type: "button", class: "chk"' "$js"
-    # DD-232: the right column's Favoriler take the root and its folders from the backend.
-    grep -q 'fsRootDirs = r.entries.filter((e) => e.type === "dir")' "$js"
-    grep -q '\.fx-nav' "$V2_ROOT/console/dosyalar.css"
-    grep -qx '            <nav class="fx-nav" id="fs-rail" aria-label="Konumlar"></nav>' "$V2_ROOT/console/index.html"
 }
 
 @test "the base install has no Compose project, no Dozzle and no service account in the input file" {
@@ -3301,8 +3225,8 @@ PY
     [ ! -e "$V2_ROOT/templates/qBittorrent.conf" ]
     [ "$(cat "$V2_ROOT/install.sh" "$V2_ROOT/common.sh" "$V2_ROOT/config/defaults.env" "$V2_ROOT/templates/Caddyfile" \
         "$V2_ROOT/templates/dnsmasq.conf" "$V2_ROOT/scripts/firewall.sh" \
-        "$V2_ROOT/magaza/wireguard/master-wg" "$V2_ROOT/panel/master-panel" "$V2_ROOT/console/konsol.js" \
-        "$V2_ROOT/console/index.html" | grep -ciE 'dozzle|COMPOSE_DIR|QBITTORRENT_(IMAGE|DATA_DIR|CONF_FILE)|PULL_IMAGES|bcrypt_matches|validate_account')" -eq 0 ]
+        "$V2_ROOT/magaza/wireguard/master-wg" "$V2_ROOT/panel/master-panel" "$V2_ROOT/console/yeni/app.js" \
+        "$V2_ROOT/console/yeni/index.html" | grep -ciE 'dozzle|COMPOSE_DIR|QBITTORRENT_(IMAGE|DATA_DIR|CONF_FILE)|PULL_IMAGES|bcrypt_matches|validate_account')" -eq 0 ]
     grep -qx 'SERVICE_NAMES="panel"' "$V2_ROOT/config/defaults.env"
     run ! grep -q 'docker-ce' "$V2_ROOT/install.sh"
     # qBittorrent's name and interface come with its module.
@@ -3329,27 +3253,19 @@ PY
     run ! grep -q '^TORRENT_' "$V2_ROOT/config/defaults.env"
 }
 
-@test "console shows qBittorrent's first login and its interface link" {
-    local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
-    # DD-200/202: the App Store texts come from the package; the shell names no application.
+@test "qBittorrent's App Store texts come from its package and the backend supplies its interface link" {
+    # DD-200/202: the App Store texts come from the package.
     # DD-267: the package's page of the old interface (sayfa.js/css, the "sayfa" declaration) is gone.
     local meta="$V2_ROOT/magaza/torrent/konsol.json"
     python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["ad"]=="qBittorrent" and "sayfa" not in d and d["durdur_notu"] and d["kaldir"]["veri_etiket"], d' "$meta"
     grep -qx 'PAKET_KONSOL="konsol.json"' "$V2_ROOT/magaza/torrent/paket.env"
     run ! grep -q '^PAKET_SAYFA=' "$V2_ROOT/magaza/torrent/paket.env"
-    [ ! -e "$V2_ROOT/magaza/torrent/sayfa.js" ] && [ ! -e "$V2_ROOT/magaza/torrent/sayfa.css" ]
+    [ ! -e "$V2_ROOT/magaza/torrent/sayfa.js" ]
+    [ ! -e "$V2_ROOT/magaza/torrent/sayfa.css" ]
     grep -qx 'PAKET_API="api.py"' "$V2_ROOT/magaza/torrent/paket.env"
-    run ! grep -qE 'MOD_META|firstLogin|noStop|Torrent indirmelerini' "$js"
-    # DD-152: the Unpackerr application and its "recommended together" hint are gone.
-    run ! grep -qE 'recommends|unpackerr' "$js"
     grep -qF 'qBittorrent ayarları' "$meta"
-    run ! grep -qE 'accountBlock|REVEAL_SECONDS|hideAllPass|renderTorrentStatus|ROUTES\.torrent|"torrent"' "$js"
     # DD-195 (v2-168): the backend supplies both names of the interface link.
     grep -qF 'urls = self.package_urls(mid)' "$V2_ROOT/panel/master-panel"
-    run ! grep -q 'torrent' "$html"
-    run ! grep -q 'installed-label' "$html"
-    [ "$(grep -c 'link-dozzle' "$html" "$js" | awk -F: '{s += $NF} END {print s}')" -eq 0 ]
-    run ! grep -q '^\.acct-wg {' "$V2_ROOT/console/konsol.css"
 }
 
 @test "phase 3: packages declare their folders, settings and backend write paths; the base names no application" {
@@ -3358,11 +3274,9 @@ PY
     grep -qx 'PAKET_KLASOR_MODUL="klasorler.py"' "$V2_ROOT/magaza/torrent/paket.env"
     grep -qF 'def yazilan(env):' "$V2_ROOT/magaza/torrent/klasorler.py"
     grep -qF 'source "$MODULES_DIR/torrent/torrent.env"' "$V2_ROOT/magaza/torrent/kanca"
-    # The base's state, defaults, shell and helpers carry no application name or key.
+    # The base's state, defaults and helpers carry no application name or key.
     run ! grep -qE '^TORRENT_' <<<"$(awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     run ! grep -qE 'qBittorrent|^TORRENT_|WireGuard' "$V2_ROOT/config/defaults.env"
-    run ! grep -qiE 'qbittorrent|torrent' "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/ayarlar.js" "$V2_ROOT/console/index.html"
-    run ! grep -q 'WireGuard' "$V2_ROOT/console/ayarlar.js"
     run ! grep -qiE 'qbittorrent|TORRENT_' "$V2_ROOT/panel/master_shares.py" "$V2_ROOT/panel/master_webdav.py" \
         "$V2_ROOT/files-panel/master-files-panel" "$V2_ROOT/panel/master_settings.py" "$V2_ROOT/scripts/firewall.sh" \
         "$V2_ROOT/systemd/master-files-panel.service" "$V2_ROOT/systemd/master-panel.service"
@@ -3391,170 +3305,18 @@ PY
     grep -qF '[[ -f "$V2_ROOT/magaza/$id/$name" ]] || { mark_module_pending "$id"; rm -rf -- "$dst"; changed=1; }' "$V2_ROOT/install.sh"
 }
 
-@test "console skin (DD-204, DD-213): compact home tiles, fixed actions and title clock, no external asset" {
-    local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html" css="$V2_ROOT/console/panel.css"
-    # The overview is the landing page and a shell route; the wallpaper is inline SVG with no inline style.
-    grep -q '<a href="#/genel" data-route="genel" data-icon="home">Ana Menü</a>' "$html"
-    grep -q '<section data-view="genel" hidden>' "$html"
-    grep -q '<div class="wall" aria-hidden="true">' "$html"
-    run ! grep -q ' style="' "$html"
-    run ! grep -qE 'url\(|@import|https?://' "$css"
-    grep -qF 'const SHELL_ROUTES = new Set(["genel", "dosyalar", "moduller", "konteynerler", "ayarlar"]);' "$js"
-    grep -qF 'let current = "genel";' "$js"
-    grep -qF 'pendingRoute ? raw[0] : "genel";' "$js"
-    # Widgets read the shell's own endpoints only; tiles come from the module list and package tones.
-    grep -qF 'genel: { title: "Ana Menü", eyebrow: "", actions: () => [],' "$js"
-    run ! grep -qE 'overviewActions|homeRefresh' "$js"
-    grep -qF 'return { key: m.id, href: meta.rota ? "#/" + meta.rota : "#/moduller", icon: meta.icon, tone: meta.tone, name: meta.name, sub: state, dot,' "$js"
-    # DD-212: only installed applications become home tiles; built-in navigation stays available.
-    local defs actions journal sidebar
-    defs="$(awk '/^  function tileDefs\(\)/,/^  }$/' "$js")"
-    grep -qF 'return (MODS || []).filter((m) => m.installed).map((m) => {' <<<"$defs"
-    run ! grep -qE 'key: "(dosyalar|paylasim|moduller|ayarlar)"' <<<"$defs"
-    for route in dosyalar moduller ayarlar; do grep -qF "data-route=\"$route\"" "$html"; done
-    # Native launch and lifecycle remain; three action slots are siblings of the launch link.
-    grep -qF 'launch: launchUrl(m), settings: form && form.oku && form.yaz ? "form" : meta.rota ? "#/" + meta.rota : "", service: !!m.durdurulabilir };' "$js"
-    grep -qF 'const actions = !editing ? appActions(def) : null;' "$js"
-    grep -qF 'if (m.state === "calisiyor") askStop(m, () => go("durdur")); else go("baslat");' "$js"
-    grep -qF 'const newTab = (url) => (url ? { target: "_blank", rel: "noopener noreferrer" } : {});' "$js"
-    actions="$(awk '/^  function appActions\(def\)/,/^  }$/' "$js")"
-    grep -qF 'class: "tile-act tile-act-empty", "data-act": action, "aria-hidden": "true"' <<<"$actions"
-    grep -qF 'else kids.push(blank("ayar"));' <<<"$actions"
-    grep -qF '} else kids.push(blank("servis"));' <<<"$actions"
-    grep -qF '"aria-label": name, title: name' <<<"$actions"
-    grep -qF '"data-act": "gunluk"' <<<"$actions"
-    grep -qF 'onclick: () => appLog(m.id)' <<<"$actions"
-    grep -qE '^\.tile-actions \{ .*display:grid; grid-template-columns:minmax\(44px,auto\) 44px 44px;' "$css"
-    grep -qE '^\.tile-act \{ .*width:44px; height:44px;' "$css"
-    grep -qF '.tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(138px,1fr));' "$css"
-    grep -qE '^\.tile \{ .*min-height:193px;' "$css"
-    grep -qF '.tile-act-empty { cursor:default; pointer-events:none; }' "$css"
-    [ "$(grep -n 'blank("servis")' <<<"$actions" | cut -d: -f1)" -lt "$(grep -n 'blank("ayar")' <<<"$actions" | cut -d: -f1)" ]
-    [ "$(grep -n 'blank("ayar")' <<<"$actions" | cut -d: -f1)" -lt "$(grep -n '"data-act": "gunluk"' <<<"$actions" | cut -d: -f1)" ]
-    # The dialog consumes the existing module journal as text, through the usual request gate.
-    journal="$(awk '/^  function appLog\(id\)/,/^  }$/' "$js")"
-    grep -qF '$("sh").showModal()' <<<"$journal"
-    grep -qF 'fetch(`/api/konsol/moduller/${enc(id)}/gunluk`' <<<"$journal"
-    grep -qF '"X-Konsol": "1"' <<<"$journal"
-    grep -qF 'output.textContent = value || "(boş)"' <<<"$journal"
-    run ! grep -q 'innerHTML' <<<"$journal"
-    # Resources stay in the sidebar and close it; clock/date belong only to the home page's h1.
-    # DD-230: the address facts moved to Ana Menü's "Sunucu" widget.
-    sidebar="$(awk '/<aside /,/<\/aside>/' "$html")"
-    for id in resource-cpu resource-mem resource-disk; do
-        grep -qF "id=\"$id\"" <<<"$sidebar"
-    done
-    run ! grep -qE 'foot-(ts|wan|version|uptime|access)|side-facts' <<<"$sidebar"
-    # DD-232: navigation and resources are two stacked cards; resources come last.
-    [ "$(grep -n 'class="side-card resources"' <<<"$sidebar" | cut -d: -f1)" -gt "$(grep -n 'class="side-foot"' <<<"$sidebar" | cut -d: -f1)" ]
-    grep -qF '<div class="side-card side-main">' <<<"$sidebar"
-    run ! grep -qE 'side-clock|side-date|home-clock|home-date' <<<"$sidebar"
-    grep -qF 'function paintHomeClock()' "$js"
-    grep -qF '$("title").replaceChildren(h("time", { id: "home-clock" }), h("span", { id: "home-date" }), h("span", { id: "home-update", class: "home-update" }));' "$js"
-    grep -qF '} else $("title").textContent = hd.title;' "$js"
-    grep -qF '["foot-uptime", "Açık", fresh && Number.isFinite(s.uptime)' "$js"
-    grep -qF 'function paintFacts() {' "$js"
-    run ! grep -qE 'genel-clock|genel-health|const (ring|pie) =|function (ring|pie)\(' "$js"
-    run ! grep -qE '(^|[[:space:],])\.(clock(-facts)?|rings?|pie(-box)?)([[:space:].,{]|$)' "$css"
-    run ! grep -qiE 'qbittorrent|wireguard|torrent' "$js" "$css"
-    # Glass tokens, opaque fallbacks for reduced transparency and engines without backdrop-filter.
-    for token in -- '--glass:' '--glass-line:' '--blur:' '--radius:' '--sky1:' '--m4:'; do [ "$token" = -- ] || grep -q -- "$token" "$css"; done
-    grep -q 'prefers-reduced-transparency:reduce' "$css"
-    grep -q '@supports not (backdrop-filter:blur(1px))' "$css"
-    grep -q 'backdrop-filter:blur(var(--blur))' "$css"
-    grep -qx 'body { font-size:14px; background:transparent; }' "$css"
-    # The App Store rows keep their ids and controls; only the shape changed to tiles.
-    grep -q '^\.store-list { display:grid;' "$css"
-    grep -qF 'h("article", { class:"store-row", id:`modc-${m.id}`' "$js"
-    # Icons the overview uses exist (svg() silently falls back to the file icon).
-    for icon in home clock folder share stack sliders refresh list; do grep -qE "^    ${icon}: '" "$js"; done
-}
-
-@test "overview layout and network card (DD-206, DD-213, DD-230): widgets aligned to tiles, server rates and cumulative app totals" {
-    local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html" css="$V2_ROOT/console/panel.css" backend="$V2_ROOT/panel/master-panel"
-    # DD-229: Düzenle is fixed to the screen's bottom-right corner; the page keeps room below the last row.
-    grep -qF '<div class="edit-bar" id="genel-edit" role="toolbar" aria-label="Ana Menü düzeni"></div>' "$html"
-    [ "$(grep -n 'id="genel-edit"' "$html" | cut -d: -f1)" -gt "$(grep -n 'id="genel-tiles"' "$html" | cut -d: -f1)" ]
-    grep -q '^\.edit-bar { position:fixed; z-index:30; right:' "$css"
-    grep -qF 'section[data-view="genel"] { padding-bottom:72px; }' "$css"
-    # The tiles wait for the module list (no jump), and Düzenle waits for both the layout and the list.
-    grep -qF 'const defs = modsSettled ? orderedTiles() : [];' "$js"
-    grep -qF 'disabled: !layoutLoaded || !modsSettled, onclick: startEdit' "$js"
-    # ag and sunucu (DD-230) are the widgets; an old width is ignored while visibility is retained.
-    local widgets tools totals
-    widgets="$(awk '/^  const WIDGETS = \[/,/^  ];$/' "$js")"
-    # DD-242: two 1×1 widgets (Sunucu, Hız) and the 2×1 application traffic card, in that order.
-    [ "$(grep -c 'id:' <<<"$widgets")" -eq 3 ]
-    [ "$(grep -o 'id: "[a-z]*"' <<<"$widgets" | tr '\n' ' ')" = 'id: "sunucu" id: "hiz" id: "ag" ' ]
-    grep -qF '{ id: "hiz", ad: "Hız", label: "Anlık ağ hızı", genislik: 1, boy: "1x1" },' <<<"$widgets"
-    grep -qF '{ id: "ag", ad: "Ağ", label: "Uygulama trafiği", genislik: 2, boy: "2x1" },' <<<"$widgets"
-    grep -qF 'return { genislik: base.genislik, gizli: own ? own.gizli : false };' "$js"
-    grep -qF 'widgetlar: widgetOrder().map((id) => ({ id, ...widgetSetting(id) }))' "$js"
-    # DD-242: the widget order is the saved list's order when it names every widget, packed row by row.
-    grep -qF 'return packWidgets(saved.length === ids.length && new Set(saved).size === ids.length ? saved : ids);' "$js"
-    grep -qF 'const c = wide ? (row[0] || row[1] ? -1 : 0) : row.indexOf(false);' "$js"
-    grep -qF 'if (shown.join() !== order.join()) return shown;' "$js"
-    grep -qF 'disabled: !widgetStep(order, def.id, step), onclick: () => moveWidget(def.id, step) }, svg(icon));' "$js"
-    grep -qF "widgets.replaceChildren(...(cards.length ? [h(\"div\", { class: \"widget-block\" }, ...cards)] : []));" "$js"
-    grep -qF 'const defs = tileDefs(), order = activeLayout().kareler || [];' "$js"
-    # DD-230: widgets share the tiles' column template, so a span-2 widget is exactly two tiles wide.
-    grep -qF '.widgets { display:grid; grid-template-columns:repeat(auto-fill,minmax(138px,1fr));' "$css"
-    grep -qF '.tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(138px,1fr));' "$css"
-    grep -qF '.widget-block { grid-column:1 / span 2; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); grid-auto-rows:var(--w-row); gap:14px; }' "$css"
-    grep -qF '.widget[data-boy="2x1"] { grid-column:span 2; }' "$css"
-    run ! grep -qE 'grid-auto-flow:column|data-boy="2x2"|grid-row:span' "$css"
-    grep -qF '@media(max-width:480px) { .tiles, .widgets { grid-template-columns:repeat(2,minmax(0,1fr)); }' "$css"
-    grep -qF '.store-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(138px,1fr));' "$css"
-    tools="$(awk '/^  function widgetTools\(def, set, order\)/,/^  }$/' "$js")"
-    grep -qF 'change({ gizli: !set.gizli }, "gizle")' <<<"$tools"
-    run ! grep -qE '"data-tool": "(dar|genis)"|genislik:' <<<"$tools"
-    run ! grep -qE 'data-height|yukseklik' "$js" "$css"  # DD-242: sizes are fixed per widget (1×1, 2×1), never operator-set
+@test "network card data (DD-206): WAN counters from sysfs, application totals from package modules; no stored layout (DD-267)" {
+    local backend="$V2_ROOT/panel/master-panel"
     # DD-267: the root backend no longer stores the layout (no route, record or audit kind); the
     # installer removes an old KONSOL_AUTH_DIR/duzen.json (test_overview.py checks the routes answer 404).
     run ! grep -qE 'LAYOUT_|/api/konsol/duzen|"duzen"' "$backend"
-    # DD-232: only the Files icon/list choice is a per-browser convenience; the layout stays server-side.
-    [ "$(grep -o 'localStorage\.[a-zA-Z]*' "$js" | sort -u | tr '\n' ' ')" = 'localStorage.getItem localStorage.setItem ' ]
-    [ "$(grep -c 'konsol-files-view' "$js")" = 2 ]
-    run ! grep -qF '"Kartlar"' "$js"
-    run ! grep -qE 'sessionStorage' "$js"
-    run ! grep -qiE 'qbittorrent|wireguard|torrent' "$js" "$css" "$html"
-    # Application columns show cumulative byte totals; only the server section shows live rates.
-    totals="$(awk '/^  function netApps\(\)/,/^  }$/' "$js")"
-    grep -qF 'total("down", "down"), total("up", "up")' <<<"$totals"
-    grep -qF 'fresh && Number.isFinite(a[key]) ? bytes(a[key]) : "—"' <<<"$totals"
-    run ! grep -qE 'speed\(|down_rate|up_rate' <<<"$totals"
-    grep -qF 'if (!Number.isFinite(b)) return "—";' "$js"
-    grep -qF 'fresh ? speed(NET.rx) : "—"' "$js"
-    grep -qF 'fresh ? speed(NET.tx) : "—"' "$js"
-    grep -qF 'h("table", { class: "net-table", "aria-label": "Uygulama aktarım toplamları" }' "$js"
-    grep -qF '...["Uygulama", "İndirme", "Yükleme"].map' "$js"
-    grep -qF 'class: "net-app-name", title: name' <<<"$totals"
-    # Equal-width, equal-height sections and a borderless table with fixed-height overflow.
-    # DD-231: no chart; DD-242: the table scrolls inside the fixed 2×1 row, its headings visually hidden.
-    run ! grep -qE 'netChart|net-svg|net-chart|net-live' "$js" "$css"
-    grep -qF '.net-apps { flex:1; min-height:0; overflow:auto; scrollbar-width:thin; }' "$css"
-    grep -qF '.net-table thead { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }' "$css"
-    grep -qF 'svg(cls === "down" ? "download" : "upload"), fresh && Number.isFinite(a[key]) ? bytes(a[key]) : "—");' <<<"$totals"
-    grep -qF 'svg("download"), h("b", { id: "ag-rx" }' "$js"
-    grep -qF 'svg("upload"), h("b", { id: "ag-tx" }' "$js"
-    grep -qF '.net-table th, .net-table td { border:0;' "$css"
     # Network: WAN counters from sysfs (no command in the sampler), package totals from PAKET_TRAFIK modules.
     grep -qF 'open("/sys/class/net/%s/statistics/%s" % (iface, name), "rb")' "$backend"
     grep -qF 'master_settings.load_package_module(env, mid, name, "trafik", label)' "$backend"
-    # One five-second home tick fetches all three sources; other pages keep the ten-second tick.
-    local poll
-    poll="$(awk '/^  setInterval\(\(\) => \{$/,/^  }, 5000\);$/' "$js")"
-    grep -qF 'if (document.hidden || current !== "genel") return;' <<<"$poll"
-    grep -qF 'if (document.hidden || current === "genel") return;' <<<"$poll"
-    [ "$(grep -cF 'loadSystem();' <<<"$poll")" -eq 2 ]
-    grep -qF 'if (!(MODS || []).some((m) => m.busy)) loadModules();' <<<"$poll"
-    grep -qF 'if (editing || !widgetSetting("ag").gizli || !widgetSetting("hiz").gizli) loadNetwork();' <<<"$poll"
-    grep -qxF '  }, 10000);' <<<"$poll"
-    grep -qxF '  }, 5000);' <<<"$poll"
-    run ! grep -qE 'loadNetwork\(\).*2000|homeRefresh|overviewActions' "$js"
     grep -qx 'PAKET_TRAFIK="trafik.py"' "$V2_ROOT/magaza/torrent/paket.env"
     grep -qx 'PAKET_TRAFIK="trafik.py"' "$V2_ROOT/magaza/wireguard/paket.env"
-    [ -f "$V2_ROOT/magaza/torrent/trafik.py" ] && [ -f "$V2_ROOT/magaza/wireguard/trafik.py" ]
+    [ -f "$V2_ROOT/magaza/torrent/trafik.py" ]
+    [ -f "$V2_ROOT/magaza/wireguard/trafik.py" ]
     # qBittorrent's own all-time statistics, not systemd IP accounting (a daemon-reload drops those counters).
     run ! grep -q 'IPAccounting' "$V2_ROOT/magaza/torrent/master-stack.conf"
     grep -qF '"qBittorrent-data.conf"' "$V2_ROOT/magaza/torrent/trafik.py"
@@ -3565,7 +3327,7 @@ PY
 }
 
 @test "Podman is base infrastructure (DD-211): integrated manager uses private root workers" {
-    local s1 s7 mc="$V2_ROOT/panel/master_containers.py" js="$V2_ROOT/console/konteynerler.js" css="$V2_ROOT/console/konteynerler.css"
+    local s1 s7 mc="$V2_ROOT/panel/master_containers.py"
     [ ! -e "$V2_ROOT/magaza/podman" ]
     s1="$(awk '/^stage_1\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
@@ -3579,7 +3341,6 @@ PY
     [ "$(cat "$V2_ROOT/install.sh" "$V2_ROOT/scripts/master-modul" | grep -vE '^[[:space:]]*#' | grep -cE 'podman\.socket|podman-auto-update|systemctl (enable|start)[^#]*podman')" -eq 0 ]
     # The base read mapper stays read-only; manager writes have one gated route and an external worker.
     grep -qF 'atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"' "$V2_ROOT/install.sh"
-    grep -qF 'konteynerler.css konteynerler.js giris.html giris.js giris.css duzenleyici.js obhut.svg obhut.png; do' "$V2_ROOT/install.sh"
     # DD-266: the reads are table routes too, on the same view; no Podman path is matched by hand.
     for read in liste ayrinti gunluk guncellemeler islem; do
         grep -qF "Route(\"GET\", \"/api/konsol/konteynerler/$read\"," "$V2_ROOT/panel/master_api.py"
@@ -3596,17 +3357,7 @@ PY
     run ! grep -qE 'SECRET_RE|MASK|mask\(' "$mc" "$V2_ROOT/panel/master_container_manager.py"
     grep -qF "rc,text,_=self.run(['journalctl','-u',unit,'-n',str(tail),'--no-pager','-o','short-iso'],30)" "$V2_ROOT/panel/master_container_manager.py"
     run ! grep -qE '"Env"|\.get\("Env"' "$mc"
-    run ! grep -qiE 'qbittorrent|wireguard|torrent' "$mc" "$js" "$css"
-    # Main sidebar page: CSP-safe, scoped styles and script loaded before the shell.
-    run ! grep -qF '["konteynerler", "Konteynerler"]' "$V2_ROOT/console/ayarlar.js"
-    grep -qF 'href="#/konteynerler"' "$V2_ROOT/console/index.html"
-    [ "$(grep -n 'src="/konteynerler.js"' "$V2_ROOT/console/index.html" | cut -d: -f1)" -lt "$(grep -n 'src="/konsol.js"' "$V2_ROOT/console/index.html" | cut -d: -f1)" ]
-    grep -qF 'href="/konteynerler.css"' "$V2_ROOT/console/index.html"
-    run ! grep -qE 'innerHTML|localStorage|sessionStorage|https?://|style=' "$js"
-    run ! grep -qE 'url\(|@import|https?://' "$css"
-    [ "$(grep -cE '^\.(pd-|@)' "$css")" -gt 0 ] && [ "$(grep -cE '^\.[a-oq-z]' "$css")" -eq 0 ]
-    # Syntax check only where Node exists (the Mac); the Linux host has no Node.
-    if command -v node >/dev/null 2>&1; then node --check "$js"; fi
+    run ! grep -qiE 'qbittorrent|wireguard|torrent' "$mc"
 }
 
 @test "qBittorrent runs as a Podman quadlet (DD-209): pinned image, loopback UI, same-path mounts, stop removes the unit" {
@@ -3911,38 +3662,6 @@ EOF
         "$(grep -nx '    reapply_modules' <<<"$stage7" | cut -d: -f1)" ]
 }
 
-@test "container list (DD-213, DD-214): start/stop and edit before the name, remove last, home-tile icons" {
-    local js="$V2_ROOT/console/konteynerler.js" css="$V2_ROOT/console/konteynerler.css" row control list
-    row="$(awk '/^  function rowEl\(c\)/,/^  }$/' "$js")"
-    control="$(awk '/^  function control\(c, slot\)/,/^  }$/' "$js")"
-    list="$(awk '/^  function containersPanel\(\)/,/^  }$/' "$js")"
-    # Ownership remains server authority, but no longer consumes a list column.
-    grep -qF 'h("span", null, "Ad"), h("span", null, "Durum"), h("span", null, "Kaynak"), h("span", null, "Erişim"), h("span", null, ""))' <<<"$list"
-    run ! grep -qE 'shortImage|c\.image|pd-c-owner|ownerPill' <<<"$row"
-    grep -qF 'appName(c)' <<<"$row"
-    for cls in pd-c-state pd-c-res pd-c-access; do grep -qF "$cls" <<<"$row"; done
-    # DD-214: lead controls, icon and name in the first cell; remove alone at the end of the row.
-    grep -qF 'h("div", { class: "pd-c-who" }, rowLead(c), icon(c), h("div", { class: "pd-nm" },' <<<"$row"
-    grep -qF 'h("div", { class: "pd-acts pd-acts-end" }, control(c, "remove")),' <<<"$row"
-    grep -qF 'const rowLead = (c) => h("div", { class: "pd-acts pd-acts-lead", role: "group", "aria-label": `${appName(c)} işlemleri` }, control(c, "svc"), control(c, "edit"));' "$js"
-    # Fixed slots dispatch to the existing confirmed workflows, never directly to the API; the icons are the
-    # home tiles' own (play/pause, sliders, trash).
-    grep -qF 'svcAction === "stop" ? "pause" : "play", () => lifecycle(c, svcAction)]' <<<"$control"
-    grep -qF 'edit: ["save", "Düzenle", "sliders", () => openEditor(c.name)],' <<<"$control"
-    grep -qF 'remove: ["remove", "Kaldır", "trash", () => removeContainer(c)],' <<<"$control"
-    grep -qF '"aria-disabled": reason ? "true" : "false"' <<<"$control"
-    grep -qF 'if (!busyOf(c) && can(c, action)) fn();' <<<"$control"
-    run ! grep -qE 'submit\(|fetch\(|"pencil"|"stop" : "play"' <<<"$control"
-    grep -qF 'c.restricted_reason' <<<"$row"
-    grep -qF '.pd-acts .pd-ib { width:44px; height:44px; border-radius:8px; border:0; background:none; color:var(--muted); }' "$css"
-    run ! grep -qE '\.pd-acts \.pd-act-(start|stop|edit) \{ color' "$css"
-    # The row layout follows the table's own width, so the sidebar's narrow table turns into cards
-    # instead of squeezing the name; the phone media block no longer lays out rows.
-    grep -qF '.pd-table { padding:0; gap:0; overflow:visible; container-type:inline-size; }' "$css"
-    grep -qF '@container (max-width:840px) {' "$css"
-    run ! grep -qF '.pd-row' <<<"$(awk '/^@media \(max-width:760px\) \{/,/^\}/' "$css")"
-}
-
 @test "qBittorrent on its own bridge (DD-217): per-address publications, engine-made bridge, guarded forward path" {
     local mm="$V2_ROOT/scripts/master-modul" net="$V2_ROOT/panel/master_container_network.py" kanca="$V2_ROOT/magaza/torrent/kanca" ayar="$V2_ROOT/magaza/torrent/ayar.py"
     # The engine makes the package bridge with the guard's interface naming and the package's own label,
@@ -3969,14 +3688,13 @@ EOF
     grep -qF '"Eş portu (TCP+UDP) yalnız sunucunun WAN IPv4 adresinde internete açılır' "$V2_ROOT/magaza/torrent/konsol.json"
     run ! grep -qF '__TORRENT_PEER_PORT__' "$V2_ROOT/magaza/torrent/konsol.json"
     run ! grep -qF 'İnternete eş portu açılmaz' "$V2_ROOT/magaza/torrent/konsol.json"
-    # Settings shows the peer port as an internet-facing package port, IPv4 only and without an INPUT toggle.
+    # The backend reports the peer port as an internet-facing package port, IPv4 only and without an INPUT toggle.
     grep -qF 'row.update(families=(4,), fixed=True)' "$V2_ROOT/panel/master-panel"
-    grep -qF 'r.scope === "lo" || r.fixed' "$V2_ROOT/console/ayarlar.js"
     grep -qx 'PAKET_PORTLAR="TORRENT_UI_PORT:tcp:loopback:qBittorrent arayüzü;TORRENT_PEER_PORT:udp+tcp:internet:qBittorrent eş portu"' "$V2_ROOT/magaza/torrent/paket.env"
 }
 
-@test "peer port editor (DD-221): the Podman page moves the WAN publications with the guard and a durable choice" {
-    local ayar="$V2_ROOT/magaza/torrent/ayar.py" ui="$V2_ROOT/console/konteynerler.js" body
+@test "peer port change (DD-221): qBittorrent's adapter moves the WAN publications with the guard and a durable choice" {
+    local ayar="$V2_ROOT/magaza/torrent/ayar.py" body
     body="$(awk '/^def konteyner_ayar\(/,/^def _runner\(/' "$ayar")"
     # Both WAN publications and TORRENTING_PORT move together, on the WAN address the installer rendered.
     grep -qx 'def patch_peer_publish(text, wan, old, new):' "$ayar"
@@ -3989,9 +3707,6 @@ EOF
     grep -qF 'peer_value = config.get("peer_port", int(env["TORRENT_PEER_PORT"]))' <<<"$body"
     # The probe binds TCP and UDP on the WAN address; no install-time free-port search exists.
     grep -qF 'for kind in (socket.SOCK_STREAM, socket.SOCK_DGRAM):' "$ayar"
-    # The base page shows the field only for an adapter that declares it.
-    grep -qF '"peer_port" in d ? field("Eş portu (WAN IPv4, TCP+UDP)"' "$ui"
-    grep -qF 'if ("peer_port" in s.draft) config.peer_port' "$ui"
 }
 
 @test "image updates (DD-214): Konsol checks registry manifests, the operator updates; no automatic update" {
@@ -4017,73 +3732,24 @@ EOF
     grep -qF '_runner(["podman", "rmi", ident.strip()], 60)' <<<"$body"
     # No timer, auto-update label or Podman auto-update unit anywhere in the stack.
     [ "$(grep -rhE 'AutoUpdate=|podman-auto-update|auto-update' "$V2_ROOT/magaza" "$V2_ROOT/panel" "$V2_ROOT/systemd" "$V2_ROOT/install.sh" "$V2_ROOT/scripts" | grep -cvE '^[[:space:]]*#')" -eq 0 ]
-    # The page asks the cached status on open and forces only on the operator's button.
-    grep -qF 'api(`${BASE}/guncellemeler${force ? "?yenile=1" : ""}`)' "$V2_ROOT/console/konteynerler.js"
-    grep -qF 'onclick: () => { if (!updLoading) loadUpdates(true); } }, svg("refresh"), "Güncellemeleri denetle")' "$V2_ROOT/console/konteynerler.js"
 }
 
-@test "console shows App Store from the module API in one responsive sidebar" {
-    local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
-    [ "$(grep -c 'data-route="moduller"' "$html")" -eq 1 ]
-    grep -q 'aria-controls="panel-sidebar"' "$html"
-    grep -q 'href="/panel.css"' "$html"
-    grep -q '<section data-view="moduller"' "$html"
-    grep -q 'id="mod-grid"' "$html"
-    grep -q 'id="cf-extra"' "$html"
-    grep -qF 'api("/api/konsol/moduller")' "$js"
-    grep -qF 'return modStart(m, action, body || { veri: !!veri }).catch(fail);' "$js"
-    grep -qF 'return post(`/api/konsol/moduller/${enc(m.id)}/${action}`, body)' "$js"
-    # DD-210: Kur opens the package's declared form instead of starting at once.
-    grep -qF 'onclick:() => (formOf(m.id) ? appForm(m.id, "kur") : modAct(m, "kur"))}, "Kur")),' "$js"
-    grep -qF 'if (MODS.some((m) => m.busy)) modTimer = setTimeout(loadModules, 1500);' "$js"
-    # Until the unit writes its first step, the card shows the requested action, not the previous one.
-    grep -qF 'if (!p || p.action !== want || p.step === "bitti" || p.step === "hata") m.progress = { action: want, step: "0", total: 0, text: "" };' "$js"
-    grep -qF 'moduller: { title: "App Store"' "$js"
-    run ! grep -qF 'unpackerr' "$js"
-    # DD-152: every module runs on the host or in Konsol; there is no Docker runtime chip.
-    grep -qF 'const RUNTIME = { host: ["host", "server", "Host"], konsol: ["konsol", "gauge", "Konsol"], konteyner: ["konteyner", "box", "Konteyner"] };' "$js"
-    # DD-209: a container app's state is its unit's liveness, like a host service.
-    grep -qF 'const unitRuntime = (m) => m.runtime === "host" || m.runtime === "konteyner";' "$js"
-    grep -q '^\.rt-chip\.konteyner' "$V2_ROOT/console/konsol.css"
-    run ! grep -q 'rt-chip.docker' "$V2_ROOT/console/konsol.css"
-    grep -q '^\.store-list' "$V2_ROOT/console/panel.css"
-    grep -q '^\.store-row' "$V2_ROOT/console/panel.css"
-    grep -q '^\.rt-chip' "$V2_ROOT/console/konsol.css"
-    # Compact cards omit descriptions; opening details must still reveal the package's explanation.
-    local card detail
-    card="$(awk '/^  function modRow\(m\)/,/^  }$/' "$js")"
-    detail="$(awk '/^  function modDetail\(m\)/,/^  }$/' "$js")"
-    run ! grep -qE 'meta\.desc|mod-desc|store-desc' <<<"$card"
-    grep -qF 'h("h2", {id:`mod-name-${m.id}`}, meta.name)' <<<"$card"
-    grep -qF 'h("p", {class:"mod-desc"}, meta.desc)' <<<"$detail"
-}
-
-@test "console includes per-folder accounts as a Files capability" {
-    local js="$V2_ROOT/console/konsol.js" dav="$V2_ROOT/console/dosyalar.js"
-    grep -qF 'else { body.append(h("h2", { class: "fx-title" }, "Paylaşımlar")); renderShareList(body); }' "$js"
-    # DD-267: the files backend has no archive jobs any more (no route, no result line).
+@test "the files backend has no archive jobs any more and still starts with a retired --archive-dir (DD-267)" {
+    # No route and no result line.
     run ! grep -qE 'arsiv|/api/archives' "$V2_ROOT/files-panel/master-files-panel"
-    grep -qF 'raw[1] === "paylasim" ? "shares" : "files";' "$js"
-    grep -qF 'api("/api/konsol/paylasim")' "$js"
-    grep -qF 'window.createSharesPage' "$js"
-    # Each trusted network has its own card, switch, permission and lifetime.
-    grep -qF 'const scopes = ["tailscale", "wan"];' "$dav"
-    grep -qF 'class: "dav-card-grid" }, ...scopes.map(scope => connection(s, scope))' "$dav"
-    grep -qF 'role: "switch", "aria-checked": c.enabled' "$dav"
-    grep -qF 'id: "dav-" + scope + "-permission"' "$dav"
-    grep -qF 'id: "dav-" + scope + "-days"' "$dav"
-    grep -qF 'data.connections[scope] = { enabled: d.enabled.getAttribute("aria-checked") === "true", permission: d.permission.value, days: Number(d.days.value) };' "$dav"
-    grep -qF 'if (d.permission.value === "rw") data.connections[scope].ack_write = d.ack.checked;' "$dav"
-    grep -qF 'if (value === "rw") patch.ack_write = true;' "$dav"
-    grep -qF 'connections: { [scope]: patch }' "$dav"
-    grep -qF 'if (value === "rw") ask({' "$dav"
-    grep -qF 'onOk: save' "$dav"
-    grep -qF 'connections: { [scope]: { enabled } }' "$dav"
-    grep -qF 'if (value === null || (value === 0 && c.expires == null)) return;' "$dav"
-    grep -qF 'connections: { [scope]: { days: value } }' "$dav"
-    grep -qF 'onOk: () => { body.ack_wan_http = true; return save(); }' "$dav"
-    grep -qF 'data.password = ""' "$dav"
-    run ! grep -qE 'localStorage|sessionStorage' "$dav"
+    # A unit rendered before the upgrade may still pass --archive-dir: accepted and ignored, never a start failure.
+    PYTHONDONTWRITEBYTECODE=1 python3 - "$V2_ROOT/files-panel/master-files-panel" <<'PY'
+import importlib.machinery, sys, types
+loader = importlib.machinery.SourceFileLoader("files_panel", sys.argv[1])
+m = types.ModuleType("files_panel")
+m.__file__ = sys.argv[1]
+loader.exec_module(m)
+seen = []
+m.cmd_serve = seen.append
+sys.argv = ["master-files-panel", "serve", "--listen", "127.0.0.1:1", "--root", "/srv", "--archive-dir", "/srv/.arsiv"]
+m.main()
+assert len(seen) == 1 and seen[0].root == "/srv", seen
+PY
 }
 
 @test "installer wires private folder accounts without exposing hashes to the file backend" {
@@ -4091,7 +3757,6 @@ EOF
     grep -qF 'atomic_write "$SBIN_DIR/master_shares.py"' "$V2_ROOT/install.sh"
     grep -qF 'atomic_write "$SBIN_DIR/master_https.py"' "$V2_ROOT/install.sh"
     grep -qF 'atomic_write "$SBIN_DIR/master_webdav.py"' "$V2_ROOT/install.sh"
-    grep -qF 'dosyalar.css dosyalar.js' "$V2_ROOT/install.sh"
     [ "$(cat "$V2_ROOT/systemd/master-files-panel.service" "$V2_ROOT/files-panel/master-files-panel" | grep -cE 'LoadCredential|SHARE_STATE_FILE')" -eq 0 ]
     # DD-209: the qBittorrent container sees only its profile and the downloads tree (same path), so the
     # trash and the share root are absent inside it rather than hidden by a systemd sandbox.
@@ -4125,9 +3790,11 @@ EOF
     grep -q -- '--shell /usr/sbin/nologin "\$DOWNLOADS_ACCOUNT"' <<<"$body"
     grep -qx 'DOWNLOADS_ACCOUNT="master-downloads"' "$V2_ROOT/config/defaults.env"
     grep -qF 'protected="$(paket_korunan_klasorler)"' <<<"$body"
-    # DD-140: this backend serves the console pages.
+    # Caddy serves the console pages from CONSOLE_WEB_DIR; this backend serves none (DD-140). DD-267: the
+    # page is the build's index.html, placed at the root from console/yeni.
     pages="$(awk '/^ensure_console_pages\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    for f in index.html konsol.css konsol.js; do grep -q "$f" <<<"$pages"; [ -f "$V2_ROOT/console/$f" ]; done
+    grep -qF 'done < <(find "$V2_ROOT/console/yeni" -type f' <<<"$pages"
+    [ -f "$V2_ROOT/console/yeni/index.html" ]
     run ! grep -q 'index.html' <<<"$body"
     grep -q 'CONSOLE_WEB_DIR="\$CONSOLE_WEB_DIR"' <<<"$(awk '/^stage_6\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -qx 'CONSOLE_WEB_DIR="/usr/local/share/master-stack/konsol"' "$V2_ROOT/config/defaults.env"
@@ -4148,7 +3815,8 @@ EOF
     grep -q 'handle /api/\* {' "$TMP/site"
     grep -q 'reverse_proxy unix/__PANEL_SOCKET__ {$' "$TMP/site"
     grep -q 'reverse_proxy 127.0.0.1:__FILES_PANEL_PORT__ {$' "$TMP/site"
-    run ! grep -q 'redir ' "$V2_ROOT/templates/Caddyfile"
+    # The only redirects take the interface's old /yeni/ address to / (DD-267); none goes to another name.
+    [ "$(grep 'redir ' "$V2_ROOT/templates/Caddyfile")" = "$(printf '\tredir /yeni / 308\n\tredir /yeni/* / 308')" ]
     grep -qx 'interface-name=panel.__LOCAL_DOMAIN__,__TAILSCALE_IF__/4' "$V2_ROOT/templates/dnsmasq.conf"
     [ ! -e "$V2_ROOT/templates/Caddyfile.wg" ]
     # DD-144: the trash sits beside the downloads folder, not inside it, so no container
@@ -4162,9 +3830,6 @@ EOF
     run ! grep -q 'wg_first_addr' <<<"$s7"
     grep -q 'http://${s4}:${FILES_PANEL_PORT}/' "$V2_ROOT/magaza/wireguard/kanca"
     grep -qE '^    local items="[^"]*(^| )files-panel( |")' "$V2_ROOT/../kur.sh"
-    # The console page inserts names only as text; the one innerHTML builds icons from a fixed table.
-    [ "$(grep -c 'innerHTML' "$V2_ROOT/console/konsol.js")" -eq 1 ]
-    grep -q "const svg = (name) => svgFrom('<svg" "$V2_ROOT/console/konsol.js"
     # One page, no login: both backends answer only on panel.<domain> and log the same actor.
     grep -q 'ACTOR = "konsol"' "$V2_ROOT/files-panel/master-files-panel"
     grep -q 'ACTOR = "konsol"' "$V2_ROOT/panel/master-panel"
@@ -5197,14 +4862,10 @@ PY
     grep -qF '"$SBIN_DIR/master-modul" yerlesik "$MODULES_CHANGED"' "$V2_ROOT/install.sh"
 }
 
-@test "a re-run removes the retired Konsol records and package pages, only as regular files and real folders (DD-267)" {
+@test "a re-run removes the retired Konsol records, only as regular files (DD-267)" {
     log() { printf '%s\n' "$*" >>"$TMP/log"; }
-    if ! command rm --version >/dev/null 2>&1; then
-        rm() { local a=() x; for x in "$@"; do [ "$x" = --one-file-system ] || a+=("$x"); done; command rm "${a[@]}"; }
-    fi
-    local panel pages block
+    local panel block
     panel="$(awk '/^ensure_panel\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    pages="$(awk '/^ensure_console_pages\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     # The layout (DD-206) and favourites (DD-250) records go after the backend that wrote them restarted.
     [ "$(grep -n 'systemctl restart master-panel.service' <<<"$panel" | cut -d: -f1)" -lt "$(grep -n 'for f in duzen.json favoriler.json; do' <<<"$panel" | cut -d: -f1)" ]
     block="$(sed -n '/# DD-267: Ana Menü düzeni/,/^    done$/p' <<<"$panel")"
@@ -5217,37 +4878,82 @@ PY
     printf '{}' >"$TMP/elsewhere.json"
     ln -s "$TMP/elsewhere.json" "$KONSOL_AUTH_DIR/favoriler.json"
     records
-    [ ! -e "$KONSOL_AUTH_DIR/duzen.json" ] && [ -f "$KONSOL_AUTH_DIR/hesap.json" ]
-    [ -L "$KONSOL_AUTH_DIR/favoriler.json" ] && [ -f "$TMP/elsewhere.json" ]
+    [ ! -e "$KONSOL_AUTH_DIR/duzen.json" ]
+    [ -f "$KONSOL_AUTH_DIR/hesap.json" ]
+    [ -L "$KONSOL_AUTH_DIR/favoriler.json" ]
+    [ -f "$TMP/elsewhere.json" ]
     command rm "$KONSOL_AUTH_DIR/favoriler.json"
     printf '{"favoriler": []}' >"$KONSOL_AUTH_DIR/favoriler.json"
     records
-    [ ! -e "$KONSOL_AUTH_DIR/favoriler.json" ] && [ -f "$KONSOL_AUTH_DIR/hesap.json" ]
+    [ ! -e "$KONSOL_AUTH_DIR/favoriler.json" ]
+    [ -f "$KONSOL_AUTH_DIR/hesap.json" ]
     [ "$(grep -c 'kaldırılan özelliğin kaydı silindi' "$TMP/log")" -eq 2 ]
     records
     [ "$(grep -c 'kaldırılan özelliğin kaydı silindi' "$TMP/log")" -eq 2 ]
-    # The packages' old pages (DD-200) go as one folder, once; the new interface and the shell stay.
-    block="$(sed -n '/# DD-267: paketlerin eski arayüz sayfaları/,/^    fi$/p' <<<"$pages")"
-    grep -qF 'rm -rf --one-file-system -- "$CONSOLE_WEB_DIR/uygulama"' <<<"$block"
-    eval "web_pages() { $block
-}"
-    CONSOLE_WEB_DIR="$TMP/web"
-    mkdir -p "$CONSOLE_WEB_DIR/uygulama/torrent" "$CONSOLE_WEB_DIR/uygulama/wireguard" "$CONSOLE_WEB_DIR/yeni"
-    printf 'x' >"$CONSOLE_WEB_DIR/uygulama/torrent/sayfa.js"
-    printf 'x' >"$CONSOLE_WEB_DIR/yeni/index.html"
-    printf 'x' >"$CONSOLE_WEB_DIR/index.html"
-    web_pages
-    [ ! -e "$CONSOLE_WEB_DIR/uygulama" ] && [ -f "$CONSOLE_WEB_DIR/yeni/index.html" ] && [ -f "$CONSOLE_WEB_DIR/index.html" ]
-    grep -q 'paketlerin eski sayfa dosyaları kaldırıldı' "$TMP/log"
-    : >"$TMP/log"
-    web_pages
-    [ ! -s "$TMP/log" ]
-    mkdir -p "$TMP/other/keep"
-    ln -s "$TMP/other" "$CONSOLE_WEB_DIR/uygulama"
-    web_pages
-    [ -L "$CONSOLE_WEB_DIR/uygulama" ] && [ -d "$TMP/other/keep" ]
-    # The per-package placement and the registry-based pruning are gone with the pages.
-    run ! grep -qE 'module_state|uygulama/\*/' <<<"$pages"
+}
+
+@test "the console folder holds this version's files only: the build at the root beside the sign-in page (DD-267)" {
+    # ensure_console_pages places the build (console/yeni) at CONSOLE_WEB_DIR's root with the sign-in
+    # page, the editor and the icons, then removes every other file (the old shell, the /yeni/ copy, the
+    # packages' uygulama/<id>/ pages) and the folders left empty; a symlink goes as a link, never followed.
+    local fn want f
+    fn="$(awk '/^ensure_console_pages\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    # It manages every file in the folder, so a wrong value cannot prune another folder; no build, no change.
+    grep -qF '[[ "$CONSOLE_WEB_DIR" == /usr/local/share/master-stack/* ]] || die ' <<<"$fn"
+    grep -qF '[[ -f "$V2_ROOT/console/yeni/index.html" ]] || die ' <<<"$fn"
+    [ "$(grep -n 'CONSOLE_WEB_DIR" == /usr/local/share/master-stack/' <<<"$fn" | cut -d: -f1)" -lt "$(grep -n 'install -d' <<<"$fn" | head -1 | cut -d: -f1)" ]
+    [ "$(grep -n 'console/yeni/index.html" ]] || die' <<<"$fn" | cut -d: -f1)" -lt "$(grep -n 'install -d' <<<"$fn" | head -1 | cut -d: -f1)" ]
+    grep -qx 'CONSOLE_WEB_DIR="/usr/local/share/master-stack/konsol"' "$V2_ROOT/config/defaults.env"
+    # Files go one by one (no recursive rm that could cross into a linked folder); nothing is per package.
+    run ! grep -q 'rm -rf' <<<"$fn"
+    run ! grep -qE 'module_state|uygulama/\*/' <<<"$fn"
+    # The kept-file table is an associative array (the server's Bash 5); macOS /bin/bash 3.2 has none.
+    [ "${BASH_VERSINFO[0]}" -ge 4 ] || skip "ensure_console_pages needs Bash 4 or later"
+    # The fixture's folder stands in for /usr/local/share/master-stack; the owner flags need root.
+    eval "${fn//\/usr\/local\/share\/master-stack\//$TMP/share/}"
+    install() { mkdir -p -- "${@: -1}"; }
+    CONSOLE_WEB_DIR="$TMP/share/konsol"
+    mkdir -p "$CONSOLE_WEB_DIR/uygulama/torrent" "$CONSOLE_WEB_DIR/yeni/fonts" "$TMP/other"
+    for f in index.html konsol.js konsol.css panel.css ayarlar.js yeni/index.html yeni/app.js \
+        yeni/fonts/Outfit-Variable.woff2 uygulama/torrent/sayfa.js ._app.js; do
+        printf 'old\n' >"$CONSOLE_WEB_DIR/$f"
+    done
+    printf 'keep\n' >"$TMP/other/keep"
+    ln -s "$TMP/other" "$CONSOLE_WEB_DIR/uygulama/baglanti"
+    ln -s "$TMP/other/keep" "$CONSOLE_WEB_DIR/eski.js"
+    ensure_console_pages
+    want="$( { (cd "$V2_ROOT/console/yeni" && find . -type f ! -name kaynak.sha256 ! -name '.*' | sed 's|^\./||')
+        printf '%s\n' giris.html giris.js giris.css duzenleyici.js obhut.svg obhut.png; } | LC_ALL=C sort)"
+    [ "$(cd "$CONSOLE_WEB_DIR" && find . -mindepth 1 ! -type d | sed 's|^\./||' | LC_ALL=C sort)" = "$want" ]
+    [ "$(cd "$CONSOLE_WEB_DIR" && find . -mindepth 1 -type d | sed 's|^\./||' | LC_ALL=C sort)" = \
+        "$(cd "$V2_ROOT/console/yeni" && find . -mindepth 1 -type d | sed 's|^\./||' | LC_ALL=C sort)" ]
+    for f in $want; do
+        if [ -f "$V2_ROOT/console/yeni/$f" ]; then cmp -s "$V2_ROOT/console/yeni/$f" "$CONSOLE_WEB_DIR/$f"; else cmp -s "$V2_ROOT/console/$f" "$CONSOLE_WEB_DIR/$f"; fi
+        [ "$(stat_field %a %Lp "$CONSOLE_WEB_DIR/$f")" = 644 ]
+    done
+    [ ! -e "$CONSOLE_WEB_DIR/kaynak.sha256" ]
+    [ "$(cat "$TMP/other/keep")" = keep ]
+    # A second run changes nothing.
+    ensure_console_pages
+    [ "$(cd "$CONSOLE_WEB_DIR" && find . -mindepth 1 ! -type d | sed 's|^\./||' | LC_ALL=C sort)" = "$want" ]
+    # A folder outside Konsol's share and a tree without the build are refused before anything is touched;
+    # a build file named like one of the sign-in page's stops the install.
+    mkdir -p "$TMP/elsewhere"
+    printf 'mine\n' >"$TMP/elsewhere/note"
+    CONSOLE_WEB_DIR="$TMP/elsewhere" run ensure_console_pages
+    [ "$status" -ne 0 ]
+    [ "$(ls -A "$TMP/elsewhere")" = note ]
+    mkdir -p "$TMP/v2/console"
+    cp "$V2_ROOT"/console/giris.* "$V2_ROOT"/console/duzenleyici.js "$V2_ROOT"/console/obhut.* "$TMP/v2/console/"
+    V2_ROOT="$TMP/v2" run ensure_console_pages
+    [ "$status" -ne 0 ]
+    [ "$(cd "$CONSOLE_WEB_DIR" && find . -mindepth 1 ! -type d | sed 's|^\./||' | LC_ALL=C sort)" = "$want" ]
+    mkdir -p "$TMP/v2/console/yeni"
+    printf '<!doctype html>\n' >"$TMP/v2/console/yeni/index.html"
+    printf 'clash\n' >"$TMP/v2/console/yeni/giris.js"
+    V2_ROOT="$TMP/v2" run ensure_console_pages
+    [ "$status" -ne 0 ]
+    case "$output" in *giris.js*) ;; *) false ;; esac
 }
 
 @test "master-modul installs WireGuard, opens the kept networks after the firewall and closes them on removal" {
@@ -5573,7 +5279,7 @@ PY
 @test "internet-only installation never recreates the retired WireGuard web listener" {
     [ ! -e "$V2_ROOT/templates/Caddyfile.wg" ]
     [ ! -e "$V2_ROOT/systemd/caddy-wg@.service" ]
-    run ! grep -qE 'Caddyfile.wg|izin verilen WireGuard|Local erişim' "$V2_ROOT/console/konsol.js"
+    run ! grep -qE 'Caddyfile.wg|izin verilen WireGuard|Local erişim' "$V2_ROOT/console/yeni/app.js"
     run ! grep -qE 'CADDY_WG_FILE|caddy-wg@|ensure_caddy_wg' "$V2_ROOT/install.sh" "$V2_ROOT/magaza/wireguard/master-wg" "$V2_ROOT/scripts/master-modul"
     # Fresh installs only: no upgrade helper rewrites an older WireGuard registry.
     run ! grep -q 'master_wg_upgrade' "$V2_ROOT/install.sh"
@@ -5740,9 +5446,12 @@ assert sum(e["pkts"] for e in v6 if e["kind"] == "icmp6") == 10 and [e["pkts"] f
 assert [e["group"] for e in v6 if e["kind"] == "nat"] == ["wg:wg0"] and not [e for e in v6 if e["group"] == "other"], v6
 # Web: every address with where it goes, its source and who reaches it.
 web = {e["address"]: e for e in d["web"]["entries"]}
-assert [(r["path"], r["kind"], r["to"]) for r in web["panel.ayc"]["routes"]] == [
+routes = [(r["path"], r["kind"], r["to"]) for r in web["panel.ayc"]["routes"]]
+assert [r for r in routes if r[1] != "redirect"] == [
     ("/api/uygulama/* /api/konsol/*", "proxy", "unix//run/master-panel/api.sock"),
     ("/api/sistem/*", "proxy", "unix//run/master-sistem-dosya/api.sock"), ("/api/*", "proxy", "127.0.0.1:61009"), ("", "files", "")], web["panel.ayc"]
+# DD-267: the interface's old /yeni and /yeni/* addresses are redirected before the routes.
+assert [r[1] for r in routes[:2]] == ["redirect", "redirect"] and len(routes) == 6, routes
 assert "health.ayc" not in web
 assert web["paylas.ayc"]["source"] == "paylasim" and web["100.64.0.7:61010"]["source"] == "paylasim"
 assert web["torrent.ayc"]["routes"][0]["to"] == "127.0.0.1:61006"
@@ -5801,34 +5510,9 @@ PY
     [ ! -e "$TMP/sdrun-calls" ]
 }
 
-@test "console manages five system tabs; application settings live in package pages" {
-    local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html" css="$V2_ROOT/console/konsol.css"
-    [ "$(grep -c 'data-route="ayarlar"' "$html")" -eq 1 ]
-    grep -q '<section data-view="ayarlar" hidden>' "$html"
-    grep -q 'id="settings-page"' "$html"
-    grep -q 'src="/ayarlar.js"' "$html"
-    grep -q 'href="/ayarlar.css"' "$html"
-    grep -qF 'api(fresh === true ? "/api/konsol/ayarlar?yenile=1" : "/api/konsol/ayarlar")' "$js"
-    grep -qF 'ayarlar: { title: "Ayarlar"' "$js"
-    grep -q 'window.createSettingsPage' "$js"
-    local settings="$V2_ROOT/console/ayarlar.js"
-    for label in Sistem 'Güvenlik Duvarı' Caddy Dnsmasq Günlük 'İncele ve uygula' 'Geri al'; do grep -q "$label" "$settings"; done
-    # DD-202: no application tab or draft in the base settings page (DD-267: the package page is gone too).
-    run ! grep -qE 'qdraft|torrent|qBittorrent|"qb"' "$settings"
-    grep -q '/api/konsol/ayarlar/uygula' "$settings"
-    grep -q '/api/konsol/ayarlar/durum' "$settings"
-    run ! grep -qE 'localStorage[.(]|innerHTML[ =]' "$settings"
-    # v2-180: public names are shown on the HTTPS listener port, never on WebDAV's own WAN port (SHARE_PORT under legacy HTTP).
-    grep -qF 'live.manage.https?.https_port && live.manage.https.https_port !== 443 ? ":" + live.manage.https.https_port : ""' "$settings"
-    run ! grep -qF 'live.manage.https.port' "$settings"
+@test "the settings guard runs from its own two-second timer" {
     grep -q 'OnUnitActiveSec=2s' "$V2_ROOT/systemd/master-settings-guard.timer"
     grep -q 'master_settings.py --state __STATE_FILE__ guard' "$V2_ROOT/systemd/master-settings-guard.service"
-    # Icons the page uses exist (svg() silently falls back to the file icon).
-    for icon in sliders chev arrow; do grep -qE "^    ${icon}: '" "$js"; done
-    grep -q '^\.addr-t \.tr {' "$css"
-    # CSP: no inline style in the markup.
-    run ! grep -q ' style="' "$html"
-    run ! grep -q CADDY_WG_FILE "$V2_ROOT/install.sh"
 }
 
 @test "settings API keeps its gates, hides hashes, lists all rules and passes mutations privately to a worker" {
@@ -5997,8 +5681,9 @@ PY
     # The build sources never reach the server: kur.sh copies a fixed list without tools.
     run ! grep -qE '^    local items="[^"]*(^| )tools( |")' "$V2_ROOT/../kur.sh"
     grep -qx 'node_modules/' "$V2_ROOT/../.gitignore"
-    # Loaded on first use from Konsol's own origin; styles go through a constructed sheet, not <style>.
-    grep -qF 'src: "/duzenleyici.js"' "$V2_ROOT/console/konsol.js"
+    # Loaded on first use from Konsol's own origin (DD-267: by the interface's Dosyalar page); styles go
+    # through a constructed sheet, not <style>.
+    grep -qxF 'const SRC = "/duzenleyici.js";' "$V2_ROOT/tools/konsol-ui/src/pages/dosyalar/editor.ts"
     grep -qF 'StyleModule.mount = ' "$tools/giris.js"
     grep -qF 'adoptedStyleSheets' "$bundle"
     # The only address in the code is the SVG namespace; nothing is fetched from elsewhere.
@@ -6008,7 +5693,7 @@ PY
     [ "$(grep -cF '"/api/text/save": ("duzenle", save_text),' "$V2_ROOT/files-panel/master-files-panel")" -eq 2 ]
 }
 
-@test "the new interface's backend: route table, Erişim and live events are installed and wired (DD-259)" {
+@test "Konsol's backend: route table, Erişim and live events are installed and wired (DD-259)" {
     local install="$V2_ROOT/install.sh" panel="$V2_ROOT/panel/master-panel" caddy="$V2_ROOT/templates/Caddyfile" module stage
     # Every module the backend imports is installed beside it in SBIN_DIR.
     for module in $(grep -oE '^import master_[a-z_]+' "$panel" | cut -d' ' -f2); do
@@ -6030,14 +5715,14 @@ PY
     grep -qx 'STREAM_LIMIT = 4' "$panel"
     [ "$(grep -c 'max_conns_per_host 16' "$caddy")" -ge 2 ]
     [ "$(grep -c 'olaylar' <<<"$(awk '/def gate\(self\):/,/return ACTOR/' "$panel")")" -eq 0 ]
-    # The new interface is placed beside the current one; stale files of an older build are removed.
-    grep -qF '[[ -f "$V2_ROOT/console/yeni/index.html" ]] || die "Konsol'"'"'un yeni arayüzü eksik: console/yeni/index.html"' "$install"
-    grep -qF 'atomic_write "$CONSOLE_WEB_DIR/yeni/$rel" 0644 <"$f"' "$install"
-    grep -qF '[[ "${rel##*/}" != .* && -f "$V2_ROOT/console/yeni/$rel" ]] || rm -f -- "$f"' "$install"
+    # DD-267: the build is Konsol at the console's root; its hidden files are never placed and every file
+    # not in this version is removed (the console folder test drives ensure_console_pages).
+    grep -qF 'atomic_write "$CONSOLE_WEB_DIR/$rel" 0644 <"$f"' "$install"
     grep -qF 'find "$V2_ROOT/console/yeni" -type f ! -name '"'"'.*'"'"' \( -name '"'"'*.html'"'"'' "$install"
+    grep -qF '[[ -n "${keep[$rel]:-}" ]] || rm -f -- "$f"' "$install"
 }
 
-@test "the new interface's build matches its sources, stays inside the CSP and is installed whole (DD-259)" {
+@test "Konsol's build matches its sources, stays inside the CSP and is installed whole at the root (DD-259, DD-267)" {
     local yeni="$V2_ROOT/console/yeni" tools="$V2_ROOT/tools/konsol-ui" caddy="$V2_ROOT/templates/Caddyfile" f
     # The committed build belongs to the committed sources: npm run derle writes the digest and POSIX
     # tools recompute it (rebuild: cd tools/konsol-ui && npm ci && npm run derle).
@@ -6050,11 +5735,15 @@ PY
     run ! grep -q '"resolved": "http' <(grep '"resolved"' "$tools/package-lock.json" | grep -v 'https://registry.npmjs.org/')
     head -1 "$yeni/app.js" | grep -qF '/*! Konsol (DD-258), built from Data/tools/konsol-ui'
     head -8 "$yeni/app.js" | grep -qF " *   vue-router $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"]["vue-router"])' "$tools/package.json") — "
-    # The page loads only its own files: no inline script, style or handler, nothing from elsewhere.
+    # The page loads only its own files, from the root (DD-267): no inline script, style or handler,
+    # nothing from elsewhere.
     run ! grep -qiE '<style|style=|(^|[[:space:]])on[a-z]+=|https?://' "$yeni/index.html"
     [ "$(grep -oE '(href|src)="[^"]+"' "$yeni/index.html" | LC_ALL=C sort -u | tr '\n' ' ')" = \
-        'href="/obhut.png" href="/obhut.svg" href="/yeni/app.css" href="/yeni/fonts/Outfit-Variable.woff2" src="/yeni/app.js" src="/yeni/tema.js" ' ]
+        'href="/app.css" href="/fonts/Outfit-Variable.woff2" href="/obhut.png" href="/obhut.svg" src="/app.js" src="/tema.js" ' ]
     run ! grep -qE 'new Function|eval\(' "$yeni/app.js"
+    # The stylesheet's only address is the local font; the sources put text into the page, never HTML.
+    [ "$(grep -oE 'url\([^)]*\)|@import|https?://' "$yeni/app.css" | sort -u)" = 'url(/fonts/Outfit-Variable.woff2)' ]
+    run ! grep -rqE 'v-html|\.(inner|outer)HTML *=|insertAdjacentHTML' "$tools/src"
     # The only addresses in the bundle are XML namespaces and Vue's error reference; none is fetched.
     [ "$(grep -oE 'https?://[a-zA-Z0-9./_-]+' "$yeni/app.js" | sort -u | tr '\n' ' ')" = \
         'http://www.w3.org/1998/Math/MathML http://www.w3.org/1999/xlink http://www.w3.org/2000/svg https://vuejs.org/error-reference/ ' ]
@@ -6090,8 +5779,7 @@ text = open(sys.argv[1] + "/install.sh", encoding="utf-8").read()
 assert mu.SURUM_LINE_RE.search(text).group(1) == sys.argv[2]
 assert mu.number(mu.INSTALL_LINE_RE.search(text).group(1)) is not None
 PY
-    # Both consoles show it and fall back to the build number from an older backend.
-    grep -qF 'shortVersion = s && s.surum || version.replace(' "$V2_ROOT/console/konsol.js"
+    # Konsol shows it and falls back to the build number from an older backend.
     grep -qF 'live.kaynaklar?.surum || live.guncelleme?.kurulu_surum || shortVersion(' "$V2_ROOT/tools/konsol-ui/src/components/SideNav.vue"
     # The changelog has this release's section.
     grep -qE "^## \[$surum\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$V2_ROOT/CHANGELOG.md"

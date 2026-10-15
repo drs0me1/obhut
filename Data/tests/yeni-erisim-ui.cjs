@@ -228,7 +228,7 @@ h.handlers["/api/konsol/konteynerler/islem"] = ({ method, body }) =>
 const job = (o) => ({ tur: "konteyner", id: "is-7", ad: "medya · Kaydet", durum: "calisiyor", adim: "", bitis: null, ...o });
 
 // ---- helpers
-const url = (hash) => new URL("/yeni/" + hash, base).href;
+const url = (hash) => new URL("/" + hash, base).href;
 const hashOf = (page) => page.evaluate(() => location.hash);
 const lastPost = (key) => posts(key).at(-1);
 /** Whether closing or reloading the tab now would ask first (the leave guard, DD-266). */
@@ -463,10 +463,10 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await page.getByTestId("countdown").filter({ hasText: /^(5:00|4:59)$/ }).waitFor();
     const domainNote = banner.getByTestId("pending-domain");
     assert.match(await domainNote.innerText(), /ev → ofis değişiyor; yeni adresten onaylayın/);
-    assert.equal(await domainNote.getByRole("link", { name: "panel.ofis" }).getAttribute("href"), "http://panel.ofis/yeni/#/erisim?sekme=adresler");
-    assert.equal(await domainNote.getByRole("link", { name: "panel.ev" }).getAttribute("href"), "http://panel.ev/yeni/#/erisim?sekme=adresler");
+    assert.equal(await domainNote.getByRole("link", { name: "panel.ofis" }).getAttribute("href"), "http://panel.ofis/#/erisim?sekme=adresler");
+    assert.equal(await domainNote.getByRole("link", { name: "panel.ev" }).getAttribute("href"), "http://panel.ev/#/erisim?sekme=adresler");
     assert(await banner.getByTestId("pending-confirm").isDisabled(), "a domain change is confirmed only from the new address");
-    assert.equal(await page.getByTestId("domain-pending").getByRole("link").getAttribute("href"), "http://panel.ofis/yeni/#/erisim?sekme=adresler");
+    assert.equal(await page.getByTestId("domain-pending").getByRole("link").getAttribute("href"), "http://panel.ofis/#/erisim?sekme=adresler");
     assert(await page.getByTestId("review-domain").isDisabled(), "no new change while one is pending");
     await shot(page, "1440-light-erisim-alan-bekliyor.png");
     await banner.getByTestId("pending-rollback").click();
@@ -925,7 +925,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     expectedFailures = ["/api/konsol/olaylar"];
     data.bekleyen = { bekleyen: { id: "p-fw", phase: "awaiting", seconds: 50 } };
     page = await h.newHttpsPage("konsol.example.org");
-    await page.goto("https://konsol.example.org/yeni/#/erisim?sekme=guvenlik-duvari");
+    await page.goto("https://konsol.example.org/#/erisim?sekme=guvenlik-duvari");
     const remote = page.locator(".pending");
     await remote.getByTestId("pending-internet").waitFor();
     assert.match(await remote.getByTestId("pending-internet").innerText(), /^Onay yalnız Tailscale'e bağlı bir cihazdan verilir/);
@@ -1019,7 +1019,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     }
 
     assert.deepEqual(h.errors, []);
-    console.log("PASS: /yeni/ phase 3 Erişim under the production CSP — Genel (warnings first with Düzelt by duzelt: Yayınla, the application, " +
+    console.log("PASS: Konsol phase 3 Erişim under the production CSP — Genel (warnings first with Düzelt by duzelt: Yayınla, the application, " +
       "Tailscale; summaries; the matrix in plain words with Teknik ayrıntı in the address), Tailscale (device, addresses, version, key expiry " +
       "warning, exit node, admin console link, disconnected), Adresler (publications with state, certificate and guard; local names with the " +
       "locked one; DNS draft → plan → apply with exact bodies; a refused plan and re-check; the local domain: plan, 300 s, confirmation only " +

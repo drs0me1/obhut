@@ -1418,6 +1418,9 @@ def main():
     s.add_argument("--allow-host", dest="allow_host", action="append", default=[])
     s.add_argument("--sistem", action="store_true")
     s.add_argument("--socket-group", dest="socket_group", default="")
+    # DD-267: archive jobs are gone; a unit from before the upgrade may still pass this for one release
+    # (an install stopped between placing this script and rendering its unit). Accepted and ignored.
+    s.add_argument("--archive-dir", dest="retired_archive_dir", default="", help=argparse.SUPPRESS)
     c = sub.add_parser("check")
     c.add_argument("--url", required=True)
     c.add_argument("--host", required=True)

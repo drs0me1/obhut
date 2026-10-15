@@ -1,4 +1,4 @@
-// Konsol's new shell (DD-258), served at /yeni/ beside the current interface.
+// Konsol (DD-258), served at / since phase 4b (DD-267).
 import { createApp } from "vue";
 import App from "./App.vue";
 import { router } from "./router";

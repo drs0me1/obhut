@@ -284,7 +284,7 @@ backend("/api", () => srv);
 backend("/api/sistem", () => sys);
 
 // ---- helpers
-const url = (hash) => new URL("/yeni/" + hash, base).href;
+const url = (hash) => new URL("/" + hash, base).href;
 const hashOf = (page) => page.evaluate(() => location.hash);
 const queryOf = async (page) => new URLSearchParams((await hashOf(page)).split("?")[1] ?? "");
 const posts = (path) => h.requests.filter((r) => r.method === "POST" && r.path === path).map((r) => r.body);
@@ -970,7 +970,7 @@ async function drop(page, files, type = "drop") {
     // On the internet name (HTTPS) the tab is not offered at all (the page polls there: no event stream).
     expectedFailures = ["/api/konsol/olaylar"];
     page = await h.newHttpsPage("panel.example.org", { timezoneId: TZ });
-    await page.goto("https://panel.example.org/yeni/#/dosyalar?sekme=sistem");
+    await page.goto("https://panel.example.org/#/dosyalar?sekme=sistem");
     await page.getByTestId("depolama").waitFor();
     assert.deepEqual(await page.getByRole("tablist", { name: "Dosyalar bölümleri" }).getByRole("tab").allInnerTexts(),
       ["Depolama", "Sunucu klasörleri", "Çöp kutusu", "Paylaşımlar"]);
@@ -1024,7 +1024,7 @@ async function drop(page, files, type = "drop") {
     }
 
     assert.deepEqual(h.errors, []);
-    console.log("PASS: /yeni/ phase 4b Dosyalar under the production CSP — Depolama (the disk with what the user area holds and its mount, " +
+    console.log("PASS: Konsol phase 4b Dosyalar under the production CSP — Depolama (the disk with what the user area holds and its mount, " +
       "the trash in short with its link, Gezgin's address or the way to install it, the top folders in Turkish order with size, count and who " +
       "uses them: applications' binds with their access and container path, a bind of the whole user area for every folder, folder shares, " +
       "a package's own folder with its owner, binds outside the listed folders, a failed read), Sunucu klasörleri (order with numbers, sizes " +

@@ -192,7 +192,7 @@ h.dynamic.push([/^\/api\/uygulama\/torrent\/(durum|ayar)$/, (req, m) => {
 }]);
 
 // ---- helpers
-const url = (hash) => new URL("/yeni/" + hash, base).href;
+const url = (hash) => new URL("/" + hash, base).href;
 const hashOf = (page) => page.evaluate(() => location.hash);
 const lastPost = (key) => posts(key).at(-1);
 const job = (o) => ({ tur: "konteyner", id: "", ad: "", durum: "calisiyor", adim: "", bitis: null, ...o });
@@ -947,7 +947,7 @@ const guarded = (page) => page.evaluate(() => {
     }
 
     assert.deepEqual(h.errors, []);
-    console.log("PASS: /yeni/ phase 4a Uygulama ekle and the application's settings under the production CSP — Uygulamalar' add card (catalogue " +
+    console.log("PASS: Konsol phase 4a Uygulama ekle and the application's settings under the production CSP — Uygulamalar' add card (catalogue " +
       "links, adoptable count, no links to the current interface) and Altyapı (unhealthy, updates, storage, Gelişmiş's Podman lists), the " +
       "catalogue (only packages not installed, the package's words, its form: the declared default, an unrendered default, required, " +
       "pattern, length, the repeated password, the folder picker with free space, entering, back, Esc only closing the picker, a refusal " +

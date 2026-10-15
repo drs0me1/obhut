@@ -161,7 +161,7 @@ h.handlers["/api/konsol/konteynerler/islem"] = ({ method, body }) => {
 };
 
 // ---- helpers
-const url = (hash) => new URL("/yeni/" + hash, base).href;
+const url = (hash) => new URL("/" + hash, base).href;
 const hashOf = (page) => page.evaluate(() => location.hash);
 const queryOf = async (page) => new URLSearchParams((await hashOf(page)).split("?")[1] ?? "");
 const lastPost = (key) => posts(key).at(-1);
@@ -558,7 +558,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     data.guncelleme = update({ baslatilabilir: false });
     expectedFailures = ["/api/konsol/olaylar"];
     page = await h.newHttpsPage("konsol.example.org");
-    await page.goto("https://konsol.example.org/yeni/#/sistem");
+    await page.goto("https://konsol.example.org/#/sistem");
     await page.getByTestId("repair-lock").filter({ hasText: "Onarım yalnız Tailscale adresinden başlatılır." }).waitFor();
     assert(await page.getByTestId("repair-check").isDisabled() && await page.getByTestId("repair-fix").isDisabled());
     assert(await page.getByTestId("repair-log").isEnabled(), "the log is read anywhere");
@@ -589,7 +589,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     await pwi.getByLabel("Yeni parola (tekrar)").fill("yeni-uzun-parola");
     await pwi.getByTestId("password-go").click();
     await pwi.getByTestId("password-error").filter({ hasText: "Mevcut parola hatalı." }).waitFor();
-    assert.equal(new URL(page.url()).pathname, "/yeni/", "still here");
+    assert.equal(new URL(page.url()).pathname, "/", "still here");
     assert.equal(await pwi.getByLabel("Mevcut parola").inputValue(), "", "the wrong one is cleared");
     await pwi.getByLabel("Mevcut parola").fill("dogru-parola-1");
     await pwi.getByTestId("password-go").click();
@@ -603,18 +603,18 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     await pwi.getByLabel("Yeni parola", { exact: true }).fill("baska-uzun-parola");
     await pwi.getByLabel("Yeni parola (tekrar)").fill("baska-uzun-parola");
     await pwi.getByTestId("password-go").click();
-    await page.waitForURL((u) => u.pathname === "/giris.html" && u.search === "?geri=yeni");
+    await page.waitForURL((u) => u.pathname === "/giris.html" && u.search === "");
     await page.context().close();
     // Sign-out from the sidebar and from the phone's menu sheet.
     session = { durum: "acik", kullanici: "yonetici", oturum_gun: 7, kanal: "internet" };
     page = await h.newHttpsPage("konsol.example.org", { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
-    await page.goto("https://konsol.example.org/yeni/#/genel");
+    await page.goto("https://konsol.example.org/#/genel");
     await page.getByRole("button", { name: "Daha fazla" }).tap();
     const menu = page.getByRole("dialog", { name: "Menü" });
     await menu.getByTestId("sign-out").waitFor();
     await shot(page, "390-light-internet-menu.png");
     await menu.getByTestId("sign-out").tap();
-    await page.waitForURL((u) => u.pathname === "/giris.html" && u.search === "?geri=yeni");
+    await page.waitForURL((u) => u.pathname === "/giris.html" && u.search === "");
     assert.deepEqual(lastPost("oturum/cikis"), {});
     await page.context().close();
     session = { durum: "giris", kullanici: "yonetici", kanal: "tailscale" };
@@ -905,7 +905,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     }
 
     assert.deepEqual(h.errors, []);
-    console.log("PASS: /yeni/ phase 4a Sistem and Gelişmiş under the production CSP — Sağlık (every check with problems first, the last " +
+    console.log("PASS: Konsol phase 4a Sistem and Gelişmiş under the production CSP — Sağlık (every check with problems first, the last " +
       "repair report with its source and steps, Denetle at once, Onar after a confirmation, a refusal, the report read every 2 s while a run " +
       "goes on, its end through islemler, the repair log as plain text in a sheet: 72 h / 1 week in the address, newest line, copy, a failed " +
       "read, an empty log), Güncellemeler (versions and builds, Yeniden denetle with ?yenile=1, the confirmation's words, a refusal, the run's " +

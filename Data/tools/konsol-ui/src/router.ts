@@ -87,7 +87,7 @@ function oldAppHome(path: string, list: Uygulamalar | null): RouteLocationRaw | 
   // A package's own page (#/torrent): the application's page; one that is not installed any more opens its
   // install in the catalogue, as the old Konsol sent such a bookmark to App Store.
   if (head && !sub) {
-    const app = items.find((a) => a.tur === "paket" && (a.sayfa === "#/" + head || a.modul === head));
+    const app = items.find((a) => a.tur === "paket" && a.modul === head);
     if (app) return appPage(app.id);
     if (list?.katalog.some((k) => k.id === head)) return addRoute("katalog", { paket: head });
   }

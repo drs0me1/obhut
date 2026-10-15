@@ -32,9 +32,8 @@
 }
 # Konsol (DD-140, DD-148, DD-200): /api/konsol/* ve /api/uygulama/* root arka uca (sistem,
 # modüller ve kurulu paketlerin API'leri; DD-180: Unix soketi), öbür /api/* dosya arka ucuna
-# gider. Sayfaları Caddy doğrudan sunar; kurulu bir paketin sayfa dosyaları CONSOLE_WEB_DIR
-# altında uygulama/<id>/ klasöründedir ve aynı oturum kapısından geçer. CSRF ve Host denetimi
-# arka uçlarda (DD-147), başlıklar burada.
+# gider. Sayfaları Caddy doğrudan sunar: Konsol arayüzü kökte (DD-267), yanında giriş sayfası ve
+# düzenleyici. CSRF ve Host denetimi arka uçlarda (DD-147), başlıklar burada.
 # DD-195: yollar tek parçada; Tailscale sitesi ve isteğe bağlı internet (HTTPS) sitesi aynı
 # korumayı içe aktarır. Arka uçlar Host olarak her zaman panel.<alan> görür. Hangi kapıdan
 # gelindiğini (X-Konsol-Kanal) yalnız Caddy yazar; istemcinin gönderdiği değer ezilir.
@@ -43,12 +42,16 @@
 	# akışı sıkıştırılmaz; sıkıştırıcı küçük olayları biriktirip geciktirmesin.
 	@sikistir not path /api/konsol/olaylar
 	encode @sikistir zstd gzip
+	# DD-267: arayüz /yeni/'den köke taşındı; eski bağlantı aynı görünüme düşer (#parçayı tarayıcı korur).
+	redir /yeni / 308
+	redir /yeni/* / 308
 	# DD-194/DD-205: giriş sayfasının dosyaları ve giriş API'si açıktır. Geri kalan her istek
 	# (giriş sayfası dahil sayfalar, Dosyalar ve tüm API) önce root arka uca sorar: Tailscale
 	# sitesinde yanıt hep "geç"tir ve /giris.html Konsol'a yönlenir (cihazı Tailscale doğrular);
 	# internet sitesinde oturum yoksa sayfa /giris.html'e yönlenir, API 401 alır. Sunucunun
 	# içinden gelen istek yine reddedilir (DD-180).
-	@korumali not path /giris.js /giris.css /konsol.css /api/konsol/oturum /api/konsol/oturum/*
+	# DD-267: giriş sayfası oturumdan önce açılır; teması, yazı tipi ve simgesi de açıktır (gizli bilgi taşımaz).
+	@korumali not path /giris.js /giris.css /tema.js /fonts/Outfit-Variable.woff2 /obhut.svg /obhut.png /api/konsol/oturum /api/konsol/oturum/*
 	# Her site root arka uca en çok 16 bağlantı açar: internetten gelen istek seli arka
 	# ucun iş parçacıklarını ve dosya tanıtıcılarını tüketip Tailscale'i de kapatamaz.
 	forward_auth @korumali unix/__PANEL_SOCKET__ {

@@ -1,7 +1,7 @@
 {
   "name": "konsol-ui",
   "private": true,
-  "description": "Builds Data/console/yeni/, Konsol's new shell (DD-258): Vue 3 + TypeScript + Vite into committed static files.",
+  "description": "Builds Data/console/yeni/, Konsol (DD-258; served at / since DD-267): Vue 3 + TypeScript + Vite into committed static files.",
   "license": "MIT",
   "type": "module",
   "engines": {

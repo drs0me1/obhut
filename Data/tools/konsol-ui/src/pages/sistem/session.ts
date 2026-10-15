@@ -42,5 +42,5 @@ export const canSignOut = computed(() => session.value?.kanal === "internet" && 
 /** Ends this browser's session and goes to the sign-in page, which returns to this interface. */
 export async function leave(): Promise<void> {
   await signOut();
-  location.replace("/giris.html?geri=yeni");
+  location.replace("/giris.html");
 }

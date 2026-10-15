@@ -1,7 +1,7 @@
 // Requests to Konsol's root backend. Every /api/* request carries X-Konsol (the CSRF rule, DD-147/180)
 // and the session cookie; nothing is cached. A 401 marked `giris` means the internet session ended: the
 // browser goes to the sign-in page, which returns to this interface and the same view afterwards
-// (geri=yeni; DD-194, DD-205, DD-259). Any other failure, a 401 without the mark among them (a wrong
+// (DD-194, DD-205, DD-259; Konsol is at / since DD-267). Any other failure, a 401 without the mark among them (a wrong
 // current password), is an ApiError carrying the backend's own message.
 import type { Hata } from "./sema";
 
@@ -19,7 +19,7 @@ let leaving = false;
 export function goToSignIn(): void {
   if (leaving) return;
   leaving = true;
-  location.replace("/giris.html?geri=yeni" + (location.hash.startsWith("#/") ? location.hash : ""));
+  location.replace("/giris.html" + (location.hash.startsWith("#/") ? location.hash : ""));
 }
 
 export const KONSOL_HEADERS: Readonly<Record<string, string>> = Object.freeze({ "X-Konsol": "1" });
