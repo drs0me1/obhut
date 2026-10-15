@@ -73,7 +73,7 @@ def item(sid, ad, tur, aciklama, **extra):
     base = {"id": sid, "ad": ad, "tur": tur, "aciklama": aciklama, "modul": None, "konteyner": None, "simge": None,
             "durum": "bilinmiyor", "islem": None, "tailscale": cell(None, "tailscale"), "internet": cell(None, "internet"),
             "kaynak": {"cpu": None, "bellek": None}, "guncelleme": "sabit", "adres": {"tailscale": None, "internet": None},
-            "sayfa": None, "eylemler": [], "revizyon": None, "metinler": None}
+            "sayfa": None, "eylemler": [], "revizyon": None, "metinler": None, "hesap": False}
     base.update(extra)
     return base
 
@@ -120,7 +120,7 @@ def build(modules, containers, erisim, now, errors=()):
         urls = m.get("urls") if isinstance(m.get("urls"), dict) else {}
         adres = addresses(row)
         adres = {"tailscale": urls.get("tailscale") or adres["tailscale"], "internet": urls.get("internet") or adres["internet"]}
-        items.append(item("paket:" + m["id"], name, "paket", str(meta.get("alt") or ""), modul=m["id"],
+        items.append(item("paket:" + m["id"], name, "paket", str(meta.get("alt") or ""), modul=m["id"], hesap=m.get("hesap") is True,
                           konteyner=box["name"] if box else None, simge=meta.get("simge"), durum=state,
                           islem={"eylem": str(progress.get("action", "")), "adim": str(progress.get("step", "")),
                                  "metin": str(progress.get("text", ""))} if isinstance(progress, dict) else None,

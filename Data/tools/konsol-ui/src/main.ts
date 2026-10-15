@@ -11,6 +11,7 @@ import "./styles/ui.css";
 import "./styles/pages.css";
 import "./styles/erisim.css";
 import "./styles/sistem.css";
+import "./styles/uygulama.css";
 
 initTheme();
 createApp(App).use(router).mount("#app");

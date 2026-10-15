@@ -11,7 +11,7 @@ const assert = require("node:assert/strict");
 const cell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
 const app = (id, ad, extra) => ({ id, ad, tur: "paket", aciklama: "", modul: id.split(":")[1], konteyner: null, simge: null, durum: "calisiyor", islem: null,
   tailscale: cell("yok"), internet: cell("yok"), kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null },
-  sayfa: null, eylemler: ["durdur", "yeniden-baslat", "kaldir"], revizyon: null, ...extra });
+  sayfa: null, eylemler: ["durdur", "yeniden-baslat", "kaldir"], revizyon: null, hesap: false, ...extra });
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.08.06-v2-242", surum: "1.0.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
     cores: 4, interval: 10, read_at: 1791845000, sampled_at: 1791845000, cpu: [2.0], mem: { total: 8300000000, used: 700000000, graph: [8.0] },
@@ -43,6 +43,9 @@ const h = require("./yeni-harness.cjs").create({ name: "konsol-yeni-ui", url: pr
 const { base, csp, shots, status, calls, errors, stream, push, waitFor, newPage, count, noHorizontalScroll, shot } = h;
 // Gelişmiş (phase 4a) reads the effective configuration when it opens; yeni-sistem-ui.cjs covers the page.
 h.handlers["/api/konsol/gelismis"] = () => ({ body: { read_at: 1791845000, caddy: { entries: [], raw: [] }, dnsmasq: { listen: [], domains: [], dhcp: false, names: [], raw: [] } } });
+// Phase 4a: Uygulamalar reads Podman's own counts (yeni-uygulama-ekle-ui.cjs covers them); not a Genel read.
+h.handlers["/api/konsol/konteynerler/liste"] = () => ({ body: { read_at: 1791845000, runtime: { version: "5.4.2", ok: true, error: "" }, containers: [],
+  images: [], volumes: [], networks: [], storage: { images: 1, containers: 1, size: null }, resource_errors: {} } });
 const clippedBarLabels = (page) => page.locator(".bottom-bar .bb-item span").evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 0.5).map((e) => e.textContent));
 const badge = (page, id) => page.locator(`.sidebar [data-badge="${id}"]`);
 const optionLabels = (page) => page.locator(".palette-option .palette-label").allInnerTexts();
@@ -168,7 +171,8 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert(await input.evaluate((el) => el === document.activeElement), "the field has focus");
     assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Eylemler", "Eski arayüz"]);
     assert.deepEqual(await palette.locator('[aria-labelledby="palet-grup-1"] .palette-label').allInnerTexts(), ["WireGuard", "qBittorrent"]);
-    assert.equal(await palette.locator('[aria-labelledby="palet-grup-3"] [role="option"]').count(), 4, "Caddy, Dnsmasq and the firewall are Erişim's tabs; Settings is Sistem's");
+    assert.equal(await palette.locator('[aria-labelledby="palet-grup-3"] [role="option"]').count(), 2,
+      "Caddy, Dnsmasq and the firewall are Erişim's tabs; Settings is Sistem's; App Store and Podman are Uygulamalar' and Gelişmiş's");
     assert.equal(await palette.locator('[data-key="uygulama-paket:wireguard"] .palette-hint').innerText(), "Uygulama", "an application opens its own page (phase 2)");
     await shot(page, "1440-light-palette.png");
     await input.fill("İŞ");
@@ -189,7 +193,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert.equal(await input.getAttribute("aria-activedescendant"), await palette.locator('[aria-selected="true"]').getAttribute("id"));
     await page.keyboard.press("ArrowUp");
     await page.keyboard.press("ArrowUp");
-    assert.equal(await selected(), "Podman", "↑ from the first wraps to the last");
+    assert.equal(await selected(), "Dosyalar", "↑ from the first wraps to the last");
     await input.fill("gel");
     assert.equal(await selected(), "Gelişmiş");
     await page.keyboard.press("Enter");

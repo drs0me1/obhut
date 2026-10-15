@@ -2893,6 +2893,9 @@
                 "type": "null"
               }
             ]
+          },
+          "hesap": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -2913,7 +2916,8 @@
           "sayfa",
           "eylemler",
           "revizyon",
-          "metinler"
+          "metinler",
+          "hesap"
         ],
         "additionalProperties": false
       },
@@ -3622,6 +3626,9 @@
             ]
           },
           "durdurulabilir": {
+            "type": "boolean"
+          },
+          "hesap": {
             "type": "boolean"
           },
           "konsol": {

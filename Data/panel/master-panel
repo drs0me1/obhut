@@ -941,7 +941,9 @@ class Panel:
             item = {"id": mid, "runtime": runtime, "installed": reg in ("calisiyor", "durduruldu"),
                     "state": reg if reg in ("calisiyor", "durduruldu") else "", "live": live,
                     "busy": self.module_busy(mid, busy), "progress": progress,
-                    "durdurulabilir": manifest.get("PAKET_DURDURULABILIR") == "1"}
+                    "durdurulabilir": manifest.get("PAKET_DURDURULABILIR") == "1",
+                    # DD-266: the package has a first-login account (PAKET_HESAP, DD-149) the page may show.
+                    "hesap": manifest.get("PAKET_HESAP") == "1"}
             # DD-200: App Store metinleri ve sayfa bildirimi paketten; sayfa dosyaları yalnız kuruluyken.
             meta = self.konsol_meta(env, mid, manifest)
             if meta is not None:

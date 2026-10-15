@@ -92,6 +92,7 @@ SCHEMAS = {
         "adres": obj({"tailscale": null(STR), "internet": null(STR)}), "sayfa": null(STR),
         "eylemler": arr(enum("baslat", "durdur", "yeniden-baslat", "kaldir", "guncelle")), "revizyon": null(STR),
         "metinler": null(ref("UygulamaMetinleri")),
+        "hesap": BOOL,  # DD-266: a package with a first-login account (GET /api/konsol/uygulamalar/hesap)
     }),
     "UygulamaMetinleri": obj({"durdur": STR, "kaldir": arr(arr(STR)), "veri_etiket": STR, "veri_kalir": STR, "veri_silinir": STR}),
     "UygulamaAyrinti": obj({
@@ -130,9 +131,9 @@ SCHEMAS = {
                                  "sayfa": open_obj({"rota": STR, "baslik": STR, "ustbilgi": STR})}),
     "Modul": obj({"id": STR, "runtime": STR, "installed": BOOL, "state": enum("calisiyor", "durduruldu", ""), "live": STR,
                   "busy": BOOL, "progress": null(obj({"action": STR, "step": STR, "total": INT, "text": STR})),
-                  "durdurulabilir": BOOL, "konsol": ref("KonsolBildirimi"), "sayfa": arr(STR),
+                  "durdurulabilir": BOOL, "hesap": BOOL, "konsol": ref("KonsolBildirimi"), "sayfa": arr(STR),
                   "urls": obj({"tailscale": null(STR), "internet": null(STR)})},
-                 optional=("konsol", "sayfa", "urls")),
+                 optional=("hesap", "konsol", "sayfa", "urls")),
     "Moduller": obj({"items": arr(ref("Modul"))}),
     "GuncellemeIsi": obj({"durum": enum("yok", "calisiyor", "tamam", "hata"), "hedef": STR, "mesaj": STR,
                           "bitis": null(INT), "asama": STR}),

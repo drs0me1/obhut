@@ -159,6 +159,7 @@ export interface Uygulama {
   eylemler: ("baslat" | "durdur" | "yeniden-baslat" | "kaldir" | "guncelle")[];
   revizyon: string | null;
   metinler: UygulamaMetinleri | null;
+  hesap: boolean;
 }
 
 export interface UygulamaMetinleri {
@@ -313,6 +314,7 @@ export interface Modul {
     text: string;
   } | null;
   durdurulabilir: boolean;
+  hesap?: boolean;
   konsol?: KonsolBildirimi;
   sayfa?: string[];
   urls?: {

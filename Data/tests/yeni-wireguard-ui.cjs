@@ -20,7 +20,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 const ucell = (durum) => ({ durum, adresler: [], uyari: "", not: "" });
 const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: ucell("yok"), internet: ucell("yok"),
   kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, sayfa: null, eylemler: [], revizyon: null,
-  metinler: null, aciklama: "", ...o });
+  metinler: null, hesap: false, aciklama: "", ...o });
 const WG_APP = app({ id: "paket:wireguard", ad: "WireGuard", tur: "paket", modul: "wireguard", simge: "shield", aciklama: "Cihazlarınız için VPN bağlantısı.",
   eylemler: ["durdur", "yeniden-baslat", "kaldir"] });
 

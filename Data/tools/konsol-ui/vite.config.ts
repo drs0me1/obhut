@@ -23,6 +23,8 @@ export default defineConfig({
     sourcemap: false,
     cssCodeSplit: false,
     reportCompressedSize: false,
+    // One app.js on purpose: the installer places the build whole and the CSP loads only 'self' files.
+    chunkSizeWarningLimit: 1024,
     rolldownOptions: {
       output: {
         entryFileNames: "app.js",

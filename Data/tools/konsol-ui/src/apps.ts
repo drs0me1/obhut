@@ -162,3 +162,8 @@ export function shortImage(image: string): string {
 }
 
 export const KIND_TEXT: Record<Uygulama["tur"], string> = { paket: "App Store paketi", konteyner: "Konteyner", yerlesik: "Yerleşik" };
+
+/** Podman's images, volumes and networks: Gelişmiş's Podman view (phase 4a), one of its lists. */
+export function podmanRoute(kaynak: "imajlar" | "birimler" | "aglar" | "" = ""): string {
+  return "/gelismis?sekme=podman" + (kaynak ? "&kaynak=" + kaynak : "");
+}

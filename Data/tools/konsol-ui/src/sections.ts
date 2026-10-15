@@ -39,10 +39,7 @@ export const SECTIONS: readonly Section[] = [
     description: "App Store paketleri, konteynerler ve yerleşik hizmetler tek listede.",
     icon: "apps",
     keywords: "app store mağaza paket konteyner podman kur kaldır",
-    legacy: [
-      { href: "/#/moduller", label: "App Store" },
-      { href: "/#/konteynerler", label: "Podman" },
-    ],
+    legacy: [],
   },
   {
     id: "erisim",
@@ -107,12 +104,11 @@ export function accessRoute(tab: AccessTab = "genel", yayinla = ""): string {
 }
 
 /** The current interface's views, for the palette's "Eski arayüz" group (Caddy, Dnsmasq and the firewall
-    are Erişim's tabs since phase 3; Settings' system view and its log are Sistem's since phase 4a). */
+    are Erişim's tabs since phase 3; Settings' system view and its log are Sistem's, App Store and Podman
+    are Uygulamalar' and Gelişmiş's since phase 4a). */
 export const LEGACY_VIEWS: readonly (LegacyLink & { keywords: string })[] = [
   { href: "/#/genel", label: "Ana Menü", keywords: "genel bakış ana sayfa" },
   { href: "/#/dosyalar", label: "Dosyalar", keywords: "klasör dosya paylaşım çöp" },
-  { href: "/#/moduller", label: "App Store", keywords: "uygulama mağaza paket modül" },
-  { href: "/#/konteynerler", label: "Podman", keywords: "konteyner imaj container" },
 ];
 
 /** Sistem's tabs (phase 4a), in the address as ?sekme=; the palette lists each one. */
@@ -153,3 +149,18 @@ export const SECTION_TABS: Partial<Record<SectionId, readonly { id: string; labe
   sistem: SYSTEM_TABS.map((t) => ({ ...t, to: systemRoute(t.id) })),
   gelismis: ADVANCED_TABS.map((t) => ({ ...t, to: advancedRoute(t.id) })),
 };
+
+/** Uygulamalar' add flows (phase 4a), opened over the list with ?ekle= (a package's install with &paket=,
+    one container's adoption with &ad=); the palette lists each one. */
+export const ADD_FLOWS = [
+  { id: "katalog", label: "Katalogdan uygulama kur", keywords: "app store mağaza paket kur katalog ekle" },
+  { id: "imaj", label: "İmajdan konteyner oluştur", keywords: "konteyner podman imaj yeni oluştur docker ekle" },
+  { id: "sahiplen", label: "Var olan konteyneri yönetime al", keywords: "benimse sahiplen konteyner podman dışarıda yönet" },
+] as const;
+
+export type AddFlow = (typeof ADD_FLOWS)[number]["id"];
+
+/** The address of an add flow over Uygulamalar. */
+export function addRoute(flow: AddFlow, extra: Record<string, string> = {}): string {
+  return "/uygulamalar?" + new URLSearchParams({ ekle: flow, ...extra }).toString();
+}

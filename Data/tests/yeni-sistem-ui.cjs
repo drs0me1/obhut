@@ -14,7 +14,7 @@ const HEX = (c) => c.repeat(32);
 const ucell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
 const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: ucell("yok"), internet: ucell("yok"),
   kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, sayfa: null, eylemler: [], revizyon: null,
-  metinler: null, aciklama: "", ...o });
+  metinler: null, hesap: false, aciklama: "", ...o });
 
 const CHECKS = [
   { id: "firewall", name: "Güvenlik duvarı", status: "ok", detail: "Kurallar beklendiği gibi" },

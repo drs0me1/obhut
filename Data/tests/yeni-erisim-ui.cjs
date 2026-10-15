@@ -14,7 +14,7 @@ const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler,
 const ucell = (durum, adresler = [], uyari = "", not = "") => ({ durum, adresler, uyari, not });
 const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: ucell("yok"), internet: ucell("yok"),
   kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, sayfa: null, eylemler: [], revizyon: null,
-  metinler: null, aciklama: "", ...o });
+  metinler: null, hesap: false, aciklama: "", ...o });
 const row = (id, ad, tur, cells, ayrinti = [], aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, calisiyor: true, yerel: cell("yok"),
   tailscale: cell("yok"), wireguard: cell("kapali", [], VPN_NOTE), internet: cell("yok"), yayinlar: [], ayrinti, ...cells });
 
