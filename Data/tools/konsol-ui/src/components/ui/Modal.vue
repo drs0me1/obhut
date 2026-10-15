@@ -1,7 +1,8 @@
 <!-- The dialog and the sheet (DD-258 goal 5): a small confirmation in the middle ("dialog") or a larger
      panel from the side ("sheet"); on a phone both rise from the bottom. Rendered outside the page, which is
      inert meanwhile (ui.ts). Focus moves in (to [data-autofocus] or the first control) and stays inside;
-     Esc, the backdrop or "Kapat" close it and focus returns to the control that opened it. -->
+     Esc, the backdrop or "Kapat" close it and focus returns to the control that opened it. When the focused
+     control goes away (a form's next step replaced it), Esc and Tab still reach the dialog. -->
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, useId, watch } from "vue";
 import { Icon } from "../icons";
@@ -31,15 +32,25 @@ function focusFirst(): void {
 // Whether this dialog holds the shell's modal surface (a page may have several dialogs, one open at a time).
 let owns = false;
 
+// Keys that arrive outside the panel (focus fell to the page's body): Esc closes, Tab comes back in.
+function onDocumentKeydown(event: KeyboardEvent): void {
+  const root = panel.value;
+  if (!root || (event.target instanceof Node && root.contains(event.target))) return;
+  if (event.target instanceof Element && event.target.closest(".layer") && !event.target.closest(".layer-modal")) return;
+  onKeydown(event);
+}
+
 watch(
   () => props.open,
   (open) => {
     if (open && !owns) {
       owns = true;
       openSurface("dialog");
+      document.addEventListener("keydown", onDocumentKeydown);
       void nextTick(focusFirst);
     } else if (!open && owns) {
       owns = false;
+      document.removeEventListener("keydown", onDocumentKeydown);
       if (ui.open === "dialog") closeSurface();
     }
   },
@@ -52,6 +63,7 @@ watch(
   (which) => {
     if (owns && which !== "dialog") {
       owns = false;
+      document.removeEventListener("keydown", onDocumentKeydown);
       emit("close");
     }
   },
@@ -59,6 +71,7 @@ watch(
 
 // The page went away with the dialog open (Back): the shell must not stay inert.
 onBeforeUnmount(() => {
+  document.removeEventListener("keydown", onDocumentKeydown);
   if (!owns) return;
   owns = false;
   if (ui.open === "dialog") closeSurface(false);

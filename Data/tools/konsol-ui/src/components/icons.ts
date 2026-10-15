@@ -95,6 +95,22 @@ const ICONS = {
     ],
   },
   lines: { shapes: [{ d: "M5 7h14" }, { d: "M5 12h14" }, { d: "M5 17h9" }] },
+  info: { shapes: [{ cx: 12, cy: 12, r: 8.5 }, { d: "M12 11v5" }, { d: "M12 7.8h.01" }] },
+  lock: { shapes: [{ x: 5.5, y: 10.5, width: 13, height: 9, rx: 2 }, { d: "M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" }] },
+  pencil: { shapes: [{ d: "M4.5 19.5l1-4L15.8 5.2a1.8 1.8 0 0 1 2.5 0l.5.5a1.8 1.8 0 0 1 0 2.5L8.5 18.5z" }, { d: "M13.5 7.5l3 3" }] },
+  qr: {
+    shapes: [
+      { x: 4, y: 4, width: 6, height: 6, rx: 1 },
+      { x: 14, y: 4, width: 6, height: 6, rx: 1 },
+      { x: 4, y: 14, width: 6, height: 6, rx: 1 },
+      { d: "M14 14h2.5v2.5H14z" },
+      { d: "M18.5 18.5H20V20h-1.5z" },
+      { d: "M14 19.5h2" },
+      { d: "M19.5 14v2" },
+    ],
+  },
+  key: { shapes: [{ cx: 8, cy: 15.5, r: 3.5 }, { d: "M10.5 13 19 4.5" }, { d: "M16 7.5l2.5 2.5" }] },
+  power: { shapes: [{ d: "M12 4v7" }, { d: "M7.5 6.8a7 7 0 1 0 9 0" }] },
 } satisfies Record<string, IconDef>;
 
 export type IconName = keyof typeof ICONS;

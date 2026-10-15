@@ -32,6 +32,19 @@ export function dateTime(unixSeconds: number | null | undefined): string {
   return dateTimeFormat.format(new Date(unixSeconds * 1000));
 }
 
+const dateFormat = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long", year: "numeric" });
+
+/** Unix seconds as "8 Kasım 2026". */
+export function date(unixSeconds: number | null | undefined): string {
+  if (!isNumber(unixSeconds) || unixSeconds <= 0) return UNKNOWN;
+  return dateFormat.format(new Date(unixSeconds * 1000));
+}
+
+/** Whole days from `now` until a server time (negative once it has passed). */
+export function daysUntil(unixSeconds: number, now: number): number {
+  return Math.floor((unixSeconds - now) / 86400);
+}
+
 /** Turkish-aware lower case: "İ" → "i", "I" → "ı". */
 export const fold = (text: string): string => text.toLocaleLowerCase("tr-TR");
 

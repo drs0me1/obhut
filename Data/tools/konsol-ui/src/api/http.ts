@@ -26,10 +26,10 @@ export const KONSOL_HEADERS: Readonly<Record<string, string>> = Object.freeze({ 
 const isHata = (body: unknown): body is Hata =>
   typeof body === "object" && body !== null && typeof (body as { error?: unknown }).error === "string";
 
-async function reply(res: Response): Promise<unknown> {
+async function failure(res: Response): Promise<ApiError> {
   if (res.status === 401) {
     goToSignIn();
-    throw new ApiError(401, "Oturum gerekli; yeniden giriş yapın.");
+    return new ApiError(401, "Oturum gerekli; yeniden giriş yapın.");
   }
   let body: unknown = null;
   try {
@@ -37,8 +37,16 @@ async function reply(res: Response): Promise<unknown> {
   } catch {
     body = null;
   }
-  if (!res.ok) throw new ApiError(res.status, isHata(body) ? body.error : `Sunucu yanıtı: HTTP ${res.status}`);
-  return body;
+  return new ApiError(res.status, isHata(body) ? body.error : `Sunucu yanıtı: HTTP ${res.status}`);
+}
+
+async function reply(res: Response): Promise<unknown> {
+  if (!res.ok || res.status === 401) throw await failure(res);
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
 export async function getJson(path: string): Promise<unknown> {
@@ -56,4 +64,13 @@ export async function postJson(path: string, body: unknown): Promise<unknown> {
       body: JSON.stringify(body),
     }),
   );
+}
+
+/** A file the page shows or saves once and forgets (a WireGuard QR code or device profile, which carry a
+    private key): fetched only when asked, never from or into the browser's cache. The caller turns it into
+    an object URL and revokes that right after use. */
+export async function getBlob(path: string): Promise<Blob> {
+  const res = await fetch(path, { headers: KONSOL_HEADERS, credentials: "same-origin", cache: "no-store" });
+  if (!res.ok) throw await failure(res);
+  return res.blob();
 }

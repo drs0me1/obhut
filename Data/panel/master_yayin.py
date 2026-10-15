@@ -191,6 +191,8 @@ def plan(env, request, cands, settings_plan, container_detail, pick_port):
                   "istek": data})
     if internet and c["giris"] == GUARD_APP:
         warnings.append({"seviye": "warn", "metin": GUARD_APP})
+    if c["konteyner"] and not c["konteyner"]["calisiyor"] and (tail or internet):
+        warnings.append({"seviye": "warn", "metin": "Konteyner şu an çalışmıyor; ad açılır ama başlatılana kadar yanıt vermez."})
     if internet and c["internet_engel"] and not engel:
         engel = c["internet_engel"]
     dns = {"ad": domain, "tur": "A", "deger": env.get("WAN_IPV4", "")} if internet and domain else None

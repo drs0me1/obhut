@@ -1,11 +1,13 @@
 // Hash routes (#/genel …), so Caddy needs no rewrite for /yeni/. Unknown addresses open Genel Bakış.
-// Genel Bakış, Uygulamalar and an application's page (#/uygulamalar/paket:torrent) are built (phase 2);
-// the other sections are still placeholders that lead to the current interface.
+// Genel Bakış, Uygulamalar and an application's page (#/uygulamalar/paket:torrent) are built (phase 2), and
+// Erişim with its tabs (#/erisim?sekme=adresler, phase 3); the other sections are still placeholders that
+// lead to the current interface.
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from "vue-router";
 import SectionPage from "./pages/SectionPage.vue";
 import OverviewPage from "./pages/OverviewPage.vue";
 import AppsPage from "./pages/AppsPage.vue";
 import AppPage from "./pages/AppPage.vue";
+import AccessPage from "./pages/AccessPage.vue";
 import { SECTIONS, type SectionId } from "./sections";
 
 declare module "vue-router" {
@@ -15,7 +17,7 @@ declare module "vue-router" {
   }
 }
 
-const PAGES: Partial<Record<SectionId, RouteRecordRaw["component"]>> = { genel: OverviewPage, uygulamalar: AppsPage };
+const PAGES: Partial<Record<SectionId, RouteRecordRaw["component"]>> = { genel: OverviewPage, uygulamalar: AppsPage, erisim: AccessPage };
 
 export const router = createRouter({
   history: createWebHashHistory(),

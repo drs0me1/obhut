@@ -9,6 +9,7 @@ import "./styles/base.css";
 import "./styles/shell.css";
 import "./styles/ui.css";
 import "./styles/pages.css";
+import "./styles/erisim.css";
 
 initTheme();
 createApp(App).use(router).mount("#app");

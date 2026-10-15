@@ -16,6 +16,7 @@ import UsageBar from "../components/ui/UsageBar.vue";
 import type { Tone } from "../components/ui/types";
 import { apps, checkLevel, live, serverNow } from "../live";
 import { accessLine, appState, openTarget } from "../apps";
+import { fixRoute } from "../access";
 import { appRoute } from "../router";
 import { readNetwork, readRepair, startRepair } from "../api/konsol";
 import type { Ag, Onarim } from "../api/sema";
@@ -28,6 +29,8 @@ interface Problem {
   tone: Extract<Tone, "warning" | "danger">;
   title: string;
   detail: string;
+  /** Where an Erişim warning is fixed (its `duzelt`). */
+  fix: string;
 }
 
 const serviceNames = computed(() => {
@@ -41,11 +44,12 @@ const problemList = computed<Problem[]>(() => {
   for (const check of live.saglik?.checks ?? []) {
     const level = checkLevel(check.status);
     if (level === "ok") continue;
-    out.push({ key: "saglik:" + check.id, kind: "saglik", tone: level, title: check.name || check.id, detail: check.detail });
+    out.push({ key: "saglik:" + check.id, kind: "saglik", tone: level, title: check.name || check.id, detail: check.detail, fix: "" });
   }
   (live.uyarilar ?? []).forEach((u, i) => {
     const service = serviceNames.value.get(u.hizmet);
-    out.push({ key: `erisim:${i}`, kind: "erisim", tone: u.seviye === "bad" ? "danger" : "warning", title: u.metin, detail: service ? `Erişim · ${service}` : "Erişim" });
+    out.push({ key: `erisim:${i}`, kind: "erisim", tone: u.seviye === "bad" ? "danger" : "warning", title: u.metin, detail: service ? `Erişim · ${service}` : "Erişim",
+      fix: fixRoute(u.duzelt ?? null) });
   });
   // The most serious first; otherwise in the server's order.
   return out.map((p, i) => [p, i] as const).sort((a, b) => (a[0].tone === b[0].tone ? a[1] - b[1] : a[0].tone === "danger" ? -1 : 1)).map(([p]) => p);
@@ -253,7 +257,7 @@ watch(() => live.offset, () => (now.value = serverNow()));
           >
             {{ repairRunning ? "Onarım sürüyor…" : "Denetle ve onar" }}
           </button>
-          <a v-else class="btn btn-primary" href="/#/ayarlar/web">Düzelt</a>
+          <RouterLink v-else :to="p.fix" class="btn btn-primary" data-eylem="duzelt">Düzelt</RouterLink>
         </li>
       </ul>
       <p v-if="repairLock && problemList.some((p) => p.kind === 'saglik')" id="onarim-not" class="health-note" data-testid="repair-lock">{{ repairLock }}</p>

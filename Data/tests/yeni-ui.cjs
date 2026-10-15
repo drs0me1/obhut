@@ -139,7 +139,8 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await banner.waitFor();
     assert.equal(await banner.locator("strong").innerText(), "Bekleyen bir ayar değişikliği var");
     assert.match(await page.getByTestId("countdown").innerText(), /^0:4[45]$/);
-    assert.equal(await banner.getByRole("link", { name: "Ayarlar'da onayla" }).getAttribute("href"), "/#/ayarlar");
+    // Since phase 3 the banner confirms and rolls back itself (yeni-erisim-ui.cjs drives both).
+    assert.deepEqual(await banner.locator(".pending-actions button").allInnerTexts(), ["Onayla", "Geri al"]);
     await page.getByTestId("countdown").filter({ hasText: /^0:4[0-3]$/ }).waitFor({ timeout: 4000 });
     await shot(page, "1440-light-pending.png");
     push("bekleyen", { bekleyen: { id: "p1", phase: "applying", seconds: 170 } });
@@ -165,7 +166,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert(await input.evaluate((el) => el === document.activeElement), "the field has focus");
     assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Eylemler", "Eski arayüz"]);
     assert.deepEqual(await palette.locator('[aria-labelledby="palet-grup-1"] .palette-label').allInnerTexts(), ["WireGuard", "qBittorrent"]);
-    assert.equal(await palette.locator('[aria-labelledby="palet-grup-3"] [role="option"]').count(), 9);
+    assert.equal(await palette.locator('[aria-labelledby="palet-grup-3"] [role="option"]').count(), 6, "Caddy, Dnsmasq and the firewall are Erişim's tabs");
     assert.equal(await palette.locator('[data-key="uygulama-paket:wireguard"] .palette-hint').innerText(), "Uygulama", "an application opens its own page (phase 2)");
     await shot(page, "1440-light-palette.png");
     await input.fill("İŞ");
@@ -221,11 +222,13 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await page.route((u) => u.pathname === "/" , (route) => route.fulfill({ status: 200, contentType: "text/html", headers: { "content-security-policy": csp }, body: "<!doctype html><title>Eski Konsol</title>" }));
     await page.keyboard.press("Control+K");
     await input.fill("caddy");
-    assert.deepEqual(await optionLabels(page), ["Erişim", "Gelişmiş", "Ayarlar → Caddy"], "pages first, then the current UI's view");
-    await input.fill("ayarlar caddy");
-    assert.equal(await palette.locator('[aria-selected="true"] .palette-hint').innerText(), "/#/ayarlar/web");
+    assert.deepEqual(await optionLabels(page), ["Erişim", "Erişim → Adresler", "Gelişmiş"], "Caddy's addresses are Erişim's (phase 3)");
+    await input.fill("günlük");
+    assert.deepEqual(await optionLabels(page), ["Sistem", "Ayarlar → Günlük"], "pages first, then the current UI's view");
+    await input.fill("ayarlar günlük");
+    assert.equal(await palette.locator('[aria-selected="true"] .palette-hint').innerText(), "/#/ayarlar/log");
     await page.keyboard.press("Enter");
-    await page.waitForURL((u) => u.pathname === "/" && u.hash === "#/ayarlar/web");
+    await page.waitForURL((u) => u.pathname === "/" && u.hash === "#/ayarlar/log");
     await page.goto(new URL("/yeni/#/sistem", base).href);
 
     // Theme on the Sistem page, kept across a reload.
@@ -249,8 +252,8 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert.equal(await page.evaluate(() => document.documentElement.hasAttribute("data-theme")), false, "Sistem follows the system");
     assert.equal(await page.evaluate(() => localStorage.getItem("konsol.tema")), "sistem");
     assert.deepEqual(await page.getByTestId("legacy").locator("a").evaluateAll((as) => as.map((a) => a.getAttribute("href"))), ["/#/ayarlar", "/#/ayarlar/log"]);
-    for (const [hash, hrefs] of [["#/erisim", ["/#/ayarlar/web", "/#/ayarlar/dns", "/#/ayarlar/fw", "/#/wireguard"]],
-      ["#/dosyalar", ["/#/dosyalar"]], ["#/gelismis", ["/#/ayarlar/fw"]]]) {
+    // Erişim is built since phase 3; the other sections still lead to the current interface.
+    for (const [hash, hrefs] of [["#/dosyalar", ["/#/dosyalar"]], ["#/gelismis", ["/#/ayarlar/fw"]]]) {
       await page.evaluate((h) => { location.hash = h; }, hash);
       await page.waitForFunction((h) => location.hash === h, hash);
       await page.getByTestId("legacy").locator(`a[href="${hrefs[0]}"]`).waitFor();

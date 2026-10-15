@@ -6,4 +6,6 @@ export type Tone = "ok" | "warning" | "danger" | "accent" | "neutral";
 export interface TabItem {
   id: string;
   label: string;
+  /** A second, quieter line under the label (a network's port or "2/3 bağlı"). */
+  hint?: string;
 }

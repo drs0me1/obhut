@@ -22,7 +22,8 @@ const OK_CHECKS = [
   { id: "caddy", name: "Caddy", status: "ok", detail: "çalışıyor" },
   { id: "dns", name: "DNS", status: "ok", detail: "yanıt veriyor" }];
 const BAD_CHECK = { id: "units", name: "2 eski konteyner birimi başarısız", status: "bad", detail: "konsol-filebrowser ve konsol-gezgin-deneme her açılışta hata veriyor." };
-const WARNING = { seviye: "warn", hizmet: "paylasim", metin: "İnternetten gelen WebDAV bağlantıları şifresiz; kullanıcı adı ve parola ağda okunabilir." };
+const WARNING = { seviye: "warn", hizmet: "paylasim", metin: "İnternetten gelen WebDAV bağlantıları şifresiz; kullanıcı adı ve parola ağda okunabilir.",
+  duzelt: { bolum: "yayinlar", hedef: "paylasim" } };
 
 function apps() {
   return [
@@ -152,7 +153,7 @@ async function noStyles(page, where) {
     const warn = page.locator('.problem-warning[data-kind="erisim"]');
     assert.equal(await warn.locator("strong").innerText(), WARNING.metin);
     assert.equal(await warn.locator(".problem-text span").innerText(), "Erişim · Paylaşımlar");
-    assert.equal(await warn.getByRole("link", { name: "Düzelt" }).getAttribute("href"), "/#/ayarlar/web");
+    assert.equal(await warn.getByRole("link", { name: "Düzelt" }).getAttribute("href"), "#/erisim?sekme=adresler&yayinla=paylasim", "its fix (phase 3)");
     assert.equal(await page.getByRole("link", { name: "Tüm denetimler" }).getAttribute("href"), "/#/ayarlar");
     // Applications: every one but Files, which has its own section.
     await page.locator(".app-card").first().waitFor();
@@ -465,7 +466,8 @@ async function noStyles(page, where) {
     await technical.locator("summary").click();
     await page.waitForURL((u) => u.hash === "#/uygulamalar/paket:torrent?sekme=erisim&teknik=1");
     assert.deepEqual(await technical.locator("dd").allInnerTexts(), ["127.0.0.1:62947 → 8080/tcp", "torrent.ev → 100.64.0.2"]);
-    assert.equal(await access.getByRole("link", { name: "Erişimi düzenle" }).getAttribute("href"), "/#/ayarlar/web");
+    // Since phase 3 it opens the Yayınla flow over this page (yeni-erisim-ui.cjs drives the flow).
+    assert.equal(await access.getByRole("button", { name: "Erişimi düzenle" }).count(), 1);
     await shot(page, "1440-light-uygulama-erisim.png", true);
     await page.reload();
     await access.locator(".access-row").first().waitFor();

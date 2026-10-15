@@ -150,6 +150,13 @@ class PlanTests(unittest.TestCase):
                                                "elle": {"name": "medya", "local": "medya", "upstream": "127.0.0.1:62101"}})
         self.assertIn(master_yayin.GUARD_APP, [w["metin"] for w in result["uyarilar"]])
         self.assertTrue(any("İki adım" in w["metin"] for w in result["uyarilar"]))
+        self.assertFalse(any("çalışmıyor" in w["metin"] for w in result["uyarilar"]))
+        stopped = copy.deepcopy(CONTAINERS)
+        stopped["containers"][2]["state"] = "exited"
+        self.items = cands(containers=stopped)
+        self.assertTrue(any("çalışmıyor" in w["metin"] for w in self.plan(self.request("konteyner:medya"))["uyarilar"]),
+                        "a stopped container keeps its state; the name answers once it runs")
+        self.items = cands()
         # A container with a loopback port and its manual address: only the row.
         result = self.plan(self.request("konteyner:notlar"))
         self.assertEqual([s["tur"] for s in result["adimlar"]], ["ayar"])

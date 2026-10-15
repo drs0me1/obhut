@@ -3,7 +3,9 @@
 // health, running jobs and the pending settings change. When the stream is unavailable (404, 503, no
 // ReadableStream) or keeps failing, the same data is polled: resources every 10 s, health every 60 s, jobs
 // and the pending change every 5 s. Applications, the update check and Erişim's warnings are read every
-// 60 s in both modes, and again whenever a job starts or ends. Hidden pages do not poll.
+// 60 s in both modes, and again whenever a job starts or ends. Hidden pages do not poll. Erişim's whole read
+// model is kept (its page and the warnings everywhere); `ayarSurumu` rises whenever the saved settings may
+// have changed (a change committed, confirmed or rolled back), so pages that show them read them again.
 import { computed, reactive } from "vue";
 import {
   YOLLAR,
@@ -41,6 +43,10 @@ export const live = reactive({
   guncelleme: null as Guncelleme | null,
   /** Erişim's warnings; null while unknown. */
   uyarilar: null as Uyari[] | null,
+  /** Erişim's read model (DD-259): every service's four cells, the summaries and the warnings. */
+  erisim: null as Erisim | null,
+  /** Rises when the saved settings may have changed; pages that show settings read them again. */
+  ayarSurumu: 0,
   /** GET /api/konsol/erisim answered 404: an older backend without the read model. */
   erisimYok: false,
   connection: "baslangic" as Connection,
@@ -100,8 +106,7 @@ const apply: Record<Key, (data: unknown) => void> = {
   bekleyen(data) {
     if (!isObject(data) || !("bekleyen" in data)) return;
     const value = (data as unknown as Bekleyen).bekleyen;
-    live.bekleyen = isObject(value) && isText(value.phase) ? value : null;
-    live.bekleyenAt = Date.now();
+    setPending(isObject(value) && isText(value.phase) ? value : null);
   },
   uygulamalar(data) {
     if (!isObject(data) || !Array.isArray(data.items)) return;
@@ -119,8 +124,18 @@ const apply: Record<Key, (data: unknown) => void> = {
   },
   erisim(data) {
     if (isObject(data) && Array.isArray(data.uyarilar)) {
-      live.uyarilar = (data as unknown as Erisim).uyarilar.filter((u): u is Uyari => isObject(u) && isText(u.metin));
+      const value = data as unknown as Erisim;
+      const uyarilar = value.uyarilar.filter((u): u is Uyari => isObject(u) && isText(u.metin));
+      live.uyarilar = uyarilar;
       live.erisimYok = false;
+      if (Array.isArray(value.hizmetler) && isObject(value.ozet)) {
+        live.erisim = {
+          ...value,
+          uyarilar,
+          hizmetler: value.hizmetler.filter((h) => isObject(h) && isText(h.id) && isText(h.ad) && ["yerel", "tailscale", "wireguard", "internet"].every((k) => isObject(h[k]))),
+          hatalar: Array.isArray(value.hatalar) ? value.hatalar.filter(isText) : [],
+        };
+      }
     }
   },
 };
@@ -157,6 +172,27 @@ async function refresh(key: Key, changed = false): Promise<void> {
 /** Reads the application list now (a page opened, or an operation was started from it). */
 export function refreshApps(): Promise<void> {
   return refresh("uygulamalar", true);
+}
+
+/** Reads Erişim's read model now (its page opened, or a publication changed). */
+export function refreshAccess(): Promise<void> {
+  return refresh("erisim", true);
+}
+
+/** The pending settings change as the server or an apply reply reported it. Its end (confirmed, rolled
+    back or discarded) means the saved settings may differ from what a page shows. */
+export function setPending(value: BekleyenDegisiklik | null): void {
+  const before = live.bekleyen;
+  live.bekleyen = value;
+  live.bekleyenAt = Date.now();
+  generation.bekleyen += 1;
+  if (before && !value) settingsChanged();
+}
+
+/** Something changed the saved settings (a change committed at once, or a pending one ended). */
+export function settingsChanged(): void {
+  live.ayarSurumu += 1;
+  void refresh("erisim", true);
 }
 
 // Timers: the slow reads run always; the fast ones only while the stream is not delivering.

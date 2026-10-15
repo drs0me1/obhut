@@ -309,10 +309,12 @@ Contract in §5–§7 and `folder-shares.md`.
 - **Internet-only (DD-177).** No access selector, no WG host-rule override and
   no per-network Caddy listener. API creation/settings reject a supplied
   `scope` field; CLI creation is `net-add PORT DNS LABEL`, and settings is
-  `--if wgN net-settings DNS REVISION`. Network settings change only the
-  default DNS for future peers, under revision and install-lock checks; they
-  never regenerate keys, change existing profiles or start a stopped network
-  (**DD-167**).
+  `--if wgN net-settings DNS REVISION [LABEL]`. Network settings change only the
+  default DNS for future peers and, when a name is given, the network's name
+  (**DD-265**: at most 64 bytes, no leading or trailing space, no control
+  character; `/nets/<if>/ayarlar` takes it as `label`), under revision and
+  install-lock checks; they never regenerate keys, change existing profiles or
+  start a stopped network (**DD-167**).
 - **The server is the source of truth.** `/etc/wireguard/wgN.conf` (`0600`)
   holds that network's key and one `# peer: <name>` + `[Peer]` block per device;
   the registry holds the network's parameters. Nothing is restored from the
@@ -510,7 +512,8 @@ Contract in §5–§7 and `folder-shares.md`.
     same session check and CSP (plus `font-src 'self'` for its local Outfit font). The installer
     places the committed build of `tools/konsol-ui` (Vue 3 + TypeScript + Vite; nothing is built on
     the server) from `console/yeni/` and removes files an older build left. Genel Bakış, Uygulamalar
-    and an application's page are its own (**DD-261**); its other pages open the current Konsol
+    and an application's page are its own (**DD-261**), and so is Erişim with the Yayınla flow, where
+    every write shows the settings plan first (**DD-265**); its other pages open the current Konsol
     until a later phase replaces them. Its backend routes come from the table in
     `master_api.py`: `/api/konsol/erisim` (read-only reachability of every service from this server,
     Tailscale, WireGuard and the internet, with warnings; it changes and probes nothing new),
@@ -526,7 +529,19 @@ Contract in §5–§7 and `folder-shares.md`.
     `POST /api/konsol/uygulamalar/islem` (one action entry for packages and containers: 202 when it
     starts, 409 for a built-in, a busy application or a stale revision), and moves `/api/konsol/ag`
     and `/api/konsol/onarim` into the table unchanged. A table route that declares its request refuses
-    another shape with 400. All of them need `X-Konsol`; the page reads the stream with fetch. The
+    another shape with 400. Phase 3 (**DD-265**) adds `POST /api/konsol/ayarlar/plan`: a dry run of the
+    settings transaction with apply's own checks on a copy (no lock, file, timer or service is touched;
+    a check that fails is the same 400 apply would give) that returns the changes before and after,
+    what restarts, the confirmation window (0, 60 or 300 s) and whether the change could be confirmed
+    from the caller's address and channel. `ayarlar/uygula|onayla|geri-al|birak` and
+    `konteynerler/islem` are declared in the table on the same workers; `/api/konsol/guvenlik-duvari`
+    (the operator's rules, the port catalogue, listeners, the technical rules and the check),
+    `/api/konsol/adlar` (local names, records, forwarding) and `/api/konsol/yayinlar` with
+    `POST /api/konsol/yayinlar/plan` (the Yayınla flow) are new. A publication goes through the settings
+    transaction; a Konsol container with no loopback port first gets one through the container save
+    job, on a free port in `YAYIN_PORT_ILK`–`YAYIN_PORT_SON` (62100–62899). The two run in order, not as
+    one transaction: when the second fails, the loopback port stays. Erişim's warnings name their row
+    by its id and carry a fix target (`duzelt`). All of them need `X-Konsol`; the page reads the stream with fetch. The
     current Konsol's sidebar links to `/yeni/`. On the public name an ended session
     sends the page to `/giris.html?geri=yeni`, which returns to `/yeni/` after signing in.
   - Pages (**DD-160**, **DD-200**, **DD-204**, **DD-212/213**, **DD-216**): Ana Menü is the

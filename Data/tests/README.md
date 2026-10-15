@@ -139,6 +139,65 @@ attribute and no horizontal scroll. Screenshots go to a fresh temporary director
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulamalar-ui.cjs
 ```
 
+## New interface phase 3: Erişim, the Yayınla flow and the pending change (DD-258)
+
+Two suites drive the committed build through `yeni-harness.cjs`, which since phase 3 also answers a reply
+with `contentType` as it is (a PNG, a text file) and takes `h.dynamic` handlers for paths with variable
+parts (a package's `/api/uygulama/<id>/…` routes).
+
+`yeni-erisim-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8771`): Erişim → Genel (warnings first, each
+"Düzelt" by its `duzelt`: the Yayınla flow on Adresler, the application's page or the Tailscale tab; the
+summaries; every service's four cells in plain words, `teknik=1` adding addresses and the technical lines),
+Tailscale (device, addresses, version, key expiry under 14 days, exit node, the admin console link, the
+disconnected state), Adresler (the publications with state, certificate and who guards them; the local names
+with Konsol's own locked; a DNS draft → `POST /api/konsol/ayarlar/plan` → `…/uygula` with the exact same
+body; a refused plan and "Yeniden denetle"; the local domain with its 300 s window, confirmed only from
+`http://panel.<new>`, rolled back from the banner; removing a manual address with `{web: {service, sil: true}}`),
+the Yayınla flow (a package's internet name with the DNS record and the certificate wait; the Konsol row,
+planned only after the typed word, sent as `onay`; a container without a loopback port: the plan's
+container request unchanged to `…/konteynerler/islem`, the job's end through a pushed `islemler` event, then
+the settings request unchanged; a failing second step and a failing job; another port as a new manual
+address through `ayarlar/plan`; an `engel` and "Yeniden denetle"; both names off; a stopped package; an
+unknown target), Güvenlik duvarı (the catalogue merged with the rules, listeners, locked rows, a baseline
+switch and a new `u_…` rule with its checks, IPv6, the network tabs, the technical rules with counters, plan
+→ apply → the 60 s banner → Onayla and Geri al, a plan that cannot be applied), a stuck rollback (retry,
+typed discard), a refused confirmation, the internet channel's message (`newHttpsPage`), an application
+page's Erişim tab opening the flow in place, the palette, and 1440/390/320 px in both themes.
+
+`yeni-wireguard-ui.cjs` (default `http://127.0.0.1:8772`) feeds a fixture of the WireGuard package's own API
+that changes as the page asks: networks as tabs (`ag=`), on at once and off after a question, devices with
+their state, DNS, keepalive, addresses, last seen and traffic, the exact bodies of every write (devices,
+DNS and keepalive, networks, the name and default DNS with the revision and a 409 on a stale one,
+regenerating and removing with the typed `onayla`), QR codes and profiles fetched only on a click with
+`cache: "no-store"` and their object URLs revoked (the QR's when decoded, the profile's after 10 s, checked
+with Playwright's clock), the limit, no network yet, the stopped and the not-installed package, and `/state`
+read every 10 s only while the tab is shown and the browser tab visible.
+
+`yeni-ui.cjs` and `yeni-uygulamalar-ui.cjs` changed only where phase 3 meant them to: Erişim is no longer a
+placeholder, the palette's current-interface views no longer list Caddy, Dnsmasq and the firewall, the
+pending banner confirms and rolls back itself, and "Düzelt" and an application's "Erişimi düzenle" lead to
+the new views.
+
+```bash
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-erisim-ui.cjs
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-wireguard-ui.cjs
+```
+
+The backend (DD-265): `test_settings.py` checks the plan of firewall, DNS, domain and publication
+changes (before/after, restarts, the confirmation window, a plan refused like `apply`, nothing written,
+`uygulanabilir` false from the internet channel and for a rule that would cut the caller off);
+`test_publications.py` the plan of one publication row; `test_yayin.py` the candidates (packages, Konsol and
+foreign containers, a container joined to its manual address, the reasons an internet name is blocked),
+`free_port`, the one- and two-step plans, `engel` and the routes through the real handler;
+`test_erisim.py` the warnings' row ids and `duzelt` and the Tailscale summary; `test_wg_settings.py` a
+network's new name through the package's API and its rejected names. Bats checks the routes in the table,
+`master-wg net-settings` renaming a network without touching keys, profiles or services (and refusing bad
+names) and that the installer ships `master_yayin.py`.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_yayin.py'
+```
+
 ## Gezgin package (v2-245, DD-262)
 
 `test_gezgin_package.py` drives `magaza/gezgin/ayar.py` with faked commands: the install form (every

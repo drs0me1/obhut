@@ -15,7 +15,7 @@ import {
 import { ApiError, getJson, postJson } from "./http";
 
 export const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const isText = (v: unknown): v is string => typeof v === "string";
+export const isText = (v: unknown): v is string => typeof v === "string";
 const isCell = (v: unknown) => isObject(v) && isText(v.durum) && Array.isArray(v.adresler);
 
 /** An application the pages can show; one without the expected shape is left out (or refused). */
@@ -26,7 +26,8 @@ export function isApp(v: unknown): v is Uygulama {
   );
 }
 
-function shaped<T>(data: unknown, test: (v: Record<string, unknown>) => boolean): T {
+/** The reply as T when it passes `test`; otherwise an error, so a page never shows half a value as whole. */
+export function shaped<T>(data: unknown, test: (v: Record<string, unknown>) => boolean): T {
   if (!isObject(data) || !test(data)) throw new ApiError(0, "Sunucunun yanıtı beklenen biçimde değil.");
   return data as T;
 }

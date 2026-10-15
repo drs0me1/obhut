@@ -8,7 +8,10 @@
      data      { "<path after /api/konsol/>": reply } for GET requests, read at request time;
      h.status  { "/api/konsol/…": code } forces a status for that path;
      h.handlers{ "/api/konsol/…": (req) => ({ status, body }) | undefined } answers before data
-               (req: { method, path, query (URLSearchParams), body (parsed JSON or null) });
+               (req: { method, path, query (URLSearchParams), body (parsed JSON or null) }); a reply with
+               `contentType` is sent as it is (a PNG, a text file) instead of as JSON;
+     h.dynamic [[/regex/, (req, match) => reply | undefined], …] answers paths with variable parts (a
+               package's /api/uygulama/<id>/… routes) after the exact handlers;
      expected  URL fragments whose failed loads (4xx/5xx) are part of the current scenario. */
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const assert = require("node:assert/strict");
@@ -47,6 +50,7 @@ function create({ name, url, data, expected = () => [] }) {
     status: {},
     handlers: {},
     calls: {},
+    dynamic: [],
     requests: [],
     errors: [],
     stream: { mode: "live", clients: new Set(), connections: 0, lastConnect: 0, headers: [] },
@@ -124,7 +128,15 @@ function create({ name, url, data, expected = () => [] }) {
       return reply(code, code === 401 ? { error: "Oturum gerekli; yeniden giriş yapın.", giris: true } : { error: "fixture" });
     }
     const handler = h.handlers[p];
-    const handled = handler && handler({ method: request.method(), path: p, query: u.searchParams, body });
+    const req = { method: request.method(), path: p, query: u.searchParams, body };
+    let handled = handler && handler(req);
+    for (const [pattern, answer] of handler ? [] : h.dynamic) {
+      const match = pattern.exec(p);
+      if (match && (handled = answer(req, match))) break;
+    }
+    if (handled && handled.contentType) {
+      return route.fulfill({ status: handled.status ?? 200, contentType: handled.contentType, headers: handled.headers, body: handled.body });
+    }
     if (handled) return reply(handled.status ?? 200, handled.body);
     if (p === "/api/konsol/oturum") return reply(200, { durum: "giris", kanal: "internet" });
     if (p === "/api/konsol/oturum/giris") {

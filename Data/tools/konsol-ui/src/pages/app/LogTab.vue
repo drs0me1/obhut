@@ -5,6 +5,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Icon } from "../../components/icons";
 import EmptyState from "../../components/ui/EmptyState.vue";
+import Switch from "../../components/ui/Switch.vue";
 import { readAppLog } from "../../api/konsol";
 import { useQueryFlag } from "../../query";
 import { clock } from "../../format";
@@ -87,10 +88,7 @@ const builtin = computed(() => props.app.tur === "yerlesik");
 <template>
   <section class="card log-card" aria-label="Günlük" data-testid="log">
     <div class="log-toolbar">
-      <button type="button" role="switch" class="switch" :aria-checked="liveOn" data-testid="live-switch" @click="liveOn = !liveOn">
-        <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
-        <span>Canlı</span>
-      </button>
+      <Switch v-model="liveOn" label="Canlı" data-testid="live-switch" />
       <span class="meter-note" data-testid="log-read">{{ readAt ? `Son okuma ${clock(readAt)}` : loading ? "Okunuyor…" : "" }}</span>
       <button type="button" class="btn btn-secondary btn-sm" :disabled="loading" @click="load"><Icon name="refresh" :size="16" />Yenile</button>
     </div>

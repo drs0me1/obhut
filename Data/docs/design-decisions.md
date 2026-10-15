@@ -13,6 +13,70 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-265: The redesign's third phase: Erişim, the Yayınla flow and the settings plan (v2-248)
+
+- **Request (user, 2026-10-15):** "faz 3'e başlayalım" (phase 3 of DD-258, [`redesign.md`](redesign.md)).
+  Choices: Yayınla works from both channels as the current Konsol does; a Konsol container with no
+  loopback port is published in two steps in order; a WireGuard network's name can be changed
+  afterwards; the WireGuard functions stay as they are.
+- **`POST /api/konsol/ayarlar/plan`, the dry run:** `Manager.prepare` now holds every check `apply`
+  makes (revision, no pending change, validation, the Konsol name's DNS guard, the Caddyfile check for a
+  domain change), and `plan` runs it on a copy of the request: no lock, pending file, timer, service or
+  file is touched, and a check that fails is the same 400 `apply` would give. The answer lists each
+  change with its before and after (firewall rules, local names and records, forwarding, the domain,
+  each publication row), what restarts or reloads, the confirmation window (`onay_sn`: 0 for local
+  names, records, forwarding and publications, 60 when the firewall changes, 300 for the domain) and warnings. It is
+  `uygulanabilir: false` when a timed change is asked from the internet name (only Tailscale confirms,
+  DD-195) or when the new firewall would cut the caller's own address off Caddy or DNS
+  (`client_blocked`, the check `onayla` already made). The page shows this plan before every write.
+- **`ayarlar/uygula|onayla|geri-al|birak` and `konteynerler/islem`** move into the route table on the
+  same workers, with their request shapes. `KonteynerIstegi` keeps `revision` optional so the current
+  Podman page still works.
+- **New reads:** `/api/konsol/guvenlik-duvari` (the operator's rules, the port catalogue, listeners,
+  WireGuard networks, the technical rules and the firewall check; `yenile=1` reads again),
+  `/api/konsol/adlar` (local names with their owner, records, forwarding and the domain) and
+  `/api/konsol/yayinlar` (`panel/master_yayin.py`: every publication row and every Konsol container
+  that could have one, with its guard text, the typed word for Konsol's own name and why the internet
+  name cannot be opened yet).
+- **Yayınla (`POST /api/konsol/yayinlar/plan`):** four decisions (what, who, which name, the plan)
+  become the requests the page then sends to the existing write routes. A publication row goes through
+  the settings transaction. A Konsol container that listens on no `127.0.0.1` port first gets one
+  through the container save job (DD-211), on the first free port of `YAYIN_PORT_ILK`–`YAYIN_PORT_SON`
+  (62100–62899, `config/defaults.env`) that no definition, publication or listener holds; the row is
+  then a manual address (DD-252) joined to the container by that port. The two steps run in order and
+  are not one transaction (separate locks, revisions and rollbacks): when the second fails, the
+  loopback port stays, which is harmless because it listens on this server only. A container managed
+  outside Konsol without a loopback port is listed but cannot be chosen until it is adopted on the
+  Podman page.
+  Turning both names off keeps the row closed; "Kaldır" on Adresler deletes a manual address.
+- **Erişim's warnings** name their row by its id and carry a fix target (`duzelt`: Yayınlar, the
+  application, Tailscale); the Tailscale summary adds its name, version, addresses and the exit-node
+  offer.
+- **WireGuard network name:** `master-wg net-settings DNS REVİZYON [ETİKET]` and `/nets/<if>/ayarlar`
+  (`label`) rename a network under the same revision and install lock (at most 64 bytes, no leading or
+  trailing space, no control character); keys, profiles and the network's state are untouched. Adding
+  a network now refreshes the settings view, so the firewall and Erişim pages see it at once.
+- **The new interface's Erişim section:** Genel (warnings with "Düzelt", the Tailscale, internet,
+  WireGuard and certificate cards, the who-reaches-what matrix with its technical detail), Adresler
+  (publications, local names and records, forwarding, the local domain), Tailscale, WireGuard (the
+  networks, devices, QR and profiles through the package's own API, network settings with the name)
+  and Güvenlik duvarı (rules by network and family as a draft, reviewed in the plan sheet, the
+  listeners and the technical rules). Yayınla opens from every row and from the section's button
+  (`?yayinla=<id>|sec|yeni`). Every write shows the plan, then applies; a timed change ends in the
+  shell's pending-change banner with its countdown and Onayla/Geri al. The section's state is in the
+  address (`sekme`, `teknik`, `kapsam`, `aile`, `kurallar`, `ag`, `yayinla`).
+- **Live check (test host, v2-248):** every Erişim tab loaded with no console error; a Tailscale port
+  rule went through draft, plan, apply, the 60-second confirmation and removal; a port-less Konsol
+  container was published on the tailnet in two steps (loopback port 62100, then the name, which then
+  answered from a tailnet device), unpublished and its address removed; WireGuard was installed, its
+  first network created, a test device added and deleted, the network renamed (the name shown in the
+  registry, the matrix, the firewall page and the current Konsol's WireGuard page) and removed, and the
+  package removed again.
+- **Rejected:** one transaction across the container broker and the settings transaction (two lock
+  and rollback models for a gain the harmless loopback port does not need); a plan that writes a
+  candidate file; offering Yayınla for a container the operator manages by hand; renaming a network by
+  deleting and adding it again (new keys and profiles for every device).
+
 ### DD-263: Container CPU and memory come from cgroup files, not `podman stats` (v2-246)
 
 - **Report (nrm, 2026-10-13):** Konsol's Podman inventory never showed CPU or memory; every listing

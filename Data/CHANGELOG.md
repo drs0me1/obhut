@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-15 — Erişim and Yayınla in the new interface (v2-248)
+
+- The new interface at `/yeni/` has its Erişim section: Genel shows what needs attention, each with
+  "Düzelt", the Tailscale, internet, WireGuard and certificate cards and who reaches which service
+  from where; Adresler lists every address with its state, the local names and records, DNS
+  forwarding and the local domain; Tailscale, WireGuard and Güvenlik duvarı have their own tabs
+  (DD-265).
+- Yayınla opens an application on the tailnet, the internet or both in four steps (what, who, which
+  name, the plan). A container made in Konsol that has no port on this server first gets one
+  (127.0.0.1, from 62100–62899), then its name; the plan says so before anything changes.
+- Every change on these pages shows its plan first: what changes before and after, what restarts and
+  whether it must be confirmed within 60 seconds (firewall) or 5 minutes (the local domain). A change
+  the page could not confirm from where it is open says so instead of applying.
+- A WireGuard network's name can be changed in its settings, in the new interface and through
+  `master-wg net-settings DNS REVİZYON [ETİKET]`; keys, profiles and devices stay.
+
 ## [1.1.0] — 2026-10-13
 
 Gezgin, the file manager, joins the App Store; the redesigned Konsol at `/yeni/` gets its first own

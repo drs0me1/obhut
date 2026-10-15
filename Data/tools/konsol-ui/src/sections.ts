@@ -1,5 +1,5 @@
-// The six sections of the new Konsol (DD-258, redesign.md). In phase 1 each is a placeholder that links
-// to the current interface ("/#/…"), where the work is still done.
+// The six sections of the new Konsol (DD-258, redesign.md). Genel Bakış and Uygulamalar (phase 2) and Erişim
+// (phase 3) are built; the others are still placeholders that link to the current interface ("/#/…").
 import type { IconName } from "./components/icons";
 
 export type SectionId = "genel" | "uygulamalar" | "erisim" | "dosyalar" | "sistem" | "gelismis";
@@ -50,12 +50,7 @@ export const SECTIONS: readonly Section[] = [
     description: "Kim, neye, nereden erişebilir.",
     icon: "globe",
     keywords: "yayın yayınla adres alan adı tailscale wireguard internet https sertifika caddy dns güvenlik duvarı",
-    legacy: [
-      { href: "/#/ayarlar/web", label: "Ayarlar → Caddy" },
-      { href: "/#/ayarlar/dns", label: "Ayarlar → Dnsmasq" },
-      { href: "/#/ayarlar/fw", label: "Ayarlar → Güvenlik Duvarı" },
-      { href: "/#/wireguard", label: "WireGuard" },
-    ],
+    legacy: [],
   },
   {
     id: "dosyalar",
@@ -92,15 +87,34 @@ export const SECTIONS: readonly Section[] = [
 export const sectionById = (id: unknown): Section =>
   SECTIONS.find((s) => s.id === id) ?? (SECTIONS[0] as Section);
 
-/** The current interface's views, for the palette's "Eski arayüz" group. */
+/** Erişim's tabs (phase 3), in the address as ?sekme=; the palette lists each one. */
+export const ACCESS_TABS = [
+  { id: "genel", label: "Genel", keywords: "erişim matris kim nereden uyarı sertifika özet" },
+  { id: "adresler", label: "Adresler", keywords: "adres yayın alan adı caddy https sertifika dns dnsmasq yerel ad kayıt yönlendirme elle" },
+  { id: "tailscale", label: "Tailscale", keywords: "tailnet cihaz anahtar çıkış düğümü exit node" },
+  { id: "wireguard", label: "WireGuard", keywords: "vpn ağ cihaz peer qr profil" },
+  { id: "guvenlik-duvari", label: "Güvenlik duvarı", keywords: "firewall port kural iptables dinleyici" },
+] as const;
+
+export type AccessTab = (typeof ACCESS_TABS)[number]["id"];
+
+/** The address of an Erişim tab; `yayinla` opens the Yayınla flow over it (a candidate's id, "sec" to choose
+    first, "yeni" for another port on this server). */
+export function accessRoute(tab: AccessTab = "genel", yayinla = ""): string {
+  const query = new URLSearchParams();
+  if (tab !== "genel") query.set("sekme", tab);
+  if (yayinla) query.set("yayinla", yayinla);
+  const text = query.toString();
+  return "/erisim" + (text ? "?" + text : "");
+}
+
+/** The current interface's views, for the palette's "Eski arayüz" group (Caddy, Dnsmasq and the firewall
+    are Erişim's tabs since phase 3). */
 export const LEGACY_VIEWS: readonly (LegacyLink & { keywords: string })[] = [
   { href: "/#/genel", label: "Ana Menü", keywords: "genel bakış ana sayfa" },
   { href: "/#/dosyalar", label: "Dosyalar", keywords: "klasör dosya paylaşım çöp" },
   { href: "/#/moduller", label: "App Store", keywords: "uygulama mağaza paket modül" },
   { href: "/#/konteynerler", label: "Podman", keywords: "konteyner imaj container" },
   { href: "/#/ayarlar", label: "Ayarlar → Sistem", keywords: "ayarlar sağlık onarım hesap güncelleme" },
-  { href: "/#/ayarlar/web", label: "Ayarlar → Caddy", keywords: "ayarlar web yayın https alan adı" },
-  { href: "/#/ayarlar/dns", label: "Ayarlar → Dnsmasq", keywords: "ayarlar dns kayıt ad" },
-  { href: "/#/ayarlar/fw", label: "Ayarlar → Güvenlik Duvarı", keywords: "ayarlar firewall port kural" },
   { href: "/#/ayarlar/log", label: "Ayarlar → Günlük", keywords: "ayarlar log kayıt işlem geçmişi" },
 ];

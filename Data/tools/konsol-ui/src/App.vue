@@ -1,6 +1,7 @@
 <!-- The shell (DD-258): sidebar, page head with the top bar's tools, the pending-change banner and the page;
      on a phone a compact top bar and a bottom bar instead of the sidebar. The palette, the activity drawer,
-     the phone's menu sheet and a page's dialogs sit outside .app, which is inert while one of them is open.
+     the phone's menu sheet, the Yayınla flow (?yayinla= on any page) and a page's dialogs sit outside .app,
+     which is inert while one of them is open.
      A page below a section (an application) shows the trail back in the head and its own heading. -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
@@ -12,6 +13,7 @@ import BottomBar from "./components/BottomBar.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import ActivityDrawer from "./components/ActivityDrawer.vue";
 import MenuSheet from "./components/MenuSheet.vue";
+import PublishFlow from "./pages/erisim/PublishFlow.vue";
 import Wordmark from "./components/Wordmark.vue";
 import { Icon } from "./components/icons";
 import { sectionById } from "./sections";
@@ -89,4 +91,5 @@ onBeforeUnmount(() => {
   <CommandPalette />
   <ActivityDrawer />
   <MenuSheet />
+  <PublishFlow />
 </template>

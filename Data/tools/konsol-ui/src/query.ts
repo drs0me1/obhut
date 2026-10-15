@@ -32,19 +32,25 @@ export function updateQuery(router: Router, changes: Record<string, string | nul
   router.replace({ query }).then(settle, settle);
 }
 
-/** A query parameter limited to `allowed` (any text when null), `fallback` when absent or not allowed. */
-export function useQueryParam<T extends string>(name: string, allowed: readonly T[] | null, fallback: T): WritableComputedRef<T> {
+/** A value, or a getter for one that changes (the networks of a page that adds and removes them). */
+export type Live<T> = T | (() => T);
+const now = <T>(value: Live<T>): T => (typeof value === "function" ? (value as () => T)() : value);
+
+/** A query parameter limited to `allowed` (any text when null), `fallback` when absent or not allowed. Both
+    may be getters: the parameter then follows them (a value that is no longer allowed shows the fallback). */
+export function useQueryParam<T extends string>(name: string, allowed: Live<readonly T[] | null>, fallback: Live<T>): WritableComputedRef<T> {
   const route = useRoute();
   const router = useRouter();
   return computed<T>({
     get() {
       const value = first(route.query, name);
-      if (value === null) return fallback;
-      if (allowed && !(allowed as readonly string[]).includes(value)) return fallback;
+      const list = now(allowed);
+      if (value === null) return now(fallback);
+      if (list && !(list as readonly string[]).includes(value)) return now(fallback);
       return value as T;
     },
     set(value) {
-      const next = value === fallback ? null : value;
+      const next = value === now(fallback) ? null : value;
       if (first(base(router), name) === next) return;
       updateQuery(router, { [name]: next });
     },

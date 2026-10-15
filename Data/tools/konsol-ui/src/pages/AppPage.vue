@@ -341,7 +341,7 @@ watch(
     <Tabs v-else-if="app" :tabs="TABS" :label="`${app.ad} bölümleri`" param="sekme">
       <template #default="{ active }">
         <SummaryTab v-if="active === 'ozet'" :app="app" :detail="detail" @access="showAccess" />
-        <AccessTab v-else-if="active === 'erisim'" :row="detail?.erisim ?? null" />
+        <AccessTab v-else-if="active === 'erisim'" :row="detail?.erisim ?? null" :app="app" />
         <StorageTab v-else-if="active === 'depolama'" :detail="detail" />
         <SettingsTab v-else-if="active === 'ayarlar'" :app="app" />
         <LogTab v-else-if="active === 'gunluk'" :app="app" />

@@ -1,5 +1,6 @@
-<!-- Command palette (DD-258): ⌘K / Ctrl+K or the search field. Pages, the applications (each opens its own
-     page), actions and the current interface's views, matched with Turkish case rules ("İŞ" finds "iş", "ıs"
+<!-- Command palette (DD-258): ⌘K / Ctrl+K or the search field. Pages (with Erişim's tabs), the applications
+     (each opens its own page), actions ("Yayınla" among them) and the current interface's views, matched with
+     Turkish case rules ("İŞ" finds "iş", "ıs"
      does not find "is"). A combobox over a listbox: focus stays in the field, ↑/↓ move, Enter opens, Esc
      closes. -->
 <script setup lang="ts">
@@ -7,7 +8,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Icon, type IconName } from "./icons";
 import { trapTab } from "./focus";
-import { SECTIONS, LEGACY_VIEWS } from "../sections";
+import { ACCESS_TABS, LEGACY_VIEWS, SECTIONS, accessRoute } from "../sections";
 import { apps } from "../live";
 import { KIND_TEXT, appIcon } from "../apps";
 import { appRoute } from "../router";
@@ -37,15 +38,15 @@ const dialog = ref<HTMLElement | null>(null);
 const open = computed(() => ui.open === "palette");
 
 const items = computed<Item[]>(() => {
-  const list: Item[] = SECTIONS.map((s) => ({
-    key: "sayfa-" + s.id,
-    group: "Sayfalar",
-    label: s.title,
-    hint: "Sayfa",
-    icon: s.icon,
-    words: s.keywords,
-    run: { kind: "route", to: "/" + s.id },
-  }));
+  const list: Item[] = [];
+  for (const s of SECTIONS) {
+    list.push({ key: "sayfa-" + s.id, group: "Sayfalar", label: s.title, hint: "Sayfa", icon: s.icon, words: s.keywords, run: { kind: "route", to: "/" + s.id } });
+    if (s.id !== "erisim") continue;
+    for (const t of ACCESS_TABS) {
+      if (t.id === "genel") continue;
+      list.push({ key: "erisim-" + t.id, group: "Sayfalar", label: "Erişim → " + t.label, hint: "Erişim", icon: s.icon, words: t.keywords, run: { kind: "route", to: accessRoute(t.id) } });
+    }
+  }
   for (const app of apps.value ?? []) {
     list.push({
       key: "uygulama-" + app.id,
@@ -69,6 +70,15 @@ const items = computed<Item[]>(() => {
       run: { kind: "theme", value: t.id },
     });
   }
+  list.push({
+    key: "yayinla",
+    group: "Eylemler",
+    label: "Yayınla",
+    hint: "Erişim",
+    icon: "globe",
+    words: "yayın adres alan adı internet tailscale https aç paylaş",
+    run: { kind: "route", to: accessRoute("genel", "sec") },
+  });
   list.push({
     key: "islemler",
     group: "Eylemler",
@@ -152,7 +162,7 @@ function choose(item: Item | undefined): void {
   } else if (run.kind === "href") {
     closeSurface(false);
     location.assign(run.href);
-  } else if (router.currentRoute.value.path === run.to) {
+  } else if (router.currentRoute.value.fullPath === run.to) {
     closeSurface();
   } else {
     closeSurface(false);
