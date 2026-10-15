@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-16 — Sistem, Gelişmiş and adding applications in the new interface (v2-249)
+
+- The new interface at `/yeni/` has Sistem: every health check with "Denetle" and "Onar", the last
+  repair report and its log; the version with "Yeniden denetle" and "Güncelle"; the Konsol account
+  (create, change the password, sign out); the server's facts and "Yeniden başlat"; the theme; and the
+  log of Konsol's actions with kinds and search (DD-266).
+- Gelişmiş shows the effective Caddy and DNS configuration with the raw files, and manages Podman's
+  images, volumes and networks.
+- Uygulamalar can add applications: from the catalogue with each package's install form, from an image
+  with the full container editor, or by taking over a container made outside Konsol. An application's
+  page now has its settings (the container's definition, a package's settings form and first-login
+  account), the container's details and a searchable log.
+- A container action no longer fails at once when it meets the share check that runs every 30 seconds;
+  it waits a few seconds for it, as package installs do.
+
 ### 2026-10-15 — Erişim and Yayınla in the new interface (v2-248)
 
 - The new interface at `/yeni/` has its Erişim section: Genel shows what needs attention, each with

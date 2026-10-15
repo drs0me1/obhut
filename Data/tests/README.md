@@ -233,6 +233,12 @@ Gelişmiş → DNS, and Erişim's DNS, domain and firewall drafts ask before the
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-sistem-ui.cjs
 ```
 
+The phase 4a backend (DD-266): `test_api.py` checks the moved and new table routes through the real
+handler (the account state, the audit log, the repair log as plain text, the folder picker, Gelişmiş's
+configuration, the Podman reads, a package's account with and without `parola=1`, `kur` with its form,
+a body of another shape refused); `test_container_worker.py` checks that a job waits for a held install
+lock and refuses after the wait.
+
 ## New interface phase 4a: adding applications and their settings (DD-258)
 
 `yeni-uygulama-ekle-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8774`) drives Uygulamalar' add flows

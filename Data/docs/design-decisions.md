@@ -13,6 +13,71 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+### DD-266: The redesign's phase 4a: Sistem, Gelişmiş, adding applications and their settings (v2-249)
+
+- **Request (user, 2026-10-15):** "Sıradaki aşamaya geçelim" (phase 4 of DD-258). Choices: Dosyalar
+  stays lean and leans on Gezgin; folder shares move under Dosyalar; the old interface goes at the end
+  of phase 4; phase 4 lands in two parts. 4a (this entry) builds everything except Dosyalar beside the
+  current Konsol; 4b builds Dosyalar with Paylaşımlar, makes `/yeni/` the address `/` and removes the
+  old shell.
+- **Routes moved into the table, same paths and answers** (the current Konsol keeps using them): the
+  Podman reads (`konteynerler/liste|ayrinti|gunluk|guncellemeler|islem`), `ayarlar/klasorler`, `oturum`
+  with `oturum/kur|cikis` and `hesap/parola`, `POST guncelleme`, `POST yeniden-baslat`,
+  `onarim/gunluk` (plain text: a route may declare `text`) and `islemler`. `oturum/giris` stays outside:
+  only the sign-in page uses it.
+- **New routes:** `GET /api/konsol/gelismis` (the settings view's Caddy and dnsmasq parts: sites with
+  their typed routes, names, raw files; read-only), `GET /api/konsol/uygulamalar/hesap?id=paket:<id>`
+  (the first-login account, shared with the old `moduller/<id>/hesap`; the temporary password only
+  with `parola=1`, audited) and `eylem: "kur"` in `POST /api/konsol/uygulamalar/islem` (a catalogue
+  package with its install form, through the same `module_install` App Store uses, DD-210). A package
+  and an application carry `hesap` (PAKET_HESAP), so the page asks only packages that have an account.
+- **Sistem:** Sağlık (every check, "Denetle" at once and "Onar" after a question, the last report
+  with its steps, the repair log as text), Güncellemeler (versions and builds, "Yeniden denetle", the
+  update with the old confirmation and a reload when it ends), Hesap (create the Konsol account on the
+  tailnet, change the password — the current one only on the internet name —, sign out; the sidebar's
+  "Çıkış yap" on the internet name), Sunucu (facts and the reboot: a typed word, a wait, the page
+  reloads when the server answers again), Görünüm and Günlük (the audit log with kinds and search).
+  Update, repair and reboot stay locked on the internet name.
+- **Gelişmiş:** Caddy and DNS (effective configuration, raw files with copy), Güvenlik duvarı (a link
+  to Erişim's technical rules, no second firewall page) and Podman's images, volumes and networks
+  (pull, create, remove with the typed word; a used or pinned one cannot be removed).
+- **Uygulamalar:** "Uygulama ekle" with the catalogue (a package's own words and its install form drawn
+  from `konsol.json`: text, password with a repeat, folder through the new folder picker), a container
+  from an image (every field of the old editor, a review that calls out internet ports) and adopting a
+  foreign container (preview, every scope chosen again, the typed word; unsupported options block it).
+  The application page gets the container's details (unit, ID, tag, update state with "Güncellemeleri
+  denetle", limits, command, environment without secret values, how it starts, ports and listening
+  sockets), a log with 100–1000 lines and search, "İmajı güncelle" whenever the container offers it, and
+  an Ayarlar tab: the Konsol container's definition editor (field-by-field diff, the re-creation said
+  first, a stale revision offers the current definition), an App Store package's adapter settings, the
+  package's settings form (`form.oku/yaz`, only changed fields, a blank password kept; a field the
+  adapter card edits is left out) and the first-login account (shown for 30 s on request, copied
+  without being shown). A finished removal leads back to the list.
+- **Packages are drawn from their declarations:** the new shell loads no package script; a package's
+  install and settings forms, account, stop and removal words come from `konsol.json` and the manifest
+  (DD-200's page scripts serve the current Konsol until 4b). What qBittorrent's own page showed beyond
+  that (its profile path and last error, the note on a folder outside the downloads root, a 10 s status
+  refresh) is not carried over.
+- **Shared pieces:** a copy button with the plain-HTTP fallback (the tailnet name has no secure
+  context), a leave guard (the browser asks before closing a tab with a draft; Erişim's drafts use it
+  too) and the folder picker. A 401 leaves for the sign-in page only when it says `giris`.
+- **Live check (test host, v2-249):** every Sistem and Gelişmiş tab; "Denetle" and the repair log;
+  the update check; a Podman volume and an internal network made and removed; a container created from
+  an image already on the server (a loopback port answering, a volume, an environment value), its
+  definition edited (re-created with the new value), its log searched and the container removed; an
+  adoption refused with the image's unsupported options shown; WireGuard installed from the catalogue
+  and removed; qBittorrent installed with its form, its user name changed through the settings form
+  (confirmed by the package's status), its account card shown and removed with its data; the server
+  rebooted from Sunucu and the page back by itself.
+- **Found by the live check:** a container job failed at once with "Kurulum veya başka bir konteyner
+  işlemi sürüyor" when it met the share guard, which holds install/modul.lock for a moment every 30 s;
+  the worker now waits up to 5 s for each lock, as `master-modul` does (`flock -w 5`), in the same
+  order, so no new deadlock is possible. The create form offered a new volume name, which the worker
+  refuses (it mounts only existing volumes); the form now refuses it and says where to create one.
+- **Rejected:** loading package scripts into the new shell (code from a package in the page's own
+  origin, against goal 5's one implementation per component); a second firewall page in Gelişmiş;
+  creating a missing volume silently on container creation (a removed volume would come back empty).
+
 ### DD-265: The redesign's third phase: Erişim, the Yayınla flow and the settings plan (v2-248)
 
 - **Request (user, 2026-10-15):** "faz 3'e başlayalım" (phase 3 of DD-258, [`redesign.md`](redesign.md)).

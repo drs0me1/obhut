@@ -513,8 +513,9 @@ Contract in §5–§7 and `folder-shares.md`.
     places the committed build of `tools/konsol-ui` (Vue 3 + TypeScript + Vite; nothing is built on
     the server) from `console/yeni/` and removes files an older build left. Genel Bakış, Uygulamalar
     and an application's page are its own (**DD-261**), and so is Erişim with the Yayınla flow, where
-    every write shows the settings plan first (**DD-265**); its other pages open the current Konsol
-    until a later phase replaces them. Its backend routes come from the table in
+    every write shows the settings plan first (**DD-265**), and so are Sistem, Gelişmiş, adding an
+    application (catalogue, image, adoption) and an application's settings (**DD-266**); Dosyalar
+    opens the current Konsol until phase 4b replaces it. Its backend routes come from the table in
     `master_api.py`: `/api/konsol/erisim` (read-only reachability of every service from this server,
     Tailscale, WireGuard and the internet, with warnings; it changes and probes nothing new),
     `/api/konsol/olaylar` (Server-Sent Events for resources, health, operations and the pending
@@ -541,7 +542,15 @@ Contract in §5–§7 and `folder-shares.md`.
     transaction; a Konsol container with no loopback port first gets one through the container save
     job, on a free port in `YAYIN_PORT_ILK`–`YAYIN_PORT_SON` (62100–62899). The two run in order, not as
     one transaction: when the second fails, the loopback port stays. Erişim's warnings name their row
-    by its id and carry a fix target (`duzelt`). All of them need `X-Konsol`; the page reads the stream with fetch. The
+    by its id and carry a fix target (`duzelt`). Phase 4a (**DD-266**) moves into the table, with the
+    same paths and answers, the Podman reads (`konteynerler/liste|ayrinti|gunluk|guncellemeler|islem`),
+    `ayarlar/klasorler`, `oturum` with `oturum/kur|cikis` and `hesap/parola`, `POST guncelleme`,
+    `POST yeniden-baslat`, `onarim/gunluk` (plain text) and `islemler`; it adds `/api/konsol/gelismis`
+    (the effective Caddy and dnsmasq configuration, read-only), `/api/konsol/uygulamalar/hesap` (a
+    package's first-login account, the temporary password only with `parola=1`) and `kur` in
+    `uygulamalar/islem` (a catalogue package with its install form, as App Store installs it); packages
+    and applications say whether they have such an account (`hesap`). A 401 sends the page to the
+    sign-in page only when it carries `giris` (a wrong current password does not). All of them need `X-Konsol`; the page reads the stream with fetch. The
     current Konsol's sidebar links to `/yeni/`. On the public name an ended session
     sends the page to `/giris.html?geri=yeni`, which returns to `/yeni/` after signing in.
   - Pages (**DD-160**, **DD-200**, **DD-204**, **DD-212/213**, **DD-216**): Ana Menü is the
