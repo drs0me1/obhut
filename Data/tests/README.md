@@ -642,11 +642,13 @@ all DAV writes, disabled/expired scopes, live chunks and staged-publication chec
 `files-ui.cjs` checks the two-card controls and scoped payloads with intercepted
 APIs; its responsive matrix covers ten widths from 320 to 2560 in both themes.
 
-Optional read-only acceptance against the installed console (Playwright required):
+Optional read-only acceptance against the installed console (Playwright required), from a
+tailnet device: `KONSOL_URL` names the console and the server must hold at least one folder share;
+the suite creates none and refuses every write. Without `KONSOL_URL` it prints `SKIPPED` and exits 0;
+an unreachable console or an empty share list stops it at once with that reason instead of a timeout.
+`PLAYWRIGHT_CHROMIUM` picks a browser binary, as in the fixture suites.
 
 ```bash
-PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/share-connections-browser.cjs
-# Override the default http://panel.ayc when needed:
 KONSOL_URL=http://panel.example PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/share-connections-browser.cjs
 ```
 

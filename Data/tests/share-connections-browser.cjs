@@ -1,13 +1,20 @@
 /* Read-only installed DD-192 UI acceptance; refuses every API mutation.
+   Live only: KONSOL_URL is the installed console (http://panel.<domain>), and it must hold at least one
+   folder share; the suite creates none. Without either it stops at once and says which is missing.
    DD-194: pass a session as KONSOL_COOKIE (sudo master-konsol oturum-ac); it is never printed. */
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const assert = require("node:assert/strict");
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+if (!process.env.KONSOL_URL) {
+  console.log("SKIPPED: live suite; set KONSOL_URL to the installed console, e.g. http://panel.<domain>");
+  process.exit(0);
+}
+const base = process.env.KONSOL_URL.replace(/\/+$/, "");
+assert.match(base, /^https?:\/\/[^/]+$/, "KONSOL_URL is the console's origin, e.g. http://panel.<domain>");
 const shots = fs.mkdtempSync(path.join(os.tmpdir(), "share-connections-live-"));
 (async () => {
-  const browser = await chromium.launch({headless:true});
+  const browser = await chromium.launch({headless:true, ...(process.env.PLAYWRIGHT_CHROMIUM ? {executablePath:process.env.PLAYWRIGHT_CHROMIUM} : {})});
   try {
-    const base = process.env.KONSOL_URL || "http://panel.ayc";
     const context = await browser.newContext({viewport:{width:1440,height:1050}});
     if (process.env.KONSOL_COOKIE) await context.addCookies([{name:"konsol_oturum", value:process.env.KONSOL_COOKIE, url:base}]);
     const page = await context.newPage();
@@ -20,9 +27,14 @@ const shots = fs.mkdtempSync(path.join(os.tmpdir(), "share-connections-live-"));
       }
       return route.continue();
     });
-    await page.goto(base + "/#/dosyalar/paylasim");
-    await page.locator(".dav-share-row").first().waitFor();
-    assert(await page.locator(".dav-share-row").count() > 0, "Requires an existing share; creates none");
+    try {
+      await page.goto(base + "/#/dosyalar/paylasim", {timeout:15000});
+    } catch (err) {
+      throw new Error("Cannot open " + base + " (" + err.message.split("\n")[0] + "); this live suite needs the installed console", {cause:err});
+    }
+    // The list shows its rows or its empty state once the shares are read.
+    await page.locator(".dav-share-row, .dav-empty").first().waitFor({timeout:15000});
+    assert(await page.locator(".dav-share-row").count() > 0, "Requires an existing folder share on the server; this read-only suite creates none");
     for (const row of await page.locator(".dav-share-row").all()) {
       assert.equal(await row.locator(".dav-connection").count(), 2);
       assert.equal(await row.getByRole("switch").count(), 2);
