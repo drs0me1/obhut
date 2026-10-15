@@ -6,9 +6,6 @@ with their state, a running operation, how they are reached (from the Erişim re
 resource use, image update state, where to open them and the actions they accept. It joins what
 the backend already reads (the package list, the container inventory, the Erişim view); it changes
 nothing. A source that cannot be read adds a line to "hatalar".
-
-Pages of the current interface are named by their route ("#/torrent") until the new interface has
-its own.
 """
 import re
 
@@ -73,7 +70,7 @@ def item(sid, ad, tur, aciklama, **extra):
     base = {"id": sid, "ad": ad, "tur": tur, "aciklama": aciklama, "modul": None, "konteyner": None, "simge": None,
             "durum": "bilinmiyor", "islem": None, "tailscale": cell(None, "tailscale"), "internet": cell(None, "internet"),
             "kaynak": {"cpu": None, "bellek": None}, "guncelleme": "sabit", "adres": {"tailscale": None, "internet": None},
-            "sayfa": None, "eylemler": [], "revizyon": None, "metinler": None, "hesap": False}
+            "eylemler": [], "revizyon": None, "metinler": None, "hesap": False}
     base.update(extra)
     return base
 
@@ -116,7 +113,6 @@ def build(modules, containers, erisim, now, errors=()):
         if box and update_state(box) == "yeni" and "image-update" in (box.get("actions") or []):
             actions.append("guncelle")
         actions.append("kaldir")
-        page = (meta.get("sayfa") or {}).get("rota") if isinstance(meta.get("sayfa"), dict) else None
         urls = m.get("urls") if isinstance(m.get("urls"), dict) else {}
         adres = addresses(row)
         adres = {"tailscale": urls.get("tailscale") or adres["tailscale"], "internet": urls.get("internet") or adres["internet"]}
@@ -126,7 +122,6 @@ def build(modules, containers, erisim, now, errors=()):
                                  "metin": str(progress.get("text", ""))} if isinstance(progress, dict) else None,
                           tailscale=cell(row, "tailscale"), internet=cell(row, "internet"), kaynak=resources(box),
                           guncelleme=update_state(box) if box else "sabit", adres=adres,
-                          sayfa="#/" + page if isinstance(page, str) and re.fullmatch(r"[a-z]{2,16}", page) else None,
                           eylemler=actions if state != "islemde" else [], revizyon=(box or {}).get("revision"),
                           metinler=texts(meta)))
 
@@ -144,16 +139,15 @@ def build(modules, containers, erisim, now, errors=()):
                           ("Konteyner · %s" % image) if own else "Konsol dışında yönetilen konteyner · %s" % image,
                           konteyner=box["name"], durum=state, tailscale=cell(row, "tailscale"), internet=cell(row, "internet"),
                           kaynak=resources(box), guncelleme=update_state(box), adres=addresses(row),
-                          sayfa="#/konteynerler/" + box["name"], eylemler=actions if state != "islemde" else [],
+                          eylemler=actions if state != "islemde" else [],
                           revizyon=box.get("revision")))
 
     share = rows.get("paylasim")
-    items.append(item("yerlesik:dosya", "Dosyalar", "yerlesik", "Dosya yöneticisi · yerleşik", durum="calisiyor",
-                      sayfa="#/dosyalar"))
+    items.append(item("yerlesik:dosya", "Dosyalar", "yerlesik", "Dosya yöneticisi · yerleşik", durum="calisiyor"))
     items.append(item("yerlesik:paylasim", "Paylaşımlar", "yerlesik",
                       "WebDAV · yerleşik" + (" · %s" % share["aciklama"].split("·", 1)[1].strip() if share and "·" in share.get("aciklama", "") else ""),
                       durum="calisiyor" if (share or {}).get("calisiyor") else "durduruldu" if share else "bilinmiyor",
-                      tailscale=cell(share, "tailscale"), internet=cell(share, "internet"), sayfa="#/dosyalar/paylasim"))
+                      tailscale=cell(share, "tailscale"), internet=cell(share, "internet")))
 
     runtime = (containers or {}).get("runtime") or {}
     if containers is not None and not runtime.get("ok", True):

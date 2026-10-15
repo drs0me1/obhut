@@ -69,7 +69,8 @@ def panel_get(path):
 
 
 for name, paths in (
-    ('Konsol', ['/api/konsol/kaynaklar', '/api/konsol/ayarlar', '/api/konsol/moduller']),
+    # DD-267: Gelişmiş reads the settings view the old GET /api/konsol/ayarlar returned.
+    ('Konsol', ['/api/konsol/kaynaklar', '/api/konsol/gelismis', '/api/konsol/moduller']),
     ('Files', ['/api/state', '/api/list?path=downloads'])):
     with ThreadPoolExecutor(max_workers=20) as pool:
         codes = list(pool.map(panel_get, [paths[i % len(paths)] for i in range(100)]))

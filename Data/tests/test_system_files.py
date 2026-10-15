@@ -151,7 +151,7 @@ class SystemGateTests(unittest.TestCase):
         (self.root / "etc/hosts").write_text("127.0.0.1 localhost\n")
         self.sock = str(Path(tmp.name).resolve() / "s.sock")
         args = types.SimpleNamespace(root=str(self.root), sistem=True, domain="ornek.lan", version="t",
-                                     allow_host=[], trash="", share="", archive_dir="", downloads_dir="",
+                                     allow_host=[], trash="", share="", downloads_dir="",
                                      protected=[])
         handler = type("H", (fp.SystemHandler,), {"panel": fp.Panel(args)})
         self.server = fp.UnixServer(self.sock, handler)

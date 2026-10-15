@@ -14,18 +14,16 @@ colours, tiles — over `konsol.css`'s base rules; the wallpaper itself is inlin
 `index.html`. Host CPU
 sampling runs independently of WireGuard; the resources API
 (`/api/konsol/kaynaklar`) does not enumerate networks or ports or invoke external
-commands. Settings renders the base's tabs only; an application's settings belong to its
-package page (`magaza/torrent/sayfa.js`, **DD-202**) and go to its API, which runs
-the package worker directly (no draft, no confirmation). Folder/network edits of
+commands. Settings renders the base's tabs only; an application's settings come from its
+package's declarations (`konsol.json` `form`) and go to its API, which runs the package worker
+directly (no draft, no confirmation; **DD-202**, **DD-266**). Packages ship no page of their own
+any more (**DD-267**). Folder/network edits of
 the base retain their confirmation flow.
 
-**Built-ins (DD-159/166/170):** Files, folder WebDAV and archive tools are built in.
-Creation produces ZIP; extraction automatically detects multipart RAR and nested
-ZIP/RAR, with internal safety limits. The App Store
-catalogue contains WireGuard/qBittorrent only. `dosya`/`paylasim` are internal
-paths and registry IDs, not public lifecycle operations.
-The [archive architecture](desktop-and-archives.md) supplements this
-document with the archive API and its security boundaries.
+**Built-ins (DD-159):** Files and folder WebDAV are built in. Konsol's ZIP/RAR jobs
+(DD-166/170/183) were removed in **DD-267**: archives are Gezgin's (an App Store package).
+The App Store catalogue contains WireGuard, qBittorrent and Gezgin. `dosya`/`paylasim` are
+internal paths and registry IDs, not public lifecycle operations.
 
 The ownership rule: one owner per fact and one owner per decision. A port,
 path or chain name of the base is declared once (`config/defaults.env`); a
@@ -141,7 +139,7 @@ reality.
     ├── systemd/                       units, timers and drop-ins
     ├── magaza/<id>/                   store packages: WebDAV (paylasim), qBittorrent (torrent), WireGuard (wireguard), Gezgin (gezgin) files
     ├── panel/                         Konsol root backend (master-panel; loads package API modules), settings and share workers, WebDAV service
-    ├── files-panel/                   unprivileged file/archive backend (Python), API only
+    ├── files-panel/                   unprivileged file backend (Python), API only
     ├── console/                       Konsol pages, styles and scripts (one origin, no external loads)
     ├── tools/duzenleyici/             source and build of the bundled text editor console/duzenleyici.js (DD-249; not shipped)
     ├── tools/konsol-ui/               sources of the redesigned Konsol, built into console/yeni/ (DD-258, DD-259; not shipped)
@@ -195,21 +193,20 @@ Update stale summaries instead of treating old wording as a new requirement.
 | `config/defaults.env` | Declare every constant exactly once: ports, paths, chain names, interface name, the WebDAV registry path | How any of them is used |
 | `templates/Caddyfile` | The base HTTP sites and their upstreams (loopback, root backend socket), the admin API socket (**DD-180**), the timeouts of the optional WAN share listeners (**DD-179/190**), scoped proxy logging (**DD-193**), plus `import CADDY_MODULES_DIR/*.caddy` for module sites (**DD-149**) | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start); which modules are installed |
 | `magaza/wireguard/master-wg` | Installed on the host only with the WireGuard package (**DD-196**). WireGuard networks and peers, profiles/QR, DNS settings; coordinate internet-only network firewall changes | Installer inputs or anything on the Mac |
-| `panel/master-panel` | Root `/api/konsol/*` and, for installed packages, `/api/uygulama/<id>/*` handed to the package's API module (**DD-200**) on a Unix socket only Caddy's group and root can open (**DD-180**), Host/CSRF gates, resources, read-only health checks (**DD-182**), the overview layout and Files favourites (**DD-206**, **DD-250**), audit/settings views and fixed worker dispatch | Static pages; module installation implementation; any TCP listener |
+| `panel/master-panel` | Root `/api/konsol/*` and, for installed packages, `/api/uygulama/<id>/*` handed to the package's API module (**DD-200**) on a Unix socket only Caddy's group and root can open (**DD-180**), Host/CSRF gates, resources, read-only health checks (**DD-182**), audit/settings views and fixed worker dispatch | Static pages; module installation implementation; any TCP listener |
 | `panel/master_settings.py` | Validate/apply settings, snapshot/rollback/confirm with independent guard, render committed overrides; `prepare` holds apply's checks and `plan` runs them on a copy as the dry run (**DD-265**) | Arbitrary shell commands, client-visible password hashes |
 | `panel/master_shares.py`, `panel/master_webdav.py` | Root-owned folder-account registry with independent Tailscale/WAN policies, WAN site projection and its guard; separate unprivileged WebDAV data service (§4) | Shared plaintext credentials or a writable symlink share tree |
 | `panel/master_auth.py`, `scripts/master-konsol` | Konsol account (the public name's credential, **DD-205**), sessions, the per-address attempt limit and the shared public budget/bounded password checks (**DD-195**); the root CLI for reset/state/automation sessions (**DD-194**) | Passwords or tokens in clear text, multi-user roles, anything outside `KONSOL_AUTH_DIR` |
 | `console/giris.html`, `giris.js`, `giris.css` | The public name's sign-in page (**DD-194**; **DD-205**: the tailnet needs no sign-in and is sent back to Konsol) | Any other Konsol data or API |
 | `panel/master_https.py`, `panel/master_publications.py` | Public-name validation, DNS check and pinned certificate probe; the fixed Panel/qBittorrent/WebDAV publication table, its private 403 stubs (address line taken from the module template) and the public qBittorrent and Konsol sites (**DD-190/191/193/195**); the operator's manual addresses for a loopback port: their sites and the `modul-elle.conf` lines Settings writes (**DD-252**) | ACME keys or renewal (Caddy owns them), public DNS writes, upstreams other than `127.0.0.1` ports |
-| `panel/master_permissions.py` | Installer-only descriptor-pinned creation and selective owner/mode repair of the user data tree (**DD-187**) | Symlinks, special or hard-linked files, the private `.arsiv`/`.pay` trees |
+| `panel/master_permissions.py` | Installer-only descriptor-pinned creation and selective owner/mode repair of the user data tree (**DD-187**) | Symlinks, special or hard-linked files, the reserved `.pay` tree and the retired `.arsiv` workspace (until stage 7 removes it, **DD-267**) |
 | `panel/master_containers.py`, `panel/master_container_manager.py`, `console/konteynerler.{js,css}` | Main-sidebar container manager, the Podman page: read-only Podman mapper plus ownership-aware inventory, resource tabs, operation broker and console (**DD-211**, **DD-216**); host-network listening sockets from `/proc` (**DD-215**); reads remain in the backend sandbox, writes dispatch a bounded root transient unit | Raw shell execution from the browser; secret environment values in responses; taking over another controller |
 | `panel/master_container_config.py`, `panel/master_container_worker.py` | Private definitions, validated Quadlet rendering, explicit generic lifecycle/recreation/adoption and resource operations under install/module/container locks (waited for up to 5 s, as `master-modul` does, **DD-266**); revision checks and durable operation results | Package lifecycle (uses `master-modul` and declared adapters); deleting bind data or volumes with a container; reconciliation |
 | `panel/master_container_binds.py` | A Konsol container's `ExecStartPre`/`ExecStopPost`: walk each bind source without following links, pin it through its descriptor onto `KONTEYNER_BAGLAMA_DIR/<name>/<hash>`, verify, release on stop (**DD-226**); stdlib only, no store, package code or lock | Package containers; deciding which folders may be bound (save-time validation) |
 | `panel/master_container_network.py` | Exact project-owned nftables forward guard for managed bridges (publications in; what a container may open out, **DD-224**), validated binding scopes and host-port conflicts; applied by the locked writers (firewall, worker, engine); container units only check it before they start (**DD-223**) | Netavark NAT, third-party chains, arbitrary host-network containers |
 | `scripts/master-modul` | Package lifecycle from manifests and hooks (apt, tools, drop-ins, a container application's quadlet and digest-pinned image (**DD-209**), names, Konsol page files), the install form's private seed `RUNTIME_DIR/modul-<id>.kur` for packages with `PAKET_KUR_AYAR` (required, handed to hooks as `KUR_TOHUM`, always removed, **DD-210**), registry/progress/locks; installer-only `yerlesik` activates/checks built-in Files/WebDAV and their names, retaining accounts (**DD-159**, **DD-197**, **DD-200**) | Any application name; templates and inputs; user files; public removal of built-ins |
-| `magaza/<id>/` | One package: `paket.env` manifest and `kanca` hooks (**DD-197**), its Konsol files `konsol.json` (App Store texts, page declaration, journal words), `sayfa.js`/`sayfa.css` (the page, served from `CONSOLE_WEB_DIR/uygulama/<id>/` while installed) and `api.py` (the backend module behind `/api/uygulama/<id>/*`, **DD-200**; qBittorrent's runs its worker `ayar.py` through `ctx.worker`, **DD-202**), an optional install/settings form (`konsol.json` `form` with the manifest's `PAKET_KUR_AYAR` worker, **DD-210**), its own settings file `<id>.env` and the folders it writes into (`PAKET_KLASORLER`, optional `klasorler.py` report) plus the paths the root backend may write for it (`PAKET_ARKAUC_YOLLAR`, **DD-203**) and an optional traffic module for the overview's network card (`PAKET_TRAFIK`, `trafik.py`, **DD-206**), plus its files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `paylasim/master-paylasim.service` (the folder WebDAV unit), `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-158**); `torrent/qBittorrent.conf` (first settings only), `qbittorrent.container` (the Podman quadlet: pinned image, its own bridge with the interface published on loopback and the peer port on the WAN IPv4, two same-path mounts, **DD-209**, **DD-217**), `torrent.caddy`, `dnsmasq.conf` (**DD-151**); `gezgin/gezgin.container` (pinned image, its own bridge with the interface on loopback only, the user area as one mount with Konsol's trash and archive folders covered, data in `/var/lib/gezgin`, the Files account with no capabilities), `ayar.py` (install form: the first administrator's bcrypt hash; image update), `yayin.py`, `gezgin.caddy`, `dnsmasq.conf` (**DD-262**); `wireguard/master-wg` and `wg-quick-master-stack.conf`, placed on the host by `master-modul kur`/`uygula` and removed by `kaldir` (**DD-196**) | Whether the package is installed |
-| `files-panel/master-files-panel` | File API as downloads uid; Host/CSRF gates, descriptor-safe paths, no-overwrite operations (the editor's version-checked atomic save the one exception, **DD-249**), `.cop` trash, text and archive jobs. In `--sistem` mode (unit `master-sistem-dosya`, root, **DD-235**): the same API under `/api/sistem/*` for `/`, tailnet peers only, permanent delete, no read-only roots (**DD-238**) | Anything outside `SERVER_ROOT` (the `/srv` unit); WebDAV credentials; WireGuard administration |
-| `files-panel/master_archives.py`, `files-panel/master_rar.py` | Single bounded ZIP creation or ZIP/RAR extraction job; descriptor-safe paths, resource-limited RAR subprocess, private staging, atomic publication and history | Root privileges, shell extraction, backups or resumable jobs |
+| `magaza/<id>/` | One package: `paket.env` manifest and `kanca` hooks (**DD-197**), its Konsol files `konsol.json` (App Store texts, journal words) and `api.py` (the backend module behind `/api/uygulama/<id>/*`, **DD-200**; qBittorrent's runs its worker `ayar.py` through `ctx.worker`, **DD-202**), an optional install/settings form (`konsol.json` `form` with the manifest's `PAKET_KUR_AYAR` worker, **DD-210**), its own settings file `<id>.env` and the folders it writes into (`PAKET_KLASORLER`, optional `klasorler.py` report) plus the paths the root backend may write for it (`PAKET_ARKAUC_YOLLAR`, **DD-203**) and an optional traffic module for the overview's network card (`PAKET_TRAFIK`, `trafik.py`, **DD-206**), plus its files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `paylasim/master-paylasim.service` (the folder WebDAV unit), `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-158**); `torrent/qBittorrent.conf` (first settings only), `qbittorrent.container` (the Podman quadlet: pinned image, its own bridge with the interface published on loopback and the peer port on the WAN IPv4, two same-path mounts, **DD-209**, **DD-217**), `torrent.caddy`, `dnsmasq.conf` (**DD-151**); `gezgin/gezgin.container` (pinned image, its own bridge with the interface on loopback only, the user area as one mount with Konsol's trash covered, data in `/var/lib/gezgin`, the Files account with no capabilities), `ayar.py` (install form: the first administrator's bcrypt hash; image update), `yayin.py`, `gezgin.caddy`, `dnsmasq.conf` (**DD-262**); `wireguard/master-wg` and `wg-quick-master-stack.conf`, placed on the host by `master-modul kur`/`uygula` and removed by `kaldir` (**DD-196**) | Whether the package is installed |
+| `files-panel/master-files-panel` | File API as downloads uid; Host/CSRF gates, descriptor-safe paths, no-overwrite operations (the editor's version-checked atomic save the one exception, **DD-249**), `.cop` trash and text. In `--sistem` mode (unit `master-sistem-dosya`, root, **DD-235**): the same API under `/api/sistem/*` for `/`, tailnet peers only, permanent delete, no read-only roots (**DD-238**) | Anything outside `SERVER_ROOT` (the `/srv` unit); WebDAV credentials; WireGuard administration |
 | `panel/master_api.py` | The new interface's route table and reply shapes; the backend dispatches its routes, tests generate `docs/konsol-api.json` (OpenAPI 3.1) and `tools/konsol-ui/src/api/sema.ts` from it (**DD-259**) | Routes that predate it (they move with their pages) |
 | `panel/master_erisim.py` | `/api/konsol/erisim`: who reaches which service from where (this server, Tailscale, WireGuard, internet), projected from publications, share policies, container port scopes, VPN networks, the port catalogue and the operator's rules, with warnings (**DD-259**) | Probes or changes of its own |
 | `panel/master_olaylar.py` | `/api/konsol/olaylar`: one producer for every open Server-Sent Events stream, changed topics only (resources, health, operations, the pending change); the page reads it with fetch (**DD-259**) | An `X-Konsol` exception; a producer per stream |
@@ -249,9 +246,9 @@ error, not a warning.
 | `/etc/master-stack/config.env` | installer | operator choices, `0600` |
 | `/etc/master-stack/state.env` | installer, `refresh-tailnet-config`, `master_settings.py` (domain) | detected addresses and identification, `0600` |
 | `/etc/master-stack/webdav.json` | `master_shares.py` | Schema 4: independent folder accounts, scrypt hashes and folder identity; each item's `connections.tailscale` and `connections.wan` owns enabled/permission/expiry; 0600 root, systemd credential (DD-158, DD-192) |
-| `/etc/master-stack/konsol/` (`KONSOL_AUTH_DIR`) | `master-panel`, `master-konsol` (installer creates it 0700) | `hesap.json` (user, scrypt hash), `oturumlar.json` (SHA-256 of tokens, expiry; at most 16), `duzen.json` (the overview layout: tile order, widget order and visibility, **DD-206**, **DD-242**); 0600 root (**DD-194**, **DD-205**) |
+| `/etc/master-stack/konsol/` (`KONSOL_AUTH_DIR`) | `master-panel`, `master-konsol` (installer creates it 0700) | `hesap.json` (user, scrypt hash), `oturumlar.json` (SHA-256 of tokens, expiry; at most 16); 0600 root (**DD-194**, **DD-205**). The retired `duzen.json` and `favoriler.json` (**DD-206**, **DD-250**) are removed by the installer (**DD-267**) |
 | `/etc/master-stack/ayarlar.json`, `ayarlar-bekleyen.json` | `master_settings.py` | Committed firewall/DNS/domain choices and pending transaction recovery; the independent guard rolls unconfirmed work back |
-| `/var/lib/qbittorrent/` | qBittorrent (module) | hidden from Files, WebDAV and unrar (`PRIVATE_STATE_ROOT`, **DD-225**); its profile, the container's `/config`: settings (seeded once by `master-modul`) and torrent list, owned by the downloads uid (**DD-151**, **DD-209**) |
+| `/var/lib/qbittorrent/` | qBittorrent (module) | hidden from Files and WebDAV (`PRIVATE_STATE_ROOT`, **DD-225**); its profile, the container's `/config`: settings (seeded once by `master-modul`) and torrent list, owned by the downloads uid (**DD-151**, **DD-209**) |
 | `/etc/containers/systemd/qbittorrent.container` (`KONTEYNER_BIRIM_DIR`) | `master-modul` (qBittorrent) | the Podman quadlet; the generator writes `qbittorrent.service` from it; present only while the app is installed and not stopped (**DD-209**) |
 | `/etc/containers/systemd/qbittorrent.container.d/90-konsol.conf` | qBittorrent's worker `ayar.py` | one same-path bind mount for a download folder outside the downloads tree (**DD-209**) |
 | `/etc/master-stack/containers/` (`KONTEYNER_STATE_DIR`) | container worker (**DD-211**) | private definitions, environment files and operation results, 0700 directories/0600 files; no secret values returned by the broker |
@@ -265,7 +262,7 @@ error, not a warning.
 | `/etc/modules-load.d/master-stack-wireguard.conf` | `master-modul` (WireGuard) | `wireguard`, `0644`; removed with the module (**DD-150**) |
 | `/usr/local/sbin/master-wg` | installer | peer list/add/remove/profile/qr, `0755` |
 | `/usr/local/sbin/master-panel`, `master_settings.py`, `master_shares.py`, `master_webdav.py`, `master_https.py`, `master_publications.py` | installer | Root API, settings/account/publication workers and unprivileged WebDAV handler; pages are separate |
-| `/usr/local/sbin/master-files-panel`, `master_archives.py`, `master_rar.py`; `/usr/local/share/master-stack/konsol/` | installer | file backend and archive workers, and the console pages Caddy serves (**DD-139**, **DD-140**) |
+| `/usr/local/sbin/master-files-panel`; `/usr/local/share/master-stack/konsol/` | installer | file backend and the console pages Caddy serves (**DD-139**, **DD-140**); an earlier run's `master_archives.py`, `master_rar.py` and `konsol/uygulama/` are removed (**DD-267**) |
 | `/usr/local/sbin/master-modul`, `/usr/local/share/master-stack/moduller/<id>/` | installer | module helper and rendered module files, `0755` / `0644` (**DD-148**) |
 | `/etc/master-stack/moduller` | `master-modul` (installer creates it empty) | installed modules: `id<TAB>calisiyor\|durduruldu`, `0644` (**DD-148**) |
 | `/etc/master-stack/moduller-bekleyen/<id>` (`MODULES_PENDING_DIR`) | installer | empty marker: the package's rendered files (or a built-in's code) changed and have not been applied yet; removed after a successful `uygula`/`yerlesik` or when the package is not installed; `0700` directory (**DD-222**) |
@@ -275,7 +272,7 @@ error, not a warning.
 | `/etc/caddy/moduller/torrent-wan.caddy` | `master_shares.py` (via `master_publications.py`) | Public qBittorrent HTTPS on the shared `SHARE_HTTPS_PORT`, only while enabled, running and its native login gates pass (**DD-191**) |
 | `/etc/dnsmasq.d/modul-<id>.conf` | `master-modul` | module names; WebDAV: `interface-name=paylas.<domain>,tailscale0` (**DD-148**) |
 | `SERVER_ROOT/.cop/` | installer (folder), file panel (contents) | Trash: `<id>/<item>` plus `<id>.json` (origin, time); outside downloads and excluded from WebDAV/qBittorrent access |
-| `SERVER_ROOT/.arsiv/`, `jobs.json` | unprivileged archive worker | private staging (0700) and last 20 jobs (0600); excluded from installer recursive permission repair; never a backup (**DD-159**) |
+| `SERVER_ROOT/.arsiv/` (`RETIRED_ARCHIVE_DIR`) | nothing (retired, **DD-267**) | The removed archive jobs' private staging and history; skipped by permission repair and removed in stage 7 only while it is a real folder owned by the downloads uid with mode 0700 |
 | `SERVER_ROOT/.pay/` (`SHARE_DIR`) | nothing (reserved name) | Never created, read or removed; if present it stays hidden/blocked in Files, WebDAV and qBittorrent and is skipped by permission repair (**DD-171**) |
 | `/etc/apt/apt.conf.d/20auto-upgrades`, `52master-stack-unattended` | installer | periodic unattended upgrades on, automatic reboot off (**DD-113**), Tailscale and Caddy origins added (**DD-184**), `0644` |
 | `/etc/systemd/system/apt-daily-upgrade.timer.d/master-stack.conf` | installer | upgrade window at `APT_UPGRADE_TIME` (04:00, up to 30 min random delay) instead of 06:00 (**DD-184**) |
@@ -463,7 +460,7 @@ appearing here, or removed from here while it still exists in the code.
 `grep -n 'OS-DIVERGENCE:' install.sh` prints the live inventory.
 
 The list is short on purpose. Prefer capability probes; use distribution
-identity when selecting repository suites/components (including RAR dependencies).
+identity when selecting repository suites/components.
 See **DD-102** and **DD-104**, and `archive/os-aware-review.md` for why the tree is not
 forked into per-distribution paths.
 
@@ -472,7 +469,6 @@ forked into per-distribution paths.
 | Slug | Kind | Affects | What differs | DD |
 |---|---|---|---|---|
 | `tailscale-repo-suite` | identity-derived | both | apt suite and keyring URL come from `OS_ID`/`OS_CODENAME`; both vendors publish the same URL shape | DD-102 |
-| `rar-repository` | candidate probe + identity-derived | both | when RAR dependencies have no apt candidate, add only a managed signed source: Debian non-free, Ubuntu universe/multiverse; Ubuntu arm uses ports | DD-166 |
 | `ufw-gate` | probe | ubuntu in practice | ufw active is a fail-closed stop; no package, no-op | DD-102 |
 | `netfilter-binaries` | probe | debian | a minimal Debian image ships no `iptables`; stage 0 checks only what exists, stage 1 makes it mandatory | DD-108 |
 | `needrestart-suspend` | probe-free no-op | ubuntu | `NEEDRESTART_SUSPEND=1`; Debian has no needrestart, so the variable is unread | DD-103 |
@@ -518,7 +514,7 @@ validator or an unrun fresh-host acceptance test as a pass:
 | `bash -n` | Root `*.sh`, `scripts/*` and the `.command` files | **yes** |
 | `shellcheck -x` | Same set; `-x` so sourced libraries are followed | **yes** |
 | `bats tests/` | Shell/unit contracts; some require Linux tools | **yes**, with explicit skips for unavailable tools |
-| Python unittest / browser suites | Backend and production UI with isolated fixtures | **yes**, with optional native-RAR tests skipped without Linux dependencies |
+| Python unittest / browser suites | Backend and production UI with isolated fixtures | **yes** |
 | `caddy validate` | The rendered `Caddyfile` | **no** — runs on the target, in stage 6, with the real env (**DD-106**) |
 | `dnsmasq --test -C` | The rendered dnsmasq config | **no** — runs on the target, in stage 6 (**DD-106**) |
 | `systemd-analyze verify` | Generated units and drop-ins | **no** — Linux suites only (`tests/settings-systemd.py`); the installer does not run it (**DD-106**) |

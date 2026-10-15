@@ -155,7 +155,6 @@ export interface Uygulama {
     tailscale: string | null;
     internet: string | null;
   };
-  sayfa: string | null;
   eylemler: ("baslat" | "durdur" | "yeniden-baslat" | "kaldir" | "guncelle")[];
   revizyon: string | null;
   metinler: UygulamaMetinleri | null;
@@ -291,12 +290,6 @@ export interface KonsolBildirimi {
   ad?: string;
   alt?: string;
   simge?: string;
-  sayfa?: {
-    rota?: string;
-    baslik?: string;
-    ustbilgi?: string;
-    [key: string]: unknown;
-  };
   [key: string]: unknown;
 }
 
@@ -316,7 +309,6 @@ export interface Modul {
   durdurulabilir: boolean;
   hesap?: boolean;
   konsol?: KonsolBildirimi;
-  sayfa?: string[];
   urls?: {
     tailscale: string | null;
     internet: string | null;

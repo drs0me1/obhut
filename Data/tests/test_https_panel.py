@@ -218,9 +218,9 @@ class HttpsPanelTests(unittest.TestCase):
             code, _, _ = resources.unix_get(sock, "/api/konsol/ayarlar/uygula", headers, "POST", json.dumps(payload))
             self.assertEqual(code, 200)
             worker.assert_called_once_with("apply", payload)
-        code, response_headers, body = resources.unix_get(sock, "/api/konsol/ayarlar/durum", headers)
-        self.assertEqual(code, 200)
-        self.assertEqual(json.loads(body)["https"], self.https)
+        # DD-267: the old shell's settings reads are gone; the gate still answers first.
+        code, response_headers, _ = resources.unix_get(sock, "/api/konsol/ayarlar/durum", headers)
+        self.assertEqual(code, 404)
         self.assertEqual(response_headers["Cache-Control"], "no-store")
         code, _, _ = resources.unix_get(sock, "/api/konsol/ayarlar/durum", {})
         self.assertEqual(code, 403)

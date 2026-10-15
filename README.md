@@ -22,8 +22,8 @@ the documentation is in English.
 - **Private by default.** Konsol and every local name (`panel.<domain>`, `paylas.<domain>`, …) are
   served by Caddy and dnsmasq on the Tailscale address only, behind a firewall that admits listed
   services alone.
-- **Files and sharing.** A Finder-style file manager with trash, a text editor and server-side
-  ZIP/RAR jobs; per-folder WebDAV accounts with separate Tailscale and internet switches, read-only
+- **Files and sharing.** A Finder-style file manager with trash and a text editor (archives are
+  Gezgin's); per-folder WebDAV accounts with separate Tailscale and internet switches, read-only
   or read-write access and expiry.
 - **Applications.** An App Store of declared packages (WireGuard, qBittorrent, Gezgin) and a Podman page for
   your own containers, with digest-pinned images and explicit port exposure.
@@ -83,7 +83,7 @@ works too. **Repair:** Konsol → Ayarlar → Sistem → Sağlık, `sudo master-
 | Section | What you do there |
 |---|---|
 | **Ana Menü** (home) | Server, speed and traffic widgets, installed applications, the update notice |
-| **Dosyalar** (Files) | Browse, upload, move, trash, edit text, create and extract archives; a root view of `/` on the tailnet |
+| **Dosyalar** (Files) | Browse, upload, move, trash, edit text; a root view of `/` on the tailnet |
 | **Paylaşımlar** (Shares) | One WebDAV account per folder; Tailscale and internet access, read-only/read-write, expiry |
 | **App Store** | Install, start, stop and remove WireGuard, qBittorrent and Gezgin; WireGuard and qBittorrent then open their own page (networks and devices, account and download folder), Gezgin its own file manager |
 | **Podman** | Containers, images, volumes and networks; ports and mounts with explicit exposure |
@@ -101,9 +101,9 @@ works too. **Repair:** Konsol → Ayarlar → Sistem → Sağlık, `sudo master-
 | `Data/templates/`, `Data/systemd/` | Caddy and dnsmasq templates; units, timers and drop-ins |
 | `Data/scripts/` | Server tools: firewall, App Store engine, repair, update, Konsol account |
 | `Data/panel/` | Konsol's root backend (Python standard library) and its workers: settings, shares, publications, containers, health; the WebDAV server |
-| `Data/files-panel/` | The unprivileged file and archive backend |
+| `Data/files-panel/` | The unprivileged file backend |
 | `Data/console/` | Konsol's pages; `console/yeni/` holds the built redesign |
-| `Data/magaza/` | App Store packages: manifest, hooks, page and API module per application |
+| `Data/magaza/` | App Store packages: manifest, hooks and API module per application |
 | `Data/tools/` | Build sources, not shipped: the text editor bundle and the redesigned console (Vue 3 + TypeScript) |
 | `Data/tests/` | Bats, Python, browser and isolated Linux suites |
 | `Data/docs/` | Behaviour contract, architecture, design decisions, plans |

@@ -298,14 +298,12 @@ emptied after it, and the masked random password. `common.bats` checks every con
 Quadlet for the DD-223 lines, the installer summary's Gezgin line and that `master-modul kur` builds
 the container guard again after the registry line.
 
-## Files favourites (v2-232, DD-250)
+## Files favourites (v2-232, DD-250; removed in DD-267)
 
-`test_favorites.py` drives `/api/konsol/favoriler` on the root backend's handler: add/remove in order,
-duplicates, the 0600 file removed when empty, bad paths and requests (400), the 20-entry limit, a damaged
-record, the gates, and the internet channel rule (system entries hidden and kept) through the Panel
-methods. `files-ui.cjs` adds and removes a favourite with the detail star, checks it is listed before
-Sunucu with its location, opens it, removes it with the row's ×, and does the same for a system-view
-folder ("root · /"). The other UI suites answer the endpoint with an empty list.
+The root backend no longer stores favourites: `test_favorites.py` is gone, and `test_overview.py` checks
+that `/api/konsol/favoriler` answers 404 and writes nothing. A Bats test runs the installer's removal of
+an old `KONSOL_AUTH_DIR/favoriler.json` (regular file only). `files-ui.cjs` still covers the old
+interface's star until that interface is removed.
 
 ## Files text editor (v2-231, DD-249)
 
@@ -377,7 +375,7 @@ to delete its scratch tree while an anchor is still mounted.
 ## Private package state (v2-203, DD-225)
 
 The Bats test "package private state is hidden" checks the new `PRIVATE_STATE_ROOT` key. The
-WebDAV unit must have exactly one `InaccessiblePaths=` line (trash, `.arsiv`, `-.pay`,
+WebDAV unit must have exactly one `InaccessiblePaths=` line (trash, `-.pay`,
 `/var/lib`), `RequiresMountsFor` and no `SystemCallErrorNumber`. The Files unit must mask only
 `/var/lib`, and the installer must pass the key. Neither unit may name an application, and
 qBittorrent's profile directory must lie under `/var/lib`. The test also renders both templates
@@ -701,9 +699,9 @@ checks the new-network screen is one card no wider than the windows.
 
 ## Home edit mode and network card (DD-206, DD-212/213)
 
-`test_overview.py` covers the layout's shape check, the root backend's layout endpoints
-(save, read back, reset, 0600 file next to the account records, audit lines, refused bodies,
-a damaged record read as the defaults, the X-Konsol and Host gates), the WAN rate sampler
+`test_overview.py` checks that the retired layout, favourites and old-shell routes (DD-267:
+`/api/konsol/duzen`, `/favoriler`, `/ayarlar`, `/ayarlar/durum`, `/moduller/<id>/…`) answer 404
+behind the X-Konsol and Host gates and write nothing, and covers the WAN rate sampler
 (deltas, the 1.5 s step, counter resets, a stale baseline, interface name checks, a new
 interface), `/api/konsol/ag` with package traffic modules in a temporary catalogue (installed,
 stopped, unregistered, undeclared and built-in packages; broken modules reported once; the
@@ -758,7 +756,7 @@ root backend to clear the limit. Passwords and tokens are never printed.
 Live tests that call Konsol through Caddy from the Mac (`share-connections-live`,
 `https-live`, `publications-live`, `backend-hardening-live`) open a short
 root-issued session with `master-konsol oturum-ac` via `konsol_session.py` and close
-it at the end. Host-side tests (`shares-live.py`, `archives-live.py`) use the
+it at the end. Host-side tests (`shares-live.py`) use the
 loopback Files backend and the root socket instead, because Caddy refuses
 host-local Konsol callers (DD-180). The browser live suites
 (`share-connections-browser.cjs`, `desktop-live.cjs`) take a session value in
@@ -840,7 +838,7 @@ reload (Caddy's journal) is named in the Settings error with the previous state 
 Caddy repository outage (v2-236, DD-253): `common.bats` runs `apt_update_caddy_tolerant` against a
 stubbed apt-get/dpkg-query: a 402 on Caddy's repository alone passes and records "402 Payment Required"
 on a host with Caddy, another failing repository or a host without Caddy stops, a clean refresh passes
-untouched; stage 1 and the RAR refresh use it, stage 6's first-install refresh stays strict, and the
+untouched; stage 1 uses it, stage 6's first-install refresh stays strict, and the
 repository URL lives only in `defaults.env`. The root-only `master-guncelle` test checks that the
 closing "env failed with exit status N." line is skipped in Konsol's message.
 Manual addresses (v2-235, DD-252): the tailnet and public sites and the `modul-elle.conf` line, no
@@ -1069,7 +1067,14 @@ modes, marker symlink) untouched, that registry preparation is idempotent and
 public lifecycle actions refuse, and that the Files backend refuses to list it
 and writes nothing into it. Folder-sharing tests are described below.
 
-## Built-in ZIP/RAR (DD-159, DD-166, DD-170)
+## Built-in ZIP/RAR (DD-159, DD-166, DD-170; removed in DD-267)
+
+DD-267 removed Konsol's archive jobs (archives are Gezgin's): `test_archives.py`, `test_rar.py` and
+`archives-live.py` are gone. `common.bats` checks that stage 1 adds no RAR repository and installs
+neither `unrar` nor `python3-rarfile`, removes only the installer's own source file, and that stage 7
+removes the old `SERVER_ROOT/.arsiv` only while it is a real 0700 folder of the downloads uid;
+`test_backend_hardening.py` checks the name is an ordinary folder for the files backend now. The old
+interface's archive checks below go with that interface.
 
 v143 adds automatic nested extraction/default depth-ceiling rollback tests and
 installer-driven default-destination state. The native RAR suite submits without
@@ -1089,26 +1094,6 @@ From the repository root, run all Python suites with an OpenSSL-enabled Python:
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_*.py'
 ```
-
-`test_archives.py` covers round trips, nested depth on/off, name collisions,
-traversal/links/duplicates, byte/entry/central-directory/deadline limits,
-malformed inner archives, cancellation/concurrency and interrupted-job recovery.
-`KONSOL_FILES_BACKEND` can point at the installed backend for Linux tests.
-
-`test_rar.py` adds mocked multipart/unsafe-input/budget tests and real subprocess
-deadline/cancel/output-cap checks on all hosts. Native RAR→ZIP→RAR is tested on
-Linux with `/usr/bin/unrar` and distro `python3-rarfile`; otherwise it is explicitly
-skipped. Set `RAR_FIXTURES` to a private directory containing the upstream
-markokr/rarfile `test/files` fixtures named by the optional native test to cover
-compressed RAR3/RAR5, solid/old/new volumes, Unicode, encryption and link rejection.
-Tests copy them into TemporaryDirectory; no downloads or package installs happen
-inside tests. Browser fixtures test `.rar`, `.r00`, `.part01.rar` selection and
-submission as well as ZIP; ordinary files never offer extraction.
-
-`archives-live.py prepare` is a **mutating disposable-host test** through the
-installed Caddy/file service. Keep the printed manifest for `verify <manifest>`
-after rerun/reboot and `cleanup <manifest>` afterward. Cleanup removes only its
-scratch tree/manifest, retaining ordinary job history as an audit record.
 
 `desktop-live.cjs` tests the **real host**, not fixtures. Set `ARCHIVE_FIXTURE`
 to the basename of that live test tree; it creates/extracts browser ZIP outputs.

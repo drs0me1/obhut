@@ -126,9 +126,10 @@ EOF
     grep -q 'APT_OPTS=(-o DPkg::Lock::Timeout=' "$V2_ROOT/install.sh"
     # DD-150: the WireGuard packages are installed by the WireGuard module, not here;
     # DD-152: no Docker repository update or packages either; DD-208: Podman is one base call.
-    # DD-253: stage 1's and the RAR refresh pass APT_OPTS through apt_update_caddy_tolerant.
+    # DD-253: stage 1's refresh passes APT_OPTS through apt_update_caddy_tolerant (DD-267: the RAR
+    # refresh is gone with the RAR repository).
     [ "$(grep -cF 'apt-get "${APT_OPTS[@]}"' "$V2_ROOT/install.sh")" -eq 6 ]
-    [ "$(grep -cE 'apt_update_caddy_tolerant "\$CADDY_APT_REPO" [^ ]+ "\$\{APT_OPTS\[@\]\}"' "$V2_ROOT/install.sh")" -eq 2 ]
+    [ "$(grep -cE 'apt_update_caddy_tolerant "\$CADDY_APT_REPO" [^ ]+ "\$\{APT_OPTS\[@\]\}"' "$V2_ROOT/install.sh")" -eq 1 ]
     grep -qF 'apt-get install -y --no-install-recommends' "$V2_ROOT/scripts/master-modul"
     grep -qF -- '-o DPkg::Lock::Timeout=300 "$@"' "$V2_ROOT/scripts/master-modul"
     # DD-197: packages are declared in each package's manifest; the engine installs them.
@@ -143,43 +144,33 @@ EOF
     [ "$status" -ne 0 ]
 }
 
-@test "RAR repository uses signed distribution components and supported architectures" {
-    # Exercise the actual distribution selection without touching host apt paths.
-    selection="$(awk '/^ensure_rar_repository\(\)/,/^}/' "$V2_ROOT/install.sh" |
-        sed -n '/    case "\$OS_ID" in/,/^    esac/p')"
-    for triple in 'debian trixie amd64' 'ubuntu noble amd64' 'ubuntu resolute arm64'; do
-        set -- $triple
-        OS_ID="$1" OS_CODENAME="$2" OS_ARCH="$3"
-        eval "$selection"
-        if [ "$OS_ID" = debian ]; then
-            [ "$components" = non-free ]
-            [ "$mirror" = https://deb.debian.org/debian ]
-            [ "$security" = https://security.debian.org/debian-security ]
-            [ "$keyring" = /usr/share/keyrings/debian-archive-keyring.gpg ]
-        else
-            [ "$components" = 'universe multiverse' ]
-            [ "$keyring" = /usr/share/keyrings/ubuntu-archive-keyring.gpg ]
-            if [ "$OS_ARCH" = arm64 ]; then
-                [ "$mirror" = https://ports.ubuntu.com/ubuntu-ports ]
-                [ "$security" = "$mirror" ]
-            else
-                [ "$mirror" = https://archive.ubuntu.com/ubuntu ]
-                [ "$security" = https://security.ubuntu.com/ubuntu ]
-            fi
-        fi
-    done
-    grep -qF 'deb [signed-by=$keyring] $security $OS_CODENAME-security $components' "$V2_ROOT/install.sh"
-    grep -qF 'dnsutils unattended-upgrades python3 python3-rarfile unrar' "$V2_ROOT/install.sh"
-    grep -qF 'master_rar.py' "$V2_ROOT/install.sh"
-}
-
-@test "RAR repository leaves existing sources alone when dependencies have candidates" {
-    eval "$(awk '/^ensure_rar_repository\(\)/,/^}/' "$V2_ROOT/install.sh")"
-    apt-cache() { echo '  Candidate: 1.2.3'; }
-    atomic_write() { return 99; }
-    retry() { return 98; }
-    run ensure_rar_repository
-    [ "$status" -eq 0 ]
+@test "the RAR repository and packages are no longer installed; a re-run removes only the installer's own source" {
+    # DD-267: Konsol's ZIP/RAR jobs are gone (Gezgin handles archives). Stage 1 adds no RAR source and
+    # installs neither unrar nor python3-rarfile; packages an earlier run installed are not removed.
+    s1="$(awk '/^stage_1\(\)/,/^apply_udp_netbuf_floor\(\)/' "$V2_ROOT/install.sh")"
+    run ! grep -qE 'unrar|rarfile|ensure_rar_repository' <<<"$(grep -v '^[[:space:]]*#' "$V2_ROOT/install.sh")"
+    run ! grep -qE 'apt-get.*(remove|purge)' <<<"$s1"
+    grep -qF 'dnsutils unattended-upgrades python3' <<<"$s1"
+    run ! grep -qE '^RAR_APT_SOURCE_FILE=|^FILES_ARCHIVE_DIR=' "$V2_ROOT/config/defaults.env"
+    grep -qx 'RETIRED_RAR_APT_SOURCE_FILE="/etc/apt/sources.list.d/master-stack-rar.list"' "$V2_ROOT/config/defaults.env"
+    # The cleanup runs before stage 1's own apt-get update, so the lists are refreshed in that step.
+    [ "$(grep -n '^    remove_retired_rar_repository$' <<<"$s1" | cut -d: -f1)" -lt "$(grep -n 'retry "apt-update" 3' <<<"$s1" | cut -d: -f1)" ]
+    eval "$(awk '/^remove_retired_rar_repository\(\)/,/^}/' "$V2_ROOT/install.sh")"
+    log() { printf '%s\n' "$*" >>"$TMP/log"; }
+    RETIRED_RAR_APT_SOURCE_FILE="$TMP/master-stack-rar.list"
+    # Nothing there: nothing happens.
+    run remove_retired_rar_repository
+    [ "$status" -eq 0 ] && [ ! -e "$TMP/log" ]
+    # The installer's own regular file goes.
+    printf '# master-stack: RAR dependencies (DD-166); operator repositories are untouched.\n' >"$RETIRED_RAR_APT_SOURCE_FILE"
+    remove_retired_rar_repository
+    [ ! -e "$RETIRED_RAR_APT_SOURCE_FILE" ]
+    grep -q 'Eski RAR deposu kaldırıldı' "$TMP/log"
+    # A symlink in its place is not the installer's (atomic_write never wrote one): left alone.
+    printf 'deb x\n' >"$TMP/elsewhere.list"
+    ln -s "$TMP/elsewhere.list" "$RETIRED_RAR_APT_SOURCE_FILE"
+    remove_retired_rar_repository
+    [ -L "$RETIRED_RAR_APT_SOURCE_FILE" ] && [ -f "$TMP/elsewhere.list" ]
 }
 
 @test "a Caddy repository outage alone does not stop apt-update on a host that has Caddy" {
@@ -219,12 +210,11 @@ E: The repository '$repo/deb/debian any-version InRelease' is no longer signed."
     PATH="$TMP/bin:$PATH" run apt_update_caddy_tolerant "$repo" "$TMP/mark"
     [ "$status" -eq 0 ]
     [ ! -s "$TMP/mark" ]
-    # Stage 1 and the RAR refresh use it with the one configured repository; stage 6's
-    # first-install refresh stays strict, and the repository literal lives only in defaults.env.
+    # Stage 1 uses it with the one configured repository; stage 6's first-install refresh stays
+    # strict, and the repository literal lives only in defaults.env.
     grep -qx 'CADDY_APT_REPO="https://dl.cloudsmith.io/public/caddy/stable"' "$V2_ROOT/config/defaults.env"
     awk '/^stage_1\(\)/,/^apply_udp_netbuf_floor\(\)/' "$V2_ROOT/install.sh" |
         grep -qF 'retry "apt-update" 3 "$APT_LOCK_TIMEOUT" -- apt_update_caddy_tolerant "$CADDY_APT_REPO" "$caddy_mark" "${APT_OPTS[@]}"'
-    awk '/^ensure_rar_repository\(\)/,/^}/' "$V2_ROOT/install.sh" | grep -qF 'apt_update_caddy_tolerant "$CADDY_APT_REPO" /dev/null'
     awk '/^stage_6\(\)/,/^stage_7\(\)/' "$V2_ROOT/install.sh" |
         grep -qF 'retry "apt-update-caddy" 3 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" update'
     run ! grep -q 'dl\.cloudsmith\.io' "$V2_ROOT/install.sh"
@@ -637,7 +627,8 @@ EOF
     [ -n "$downloads_tree" ]
     run ! grep -q 'chown -R' <<<"$downloads_tree"
     grep -qF 'python3 "$V2_ROOT/panel/master_permissions.py" "$root" "$uid" "$gid"' <<<"$downloads_tree"
-    grep -qF '"${FILES_ARCHIVE_DIR:-.arsiv}" "${SHARE_DIR:-.pay}"' <<<"$downloads_tree"
+    # DD-267: the retired archive workspace stays out of the walk until stage 7 removes it.
+    grep -qF '"${RETIRED_ARCHIVE_DIR:-.arsiv}" "${SHARE_DIR:-.pay}"' <<<"$downloads_tree"
     run ! grep -qE 'find |chown |chmod ' <<<"$(grep -v '^[[:space:]]*#' <<<"$downloads_tree")"
 }
 
@@ -881,7 +872,7 @@ assert not missing, missing
     grep -qx 'CPUWeight=50' "$V2_ROOT/magaza/torrent/qbittorrent.container"
 }
 
-@test "resilience: capped rollback with discard, stale WAN site, watchdog resets, damaged history, health card" {
+@test "resilience: capped rollback with discard, stale WAN site, watchdog resets, health card" {
     local s6 rt="$V2_ROOT/scripts/refresh-tailnet-config" body
     # DD-182: five automatic attempts with backoff, then "stuck" until the operator retries or discards.
     grep -qx 'ROLLBACK_ATTEMPTS = 5' "$V2_ROOT/panel/master_settings.py"
@@ -905,8 +896,6 @@ assert not missing, missing
     [ "$(grep -cx 'recover_firewall_if_broken' "$rt")" -eq 3 ]
     [ "$(awk '/^recover_firewall_if_broken$/ {n++; if (n == 2) {print NR; exit}}' "$rt")" -gt \
         "$(awk '/^if ! wait_for_tailscale_ready; then$/ {print NR; exit}' "$rt")" ]
-    # A damaged archive history is set aside instead of stopping the Files service.
-    grep -qF 'aside = "jobs.json.bozuk-%d" % time.time()' "$V2_ROOT/files-panel/master_archives.py"
     # Health card: read-only endpoint (DD-259: in the route table), shown on Settings → Sistem,
     # refreshed with the page poll.
     grep -qF 'Route("GET", "/api/konsol/saglik", "saglik",' "$V2_ROOT/panel/master_api.py"
@@ -1154,7 +1143,7 @@ EOF
         'Group=__DOWNLOADS_GID__' 'Type=exec' 'ProtectSystem=strict' 'ProtectHome=true' \
         'PrivateTmp=true' 'NoNewPrivileges=true' 'CapabilityBoundingSet=' \
         'IPAddressDeny=any' 'IPAddressAllow=localhost' 'ReadWritePaths=__SERVER_ROOT__' \
-        'InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__ __SERVER_ROOT__/__FILES_ARCHIVE_DIR__ -__SERVER_ROOT__/__SHARE_DIR__ __PRIVATE_STATE_ROOT__' \
+        'InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__ -__SERVER_ROOT__/__SHARE_DIR__ __PRIVATE_STATE_ROOT__' \
         'RequiresMountsFor=__SERVER_ROOT__'; do
         grep -qxF "$line" "$unit"
     done
@@ -2446,30 +2435,31 @@ import json, sys
 m = [i for i in json.load(open(sys.argv[1]))["items"] if i["id"] == "torrent"][0]
 assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progress"]) == ("torrent", "host", False, "", False, None), m
 ' "$TMP/body"
-    local json=(-H 'X-Konsol: 1' -H 'Content-Type: application/json')
-    # DD-210: qBittorrent declares an install form; without it nothing starts.
-    [ "$(pc /api/konsol/moduller/torrent/kur "${json[@]}" --data '{}')" = 400 ]
+    local json=(-H 'X-Konsol: 1' -H 'Content-Type: application/json') islem=/api/konsol/uygulamalar/islem
+    # DD-210: qBittorrent declares an install form; without it nothing starts (DD-266: the table's route).
+    [ "$(pc "$islem" "${json[@]}" --data '{"id":"paket:torrent","eylem":"kur"}')" = 400 ]
     [ ! -e "$TMP/sdrun-calls" ]
-    [ "$(pc /api/konsol/moduller/torrent/kur "${json[@]}" --data '{"form":{"username":"operator","password":"bats-install-phrase","save":"/srv/downloads"}}')" = 202 ]
+    [ "$(pc "$islem" "${json[@]}" --data '{"id":"paket:torrent","eylem":"kur","form":{"username":"operator","password":"bats-install-phrase","save":"/srv/downloads"}}')" = 202 ]
     [ "$(wc -l <"$TMP/sdrun-calls")" -eq 2 ]
     head -n 1 "$TMP/sdrun-calls" | grep -q -- "--wait --pipe .*/mods/torrent/ayar.py --lib .* kur-hazirla --tohum $TMP/run/modul-torrent.kur$"
     grep -q '"password": "bats-install-phrase"' "$TMP/sdrun-stdin"
     run ! grep -q 'bats-install-phrase' "$TMP/sdrun-calls"
     tail -n 1 "$TMP/sdrun-calls" | grep -q -- '^--unit=master-modul-torrent.service --collect --quiet '
     tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul kur torrent$"
-    [ "$(pc /api/konsol/moduller/torrent/kaldir "${json[@]}" --data '{"veri":true}')" = 202 ]
-    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul kaldir torrent --veri$"
-    [ "$(pc /api/konsol/moduller/torrent/durdur "${json[@]}" --data '{"veri":true}')" = 202 ]
-    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul durdur torrent$"
+    # Installed from here on: removal with its data and stopping go to the engine the same way.
     printf 'calisiyor\n' >"$TMP/mod-state"
+    [ "$(pc "$islem" "${json[@]}" --data '{"id":"paket:torrent","eylem":"kaldir","veri":true}')" = 202 ]
+    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul kaldir torrent --veri$"
+    [ "$(pc "$islem" "${json[@]}" --data '{"id":"paket:torrent","eylem":"durdur","veri":true}')" = 202 ]
+    tail -n 1 "$TMP/sdrun-calls" | grep -q "/master-modul durdur torrent$"
     touch "$TMP/mod-running"
     [ "$(pc /api/konsol/moduller -H 'X-Konsol: 1')" = 200 ]
     grep -q '"installed": true, "state": "calisiyor", "live": "running"' "$TMP/body"
     # One operation at a time per module.
     touch "$TMP/busy-master-modul-torrent"
-    local before
+    local before action
     before="$(wc -l <"$TMP/sdrun-calls")"
-    [ "$(pc /api/konsol/moduller/torrent/baslat "${json[@]}" --data '{}')" = 409 ]
+    [ "$(pc "$islem" "${json[@]}" --data '{"id":"paket:torrent","eylem":"baslat"}')" = 409 ]
     [ "$(pc /api/konsol/moduller -H 'X-Konsol: 1')" = 200 ]
     grep -q '"busy": true' "$TMP/body"
     rm -f "$TMP/busy-master-modul-torrent"
@@ -2477,18 +2467,23 @@ assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progres
     grep -q '^list-units --plain --no-legend --no-pager --state=active,activating,deactivating,reloading master-modul-\*\.service$' "$TMP/systemctl-calls"
     run ! grep -q '^is-active' "$TMP/systemctl-calls"
     # Unknown modules, unknown actions and requests without the panel header never reach systemd-run.
-    [ "$(pc /api/konsol/moduller/yok/kur "${json[@]}" --data '{}')" = 404 ]
-    [ "$(pc /api/konsol/moduller/torrent/sil "${json[@]}" --data '{}')" = 404 ]
-    [ "$(pc /api/konsol/moduller/torrent/kur -H 'Content-Type: application/json' --data '{}')" = 403 ]
-    [ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$PSOCK" -H 'Host: baska.ornek' "${json[@]}" --data '{}' \
-        "http://panel.ayc/api/konsol/moduller/torrent/kur")" = 403 ]
+    [ "$(pc "$islem" "${json[@]}" --data '{"id":"paket:yok","eylem":"kur"}')" = 404 ]
+    [ "$(pc "$islem" "${json[@]}" --data '{"id":"paket:torrent","eylem":"sil"}')" = 400 ]
+    [ "$(pc "$islem" -H 'Content-Type: application/json' --data '{"id":"paket:torrent","eylem":"kur"}')" = 403 ]
+    [ "$(curl -s -o /dev/null -w '%{http_code}' --unix-socket "$PSOCK" -H 'Host: baska.ornek' "${json[@]}" \
+        --data '{"id":"paket:torrent","eylem":"kur"}' "http://panel.ayc$islem")" = 403 ]
+    # DD-267: the old shell's module routes are gone and reach nothing.
+    for action in kur baslat durdur yeniden-baslat kaldir; do
+        [ "$(pc "/api/konsol/moduller/torrent/$action" "${json[@]}" --data '{}')" = 404 ]
+    done
+    for action in gunluk hesap; do
+        [ "$(pc "/api/konsol/moduller/torrent/$action" -H 'X-Konsol: 1')" = 404 ]
+    done
     [ "$(wc -l <"$TMP/sdrun-calls")" = "$before" ]
-    # DD-196: a module's log exists only while it is installed; the fixture registers torrent first.
-    [ "$(pc /api/konsol/moduller/torrent/gunluk -H 'X-Konsol: 1')" = 404 ]
-    printf 'torrent\tcalisiyor\n' >>"$(awk -F= '$1 == "MODULES_FILE" {print $2}' "$TMP/state.env")"
-    [ "$(pc /api/konsol/moduller/torrent/gunluk -H 'X-Konsol: 1')" = 200 ]
-    grep -qi '^Content-Type: text/plain' "$TMP/head"
-    grep -q 'WebUI will be started shortly' "$TMP/body"
+    # DD-196: a package's log exists only while it is installed (the registry says so, not the engine).
+    [ "$(pc '/api/konsol/uygulamalar/gunluk?id=paket:torrent' -H 'X-Konsol: 1')" = 404 ]
+    [ "$(pc '/api/konsol/uygulamalar/gunluk?id=paket:wireguard' -H 'X-Konsol: 1')" = 200 ]
+    python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert d == {"satirlar": ["WebUI will be started shortly"], "kesik": False}, d' "$TMP/body"
     grep -q 'panel: konsol yerel modul-kur torrent -> ok' "$TMP/panel.log"
     grep -q 'panel: konsol yerel modul-kaldir torrent +veri -> ok' "$TMP/panel.log"
     grep -q 'panel: konsol yerel modul-durdur torrent -> ok' "$TMP/panel.log"
@@ -2499,7 +2494,9 @@ assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progres
     panel_start
     local json=(-H 'X-Konsol: 1' -H 'Content-Type: application/json')
     printf 'paylasim\tcalisiyor\n' >"$TMP/moduller"
-    for path in /api/konsol/moduller/paylasim/hesap '/api/konsol/moduller/paylasim/hesap?parola=1'; do
+    for path in '/api/konsol/uygulamalar/hesap?id=paket:paylasim' '/api/konsol/uygulamalar/hesap?id=paket:paylasim&parola=1' \
+        '/api/konsol/uygulamalar/hesap?id=yerlesik:paylasim&parola=1' /api/konsol/moduller/paylasim/hesap \
+        '/api/konsol/moduller/paylasim/hesap?parola=1'; do
         [ "$(pc "$path" -H 'X-Konsol: 1')" = 404 ]
     done
     [ "$(pc /api/konsol/moduller/paylasim/parola -H 'X-Konsol: 1' -H 'Content-Type: application/json' --data '{}')" = 404 ]
@@ -2535,7 +2532,7 @@ assert d["root"] == sys.argv[2] and d["disk"]["total"] > 0 and d["disk"]["free"]
     printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
     [ "$(pc /api/uygulama/wireguard/state -H 'X-Konsol: 1')" = 200 ]
     python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert d["networks"] and d["defaults"]["keepalive"] == 21, d' "$TMP/body"
-    # The module listing carries the package's App Store texts and, while installed, its page files (DD-200).
+    # The module listing carries the package's App Store texts (DD-200); DD-267: no page files any more.
     printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
     cat >"$TMP/pbin/master-modul" <<EOF
 #!/bin/bash
@@ -2548,9 +2545,9 @@ EOF
     python3 - "$TMP/body" <<'PY'
 import json, sys
 items = {m["id"]: m for m in json.load(open(sys.argv[1]))["items"]}
-assert items["wireguard"]["konsol"]["ad"] == "WireGuard" and items["wireguard"]["sayfa"] == ["sayfa.js", "sayfa.css"], items["wireguard"]
+assert items["wireguard"]["konsol"]["ad"] == "WireGuard" and "sayfa" not in items["wireguard"], items["wireguard"]
 assert items["wireguard"]["durdurulabilir"] is True and items["torrent"]["durdurulabilir"] is True
-assert items["torrent"]["konsol"]["sayfa"]["rota"] == "torrent" and "sayfa" not in items["torrent"], items["torrent"]
+assert "sayfa" not in items["torrent"]["konsol"] and "sayfa" not in items["torrent"], items["torrent"]
 assert "torrent.ayc" in items["torrent"]["konsol"]["neler"][1][1]
 PY
 }
@@ -2580,12 +2577,9 @@ PY
     grep -qF 'fresh && s.disk?.total > 0' "$js"
     # DD-204 brought an overview back (data-view="genel"); the dock/window shell and the old pages stay gone.
     run ! grep -qE 'data-view="(uygulamalar|gunluk)"|desktop-dock|window-min' "$html"
-    # The WireGuard page is the package's: it registers itself and uses only its own API prefix.
-    local sayfa="$V2_ROOT/magaza/wireguard/sayfa.js"
-    grep -qF 'window.Konsol.sayfa("wireguard", (k) => {' "$sayfa"
-    grep -qF 'const BASE = "/api/uygulama/wireguard";' "$sayfa"
-    run ! grep -qE '/api/(wg|konsol)/' "$sayfa"
-    grep -qx 'PAKET_SAYFA="sayfa.js sayfa.css"' "$V2_ROOT/magaza/wireguard/paket.env"
+    # DD-267: packages ship no page of the old interface; the WireGuard package keeps its API module.
+    [ ! -e "$V2_ROOT/magaza/wireguard/sayfa.js" ] && [ ! -e "$V2_ROOT/magaza/wireguard/sayfa.css" ]
+    run ! grep -q '^PAKET_SAYFA=' "$V2_ROOT/magaza/wireguard/paket.env"
     grep -qx 'PAKET_API="api.py"' "$V2_ROOT/magaza/wireguard/paket.env"
 }
 
@@ -2603,9 +2597,11 @@ esac
 EOF
     printf 'wireguard\tcalisiyor\ntorrent\tcalisiyor\n' >"$TMP/moduller"
     printf 'FILES_PANEL_PORT=61009\n' >>"$TMP/state.env"
-    [ "$(pc /api/konsol/moduller/torrent/hesap -H 'X-Konsol: 1')" = 200 ]
+    # DD-266: the table's route; DD-267: the old shell's /api/konsol/moduller/<id>/hesap is gone.
+    [ "$(pc /api/konsol/moduller/torrent/hesap -H 'X-Konsol: 1')" = 404 ]
+    [ "$(pc '/api/konsol/uygulamalar/hesap?id=paket:torrent' -H 'X-Konsol: 1')" = 200 ]
     python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert d == {"user": "admin", "temp": True, "host": "torrent.ayc"}, d' "$TMP/body"
-    [ "$(pc '/api/konsol/moduller/torrent/hesap?parola=1' -H 'X-Konsol: 1')" = 200 ]
+    [ "$(pc '/api/konsol/uygulamalar/hesap?id=paket:torrent&parola=1' -H 'X-Konsol: 1')" = 200 ]
     python3 -c 'import json, sys; assert json.load(open(sys.argv[1]))["pass"] == "Tmp9Pass7Word"' "$TMP/body"
     grep -q 'panel: konsol yerel modul-hesap torrent -> ok' "$TMP/panel.log"
     [ "$(pc /api/konsol/moduller/torrent/parola "${json[@]}" --data '{}')" = 404 ]
@@ -2740,9 +2736,6 @@ EOF
     echo 5 >"$TMP/hs-age"
     sleep 0.8
     [ "$(online)" = "True False 2" ]
-    # The page shows the server's verdict; the handshake only separates idle from never seen.
-    grep -q 'if (p.online) return "ok";' "$V2_ROOT/magaza/wireguard/sayfa.js"
-    run ! grep -q 'a < 180' "$V2_ROOT/magaza/wireguard/sayfa.js"
 }
 
 @test "Konsol sign-in: Caddy asks the root backend for every protected path; the tailnet passes, the internet signs in" {
@@ -2857,14 +2850,10 @@ EOF
     awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '    paket_araclar_kaldir'
     awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '    paket_ekler_kaldir'
     awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '    paket_iz_kontrol'
-    # DD-200: the Konsol page files are declared, placed before the registry is written (a
-    # failed step leaves no half-registered package) and removed with the package; the engine
-    # needs CONSOLE_WEB_DIR from state.env, so the installer writes it (found live on nrm).
-    awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'CONSOLE_WEB_DIR=\$CONSOLE_WEB_DIR'
-    kur="$(awk '/^paket_kur\(\)/,/^}$/' "$V2_ROOT/magaza/wireguard/kanca")"
-    [ "$(grep -n 'paket_sayfa_koy || fail_step' <<<"$kur" | cut -d: -f1)" -lt "$(grep -n 'registry_set "$PAKET_ID" calisiyor' <<<"$kur" | cut -d: -f1)" ]
-    awk '/^cmd_kaldir\(\)/,/^}$/' "$modul" | grep -qx '    paket_sayfa_kaldir'
-    grep -q 'CONSOLE_WEB_DIR/uygulama/$PAKET_ID' "$modul"
+    # DD-267: packages place no page files any more (DD-200's uygulama/<id>/ is gone), so the engine
+    # needs no CONSOLE_WEB_DIR and the installer no longer writes it to state.env.
+    run ! grep -qE 'paket_sayfa|PAKET_SAYFA|CONSOLE_WEB_DIR' "$modul" "$V2_ROOT"/magaza/*/kanca "$V2_ROOT"/magaza/*/paket.env
+    run ! grep -q 'CONSOLE_WEB_DIR=' <<<"$(awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     # Stage 7: the tool is checked only with the package, and must be absent without it; the probe is package-neutral.
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     grep -qF 'kurulu değilken aracı ya da birim eki sunucuda kalmış"' <<<"$s7"
@@ -2886,7 +2875,8 @@ EOF
     grep -qx 'Description=Konsol root backend (master-stack, DD-133, DD-140, DD-196)' "$V2_ROOT/systemd/master-panel.service"
     # The 5-minute timer and the module log route look at WireGuard only while it is installed.
     grep -qF "grep -qx \$'wireguard\\tcalisiyor'" "$V2_ROOT/scripts/refresh-tailnet-config"
-    grep -qF 'self.error(404, "bu modül kurulu değil")' "$V2_ROOT/panel/master-panel"
+    awk '/    def uygulama_gunlugu\(self, sid, lines\):/,/^    def pending\(self\):/' "$V2_ROOT/panel/master-panel" |
+        grep -qF 'raise ApiError(404, "Bu uygulama kurulu değil.")'
     # Konsol's log labels each event by its real source; only WireGuard actions say WireGuard.
     grep -qF 'e.action.includes(":") ? e.action.split(":")[0]' "$V2_ROOT/console/konsol.js"
     run ! grep -qF 'e.source === "panel" ? "wg" : "fs"' "$V2_ROOT/console/konsol.js"
@@ -2987,19 +2977,10 @@ EOF
     [ ! -e "$V2_ROOT/templates/Caddyfile.wg" ]
     # The console page loads nothing from elsewhere and runs no inline code.
     run ! grep -qiE '<style|style=|onclick=|https?://' "$V2_ROOT/console/index.html"
-    local sayfa="$V2_ROOT/magaza/wireguard/sayfa.js"
-    run ! grep -qE 'https?://' "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/konsol.css" "$V2_ROOT/console/panel.css" "$sayfa" "$V2_ROOT/magaza/wireguard/sayfa.css"
+    run ! grep -qE 'https?://' "$V2_ROOT/console/konsol.js" "$V2_ROOT/console/konsol.css" "$V2_ROOT/console/panel.css"
     grep -q '"X-Konsol": "1"' "$V2_ROOT/console/konsol.js"
-    # DD-136/DD-140/DD-200: network cards and "Arayüz ekle" as its own view, both built by the package's page.
-    grep -q 'id: "wg-tabs"' "$sayfa"
-    grep -q 'id: "wg-ekle"' "$sayfa"
-    grep -q 'id: "na-create"' "$sayfa"
     run ! grep -qE 'wg-tabs|wgadd|na-create' "$V2_ROOT/console/index.html"
-    # DD-143: her ağ kartında kaldırma var; wg0 ayrıcalıklı değil.
-    run ! grep -q 'base ? null' "$sayfa"
-    grep -q 'arayüzünü kaldır' "$sayfa"
-    grep -q 'Bu son ağ' "$sayfa"
-    run ! grep -qiE 'yedek|backup' "$V2_ROOT/console/index.html" "$V2_ROOT/console/konsol.js" "$sayfa" "$V2_ROOT/panel/master-panel" "$unit"
+    run ! grep -qiE 'yedek|backup' "$V2_ROOT/console/index.html" "$V2_ROOT/console/konsol.js" "$V2_ROOT/panel/master-panel" "$unit"
     run ! grep -q 'WG_BACKUP_MARK' "$V2_ROOT/config/defaults.env" "$V2_ROOT/install.sh" "$V2_ROOT/../wireguard.command"
     # Stage 0 refuses a wg0 or WebDAV port that a panel network already uses.
     # DD-143: port çakışması artık ağı kuran yerde denetlenir (master-wg net-add).
@@ -3350,29 +3331,24 @@ PY
 
 @test "console shows qBittorrent's first login and its interface link" {
     local js="$V2_ROOT/console/konsol.js" html="$V2_ROOT/console/index.html"
-    # DD-200/202: the App Store texts and the page come from the package; the shell names no application.
-    local meta="$V2_ROOT/magaza/torrent/konsol.json" page="$V2_ROOT/magaza/torrent/sayfa.js"
-    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["ad"]=="qBittorrent" and d["sayfa"]["rota"]=="torrent" and d["durdur_notu"] and d["kaldir"]["veri_etiket"], d' "$meta"
+    # DD-200/202: the App Store texts come from the package; the shell names no application.
+    # DD-267: the package's page of the old interface (sayfa.js/css, the "sayfa" declaration) is gone.
+    local meta="$V2_ROOT/magaza/torrent/konsol.json"
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["ad"]=="qBittorrent" and "sayfa" not in d and d["durdur_notu"] and d["kaldir"]["veri_etiket"], d' "$meta"
     grep -qx 'PAKET_KONSOL="konsol.json"' "$V2_ROOT/magaza/torrent/paket.env"
-    grep -qx 'PAKET_SAYFA="sayfa.js sayfa.css"' "$V2_ROOT/magaza/torrent/paket.env"
+    run ! grep -q '^PAKET_SAYFA=' "$V2_ROOT/magaza/torrent/paket.env"
+    [ ! -e "$V2_ROOT/magaza/torrent/sayfa.js" ] && [ ! -e "$V2_ROOT/magaza/torrent/sayfa.css" ]
     grep -qx 'PAKET_API="api.py"' "$V2_ROOT/magaza/torrent/paket.env"
     run ! grep -qE 'MOD_META|firstLogin|noStop|Torrent indirmelerini' "$js"
     # DD-152: the Unpackerr application and its "recommended together" hint are gone.
     run ! grep -qE 'recommends|unpackerr' "$js"
     grep -qF 'qBittorrent ayarları' "$meta"
-    # DD-202: the first-login card, its 30-second reveal and the service bar live in the package page.
     run ! grep -qE 'accountBlock|REVEAL_SECONDS|hideAllPass|renderTorrentStatus|ROUTES\.torrent|"torrent"' "$js"
-    grep -qF 'window.Konsol.sayfa("torrent"' "$page"
-    grep -qF 'const REVEAL_SECONDS = 30;' "$page"
-    grep -qF 'const onHidden = () => { if (document.hidden) hidePass(); };' "$page"
-    # DD-195 (v2-168): the link follows the Konsol address in use; the backend supplies both names.
-    grep -qF 'return publicPanel() ? urls.internet || "" : urls.tailscale || "";' "$page"
-    grep -qF 'id: "torrent-open", href: url,' "$page"
+    # DD-195 (v2-168): the backend supplies both names of the interface link.
     grep -qF 'urls = self.package_urls(mid)' "$V2_ROOT/panel/master-panel"
     run ! grep -q 'torrent' "$html"
     run ! grep -q 'installed-label' "$html"
     [ "$(grep -c 'link-dozzle' "$html" "$js" | awk -F: '{s += $NF} END {print s}')" -eq 0 ]
-    grep -q '^\.acct-wg {' "$V2_ROOT/magaza/torrent/sayfa.css"
     run ! grep -q '^\.acct-wg {' "$V2_ROOT/console/konsol.css"
 }
 
@@ -3533,13 +3509,9 @@ PY
     grep -qF 'change({ gizli: !set.gizli }, "gizle")' <<<"$tools"
     run ! grep -qE '"data-tool": "(dar|genis)"|genislik:' <<<"$tools"
     run ! grep -qE 'data-height|yukseklik' "$js" "$css"  # DD-242: sizes are fixed per widget (1×1, 2×1), never operator-set
-    # The layout is stored by the root backend in KONSOL_AUTH_DIR (format checks only); the shell names no application.
-    grep -qx 'LAYOUT_FILE = "duzen.json"' "$backend"
-    grep -qx 'LAYOUT_SPANS = (1, 2, 3, 4)' "$backend"
-    grep -qF 'if path == "/api/konsol/duzen":' "$backend"
-    grep -qF 'self.audit(user, "duzen", detail, True)' "$backend"
-    grep -qF 'api("/api/konsol/duzen")' "$js"
-    grep -qF 'post("/api/konsol/duzen", reset ? { sifirla: true } : { duzen: draft })' "$js"
+    # DD-267: the root backend no longer stores the layout (no route, record or audit kind); the
+    # installer removes an old KONSOL_AUTH_DIR/duzen.json (test_overview.py checks the routes answer 404).
+    run ! grep -qE 'LAYOUT_|/api/konsol/duzen|"duzen"' "$backend"
     # DD-232: only the Files icon/list choice is a per-browser convenience; the layout stays server-side.
     [ "$(grep -o 'localStorage\.[a-zA-Z]*' "$js" | sort -u | tr '\n' ' ')" = 'localStorage.getItem localStorage.setItem ' ]
     [ "$(grep -c 'konsol-files-view' "$js")" = 2 ]
@@ -3789,7 +3761,7 @@ PY
     local files="$V2_ROOT/systemd/master-files-panel.service" dav="$V2_ROOT/magaza/paylasim/master-paylasim.service"
     local unit key args out
     grep -qx 'PRIVATE_STATE_ROOT="/var/lib"' "$V2_ROOT/config/defaults.env"
-    # Files needs its trash, staging and share names; it loses only the packages' private state.
+    # Files needs its trash and share names; it loses only the packages' private state.
     grep -qx 'InaccessiblePaths=__PRIVATE_STATE_ROOT__' "$files"
     [ "$(grep -c '^InaccessiblePaths=' "$files")" -eq 1 ]
     run ! grep -qE '^InaccessiblePaths=.*(TRASH|ARCHIVE|SHARE_DIR)' "$files"
@@ -3804,14 +3776,14 @@ PY
         for key in $(grep -oE '__[A-Z][A-Z0-9_]*__' "$unit" | sort -u | sed 's/^__//; s/__$//'); do
             case "$key" in
                 SERVER_ROOT) args+=("$key=/srv") ;; FILES_PANEL_TRASH) args+=("$key=.cop") ;;
-                FILES_ARCHIVE_DIR) args+=("$key=.arsiv") ;; SHARE_DIR) args+=("$key=.pay") ;;
+                SHARE_DIR) args+=("$key=.pay") ;;
                 PRIVATE_STATE_ROOT) args+=("$key=/var/lib") ;; *) args+=("$key=x") ;;
             esac
         done
         render_template "$unit" "$TMP/rendered" 0644 "${args[@]}"
         out="$(grep '^InaccessiblePaths=' "$TMP/rendered")"
         if [ "$unit" = "$dav" ]; then
-            [ "$out" = 'InaccessiblePaths=/srv/.cop /srv/.arsiv -/srv/.pay /var/lib' ]
+            [ "$out" = 'InaccessiblePaths=/srv/.cop -/srv/.pay /var/lib' ]
         else
             [ "$out" = 'InaccessiblePaths=/var/lib' ]
         fi
@@ -4089,12 +4061,8 @@ EOF
 @test "console includes per-folder accounts as a Files capability" {
     local js="$V2_ROOT/console/konsol.js" dav="$V2_ROOT/console/dosyalar.js"
     grep -qF 'else { body.append(h("h2", { class: "fx-title" }, "Paylaşımlar")); renderShareList(body); }' "$js"
-    # DD-183: no archive jobs page; a running job shows as a bar in Files, results go to Günlük.
-    run ! grep -qF '"Arşiv işleri"' "$js"
-    run ! grep -qF 'location.hash = "#/dosyalar/arsiv"' "$V2_ROOT/console/arsiv.js"
-    grep -qF 'archiveTools.mount(archiveBar);' "$js"
-    grep -qF '"arsiv-sonuc": (e) => `Arşiv işlemi bitti: ${e.detail}`' "$js"
-    grep -qF 'print("dosya: %s - arsiv-sonuc %s -> %s"' "$V2_ROOT/files-panel/master-files-panel"
+    # DD-267: the files backend has no archive jobs any more (no route, no result line).
+    run ! grep -qE 'arsiv|/api/archives' "$V2_ROOT/files-panel/master-files-panel"
     grep -qF 'raw[1] === "paylasim" ? "shares" : "files";' "$js"
     grep -qF 'api("/api/konsol/paylasim")' "$js"
     grep -qF 'window.createSharesPage' "$js"
@@ -4882,8 +4850,6 @@ torrent_fixture() {
         "$V2_ROOT/magaza/torrent/qBittorrent.conf" >"$TMP/mods/torrent/qBittorrent.conf"
     printf 'http://torrent.ayc {\n\treverse_proxy 127.0.0.1:61006\n}\n' >"$TMP/mods/torrent/torrent.caddy"
     printf 'interface-name=torrent.ayc,tailscale0\n' >"$TMP/mods/torrent/dnsmasq.conf"
-    # DD-202: the Konsol page comes with the package and is placed while installed.
-    cp "$V2_ROOT/magaza/torrent/sayfa.js" "$V2_ROOT/magaza/torrent/sayfa.css" "$TMP/mods/torrent/"
     # DD-210: the hook writes the install form's seed into the profile through the package's worker.
     cp "$V2_ROOT/magaza/torrent/ayar.py" "$TMP/mods/torrent/"
     mkdir -p "$TMP/srv/media"
@@ -4891,6 +4857,7 @@ torrent_fixture() {
     # DD-203: the hook reads its port, profile and container name from the package's own env file.
     printf 'TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=%s/qbprof\nTORRENT_CONTAINER=qbittorrent\nTORRENT_PEER_PORT=61008\nTORRENT_NETWORK=torrent\n' "$TMP" \
         >"$TMP/mods/torrent/torrent.env"
+    # DD-267: an older state.env still names CONSOLE_WEB_DIR; the engine places nothing there any more.
     cat >>"$TMP/mstate.env" <<EOF
 CONSOLE_WEB_DIR=$TMP/web
 DOWNLOADS_GID=1000
@@ -5016,9 +4983,8 @@ torrent_seed() { # [SAVE_DIR]
     run ! grep -qE '^(enable|disable) ' "$TMP/systemctl-calls"
     cmp -s "$TMP/mods/torrent/torrent.caddy" "$TMP/caddy/moduller/torrent.caddy"
     cmp -s "$TMP/mods/torrent/dnsmasq.conf" "$TMP/dnsmasq.d/modul-torrent.conf"
-    # DD-202: the page files sit under CONSOLE_WEB_DIR/uygulama/torrent while installed (found missing live).
-    cmp -s "$TMP/web/uygulama/torrent/sayfa.js" "$V2_ROOT/magaza/torrent/sayfa.js"
-    cmp -s "$TMP/web/uygulama/torrent/sayfa.css" "$V2_ROOT/magaza/torrent/sayfa.css"
+    # DD-267: no page files of the old interface are placed.
+    [ ! -e "$TMP/web" ]
     run mm liste
     [ "$(grep '^torrent' <<<"$output" | cut -f2-4)" = "$(printf 'konteyner\tcalisiyor\trunning')" ]
     # The account is the form's (from the profile). A temporary password, which qBittorrent prints only
@@ -5043,12 +5009,11 @@ torrent_seed() { # [SAVE_DIR]
         '[Preferences]' 'Connection\UPnP=true' 'WebUI\Username=operator' \
         >"$TMP/qbprof/qBittorrent/qBittorrent.conf"
     cp "$TMP/qbprof/qBittorrent/qBittorrent.conf" "$TMP/operator.conf"
-    # A re-run after an upgrade brings the page back and never pulls an image that is present.
-    rm -rf "$TMP/web/uygulama"
+    # A re-run never pulls an image that is present.
     run mm uygula torrent
     [ "$status" -eq 0 ]
     cmp -s "$TMP/operator.conf" "$TMP/qbprof/qBittorrent/qBittorrent.conf"
-    cmp -s "$TMP/web/uygulama/torrent/sayfa.js" "$V2_ROOT/magaza/torrent/sayfa.js"
+    [ ! -e "$TMP/web" ]
     [ "$(grep -c '^pull ' "$TMP/podman-calls")" -eq 1 ]
     # A changed quadlet (e.g. a new image digest) recreates the container.
     printf '# changed\n' >>"$TMP/mods/torrent/qbittorrent.container"
@@ -5175,21 +5140,114 @@ PY
     [ -p "$TMP/qbprof/qBittorrent/qBittorrent.conf" ]
 }
 
-@test "installer protects the archive workspace and wires bounded nonroot ZIP jobs" {
+@test "a re-run removes the retired archive workspace only when it is Konsol's own private one (DD-267)" {
     eval "$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    mkdir -p "$TMP/root/.arsiv" "$TMP/root/media"
+    eval "$(awk '/^remove_retired_archive_dir\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    log() { printf '%s\n' "$*" >>"$TMP/log"; }
+    die() { echo "die: $*" >&2; return 1; }
+    # The server has GNU stat and rm; on a Mac the fixture reads the owner and mode itself and drops the
+    # GNU-only flag (the flag itself is checked below).
+    stat() { [ "$1" = -c ] && python3 -c 'import os, sys; s = os.lstat(sys.argv[1]); print("%d:%o" % (s.st_uid, s.st_mode & 0o7777))' "$4"; }
+    if ! command rm --version >/dev/null 2>&1; then
+        rm() { local a=() x; for x in "$@"; do [ "$x" = --one-file-system ] || a+=("$x"); done; command rm "${a[@]}"; }
+    fi
+    SERVER_ROOT="$TMP/root" RETIRED_ARCHIVE_DIR=.arsiv DOWNLOADS_UID="$(id -u)"
+    mkdir -p "$TMP/root/.arsiv/0123456789abcdef01234567" "$TMP/root/media"
     printf 'private\n' >"$TMP/root/.arsiv/jobs.json"
     chmod 0700 "$TMP/root/.arsiv"
     chmod 0600 "$TMP/root/.arsiv/jobs.json"
-    FILES_ARCHIVE_DIR=.arsiv
+    # Stage 3's walk leaves the old workspace as it is until stage 7 removes it.
     ensure_downloads_tree "$TMP/root" "$(id -u)" "$(id -g)" >/dev/null
     [ "$(file_mode "$TMP/root/.arsiv")" = 0o700 ]
     [ "$(file_mode "$TMP/root/.arsiv/jobs.json")" = 0o600 ]
-    grep -qF 'python3 "$V2_ROOT/panel/master_permissions.py" --directory-mode 0700' "$V2_ROOT/install.sh"
-    grep -qF -- '--archive-dir=__FILES_ARCHIVE_DIR__' "$V2_ROOT/systemd/master-files-panel.service"
+    remove_retired_archive_dir
+    [ ! -e "$TMP/root/.arsiv" ] && [ -d "$TMP/root/media" ]
+    grep -q "eski arşiv çalışma alanı silindi ($TMP/root/.arsiv)" "$TMP/log"
+    # Nothing there: nothing happens.
+    : >"$TMP/log"
+    remove_retired_archive_dir
+    [ ! -s "$TMP/log" ]
+    # A folder of that name made later in Files, Gezgin or WebDAV (0775) is the operator's: kept.
+    mkdir -m 0775 "$TMP/root/.arsiv"
+    printf 'mine\n' >"$TMP/root/.arsiv/note"
+    remove_retired_archive_dir
+    [ "$(cat "$TMP/root/.arsiv/note")" = mine ]
+    grep -q 'eski arşiv çalışma alanı değil' "$TMP/log"
+    command rm -r "$TMP/root/.arsiv"
+    # A symlink in its place is never followed or removed.
+    mkdir -m 0700 "$TMP/elsewhere"
+    printf 'keep\n' >"$TMP/elsewhere/file"
+    ln -s "$TMP/elsewhere" "$TMP/root/.arsiv"
+    remove_retired_archive_dir
+    [ -L "$TMP/root/.arsiv" ] && [ "$(cat "$TMP/elsewhere/file")" = keep ]
+    # Wiring: GNU rm stays on one file system; stage 7 removes it after the built-ins and packages run
+    # with their new units, which no longer hide it.
+    grep -qF 'rm -rf --one-file-system -- "$dir"' <<<"$(awk '/^remove_retired_archive_dir\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
+    [ "$(grep -n '^    reapply_modules$' <<<"$s7" | cut -d: -f1)" -lt "$(grep -n '^    remove_retired_archive_dir$' <<<"$s7" | cut -d: -f1)" ]
+    [ "$(grep -n 'master-modul" yerlesik "$MODULES_CHANGED"' <<<"$s7" | cut -d: -f1)" -lt "$(grep -n '^    remove_retired_archive_dir$' <<<"$s7" | cut -d: -f1)" ]
+    run ! grep -qE 'archive|ARCHIVE|arsiv' "$V2_ROOT/systemd/master-files-panel.service" "$V2_ROOT/magaza/paylasim/master-paylasim.service" \
+        "$V2_ROOT/magaza/gezgin/gezgin.container" "$V2_ROOT/magaza/gezgin/kanca"
+    run ! grep -qE 'FILES_ARCHIVE_DIR|--directory-mode' "$V2_ROOT/install.sh"
+    # The old helpers an earlier run put in SBIN_DIR go, and the files backend restarts without them.
+    grep -qF 'for f in master_archives.py master_rar.py; do' <<<"$(awk '/^ensure_files_panel\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    [ ! -e "$V2_ROOT/files-panel/master_archives.py" ] && [ ! -e "$V2_ROOT/files-panel/master_rar.py" ]
     grep -qx 'MemoryMax=512M' "$V2_ROOT/systemd/master-files-panel.service"
     grep -qx 'CPUQuota=100%' "$V2_ROOT/systemd/master-files-panel.service"
     grep -qF '"$SBIN_DIR/master-modul" yerlesik "$MODULES_CHANGED"' "$V2_ROOT/install.sh"
+}
+
+@test "a re-run removes the retired Konsol records and package pages, only as regular files and real folders (DD-267)" {
+    log() { printf '%s\n' "$*" >>"$TMP/log"; }
+    if ! command rm --version >/dev/null 2>&1; then
+        rm() { local a=() x; for x in "$@"; do [ "$x" = --one-file-system ] || a+=("$x"); done; command rm "${a[@]}"; }
+    fi
+    local panel pages block
+    panel="$(awk '/^ensure_panel\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    pages="$(awk '/^ensure_console_pages\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    # The layout (DD-206) and favourites (DD-250) records go after the backend that wrote them restarted.
+    [ "$(grep -n 'systemctl restart master-panel.service' <<<"$panel" | cut -d: -f1)" -lt "$(grep -n 'for f in duzen.json favoriler.json; do' <<<"$panel" | cut -d: -f1)" ]
+    block="$(sed -n '/# DD-267: Ana Menü düzeni/,/^    done$/p' <<<"$panel")"
+    eval "records() { local f; $block
+}"
+    KONSOL_AUTH_DIR="$TMP/auth"
+    mkdir -m 0700 "$KONSOL_AUTH_DIR"
+    printf '{}' >"$KONSOL_AUTH_DIR/duzen.json"
+    printf '{}' >"$KONSOL_AUTH_DIR/hesap.json"
+    printf '{}' >"$TMP/elsewhere.json"
+    ln -s "$TMP/elsewhere.json" "$KONSOL_AUTH_DIR/favoriler.json"
+    records
+    [ ! -e "$KONSOL_AUTH_DIR/duzen.json" ] && [ -f "$KONSOL_AUTH_DIR/hesap.json" ]
+    [ -L "$KONSOL_AUTH_DIR/favoriler.json" ] && [ -f "$TMP/elsewhere.json" ]
+    command rm "$KONSOL_AUTH_DIR/favoriler.json"
+    printf '{"favoriler": []}' >"$KONSOL_AUTH_DIR/favoriler.json"
+    records
+    [ ! -e "$KONSOL_AUTH_DIR/favoriler.json" ] && [ -f "$KONSOL_AUTH_DIR/hesap.json" ]
+    [ "$(grep -c 'kaldırılan özelliğin kaydı silindi' "$TMP/log")" -eq 2 ]
+    records
+    [ "$(grep -c 'kaldırılan özelliğin kaydı silindi' "$TMP/log")" -eq 2 ]
+    # The packages' old pages (DD-200) go as one folder, once; the new interface and the shell stay.
+    block="$(sed -n '/# DD-267: paketlerin eski arayüz sayfaları/,/^    fi$/p' <<<"$pages")"
+    grep -qF 'rm -rf --one-file-system -- "$CONSOLE_WEB_DIR/uygulama"' <<<"$block"
+    eval "web_pages() { $block
+}"
+    CONSOLE_WEB_DIR="$TMP/web"
+    mkdir -p "$CONSOLE_WEB_DIR/uygulama/torrent" "$CONSOLE_WEB_DIR/uygulama/wireguard" "$CONSOLE_WEB_DIR/yeni"
+    printf 'x' >"$CONSOLE_WEB_DIR/uygulama/torrent/sayfa.js"
+    printf 'x' >"$CONSOLE_WEB_DIR/yeni/index.html"
+    printf 'x' >"$CONSOLE_WEB_DIR/index.html"
+    web_pages
+    [ ! -e "$CONSOLE_WEB_DIR/uygulama" ] && [ -f "$CONSOLE_WEB_DIR/yeni/index.html" ] && [ -f "$CONSOLE_WEB_DIR/index.html" ]
+    grep -q 'paketlerin eski sayfa dosyaları kaldırıldı' "$TMP/log"
+    : >"$TMP/log"
+    web_pages
+    [ ! -s "$TMP/log" ]
+    mkdir -p "$TMP/other/keep"
+    ln -s "$TMP/other" "$CONSOLE_WEB_DIR/uygulama"
+    web_pages
+    [ -L "$CONSOLE_WEB_DIR/uygulama" ] && [ -d "$TMP/other/keep" ]
+    # The per-package placement and the registry-based pruning are gone with the pages.
+    run ! grep -qE 'module_state|uygulama/\*/' <<<"$pages"
 }
 
 @test "master-modul installs WireGuard, opens the kept networks after the firewall and closes them on removal" {
@@ -5201,14 +5259,12 @@ PY
     mkdir -p "$TMP/mods/wireguard"
     cp "$V2_ROOT/magaza/wireguard/master-wg" "$TMP/mods/wireguard/master-wg"
     printf '[Unit]\nfixture\n' >"$TMP/mods/wireguard/wg-quick-master-stack.conf"
-    # DD-200: the Konsol page files are placed under CONSOLE_WEB_DIR/uygulama/<id> on install only.
-    cp "$V2_ROOT/magaza/wireguard/sayfa.js" "$V2_ROOT/magaza/wireguard/sayfa.css" "$TMP/mods/wireguard/"
+    # DD-267: an older state.env still names CONSOLE_WEB_DIR; the package places no page files there.
     printf 'CONSOLE_WEB_DIR=%s\n' "$TMP/web" >>"$TMP/mstate.env"
     run mm kur wireguard
     [ "$status" -eq 0 ]
     [ -x "$TMP/sbin/master-wg" ] && cmp -s "$TMP/sbin/master-wg" "$V2_ROOT/magaza/wireguard/master-wg"
-    cmp -s "$TMP/web/uygulama/wireguard/sayfa.js" "$V2_ROOT/magaza/wireguard/sayfa.js"
-    [ "$(python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$TMP/web/uygulama/wireguard/sayfa.css")" = 0o644 ]
+    [ ! -e "$TMP/web" ]
     [ "$(cat "$TMP/units/wg-quick@.service.d/master-stack.conf")" = "$(printf '[Unit]\nfixture')" ]
     grep -qx 'daemon-reload' "$TMP/systemctl-calls"
     grep -qx "$(printf 'wireguard\tcalisiyor')" "$TMP/moduller"
@@ -5250,7 +5306,7 @@ PY
     [ ! -e "$TMP/modload/master-stack-wireguard.conf" ]
     [ -f "$TMP/etc/wireguard/wg0.conf" ]
     [ "$(grep -c wireguard "$TMP/moduller")" -eq 0 ]
-    # The tool, the drop-in and the Konsol page leave with the package; the keys stay.
+    # The tool and the drop-in leave with the package; the keys stay.
     [ ! -e "$TMP/sbin/master-wg" ] && [ ! -e "$TMP/units/wg-quick@.service.d" ] && [ ! -e "$TMP/web/uygulama" ]
     : >"$TMP/apt-calls"
     run mm kur wireguard
@@ -5627,17 +5683,42 @@ EOF
     chmod +x "$TMP/pbin/iptables" "$TMP/pbin/ip6tables" "$TMP/pbin/master-firewall"
 }
 
+# DD-267: the old Settings page's GET /api/konsol/ayarlar is gone; the view it returned still feeds
+# Gelişmiş, Erişim and the firewall page, so a test reads it from the backend in-process (same state
+# and fake tools as the running panel).
+settings_view() {
+    PYTHONDONTWRITEBYTECODE=1 python3 - "$V2_ROOT/panel/master-panel" "$TMP" <<'PY'
+import importlib.machinery, importlib.util, json, sys, types
+loader = importlib.machinery.SourceFileLoader("master_panel", sys.argv[1])
+module = importlib.util.module_from_spec(importlib.util.spec_from_loader("master_panel", loader))
+loader.exec_module(module)
+p = module.Panel(types.SimpleNamespace(state=sys.argv[2] + "/state.env", state_env=True,
+                                       master_modul=sys.argv[2] + "/pbin/master-modul", allow_host=[]))
+print(json.dumps(p.settings(fresh=True), ensure_ascii=False))
+PY
+}
+
 @test "wg panel shows the server's settings read-only: rules with counters, sites, names; qBittorrent paths come from its package API" {
     command -v python3 >/dev/null || skip "python3 yok"
     panel_start
     settings_fixture
+    # DD-267: the old shell's settings read is gone; Gelişmiş and the firewall page read the same view.
     [ "$(pc /api/konsol/ayarlar)" = 403 ]
-    [ "$(pc /api/konsol/ayarlar -H 'X-Konsol: 1')" = 200 ]
-    # Nothing secret leaves: qBittorrent's password hash and user are never read.
+    [ "$(pc /api/konsol/ayarlar -H 'X-Konsol: 1')" = 404 ]
+    [ "$(pc /api/konsol/gelismis -H 'X-Konsol: 1')" = 200 ]
     run ! grep -qE 'GIZLI|Password|Username' "$TMP/body"
-    python3 - "$TMP/body" "$TMP" <<'PY'
+    cp "$TMP/body" "$TMP/gelismis"
+    [ "$(pc /api/konsol/guvenlik-duvari -H 'X-Konsol: 1')" = 200 ]
+    run ! grep -qE 'GIZLI|Password|Username' "$TMP/body"
+    python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); assert d["denetim"] == {"ok": True, "metin": "firewall: kritik politikalar yerinde"} and d["aglar"][0]["arayuz"] == "wg0", d' "$TMP/body"
+    settings_view >"$TMP/view"
+    # Nothing secret leaves: qBittorrent's password hash and user are never read.
+    run ! grep -qE 'GIZLI|Password|Username' "$TMP/view"
+    python3 - "$TMP/view" "$TMP" "$TMP/gelismis" <<'PY'
 import json, sys
 d, tmp = json.load(open(sys.argv[1])), sys.argv[2]
+g = json.load(open(sys.argv[3]))
+assert (g["caddy"], g["dnsmasq"]) == (d["web"], d["dns"]), g
 fw = d["firewall"]
 assert fw["ok"] and fw["check"] == "firewall: kritik politikalar yerinde", fw
 v4 = fw["v4"]["entries"]
@@ -5713,8 +5794,9 @@ PY
     # Not installed: no application view at all, and the base view stays what it was.
     printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
     [ "$(pc /api/uygulama/torrent/durum -H 'X-Konsol: 1')" = 404 ]
-    [ "$(pc '/api/konsol/ayarlar?yenile=1' -H 'X-Konsol: 1')" = 200 ]
-    python3 -c 'import json, sys; assert "torrent" not in json.load(open(sys.argv[1]))' "$TMP/body"
+    [ "$(pc '/api/konsol/gelismis?yenile=1' -H 'X-Konsol: 1')" = 200 ]
+    settings_view >"$TMP/view"
+    python3 -c 'import json, sys; assert "torrent" not in json.load(open(sys.argv[1]))' "$TMP/view"
     # Read-only: the page's GET never starts module work.
     [ ! -e "$TMP/sdrun-calls" ]
 }
@@ -5731,11 +5813,8 @@ PY
     grep -q 'window.createSettingsPage' "$js"
     local settings="$V2_ROOT/console/ayarlar.js"
     for label in Sistem 'Güvenlik Duvarı' Caddy Dnsmasq Günlük 'İncele ve uygula' 'Geri al'; do grep -q "$label" "$settings"; done
-    # DD-202: no application tab or draft in the base settings page; the qBittorrent form is its package's.
+    # DD-202: no application tab or draft in the base settings page (DD-267: the package page is gone too).
     run ! grep -qE 'qdraft|torrent|qBittorrent|"qb"' "$settings"
-    grep -qF 'id: "torrent-settings"' "$V2_ROOT/magaza/torrent/sayfa.js"
-    grep -qF 'post(BASE + "/hesap", account)' "$V2_ROOT/magaza/torrent/sayfa.js"
-    grep -qF 'post(BASE + "/dizin", { save: path })' "$V2_ROOT/magaza/torrent/sayfa.js"
     grep -q '/api/konsol/ayarlar/uygula' "$settings"
     grep -q '/api/konsol/ayarlar/durum' "$settings"
     run ! grep -qE 'localStorage[.(]|innerHTML[ =]' "$settings"
@@ -5784,8 +5863,21 @@ printf '{"ok":true}\n'
 EOF
     chmod +x "$TMP/pbin/iptables-save" "$TMP/pbin/ip6tables-save" "$TMP/pbin/ss" "$TMP/pbin/systemd-run"
     local headers=(-H 'X-Konsol: 1' -H 'Content-Type: application/json')
-    [ "$(pc '/api/konsol/ayarlar?yenile=1' -H 'X-Konsol: 1')" = 200 ]
+    # DD-267: the view is read in-process (its route is gone); the firewall page's table route carries its rules.
+    [ "$(pc '/api/konsol/ayarlar?yenile=1' -H 'X-Konsol: 1')" = 404 ]
+    [ "$(pc '/api/konsol/guvenlik-duvari?yenile=1' -H 'X-Konsol: 1')" = 200 ]
     python3 - "$TMP/body" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert "GIZLI" not in json.dumps(d)
+assert any(r["kural"] == "Politika: DROP" for r in d["teknik"])
+assert any(r["sahip"] == "Tailscale" and r["paket"] == 2 for r in d["teknik"])
+assert any(r["port"] == 8081 and r["kapsam"] == "any" for r in d["dinleyiciler"])
+assert any(r["port"] == 8081 and r["kapsam"] == "lo" for r in d["katalog"])
+assert not any(r["port"] == 8081 and r["kapsam"] in ("wan", "tail") for r in d["katalog"])
+PY
+    settings_view >"$TMP/view"
+    python3 - "$TMP/view" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert "username" not in d["manage"] and d["manage"]["pending"] is None, d["manage"]
@@ -5800,6 +5892,7 @@ assert any(r["port"] == 8081 and r["scope"] == "lo" for r in d["firewall"]["port
 assert not any(r["port"] == 8081 and r["scope"] in ("wan", "tail") for r in d["firewall"]["ports"])
 PY
     [ "$(pc /api/konsol/ayarlar/durum)" = 403 ]
+    [ "$(pc /api/konsol/ayarlar/durum -H 'X-Konsol: 1')" = 404 ]
     [ "$(pc /api/konsol/ayarlar/klasorler -H 'X-Konsol: 1')" = 200 ]
     grep -q "$TMP/srv/media" "$TMP/body"
     [ "$(pc '/api/konsol/ayarlar/klasorler?path=/etc' -H 'X-Konsol: 1')" = 400 ]

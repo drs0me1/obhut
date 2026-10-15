@@ -5,8 +5,8 @@
 # (Caddy ve yayın oraya gider). Tailscale'de, WAN'da ya da başka adreste port yoktur.
 # DD-227: süreç Dosyalar hesabı olarak çalışır (__DOWNLOADS_UID__:__DOWNLOADS_GID__), bütün yetkileri düşürülmüştür;
 # dosyalar Konsol ve Paylaşım'la aynı sahipte doğar. Kullanıcı alanı tek parça bağlanır: Gezgin'in çöpü
-# ve süren yüklemeleri kökteki kendi klasörlerinde, aynı dosya sisteminde taşınır. Konsol'un çöpü ve arşiv
-# işleri konteynerde boş, salt okunur bir klasörle örtülür; Gezgin onları göremez ve yazamaz.
+# ve süren yüklemeleri kökteki kendi klasörlerinde, aynı dosya sisteminde taşınır. Konsol'un çöpü
+# konteynerde boş, salt okunur bir klasörle örtülür; Gezgin onu göremez ve yazamaz.
 # İlk açılışın yönetici hesabı (kurulum penceresinden, parolanın yalnız bcrypt özeti) ilk.env'dedir;
 # veritabanı oluşunca kanca dosyayı boşaltır. Podman dosyayı kendisi okur: değerler genişletilmez.
 # DD-223: konteyner güvenlik duvarından sonra açılır ama onunla birlikte yeniden başlamaz (Requires= yok).
@@ -34,7 +34,6 @@ Volume=__GEZGIN_DATA_DIR__/database:/database
 Volume=__GEZGIN_DATA_DIR__/config:/config
 Volume=__SERVER_ROOT__:/srv
 Volume=__GEZGIN_DATA_DIR__/bos:/srv/__FILES_PANEL_TRASH__:ro
-Volume=__GEZGIN_DATA_DIR__/bos:/srv/__FILES_ARCHIVE_DIR__:ro
 
 [Service]
 ExecStartPre=/usr/bin/python3 __SBIN_DIR__/master_container_network.py --state __STATE_FILE__ --check

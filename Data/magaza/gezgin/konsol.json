@@ -15,7 +15,7 @@
     ],
     [
       "folder",
-      "Kullanıcı alanı __SERVER_ROOT__ görünür; Konsol'un çöpü ve arşiv işleri görünmez. Uygulama verisi __GEZGIN_DATA_DIR__"
+      "Kullanıcı alanı __SERVER_ROOT__ görünür; Konsol'un çöpü görünmez. Uygulama verisi __GEZGIN_DATA_DIR__"
     ],
     [
       "lock",

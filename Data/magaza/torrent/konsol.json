@@ -37,7 +37,6 @@
       {"ad": "save", "tur": "klasor", "etiket": "İndirme klasörü", "varsayilan": "__DOWNLOADS_PATH__", "ipucu": "İndirmeler ya da kütüphane altında; indirme klasörü dışındaki bir klasör konteynere aynı yolla bağlanır."}
     ]
   },
-  "sayfa": {"rota": "torrent", "baslik": "qBittorrent", "ustbilgi": "Hesap, indirme dizini ve servis", "detay": "qBittorrent ayarları ve ilk giriş bilgileri"},
   "gunluk": {
     "hesap": "qBittorrent hesabı kaydedildi ({detail})",
     "dizin": "qBittorrent indirme dizini: {detail}"

@@ -117,7 +117,7 @@ def main():
             else:
                 args = ["python3", str(DATA / "panel/master-panel"), "serve", "--listen", "unix:" + e["PANEL_SOCKET"],
                         "--state", str(state), "--master-modul", "/bin/false"]
-                ready = lambda: http("panel." + domain, "/api/konsol/ayarlar/durum", e["PANEL_SOCKET"]) == "200"
+                ready = lambda: http("panel." + domain, "/api/konsol/kaynaklar", e["PANEL_SOCKET"]) == "200"
             processes[name] = subprocess.Popen(args, env=child_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_for(ready)
         def adapter(argv, **kwargs):
@@ -155,7 +155,7 @@ def main():
             # site or health payload. Do not mistake status alone for a route.
             assert cmd("curl", "--noproxy", "*", "-s", "--max-time", "2", "-H", "Host: health." + domain,
                        "http://" + e["TAILSCALE_IPV4"] + "/") == ""
-            for path, port in (("/api/konsol/ayarlar/durum", e["PANEL_SOCKET"]), ("/api/state", e["FILES_PANEL_PORT"])):
+            for path, port in (("/api/konsol/kaynaklar", e["PANEL_SOCKET"]), ("/api/state", e["FILES_PANEL_PORT"])):
                 root_api = port == e["PANEL_SOCKET"]
                 # DD-180/194: Caddy's session check refuses what it relays from this host (100.64.0.2
                 # is local here); the reply still proves the new name reaches the root backend.

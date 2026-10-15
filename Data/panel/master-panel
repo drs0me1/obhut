@@ -64,15 +64,13 @@ import master_shares
 import master_publications
 import master_update
 
-# DD-148: modül kimliği ve Konsol'dan istenebilen eylemler (master-modul ile aynı küme).
+# DD-148: modül kimliği.
 MODULE_ID_RE = re.compile(r"^[a-z]{2,16}$")
 # DD-261: an application of the Uygulamalar view: a package, a container or a built-in.
 CONTAINER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 APP_ID_RE = re.compile(r"^(paket:[a-z]{2,16}|konteyner:[A-Za-z0-9][A-Za-z0-9_.-]{0,62}|yerlesik:[a-z]{2,16})$")
-MODULE_ACTIONS = ("kur", "baslat", "durdur", "yeniden-baslat", "kaldir")
 # DD-200: paketin bildirdiği Konsol dosyaları (düz dosya adları; klasör yolu kabul edilmez).
 API_FILE_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}\.py$")
-PAGE_FILE_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,40}\.(js|css)$")
 KONSOL_JSON_LIMIT = 65536
 SAMPLE_SECONDS = float(os.environ.get("PANEL_SAMPLE_SECONDS", "10"))
 MAX_BODY = 65536
@@ -165,56 +163,9 @@ TRAFFIC_CACHE_SECONDS = 2
 # DD-261: at most one background image-update check (DD-214) a minute from the read model.
 UPDATE_KICK_SECONDS = 60
 IFACE_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,15}$")
-# DD-206: Genel bakış düzeni (kare sırası, widget genişliği ve görünürlüğü) KONSOL_AUTH_DIR/duzen.json.
-# Yalnız biçim denetlenir: anahtarlar Konsol'un ve paketlerin kare ve widget adlarıdır, tanımadığını
-# kabuk yok sayar. Dosya yoksa varsayılan düzen geçerlidir.
 # DD-246: Ayarlar → Sistem → "Yeniden başlat": a transient timer runs `systemctl reboot` a few seconds later.
 REBOOT_UNIT = "master-yeniden-baslat"
 REBOOT_DELAY_SECONDS = 5
-LAYOUT_FILE = "duzen.json"
-LAYOUT_KEY_RE = re.compile(r"^[a-z]{2,16}$")
-LAYOUT_MAX_TILES = 32
-LAYOUT_MAX_WIDGETS = 8
-LAYOUT_SPANS = (1, 2, 3, 4)
-# DD-250: Dosyalar'da elle eklenen favori klasörler KONSOL_AUTH_DIR/favoriler.json. Kayıt bir ağaçtaki
-# göreli yol ve ağaçtır ("sistem": "Sistem (/)" görünümü; o görünüm gibi yalnız Tailscale'den görünür
-# ve değişir). Klasörün var olduğu denetlenmez: silinmiş bir favori açılınca "bulunamadı" der.
-FAVORITES_FILE = "favoriler.json"
-FAVORITES_MAX = 20
-FAVORITE_PATH_MAX = 1024
-
-
-def clean_favorite(value):
-    """DD-250: {"yol": "a/b", "sistem": bool}; yol is relative to its tree, never empty or escaping it."""
-    if not isinstance(value, dict) or set(value) != {"yol", "sistem"} or not isinstance(value["sistem"], bool):
-        raise ValueError("Favori geçersiz.")
-    path = value["yol"]
-    if (not isinstance(path, str) or not path or len(path.encode("utf-8", "surrogatepass")) > FAVORITE_PATH_MAX
-            or any(not p or p in (".", "..") or len(p.encode("utf-8", "surrogatepass")) > 255
-                   or any(ord(c) < 32 or ord(c) == 127 for c in p) for p in path.split("/"))):
-        raise ValueError("Favori klasörün yolu geçersiz.")
-    return {"yol": path, "sistem": value["sistem"]}
-
-
-def clean_layout(value):
-    """DD-206: the overview layout as stored; ValueError (Turkish, for the operator) when malformed."""
-    if not isinstance(value, dict) or not set(value) <= {"schema", "kareler", "widgetlar"} or value.get("schema", 1) != 1:
-        raise ValueError("Düzen kaydı geçersiz.")
-    tiles, widgets = value.get("kareler", []), value.get("widgetlar", [])
-    if (not isinstance(tiles, list) or len(tiles) > LAYOUT_MAX_TILES or len(set(map(str, tiles))) != len(tiles)
-            or not all(isinstance(k, str) and LAYOUT_KEY_RE.fullmatch(k) for k in tiles)):
-        raise ValueError("Kare sırası geçersiz.")
-    if not isinstance(widgets, list) or len(widgets) > LAYOUT_MAX_WIDGETS:
-        raise ValueError("Widget listesi geçersiz.")
-    seen, clean = set(), []
-    for item in widgets:
-        if (not isinstance(item, dict) or set(item) != {"id", "genislik", "gizli"} or not isinstance(item["id"], str)
-                or not LAYOUT_KEY_RE.fullmatch(item["id"]) or item["id"] in seen
-                or type(item["genislik"]) is not int or item["genislik"] not in LAYOUT_SPANS or type(item["gizli"]) is not bool):
-            raise ValueError("Widget ayarı geçersiz.")
-        seen.add(item["id"])
-        clean.append({"id": item["id"], "genislik": item["genislik"], "gizli": item["gizli"]})
-    return {"schema": 1, "kareler": list(tiles), "widgetlar": clean}
 
 
 def own_address(ip):
@@ -719,8 +670,8 @@ class Panel:
                 if callable(getattr(api, "networks", None))]
 
     def konsol_meta(self, env, mid, manifest):
-        """DD-200: paketin App Store metinleri ve sayfa bildirimi (PAKET_KONSOL, JSON nesnesi);
-        kurulu olsun olmasın okunur, düz dosya ve sınırlı boy, mtime ile önbellekli."""
+        """DD-200: paketin App Store metinleri (PAKET_KONSOL, JSON nesnesi); kurulu olsun olmasın
+        okunur, düz dosya ve sınırlı boy, mtime ile önbellekli."""
         name = manifest.get("PAKET_KONSOL", "")
         if not name or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,40}\.json", name) or not env.get("MODULES_DIR"):
             return None
@@ -944,14 +895,11 @@ class Panel:
                     "durdurulabilir": manifest.get("PAKET_DURDURULABILIR") == "1",
                     # DD-266: the package has a first-login account (PAKET_HESAP, DD-149) the page may show.
                     "hesap": manifest.get("PAKET_HESAP") == "1"}
-            # DD-200: App Store metinleri ve sayfa bildirimi paketten; sayfa dosyaları yalnız kuruluyken.
+            # DD-200: App Store metinleri paketten.
             meta = self.konsol_meta(env, mid, manifest)
             if meta is not None:
                 item["konsol"] = meta
             if item["installed"]:
-                pages = [f for f in manifest.get("PAKET_SAYFA", "").split() if PAGE_FILE_RE.match(f)]
-                if pages:
-                    item["sayfa"] = pages
                 urls = self.package_urls(mid)
                 if urls:
                     item["urls"] = urls
@@ -1155,68 +1103,6 @@ class Panel:
                 items.append(item)
             self.traffic_cache = (now, items)
             return items
-
-    # -- Genel bakış düzeni (DD-206)
-    def layout(self):
-        """The saved overview layout, or None for the defaults (also when the record is damaged)."""
-        try:
-            value = self.auth().read(LAYOUT_FILE)
-            return clean_layout(value) if value is not None else None
-        except (master_auth.AuthError, ValueError, OSError):
-            return None
-
-    def save_layout(self, data):
-        """POST /api/konsol/duzen: {"duzen": {...}} saves, {"sifirla": true} returns to the defaults."""
-        store = self.auth()
-        if data == {"sifirla": True}:
-            with store.locked():
-                store.remove(LAYOUT_FILE)
-            return "sifirla", None
-        if set(data) != {"duzen"}:
-            raise ValueError("Düzen isteği geçersiz.")
-        value = clean_layout(data["duzen"])
-        with store.locked():
-            store.write(LAYOUT_FILE, value)
-        return "kaydet", value
-
-    def favorites(self, channel):
-        """DD-250: the saved favourite folders the channel may see (none when the record is damaged)."""
-        try:
-            value = self.auth().read(FAVORITES_FILE)
-        except (master_auth.AuthError, OSError):
-            return []
-        raw, items = (value or {}).get("favoriler"), []
-        for entry in raw if isinstance(raw, list) else []:
-            try:
-                entry = clean_favorite(entry)
-            except ValueError:
-                continue
-            if entry not in items and (channel != "internet" or not entry["sistem"]):
-                items.append(entry)
-        return items[:FAVORITES_MAX]
-
-    def save_favorite(self, data, channel):
-        """POST /api/konsol/favoriler: {"ekle": {...}} appends, {"cikar": {...}} removes. Returns the log
-        detail and the list the channel may see. A "Sistem (/)" entry changes only from Tailscale."""
-        if not isinstance(data, dict) or len(data) != 1 or next(iter(data)) not in ("ekle", "cikar"):
-            raise ValueError("Favori isteği geçersiz.")
-        op, entry = next(iter(data.items()))
-        entry = clean_favorite(entry)
-        if entry["sistem"] and channel == "internet":
-            raise PermissionError("Sistem görünümünün favorileri yalnız Tailscale adresinden değişir.")
-        store = self.auth()
-        with store.locked():
-            items = [f for f in self.favorites("tailscale") if f != entry]
-            if op == "ekle":
-                if len(items) >= FAVORITES_MAX:
-                    raise ValueError("En çok %d favori eklenebilir." % FAVORITES_MAX)
-                items.append(entry)
-            if items:
-                store.write(FAVORITES_FILE, {"favoriler": items})
-            else:
-                store.remove(FAVORITES_FILE)
-        detail = "%s %s%s" % ("+" if op == "ekle" else "-", "/" if entry["sistem"] else "", entry["yol"])
-        return detail, [f for f in items if channel != "internet" or not f["sistem"]]
 
     def meminfo(self):
         info = {}
@@ -2638,37 +2524,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.request_user = user  # for a read that writes an audit line (a package's password shown)
             getattr(self, "api_" + route.name)(query)
             return
-        if path == "/api/konsol/duzen":
-            self.json(200, {"duzen": self.panel.layout()})
-            return
-        if path == "/api/konsol/favoriler":
-            self.json(200, {"favoriler": self.panel.favorites(self.channel())})
-            return
-        if path == "/api/konsol/ayarlar":
-            self.json(200, self.panel.settings(fresh="yenile" in query))
-            return
-        if path == "/api/konsol/ayarlar/durum":
-            try:
-                self.json(200, master_settings.Manager(self.panel.args.state).status())
-            except (master_settings.SettingsError, OSError, KeyError, ValueError) as err:
-                self.error(400, str(err) if isinstance(err, master_settings.SettingsError) else "Ayarlar okunamadı.")
-            return
-        m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/gunluk$", path)
-        if m:
-            # DD-196: kurulu olmayan paketin günlüğü yoktur; istek paketin dosyalarına uzanmaz.
-            if not self.panel.module_state(m.group(1)):
-                self.error(404, "bu modül kurulu değil")
-                return
-            rc, out, message = self.panel.modul("gunluk", m.group(1), "80")
-            if rc != 0:
-                self.error(404 if "bilinmeyen modül" in message else 502, message or "günlük okunamadı")
-                return
-            self.send(200, out.encode("utf-8"), "text/plain; charset=utf-8")
-            return
-        m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/hesap$", path)
-        if m:
-            self.package_account(user, m.group(1), query.get("parola") == ["1"])
-            return
         m = re.match(r"^/api/uygulama/([a-z]{2,16})(/.*)?$", path)
         if m:
             self.package_request(user, m.group(1), m.group(2) or "/", query, None)
@@ -3117,61 +2972,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/konsol/oturum/giris":
             self.account_post(path, data)
-            return
-        if path == "/api/konsol/duzen":
-            try:
-                detail, value = self.panel.save_layout(data)
-            except ValueError as err:
-                self.error(400, str(err))
-                return
-            except master_auth.AuthError as err:
-                self.error(err.status, str(err))
-                return
-            except OSError:
-                self.error(503, "Düzen kaydedilemedi; kurulumu yeniden çalıştırın.")
-                return
-            self.audit(user, "duzen", detail, True)
-            self.json(200, {"duzen": value})
-            return
-        if path == "/api/konsol/favoriler":
-            try:
-                detail, items = self.panel.save_favorite(data, self.channel())
-            except PermissionError as err:
-                self.error(403, str(err))
-                return
-            except ValueError as err:
-                self.error(400, str(err))
-                return
-            except master_auth.AuthError as err:
-                self.error(err.status, str(err))
-                return
-            except OSError:
-                self.error(503, "Favoriler kaydedilemedi; kurulumu yeniden çalıştırın.")
-                return
-            self.audit(user, "favori", detail, True)
-            self.json(200, {"favoriler": items})
-            return
-        # DD-182: "birak" ends a stuck rollback (typed "onayla"); the worker checks both.
-        m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/(%s)$" % "|".join(MODULE_ACTIONS), path)
-        if m:
-            mid, action = m.group(1), m.group(2)
-            try:
-                known = [i["id"] for i in self.panel.modules()] if MODULE_ID_RE.match(mid) else []
-            except RuntimeError as err:
-                self.error(502, str(err))
-                return
-            if mid not in known:
-                self.error(404, "bilinmeyen modül")
-                return
-            if action == "kur":
-                code, message = self.panel.module_install(mid, data.get("form"))
-            else:
-                code, message = self.panel.module_spawn(mid, action, bool(data.get("veri")))
-            self.audit(user, "modul-" + action, mid + (" +veri" if action == "kaldir" and data.get("veri") else ""), code == 202)
-            if code != 202:
-                self.error(code, message)
-                return
-            self.json(202, {"id": mid, "action": action})
             return
         m = re.match(r"^/api/uygulama/([a-z]{2,16})(/.*)?$", path)
         if m:
