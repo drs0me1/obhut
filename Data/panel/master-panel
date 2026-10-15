@@ -58,6 +58,7 @@ import master_container_manager
 import master_erisim
 import master_olaylar
 import master_uygulamalar
+import master_yayin
 import master_settings
 import master_shares
 import master_publications
@@ -1973,6 +1974,103 @@ class Panel:
         return master_erisim.build(env, self.settings(), shares, containers, tailscale, self.package_networks(env),
                                    packages, names, time.time(), errors)
 
+    # -- DD-265: Erişim's sections and the Yayınla flow
+    def guvenlik_duvari(self, fresh=False):
+        """GET /api/konsol/guvenlik-duvari: the firewall as the Erişim page edits it, from the same view the
+        Settings page reads (rules with counters, the port catalogue, listeners, the check)."""
+        data = self.settings(fresh=fresh)
+        fw = data.get("firewall") or {}
+        manage = data.get("manage") or {}
+        errors = [str(manage["error"])] if manage.get("error") else []
+        technical = fw.get("rules") or {}
+        errors += [str(e) for e in technical.get("errors") or []]
+        listeners = fw.get("listeners")
+        return {
+            "revizyon": str(manage.get("revision") or ""),
+            "denetim": {"ok": bool(fw.get("ok")), "metin": str(fw.get("check") or "")},
+            "kurallar": list((manage.get("config") or {}).get("firewall") or []),
+            "katalog": [{"ad": str(r.get("name", "")), "aile": int(r["family"]), "proto": str(r.get("proto", "")), "port": int(r["port"]),
+                         "kapsam": r["scope"], "sabit": bool(r.get("fixed"))}
+                        for r in fw.get("ports") or [] if r.get("scope") in ("wan", "tail", "lo")],
+            "dinleyiciler": None if listeners is None else [
+                {"proto": str(r["proto"]), "aile": int(r["family"]), "port": int(r["port"]), "adres": str(r["address"]),
+                 "kapsam": str(r["scope"])} for r in listeners],
+            "teknik": [{"aile": int(r["family"]), "tablo": str(r["table"]), "zincir": str(r["chain"]), "sira": str(r["position"]),
+                        "paket": int(r["packets"]), "bayt": int(r["bytes"]), "kural": str(r["spec"]), "sahip": str(r["owner"])}
+                       for r in technical.get("rows") or []],
+            "aglar": [{"uygulama": str(n.get("app") or ""), "arayuz": str(n.get("iface") or ""), "ad": str(n.get("label") or ""),
+                       "etkin": bool(n.get("active"))} for n in fw.get("networks") or []],
+            "vpn": str(fw.get("vpn_name") or ""),
+            "hatalar": errors,
+        }
+
+    def adlar(self):
+        """GET /api/konsol/adlar: the local names (base, packages, manual addresses) with their on/off state,
+        the operator's own records and the forwarding of other names, as Settings → DNS edits them."""
+        env = read_env(self.args.state)
+        domain = env.get("LOCAL_DOMAIN", "")
+        try:
+            m = master_settings.Manager(self.args.state)
+            dns = m.current()["dns"]
+            names, revision, errors = m.dns_names(), m.revision(), []
+        except (master_settings.SettingsError, OSError, ValueError, KeyError) as err:
+            dns, names, revision = master_settings.DEFAULT["dns"], [], ""
+            errors = [str(err) if isinstance(err, master_settings.SettingsError) else "DNS ayarları okunamadı."]
+        off = set(dns.get("disabled") or [])
+        return {"revizyon": revision, "alan": domain,
+                "adlar": [{"ad": n["name"], "aile": n.get("family"), "hedef": str(n.get("target") or ""),
+                           "kaynak": str(n.get("source") or ""), "kapali": n["name"] in off,
+                           "kilitli": n["name"] == "panel." + domain} for n in names],
+                "kayitlar": list(dns.get("records") or []), "yonlendirme": bool(dns.get("forward")),
+                "sunucular": list(dns.get("servers") or []), "hatalar": errors}
+
+    def yayinlar(self):
+        """GET /api/konsol/yayinlar: every publication row and every Konsol container that could have one."""
+        env = read_env(self.args.state)
+        errors, rows, packages, containers = [], [], {}, None
+        try:
+            rows = master_publications.status(env)
+            packages = master_publications.packages(env)
+        except (master_settings.SettingsError, OSError, ValueError, KeyError) as err:
+            errors.append(str(err) if isinstance(err, master_settings.SettingsError) else "Yayın kaydı okunamadı.")
+        if env.get("KONTEYNER_STATE_DIR"):
+            try:
+                containers = self.containers.view().reach()
+            except master_containers.ContainerError as err:
+                errors.append(str(err))
+        try:
+            wan = master_publications.wan_ready(env)
+        except (OSError, ValueError, KeyError):
+            wan = False
+        try:
+            revision = master_settings.Manager(self.args.state).revision()
+        except (master_settings.SettingsError, OSError, ValueError, KeyError):
+            revision = ""
+        return {"revizyon": revision, "alan": env.get("LOCAL_DOMAIN", ""), "wan_ipv4": env.get("WAN_IPV4", ""),
+                "adaylar": master_yayin.candidates(env, rows, packages, containers, wan), "hatalar": errors}
+
+    def yayin_plani(self, data, client, kanal):
+        """POST /api/konsol/yayinlar/plan: the steps of one publication (DD-265); changes nothing."""
+        env = read_env(self.args.state)
+        listing = self.yayinlar()
+        manager = master_settings.Manager(self.args.state)
+        used = set(master_publications.reserved_ports(env))
+        for c in listing["adaylar"]:
+            port = master_yayin.upstream_port(c.get("hedef"))
+            if port:
+                used.add(port)
+            for p in ((c.get("konteyner") or {}).get("yerel_portlar") or []) + ((c.get("konteyner") or {}).get("diger_portlar") or []):
+                used.add(p["host_port"])
+
+        def detail(name):
+            try:
+                return self.containers.view().ayrinti(name)
+            except master_containers.ContainerError as err:
+                raise master_settings.SettingsError(str(err)) from err
+        return master_yayin.plan(env, data, listing["adaylar"],
+                                 lambda request: manager.plan(request, client=client, kanal=kanal), detail,
+                                 lambda: master_yayin.free_port(env, used))
+
     def uygulamalar(self, erisim=None):
         """GET /api/konsol/uygulamalar (DD-261): packages, Konsol's containers and the built-ins in one list,
         with how each is reached (the Erişim view). A source that fails adds an error line."""
@@ -2621,6 +2719,66 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def api_erisim(self, query):
         self.json(200, self.panel.erisim())
 
+    # DD-265: the settings transaction from the table; the same workers as before.
+    def api_ayarlar_plan(self, user, data):
+        try:
+            plan = master_settings.Manager(self.panel.args.state).plan(data, client=self.client(), kanal=self.channel())
+        except master_settings.SettingsError as err:
+            self.error(400, str(err))
+            return
+        except (OSError, ValueError, KeyError):
+            self.error(503, "Ayarlar okunamadı; sayfayı yenileyin.")
+            return
+        self.json(200, plan)
+
+    def settings_action(self, user, action, data):
+        if action == "confirm":
+            data["client"] = self.client()
+            # DD-195: Caddy pins Host to panel.<alan>; the name the browser used is
+            # X-Forwarded-Host, and the channel says which Caddy site carried it.
+            data["host"] = (self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").lower()
+            data["kanal"] = self.channel()
+        code, result = self.panel.settings_run(action, data)
+        self.audit(user, "ayar-" + action, "ayarlar", code == 200)
+        self.close_connection = True
+        self.json(code, result)
+
+    def api_ayarlar_uygula(self, user, data):
+        self.settings_action(user, "apply", data)
+
+    def api_ayarlar_onayla(self, user, data):
+        self.settings_action(user, "confirm", data)
+
+    def api_ayarlar_geri_al(self, user, data):
+        self.settings_action(user, "rollback", data)
+
+    def api_ayarlar_birak(self, user, data):
+        self.settings_action(user, "discard", data)
+
+    def api_guvenlik_duvari(self, query):
+        self.json(200, self.panel.guvenlik_duvari(fresh="yenile" in query))
+
+    def api_adlar(self, query):
+        self.json(200, self.panel.adlar())
+
+    def api_yayinlar(self, query):
+        self.json(200, self.panel.yayinlar())
+
+    def api_yayin_plani(self, user, data):
+        try:
+            self.json(200, self.panel.yayin_plani(data, self.client(), self.channel()))
+        except master_settings.SettingsError as err:
+            self.error(400, str(err))
+
+    def api_konteyner_islemi(self, user, data):
+        try:
+            result = self.panel.containers.submit(data)
+        except master_containers.ContainerError as err:
+            self.error(err.status, str(err))
+            return
+        self.audit(user, "konteyner-" + result["action"], result["name"], True)
+        self.json(202, result)
+
     def api_uygulamalar(self, query):
         self.json(200, self.panel.uygulamalar())
 
@@ -2892,15 +3050,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.audit(user, "guncelleme", version, True)
             self.json(202, {"surum": version})
             return
-        if path == "/api/konsol/konteynerler/islem":
-            try:
-                result = self.panel.containers.submit(data)
-            except master_containers.ContainerError as err:
-                self.error(err.status, str(err))
-                return
-            self.audit(user, "konteyner-" + result["action"], result["name"], True)
-            self.json(202, result)
-            return
         share_actions = {"kaydet": "save", "durum": "pause", "kaldir": "remove"}
         if path in {"/api/konsol/paylasim/" + name for name in share_actions}:
             code, result = self.panel.settings_run(share_actions[path.rsplit("/", 1)[-1]], data, shares=True)
@@ -2909,20 +3058,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.json(code, result)
             return
         # DD-182: "birak" ends a stuck rollback (typed "onayla"); the worker checks both.
-        actions = {"uygula": "apply", "onayla": "confirm", "geri-al": "rollback", "birak": "discard"}
-        if path in {"/api/konsol/ayarlar/" + name for name in actions}:
-            action = actions[path.rsplit("/", 1)[-1]]
-            if action == "confirm":
-                data["client"] = self.client()
-                # DD-195: Caddy pins Host to panel.<alan>; the name the browser used is
-                # X-Forwarded-Host, and the channel says which Caddy site carried it.
-                data["host"] = (self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").lower()
-                data["kanal"] = self.channel()
-            code, result = self.panel.settings_run(action, data)
-            self.audit(user, "ayar-" + action, "ayarlar", code == 200)
-            self.close_connection = True
-            self.json(code, result)
-            return
         m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/(%s)$" % "|".join(MODULE_ACTIONS), path)
         if m:
             mid, action = m.group(1), m.group(2)

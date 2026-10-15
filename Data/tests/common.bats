@@ -886,7 +886,10 @@ assert not missing, missing
     # DD-182: five automatic attempts with backoff, then "stuck" until the operator retries or discards.
     grep -qx 'ROLLBACK_ATTEMPTS = 5' "$V2_ROOT/panel/master_settings.py"
     grep -qx 'ROLLBACK_BACKOFF = 15' "$V2_ROOT/panel/master_settings.py"
-    grep -qF '"geri-al": "rollback", "birak": "discard"' "$V2_ROOT/panel/master-panel"
+    # DD-265: the transaction's routes are in the route table, on the same workers.
+    grep -qF 'Route("POST", "/api/konsol/ayarlar/birak", "ayarlar_birak",' "$V2_ROOT/panel/master_api.py"
+    grep -qF 'self.settings_action(user, "rollback", data)' "$V2_ROOT/panel/master-panel"
+    grep -qF 'self.settings_action(user, "discard", data)' "$V2_ROOT/panel/master-panel"
     grep -qF '"/api/konsol/ayarlar/birak", { id: pending.id, confirm: "onayla" }' "$V2_ROOT/console/ayarlar.js"
     grep -qF 'finish("geri-al") }, "Yeniden dene")' "$V2_ROOT/console/ayarlar.js"
     grep -q '^\.as-rollback\.stuck ' "$V2_ROOT/console/ayarlar.css"
@@ -3606,8 +3609,9 @@ PY
     grep -qF 'atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"' "$V2_ROOT/install.sh"
     grep -qF 'konteynerler.css konteynerler.js giris.html giris.js giris.css duzenleyici.js obhut.svg obhut.png; do' "$V2_ROOT/install.sh"
     grep -qF 'm = re.match(r"^/api/konsol/konteynerler/(liste|ayrinti|gunluk|islem|guncellemeler)$", path)' "$V2_ROOT/panel/master-panel"
-    [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 2 ]
-    grep -qF 'if path == "/api/konsol/konteynerler/islem":' "$V2_ROOT/panel/master-panel"
+    [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 1 ]
+    # DD-265: the one write route is declared in the route table and goes to the same broker.
+    grep -qF 'Route("POST", "/api/konsol/konteynerler/islem", "konteyner_islemi",' "$V2_ROOT/panel/master_api.py"
     grep -qF 'self.panel.containers.submit(data)' "$V2_ROOT/panel/master-panel"
     grep -qF -- '--property=RuntimeMaxSec=900' "$V2_ROOT/panel/master_container_manager.py"
     # Podman read commands only, the environment never returned; logs unfiltered, a managed container's
@@ -4490,6 +4494,32 @@ wg_revision() {
     cmp -s "$WG0_CONF" "$TMP/original.conf"
     grep -qx 'unchanged profile' "$TMP/etc/wireguard/clients-wg0/test.conf"
     [ ! -s "$TMP/calls" ]
+}
+
+@test "network settings rename a network without touching peers keys or services (DD-265)" {
+    wg_settings_fixture
+    local revision bad
+    revision="$(wg_revision)"
+    run master_wg --if wg0 net-settings 1.1.1.1 "$revision" 'Ev \ağı'
+    [ "$status" -eq 0 ]
+    [ "$(cut -f9 "$TMP/etc/wireguard/networks")" = 'Ev \ağı' ]
+    [ "$(cut -f8 "$TMP/etc/wireguard/networks")" = '1.1.1.1' ]
+    cmp -s "$WG0_CONF" "$TMP/original.conf"
+    grep -qx 'unchanged profile' "$TMP/etc/wireguard/clients-wg0/test.conf"
+    [ ! -s "$TMP/calls" ]
+    # The old revision is stale now; a bad name is refused before any write.
+    run master_wg --if wg0 net-settings 1.1.1.1 "$revision" 'Başka'
+    [ "$status" -ne 0 ]
+    cp "$TMP/etc/wireguard/networks" "$TMP/renamed.networks"
+    for bad in ' baş' 'son ' $'iki\tsütun' "$(printf 'x%.0s' {1..65})"; do
+        run master_wg --if wg0 net-settings 1.1.1.1 "$(wg_revision)" "$bad"
+        [ "$status" -ne 0 ]
+    done
+    cmp -s "$TMP/renamed.networks" "$TMP/etc/wireguard/networks"
+    # Without a name the name stays.
+    run master_wg --if wg0 net-settings 9.9.9.9 "$(wg_revision)"
+    [ "$status" -eq 0 ]
+    [ "$(cut -f9 "$TMP/etc/wireguard/networks")" = 'Ev \ağı' ]
 }
 
 @test "network settings reject retired access arguments without writes" {
@@ -5889,7 +5919,7 @@ PY
             { echo "not installed: $module"; return 1; }
     done
     stage="$(awk '/^stage_4\(\) \{/,/^}$/' "$install")"
-    grep -qF 'for panel_module in master_api master_erisim master_olaylar master_uygulamalar; do' <<<"$stage"
+    grep -qF 'for panel_module in master_api master_erisim master_olaylar master_uygulamalar master_yayin; do' <<<"$stage"
     grep -qF '[[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1' <<<"$(grep -A3 'for panel_module in' <<<"$stage")"
     # The event stream is never compressed (the encoder would hold small events back); everything else is.
     grep -qx $'\t@sikistir not path /api/konsol/olaylar' "$caddy"

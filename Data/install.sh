@@ -97,6 +97,8 @@ KONTEYNER_BAGLAMA_DIR=$KONTEYNER_BAGLAMA_DIR
 KONTEYNER_NETWORK=$KONTEYNER_NETWORK
 KONTEYNER_BRIDGE_PREFIX=$KONTEYNER_BRIDGE_PREFIX
 KONTEYNER_NFT_TABLE=$KONTEYNER_NFT_TABLE
+YAYIN_PORT_ILK=$YAYIN_PORT_ILK
+YAYIN_PORT_SON=$YAYIN_PORT_SON
 PACKAGE_OVERRIDES_DIR=$PACKAGE_OVERRIDES_DIR
 DOWNLOADS_UID=$DOWNLOADS_UID
 DOWNLOADS_GID=$DOWNLOADS_GID
@@ -1025,7 +1027,7 @@ stage_4() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     # DD-259: yeni arayüzün rota tablosu, Erişim okuma modeli ve canlı olaylar (arka uç yükler).
     local panel_module
-    for panel_module in master_api master_erisim master_olaylar master_uygulamalar; do
+    for panel_module in master_api master_erisim master_olaylar master_uygulamalar master_yayin; do
         atomic_write "$SBIN_DIR/$panel_module.py" 0755 <"$V2_ROOT/panel/$panel_module.py"
         [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     done

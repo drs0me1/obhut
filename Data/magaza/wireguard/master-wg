@@ -26,7 +26,7 @@
 #   master-wg net-add PORT DNS ETİKET          yeni ağ (wg0-wg9); yalnız internet
 #   master-wg net-remove wgN --onay       ağı, anahtarını ve bütün peer'larını siler
 #   master-wg --if wgN net ac|kapat       ağı (ve arayüzdeki bütün peer'ları) açar/kapatır
-#   master-wg --if wgN net-settings DNS REVİZYON          anahtarları değiştirmeden varsayılan DNS
+#   master-wg --if wgN net-settings DNS REVİZYON [ETİKET] anahtarları değiştirmeden varsayılan DNS (ve ağın adı, DD-265)
 set -Eeuo pipefail
 umask 077
 
@@ -221,9 +221,7 @@ cmd_net_add() {
     [[ "$port" =~ ^[1-9][0-9]{3,4}$ && "$port" -ge 1024 && "$port" -le 65535 ]] ||
         die "UDP portu 1024-65535 arasında olmalı"
     dns="$(normalize_dns "$2")"
-    [[ "$label" != *[[:cntrl:]]* && "$label" != " "* && "$label" != *" " ]] ||
-        die "etiket denetim karakteri ya da baş/son boşluk içeremez"
-    [[ "$(printf '%s' "$label" | wc -c)" -le 64 ]] || die "etiket çok uzun (en çok 64 bayt)"
+    check_label "$label"
     [[ -n "$NETWORKS_FILE" ]] || die "wireguard.env'de WG_NETWORKS_FILE yok; önce güncel kurulumu çalıştırın"
 
     take_lock
@@ -282,8 +280,15 @@ cmd_net_remove() {
 }
 
 # DD-177: DNS only suggests defaults for future peers; keys/profiles stay untouched.
+# Ağın adı (etiket): ağ eklerken ve ad değişirken aynı kural; kayıtta sekmeyle ayrıldığı için denetim karakteri yok.
+check_label() {
+    [[ "$1" != *[[:cntrl:]]* && "$1" != " "* && "$1" != *" " ]] ||
+        die "etiket denetim karakteri ya da baş/son boşluk içeremez"
+    [[ "$(printf '%s' "$1" | wc -c)" -le 64 ]] || die "etiket çok uzun (en çok 64 bayt)"
+}
+
 cmd_net_settings() {
-    local dns expected="$2" line revision
+    local dns expected="$2" line revision label="${3-}" relabel="$#"
     [[ "$expected" =~ ^[a-f0-9]{64}$ ]] || die "geçerli ağ revizyonu gerekli; sayfayı yenileyin"
     [[ "${#1}" -le 512 && "$1" != *[[:cntrl:]]* ]] || die "geçersiz DNS listesi"
     dns="$(normalize_dns "$1")"
@@ -291,6 +296,7 @@ cmd_net_settings() {
 ips=sys.argv[1].split(", ")
 assert 1 <= len(ips) <= 8
 for ip in ips: ipaddress.ip_address(ip)' "$dns" 2>/dev/null || die "DNS için en fazla 8 geçerli IPv4/IPv6 adresi yazın"
+    [[ "$relabel" -lt 3 ]] || check_label "$label"
     take_lock
     [[ -z "${SETTINGS_PENDING_FILE:-}" || ! -e "$SETTINGS_PENDING_FILE" ]] ||
         die "Önce Ayarlar sayfasındaki bekleyen işlemi onaylayın veya geri alın"
@@ -300,9 +306,13 @@ for ip in ips: ipaddress.ip_address(ip)' "$dns" 2>/dev/null || die "DNS için en
     revision="$(printf '%s' "$line" | sha256sum | awk '{print $1}')"
     [[ "$revision" == "$expected" ]] || die "Ağ ayarları değişmiş; pencereyi kapatıp yeniden açın"
     [[ "$(cut -f3 <<<"$line")" == inet ]] || die "Ağ kaydı geçersiz; kurulumu güncelleyin"
-    awk -F'\t' -v OFS='\t' -v i="$WG_INTERFACE" -v d="$dns" \
-        '$1 == i {$8=d} {print}' "$NETWORKS_FILE" | registry_write
-    printf '%s\t%s\n' "$WG_INTERFACE" "$dns"
+    if [[ "$relabel" -lt 3 ]]; then
+        label="$(cut -f9 <<<"$line")"
+    fi
+    # The name goes through the environment: awk -v would read backslashes in it as escapes.
+    WG_ETIKET="$label" awk -F'\t' -v OFS='\t' -v i="$WG_INTERFACE" -v d="$dns" \
+        '$1 == i {$8=d; $9=ENVIRON["WG_ETIKET"]} {print}' "$NETWORKS_FILE" | registry_write
+    printf '%s\t%s\t%s\n' "$WG_INTERFACE" "$dns" "$label"
 }
 
 peer_exists() {
@@ -656,7 +666,8 @@ case "${1:-}" in
     keepalive) [[ "$#" -eq 3 ]] || die "kullanım: master-wg keepalive AD SANİYE"; cmd_keepalive "$2" "$3" ;;
     peer) [[ "$#" -eq 3 ]] || die "kullanım: master-wg peer AD ac|kapat"; cmd_peer "$2" "$3" ;;
     net) [[ "$#" -eq 2 ]] || die "kullanım: master-wg [--if wgN] net ac|kapat"; cmd_net "$2" ;;
-    net-settings) [[ "$#" -eq 3 ]] || die "kullanım: master-wg --if wgN net-settings DNS REVİZYON"; cmd_net_settings "$2" "$3" ;;
+    net-settings) [[ "$#" -eq 3 || "$#" -eq 4 ]] || die "kullanım: master-wg --if wgN net-settings DNS REVİZYON [ETİKET]"
+        cmd_net_settings "${@:2}" ;;
     reset) [[ "$#" -le 2 ]] || die "kullanım: master-wg reset --onay"; cmd_reset "${2:-}" ;;
     *) die "kullanım: master-wg [--if wgN] version|list|info|add|remove|profile|qr|png|dns|keepalive|peer|reset|nets|net|net-add|net-remove|net-settings" ;;
 esac

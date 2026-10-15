@@ -439,6 +439,34 @@ class PublicationTests(unittest.TestCase):
         self.assertIn("yanıt vermiyor", row["message"])  # nothing listens on the fixture port
         self.assertIs(row["answers"], False, "DD-259: Erişim reads the probe, not the message")
 
+    def test_plan_of_a_publication_writes_no_site_and_waits_for_no_certificate(self):
+        """DD-265: a publication row's plan runs its checks (DNS, the app's login probe) and writes nothing."""
+        sites = sorted(p.name for p in (self.root / "sites").iterdir())
+        calls = len(self.calls)
+        tls.wait_certificate.reset_mock()  # setUp's own WebDAV name waited for one
+        plan = self.m.plan(self.manual())
+        self.assertEqual(plan["onay_sn"], 0)
+        self.assertEqual(plan["degisiklikler"], [{"alan": "yayin", "islem": "ekle", "nesne": "Gezgin", "once": None,
+                                                  "sonra": "gezgin.ayc açık · internet: gezgin.example.net · hedef 127.0.0.1:8090"}])
+        self.assertIn("İnternet adı için HTTPS sertifikası alınır (en çok 1 dakika).", plan["etkiler"])
+        self.assertEqual(sorted(p.name for p in (self.root / "sites").iterdir()), sites)
+        self.assertEqual(len(self.calls), calls, "no reload, no restart")
+        tls.wait_certificate.assert_not_called()
+        self.assertNotIn("elle", self.m.config())
+        self.m.apply(self.manual())
+        plan = self.m.plan(self.manual(enabled=False, domain="gezgin.example.net"))
+        self.assertEqual([(i["islem"], i["nesne"], i["once"], i["sonra"]) for i in plan["degisiklikler"]],
+                         [("kapat", "Gezgin · internet adı", "gezgin.example.net", "kapalı")])
+        plan = self.m.plan({"revision": self.m.revision(), "web": {"service": "elle-gezgin", "sil": True}})
+        self.assertEqual(plan["degisiklikler"][0]["islem"], "kaldir")
+        with patch.object(pubs, "security_check"):
+            plan = self.m.plan(self.payload(service="torrent", domain="torrent.example.net"))
+        self.assertEqual([(i["islem"], i["nesne"], i["sonra"]) for i in plan["degisiklikler"]],
+                         [("ac", "qBittorrent · internet adı", "torrent.example.net")])
+        with patch.object(tls, "check_dns", side_effect=settings.SettingsError("DNS mismatch")), \
+                patch.object(pubs, "security_check"), self.assertRaisesRegex(settings.SettingsError, "DNS mismatch"):
+            self.m.plan(self.payload(service="torrent", domain="torrent.example.net"))
+
     def test_manual_address_refuses_konsol_and_package_ports_and_foreign_upstreams(self):
         bad = {"upstream": ("10.0.0.5:80", "localhost:8090", "127.0.0.1:0", "127.0.0.1:70000",
                             "127.0.0.1:61009", "127.0.0.1:61010", "127.0.0.1:61006", "127.0.0.1:8090/x"),

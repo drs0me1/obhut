@@ -117,6 +117,10 @@ export interface Uyari {
   seviye: "warn" | "bad";
   hizmet: string;
   metin: string;
+  duzelt: {
+    bolum: "yayinlar" | "uygulama" | "tailscale";
+    hedef: string;
+  } | null;
 }
 
 export interface UygulamaHucresi {
@@ -348,6 +352,10 @@ export interface Erisim {
       ipv6: string;
       durum: "bagli" | "bagli-degil" | "bilinmiyor";
       anahtar_bitis: number | null;
+      ad: string;
+      surum: string;
+      adresler: string[];
+      cikis_dugumu: boolean | null;
     };
     internet: {
       ipv4: string;
@@ -383,6 +391,249 @@ export interface Erisim {
   hatalar: string[];
 }
 
+export interface KuralTaslagi {
+  id: string;
+  name: string;
+  family: number;
+  scope: "wan" | "tail";
+  proto: "tcp" | "udp";
+  port: number;
+  source: string;
+  allow: boolean;
+}
+
+export interface DnsKaydi {
+  name: string;
+  target: string;
+  enabled: boolean;
+}
+
+export interface DnsTaslagi {
+  disabled: string[];
+  records: DnsKaydi[];
+  forward: boolean;
+  servers: string[];
+}
+
+export interface YayinSatiri {
+  service?: string;
+  tail?: boolean;
+  enabled?: boolean;
+  domain?: string;
+  confirm?: string;
+  sil?: boolean;
+  elle?: {
+    name: string;
+    local: string;
+    upstream: string;
+  };
+  [key: string]: unknown;
+}
+
+export interface AyarIstegi {
+  revision?: string;
+  firewall?: KuralTaslagi[];
+  dns?: DnsTaslagi;
+  domain?: string;
+  web?: YayinSatiri;
+  [key: string]: unknown;
+}
+
+export interface PlanDegisikligi {
+  alan: "guvenlik-duvari" | "dns" | "alan-adi" | "yayin";
+  islem: "ekle" | "kaldir" | "degistir" | "ac" | "kapat";
+  nesne: string;
+  once: string | null;
+  sonra: string | null;
+}
+
+export interface PlanUyarisi {
+  seviye: "info" | "warn" | "bad";
+  metin: string;
+}
+
+export interface AyarPlani {
+  revizyon: string;
+  onay_sn: number;
+  degisiklikler: PlanDegisikligi[];
+  etkiler: string[];
+  uyarilar: PlanUyarisi[];
+  uygulanabilir: boolean;
+}
+
+export interface AyarSonucu {
+  pending: BekleyenDegisiklik | null;
+  committed?: boolean;
+}
+
+export interface IslemKimligi {
+  id?: string;
+  confirm?: string;
+  [key: string]: unknown;
+}
+
+export interface Tamam {
+  ok?: boolean;
+  [key: string]: unknown;
+}
+
+export interface GuvenlikDuvari {
+  revizyon: string;
+  denetim: {
+    ok: boolean;
+    metin: string;
+  };
+  kurallar: KuralTaslagi[];
+  katalog: ({
+    ad: string;
+    aile: number;
+    proto: string;
+    port: number;
+    kapsam: "wan" | "tail" | "lo";
+    sabit: boolean;
+  })[];
+  dinleyiciler: {
+    proto: string;
+    aile: number;
+    port: number;
+    adres: string;
+    kapsam: string;
+  }[] | null;
+  teknik: {
+    aile: number;
+    tablo: string;
+    zincir: string;
+    sira: string;
+    paket: number;
+    bayt: number;
+    kural: string;
+    sahip: string;
+  }[];
+  aglar: {
+    uygulama: string;
+    arayuz: string;
+    ad: string;
+    etkin: boolean;
+  }[];
+  vpn: string;
+  hatalar: string[];
+}
+
+export interface Adlar {
+  revizyon: string;
+  alan: string;
+  adlar: ({
+    ad: string;
+    aile: number | null;
+    hedef: string;
+    kaynak: string;
+    kapali: boolean;
+    kilitli: boolean;
+  })[];
+  kayitlar: DnsKaydi[];
+  yonlendirme: boolean;
+  sunucular: string[];
+  hatalar: string[];
+}
+
+export interface YayinAdayi {
+  id: string;
+  tur: "konsol" | "paket" | "konteyner" | "elle" | "paylasim";
+  ad: string;
+  servis: string | null;
+  yerel_ad: string | null;
+  tailscale: boolean;
+  internet: boolean;
+  alan_adi: string;
+  durum: string;
+  mesaj: string;
+  bitis: number | null;
+  hedef: string | null;
+  giris: string;
+  onay_kelimesi: boolean;
+  internet_engel: string;
+  kullanilabilir: boolean;
+  neden: string;
+  konteyner: {
+    ad: string;
+    kaynak: "konsol" | "dis";
+    calisiyor: boolean;
+    yerel_portlar: {
+      host_port: number;
+      container_port: number;
+    }[];
+    diger_portlar: {
+      kapsam: string;
+      host_port: number;
+      container_port: number;
+    }[];
+    port_eklenebilir: boolean;
+    onerilen_port: number | null;
+  } | null;
+}
+
+export interface Yayinlar {
+  revizyon: string;
+  alan: string;
+  wan_ipv4: string;
+  adaylar: YayinAdayi[];
+  hatalar: string[];
+}
+
+export interface YayinIstegi {
+  hedef: string;
+  revizyon: string;
+  tailscale: boolean;
+  internet: boolean;
+  alan_adi: string;
+  ad?: string;
+  yerel?: string;
+  konteyner_portu?: number;
+  onay?: string;
+}
+
+export interface YayinAdimi {
+  tur: "konteyner" | "ayar";
+  baslik: string;
+  aciklama: string;
+  istek: {
+    [key: string]: unknown;
+  };
+}
+
+export interface YayinPlani {
+  hedef: YayinAdayi;
+  adimlar: YayinAdimi[];
+  plan: AyarPlani | null;
+  engel: string;
+  dns: {
+    ad: string;
+    tur: string;
+    deger: string;
+  } | null;
+  uyarilar: PlanUyarisi[];
+}
+
+export interface KonteynerIstegi {
+  action?: string;
+  name?: string;
+  image?: string;
+  revision?: string | null;
+  config?: {
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+export interface KonteynerIsi {
+  id?: string;
+  action?: string;
+  name?: string;
+  state?: string;
+  step?: string;
+  [key: string]: unknown;
+}
+
 export interface Olaylar {
   kaynaklar: Kaynaklar;
   saglik: Saglik;
@@ -407,4 +658,14 @@ export const YOLLAR = {
   onarim: "/api/konsol/onarim",
   onarim_baslat: "/api/konsol/onarim",
   guncelleme: "/api/konsol/guncelleme",
+  ayarlar_plan: "/api/konsol/ayarlar/plan",
+  ayarlar_uygula: "/api/konsol/ayarlar/uygula",
+  ayarlar_onayla: "/api/konsol/ayarlar/onayla",
+  ayarlar_geri_al: "/api/konsol/ayarlar/geri-al",
+  ayarlar_birak: "/api/konsol/ayarlar/birak",
+  guvenlik_duvari: "/api/konsol/guvenlik-duvari",
+  adlar: "/api/konsol/adlar",
+  yayinlar: "/api/konsol/yayinlar",
+  yayin_plani: "/api/konsol/yayinlar/plan",
+  konteyner_islemi: "/api/konsol/konteynerler/islem",
 } as const;

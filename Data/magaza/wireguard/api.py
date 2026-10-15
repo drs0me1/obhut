@@ -267,6 +267,7 @@ class Api:
                 raise self.ctx.error(400, "Port ve DNS gerekli; erişim seçeneği desteklenmiyor. Sayfayı yenileyin.")
             rc, out, message = self.run("net-add", port, dns, label)
             parts = out.strip().split("\t")
+            self.ctx.settings_changed()  # the firewall and port views list the new network at once
             req.audit("ag-ekle", parts[0] if rc == 0 else port, rc == 0)
             if rc != 0:
                 raise self.ctx.error(400, message or "ağ eklenemedi")
@@ -342,7 +343,11 @@ class Api:
         raise self.ctx.error(404, "bulunamadı")
 
     def net_settings(self, req, net, data):
-        dns, revision = (data.get(k) for k in ("dns", "revision"))
+        """Default DNS and, when "label" is sent (DD-265), the network's name; the revision guards both."""
+        dns, revision, label = (data.get(k) for k in ("dns", "revision", "label"))
+        if "label" in data and (not isinstance(label, str) or len(label.encode("utf-8")) > 64
+                                or label != label.strip() or any(ord(c) < 32 or ord(c) == 127 for c in label)):
+            raise self.ctx.error(400, "Ağ adı en çok 64 bayt olabilir; baş/son boşluk ve denetim karakteri içeremez")
         if ("scope" in data or not isinstance(dns, str) or not dns.strip()
                 or len(dns) > 512 or any(ord(c) < 32 for c in dns)
                 or not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{64}", revision)):
@@ -355,9 +360,10 @@ class Api:
                 ipaddress.ip_address(address)
         except ValueError:
             raise self.ctx.error(400, "DNS için en fazla 8 geçerli IPv4/IPv6 adresi yazın")
-        rc, _, message = self.run("net-settings", dns, revision, net=net)
+        args = ("net-settings", dns, revision) + ((label,) if "label" in data else ())
+        rc, _, message = self.run(*args, net=net)
         self.ctx.settings_changed()
         req.audit("ag-ayarlar", net, rc == 0)
         if rc != 0:
             raise self.ctx.error(409, message or "Ağ ayarları kaydedilemedi")
-        return 200, {"iface": net, "dns": ", ".join(addresses)}
+        return 200, {"iface": net, "dns": ", ".join(addresses), **({"label": label} if "label" in data else {})}

@@ -147,6 +147,72 @@ class SettingsTests(unittest.TestCase):
         self.m.apply(self.payload(firewall=[self.rule(scope="tail", port=80, source="100.64.0.20/32", allow=False)]))
         self.confirm()
 
+    def test_plan_changes_nothing_and_says_what_apply_would_do(self):
+        """DD-265: the plan runs apply's checks on a copy; no file, lock, timer or service is touched."""
+        data = self.payload(firewall=[self.rule(source="192.0.2.18/24")])
+        before = sorted(p.name for p in self.root.rglob("*"))
+        plan = self.m.plan(data, client="100.64.0.9", kanal="tailscale")
+        self.assertEqual(self.calls, [], "no systemctl, no service")
+        self.assertEqual(sorted(p.name for p in self.root.rglob("*")), before, "no lock, pending or config file")
+        self.assertEqual(data["firewall"][0]["source"], "192.0.2.18/24", "the caller's request is not normalised in place")
+        self.assertEqual(plan["onay_sn"], 60)
+        self.assertTrue(plan["uygulanabilir"])
+        self.assertEqual(plan["degisiklikler"], [{"alan": "guvenlik-duvari", "islem": "ekle", "nesne": "Test port", "once": None,
+                                                  "sonra": "TCP 12345 · İnternet · IPv4 · yalnız 192.0.2.0/24 · izin"}])
+        self.assertIn("Güvenlik duvarı kuralları yeniden kurulur.", plan["etkiler"])
+        self.assertEqual(plan["revizyon"], data["revision"])
+        # The same request applies, with the window the plan named.
+        self.m.apply(data)
+        self.assertEqual(self.m.pending()["until"], self.now + 60)
+
+    def test_plan_raises_what_apply_raises_and_refuses_an_empty_change(self):
+        for data in (self.payload(firewall=[self.rule(port=0)]), {"revision": "stale", "firewall": []}):
+            with self.subTest(data=data):
+                with self.assertRaises(settings.SettingsError) as plan_err:
+                    self.m.plan(copy.deepcopy(data))
+                with self.assertRaises(settings.SettingsError) as apply_err:
+                    self.m.apply(copy.deepcopy(data))
+                self.assertEqual(str(plan_err.exception), str(apply_err.exception))
+        with self.assertRaisesRegex(settings.SettingsError, "Değişiklik yok"):
+            self.m.plan(self.payload(firewall=[]))
+        self.m.apply(self.payload(firewall=[self.rule()]))
+        with self.assertRaisesRegex(settings.SettingsError, "bekleyen"):
+            self.m.plan(self.payload(firewall=[]))
+
+    def test_plan_names_changed_and_removed_rules_and_a_change_that_cannot_be_confirmed(self):
+        self.m.apply(self.payload(firewall=[self.rule(), self.rule(id="two", port=2222)]))
+        self.confirm()
+        plan = self.m.plan(self.payload(firewall=[self.rule(allow=False), self.rule(id="three", name="Yeni", port=3333)]),
+                           client="100.64.0.9", kanal="internet")
+        self.assertEqual([(i["islem"], i["nesne"]) for i in plan["degisiklikler"]],
+                         [("degistir", "Test port"), ("ekle", "Yeni"), ("kaldir", "Test port")])
+        self.assertEqual(plan["degisiklikler"][0]["sonra"], "TCP 12345 · İnternet · IPv4 · engel")
+        self.assertFalse(plan["uygulanabilir"], "a timed change is confirmed only over Tailscale")
+        self.assertIn("bad", [w["seviye"] for w in plan["uyarilar"]])
+        # A Tailscale rule that shuts this client out of Konsol can never be confirmed.
+        blocked = self.m.plan(self.payload(firewall=[self.rule(scope="tail", port=80, allow=False)]),
+                              client="100.64.0.9", kanal="tailscale")
+        self.assertFalse(blocked["uygulanabilir"])
+        other = self.m.plan(self.payload(firewall=[self.rule(scope="tail", port=80, source="100.64.0.20/32", allow=False)]),
+                            client="100.64.0.9", kanal="tailscale")
+        self.assertTrue(other["uygulanabilir"])
+
+    def test_plan_of_dns_and_domain_changes(self):
+        dns = self.dns(disabled=["health.ayc"], records=[{"name": "nas.ayc", "target": "192.0.2.5", "enabled": True}],
+                       forward=True, servers=["9.9.9.9"])
+        plan = self.m.plan(self.payload(dns=dns))
+        self.assertEqual(plan["onay_sn"], 0, "DNS alone commits at once")
+        self.assertEqual([(i["alan"], i["islem"], i["nesne"]) for i in plan["degisiklikler"]],
+                         [("dns", "kapat", "health.ayc"), ("dns", "ekle", "nas.ayc"), ("dns", "degistir", "Dış adlar")])
+        self.assertEqual(plan["degisiklikler"][2]["sonra"], "Üst DNS: 9.9.9.9")
+        Path(self.env["CADDYFILE"]).write_text("http://panel.ayc {\n}\n")
+        plan = self.m.plan(self.payload(domain="ev"), client="100.64.0.9", kanal="tailscale")
+        self.assertEqual(plan["onay_sn"], 300)
+        self.assertEqual(plan["degisiklikler"], [{"alan": "alan-adi", "islem": "degistir", "nesne": "Yerel alan adı",
+                                                  "once": "ayc", "sonra": "ev"}])
+        self.assertTrue(any("http://panel.ev" in w["metin"] for w in plan["uyarilar"]))
+        self.assertEqual(self.calls, [])
+
     def test_disable_panel_is_rejected_before_mutation(self):
         before = Path(self.env["DNSMASQ_CONF_FILE"]).read_bytes()
         for extra in ({}, {"firewall": []}):

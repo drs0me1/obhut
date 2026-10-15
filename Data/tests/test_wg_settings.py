@@ -69,6 +69,23 @@ class NetworkSettingsTests(unittest.TestCase):
             self.assertEqual(data["dns"],self.data["dns"])
         self.assertEqual(self.p.settings_cache,(0,None))
 
+    def test_a_name_goes_to_the_tool_only_when_sent_and_bad_names_never_reach_it(self):
+        """DD-265: the network's name is changed with its default DNS, under the same revision."""
+        with patch.object(self.p, "run_tool", return_value=(0, "", "")) as run:
+            code, data = self.request(dict(self.data, label="Ev ağı"))
+            self.assertEqual(code, 200, data)
+            self.assertEqual(self.tool_calls(run, "net-settings"),
+                             [[self.tool, "--if", "wg0", "net-settings", self.data["dns"], self.data["revision"], "Ev ağı"]])
+            self.assertEqual(data["label"], "Ev ağı")
+            code, data = self.request(dict(self.data, label=""))
+            self.assertEqual((code, self.tool_calls(run, "net-settings")[-1][-1]), (200, ""), "an empty name is allowed")
+        with patch.object(self.p, "run_tool", side_effect=AssertionError("must not run")):
+            for bad in (" baş", "son ", "iki\tsütun", "x" * 65, "ş" * 33, None, 5):
+                with self.subTest(bad=bad):
+                    code, data = self.request(dict(self.data, label=bad))
+                    self.assertEqual(code, 400)
+                    self.assertIn("Ağ adı", data["error"])
+
     def test_gates_and_module_absence_never_invoke_helper(self):
         with patch.object(self.p, "run_tool", side_effect=AssertionError("must not mutate")):
             for path in (API + "/nets", API + "/nets/wg0/ayarlar"):
@@ -90,6 +107,7 @@ class NetworkSettingsTests(unittest.TestCase):
             self.assertEqual(code,201,result)
             self.assertEqual(result,{"iface":"wg1","port":61020})
             self.assertEqual(self.tool_calls(run, "net-add"), [[self.tool, "net-add", "61020", "1.1.1.1", "New network"]])
+        self.assertEqual(self.p.settings_cache, (0, None), "the firewall and port views list the new network at once")
 
     def test_retired_scope_is_rejected_on_both_routes(self):
         with patch.object(self.p, "run_tool", side_effect=AssertionError("invalid mutation")):

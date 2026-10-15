@@ -315,6 +315,29 @@ def tailnet_ports(env):
     return rows
 
 
+SCOPE_TEXT = {"wan": "İnternet", "tail": "Tailscale"}
+
+
+def rule_text(r):
+    """A firewall rule as the plan shows it: "TCP 8080 · İnternet · IPv4 · izin"."""
+    text = "%s %d · %s · IPv%d" % (r["proto"].upper(), r["port"], SCOPE_TEXT.get(r["scope"], r["scope"]), r["family"])
+    if r["source"]:
+        text += " · yalnız " + r["source"]
+    return text + (" · izin" if r["allow"] else " · engel")
+
+
+def plan_item(alan, islem, nesne, once=None, sonra=None):
+    return {"alan": alan, "islem": islem, "nesne": nesne, "once": once, "sonra": sonra}
+
+
+def dns_record_text(r):
+    return ("Tailscale adresi" if r["target"] == "tailscale" else r["target"]) + ("" if r["enabled"] else " · kapalı")
+
+
+def forward_text(d):
+    return "Üst DNS: " + ", ".join(d["servers"]) if d["forward"] else "Yalnız yerel adlar"
+
+
 def dns_interface(value):
     """The managed interface-name grammar, shared with the read-only DNS view."""
     match = re.fullmatch(r"([^,\s]+),([^,/\s]+)(?:/([46]))?", value)
@@ -673,15 +696,168 @@ class Manager:
         self.project_dns(candidate)
         self.domain_reload(self.pending()["files_active"])
 
-    def apply(self, data):
+    def prepare(self, data):
+        """Every check apply makes before it changes anything (DD-265): the candidate and which
+        sections change. plan() runs the same, so a plan and an apply cannot disagree."""
         require(not self.pending(), "Önce bekleyen işlemi onaylayın veya geri alın.")
         candidate = self.validate(data)
         change = {k: k in data for k in ("firewall", "dns", "domain", "https", "web")}
         require(any(change.values()), "Değişiklik yok.")
-        dns_only = change["dns"] and not any(change[k] for k in ("firewall", "domain"))
         if change["dns"]:
             require("panel." + self.e["LOCAL_DOMAIN"] not in candidate["dns"]["disabled"],
                     "Panel erişimini korumak için Konsol'un kendi DNS adı kapatılamaz.")
+        if change["domain"]:
+            require(Path(self.e["CADDYFILE"]).is_file(), "Caddy yapılandırması bulunamadı.")
+        return candidate, change
+
+    @staticmethod
+    def confirm_seconds(change):
+        """0 when the change commits at once (DNS alone, an HTTPS name, a publication row), else
+        the window the operator has to confirm it: 300 s for the local domain, 60 s otherwise."""
+        dns_only = change["dns"] and not any(change[k] for k in ("firewall", "domain"))
+        if dns_only or change["https"] or change["web"]:
+            return 0
+        return 300 if change["domain"] else 60
+
+    def client_blocked(self, candidate, client):
+        """The message when the candidate's Tailscale rules shut this client out of Konsol or DNS."""
+        for proto, port in (("tcp", self.e["CADDY_HTTP_PORT"]), ("udp", self.e["DNS_PORT"]), ("tcp", self.e["DNS_PORT"])):
+            for r in candidate["firewall"]:
+                if (r["scope"] == "tail" and r["family"] == client.version and r["proto"] == proto and r["port"] == int(port)
+                        and (not r["source"] or client in ipaddress.ip_network(r["source"]))):
+                    if not r["allow"]:
+                        return "Bu kural yeni Konsol/DNS bağlantınızı engelliyor; geri alın veya sürenin dolmasını bekleyin."
+                    break
+        return ""
+
+    def plan(self, data, client="", kanal=""):
+        """DD-265: what applying `data` would change, before anything changes. The same checks as
+        apply (prepare), on a copy; no lock, file, timer or service is touched. A validation error is
+        the same SettingsError apply would raise. client/kanal: the operator's address and channel,
+        to say when a change could not be confirmed from there."""
+        saved = self.config()
+        candidate, change = self.prepare(copy.deepcopy(data))
+        items = self.plan_items(saved, candidate, change, data)
+        require(bool(items), "Değişiklik yok.")
+        seconds = self.confirm_seconds(change)
+        effects, warnings, ok = [], [], True
+        if change["firewall"]:
+            effects.append("Güvenlik duvarı kuralları yeniden kurulur.")
+        if change["dns"] or change["domain"]:
+            effects.append("dnsmasq yeniden başlar; yerel adlar birkaç saniye yanıt vermeyebilir.")
+        if change["domain"]:
+            effects.append("Caddy ve dosya servisleri yeni adla yeniden başlar.")
+            warnings.append({"seviye": "warn", "metin": "Değişikliği 5 dakika içinde yeni adresten onaylayın: http://panel.%s. "
+                             "Tailscale yönetim panelindeki split DNS kaydını da yeni ada çevirin." % candidate["domain"]})
+        if change["web"] or change["https"]:
+            effects.append("Caddy yapılandırması yeniden yüklenir.")
+            row = data.get("web") or {}
+            if row.get("enabled") or (change["https"] and candidate["https"]["domain"]):
+                effects.append("İnternet adı için HTTPS sertifikası alınır (en çok 1 dakika).")
+        if seconds:
+            warnings.append({"seviye": "info", "metin": "Uygulandıktan sonra %d saniye içinde onaylamazsanız kendiliğinden geri alınır."
+                             % seconds})
+            if kanal == "internet":
+                ok = False
+                warnings.append({"seviye": "bad", "metin": "Bu değişiklik süreli onay ister ve onay yalnız Tailscale'den verilir; "
+                                 "internet adresinden uygulanamaz."})
+        try:
+            address = ipaddress.ip_address(client) if client else None
+        except ValueError:
+            address = None
+        if address is not None and change["firewall"]:
+            blocked = self.client_blocked(candidate, address)
+            if blocked:
+                ok = False
+                warnings.append({"seviye": "bad", "metin": "Bu kurallar şu anki Konsol bağlantınızı keser; onay verilemez ve "
+                                 "değişiklik geri alınır."})
+        return {"revizyon": self.revision(), "onay_sn": seconds, "degisiklikler": items, "etkiler": effects,
+                "uyarilar": warnings, "uygulanabilir": ok}
+
+    def plan_items(self, saved, candidate, change, data):
+        items = []
+        if change["firewall"]:
+            before = {r["id"]: r for r in saved.get("firewall", [])}
+            after = {r["id"]: r for r in candidate["firewall"]}
+            for rid, r in after.items():
+                old = before.get(rid)
+                if old is None:
+                    items.append(plan_item("guvenlik-duvari", "ekle", r["name"], None, rule_text(r)))
+                elif old != r:
+                    once, sonra = rule_text(old), rule_text(r)
+                    if once == sonra:
+                        once, sonra = "Ad: " + old["name"], "Ad: " + r["name"]
+                    items.append(plan_item("guvenlik-duvari", "degistir", r["name"], once, sonra))
+            for rid, r in before.items():
+                if rid not in after:
+                    items.append(plan_item("guvenlik-duvari", "kaldir", r["name"], rule_text(r), None))
+        if change["domain"]:
+            items.append(plan_item("alan-adi", "degistir", "Yerel alan adı", self.e["LOCAL_DOMAIN"], candidate["domain"]))
+        elif change["dns"]:
+            b, a = saved.get("dns") or DEFAULT["dns"], candidate["dns"]
+            for name in sorted(set(a["disabled"]) - set(b["disabled"])):
+                items.append(plan_item("dns", "kapat", name, "açık", "kapalı"))
+            for name in sorted(set(b["disabled"]) - set(a["disabled"])):
+                items.append(plan_item("dns", "ac", name, "kapalı", "açık"))
+            before = {r["name"]: r for r in b["records"]}
+            after = {r["name"]: r for r in a["records"]}
+            for name, r in after.items():
+                if name not in before:
+                    items.append(plan_item("dns", "ekle", name, None, dns_record_text(r)))
+                elif before[name] != r:
+                    items.append(plan_item("dns", "degistir", name, dns_record_text(before[name]), dns_record_text(r)))
+            for name, r in before.items():
+                if name not in after:
+                    items.append(plan_item("dns", "kaldir", name, dns_record_text(r), None))
+            if (b["forward"], b["servers"]) != (a["forward"], a["servers"]):
+                items.append(plan_item("dns", "degistir", "Dış adlar", forward_text(b), forward_text(a)))
+        if change["web"] or change["https"]:
+            items += self.publication_items(saved, candidate, data)
+        return items
+
+    def publication_items(self, saved, candidate, data):
+        """A publication row before and after: its Tailscale name and its internet (HTTPS) name."""
+        import master_publications
+        service = data["web"]["service"] if "web" in data else master_publications.BUILTIN_ID
+        before = master_publications.config(self.e, saved).get(service)
+        after = master_publications.config(self.e, candidate).get(service)
+        items = master_publications.manual(self.e, candidate) if service.startswith(master_publications.MANUAL_PREFIX) else {}
+        old_items = master_publications.manual(self.e, saved) if service.startswith(master_publications.MANUAL_PREFIX) else {}
+        info = items.get(service) or old_items.get(service)
+        if info:
+            name, local = info["name"], info["local"]
+        elif service == master_publications.PANEL_ID:
+            name, local = "Konsol", "panel"
+        elif service == master_publications.BUILTIN_ID:
+            name, local = "WebDAV", "paylas"
+        else:
+            pkg = master_publications.packages(self.e).get(service, {})
+            name, local = pkg.get("name", service), pkg.get("local", service)
+        tailnet = "%s.%s" % (local, self.e["LOCAL_DOMAIN"])
+
+        def text(row):
+            return "%s %s · internet: %s" % (tailnet, "açık" if row["tail"] else "kapalı",
+                                              row["domain"] if row["enabled"] else "kapalı")
+        if after is None:
+            return [plan_item("yayin", "kaldir", name, text(before) + " · hedef " + old_items[service]["upstream"], None)]
+        if before is None:
+            return [plan_item("yayin", "ekle", name, None, text(after) + " · hedef " + items[service]["upstream"])]
+        out = []
+        if before["tail"] != after["tail"]:
+            out.append(plan_item("yayin", "ac" if after["tail"] else "kapat", "%s · Tailscale adı" % name,
+                                 tailnet + (" açık" if before["tail"] else " kapalı"), tailnet + (" açık" if after["tail"] else " kapalı")))
+        if (before["enabled"], before["domain"]) != (after["enabled"], after["domain"]):
+            out.append(plan_item("yayin", "ac" if after["enabled"] and not before["enabled"] else
+                                 "kapat" if before["enabled"] and not after["enabled"] else "degistir",
+                                 "%s · internet adı" % name, before["domain"] if before["enabled"] else "kapalı",
+                                 after["domain"] if after["enabled"] else "kapalı"))
+        if info and old_items.get(service) and items.get(service) and old_items[service] != items[service]:
+            out.append(plan_item("yayin", "degistir", "%s · hedef" % name, old_items[service]["upstream"], items[service]["upstream"]))
+        return out
+
+    def apply(self, data):
+        candidate, change = self.prepare(data)
+        seconds = self.confirm_seconds(change)
         run(["systemctl", "start", GUARD_TIMER])
         run(["systemctl", "is-active", "--quiet", GUARD_TIMER])
         paths = [*self.dns_paths(), self.dns_file] if change["dns"] else []
@@ -698,7 +874,6 @@ class Manager:
             if manual_dns:
                 paths.append(Path(self.e["DNSMASQ_CONF_DIR"]) / master_publications.MANUAL_DNS)
         if change["domain"]:
-            require(Path(self.e["CADDYFILE"]).is_file(), "Caddy yapılandırması bulunamadı.")
             paths += [*self.dns_paths(), self.dns_file, *self.domain_paths()]
             files_active = run(["systemctl", "is-active", "--quiet", "master-files-panel.service"], check=False).returncode == 0
         # Pending is durable BEFORE the first mutation, and the timer already runs.
@@ -727,10 +902,10 @@ class Manager:
                 self.firewall_apply()
             p = self.pending()
             require(p["until"] > time.monotonic(), "Uygulama zaman aşımına uğradı.")
-            if dns_only or change["https"] or change["web"]:
+            if not seconds:
                 self.commit(p)
                 return {"pending": None, "committed": True}
-            p.update(phase="awaiting", until=time.monotonic() + (300 if change["domain"] else 60))
+            p.update(phase="awaiting", until=time.monotonic() + seconds)
             save_json(self.pending_path, p)
         except Exception:
             self.rollback()
@@ -799,12 +974,8 @@ class Manager:
             require(data.get("host") == "panel." + p["candidate"]["domain"], "Alan adı değişikliğini yeni Konsol adresinden onaylayın.")
             self.dns_test()
             self.caddy_test()
-        for proto, port in (("tcp", self.e["CADDY_HTTP_PORT"]), ("udp", self.e["DNS_PORT"]), ("tcp", self.e["DNS_PORT"])):
-            for r in p["candidate"]["firewall"]:
-                if (r["scope"] == "tail" and r["family"] == client.version and r["proto"] == proto and r["port"] == int(port)
-                        and (not r["source"] or client in ipaddress.ip_network(r["source"]))):
-                    require(r["allow"], "Bu kural yeni Konsol/DNS bağlantınızı engelliyor; geri alın veya sürenin dolmasını bekleyin.")
-                    break
+        blocked = self.client_blocked(p["candidate"], client)
+        require(not blocked, blocked)
         require("panel." + self.e["LOCAL_DOMAIN"] not in p["candidate"]["dns"]["disabled"],
                 "Konsol'un kendi DNS adı kapalıyken değişiklik kalıcılaştırılamaz.")
         # Recheck validators before committing.

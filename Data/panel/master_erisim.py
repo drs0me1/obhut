@@ -14,6 +14,10 @@ A source that cannot be read adds a line to "hatalar"; the other rows stay.
 Each service row has four cells (yerel, tailscale, wireguard, internet). A cell's "durum" is
 acik (reachable), kismen (only some ports), kapali (closed), yok (does not apply) or hata (switched
 on but not working; "not" says why).
+
+DD-265: a warning names the row it is about by the row's id ("paket:torrent", "elle:x", "panel"; ""
+when it is about no row) and where it is fixed: "duzelt" = {bolum, hedef}, bolum one of yayinlar (a
+publication; hedef is the row id), uygulama (an application's page), tailscale.
 """
 import datetime
 
@@ -124,6 +128,10 @@ def publish(row, pub, env, upstream=""):
     target["not"] = pub.get("message") or "İnternet yayını doğrulanamadı."
 
 
+def warning(seviye, hizmet, metin, bolum, hedef=""):
+    return {"seviye": seviye, "hizmet": hizmet, "metin": metin, "duzelt": {"bolum": bolum, "hedef": hedef} if bolum else None}
+
+
 def add_container(row, item, env, labels, partial, warnings):
     """A container's publications on a service row. In a package's row a public port while the web
     interface is not published opens the internet cell only in part (e.g. a torrent peer port)."""
@@ -138,12 +146,11 @@ def add_container(row, item, env, labels, partial, warnings):
             label = labels.get(group["host_port"], "")
             open_cell(row["internet"], text, partial, ("Yalnız " + label) if partial and label else "")
             if not partial:
-                warnings.append({"seviye": "warn", "hizmet": row["id"],
-                                 "metin": "%s: %s doğrudan internete açık; şifreleme ve giriş uygulamanın kendisinde."
-                                          % (row["ad"], text)})
+                warnings.append(warning("warn", row["id"], "%s: %s doğrudan internete açık; şifreleme ve giriş uygulamanın kendisinde."
+                                        % (row["ad"], text), "uygulama", row["id"]))
         else:
-            warnings.append({"seviye": "warn", "hizmet": row["id"],
-                             "metin": "%s: %s adresindeki yayın tanınmıyor; Podman sayfasından denetleyin." % (row["ad"], text)})
+            warnings.append(warning("warn", row["id"], "%s: %s adresindeki yayın tanınmıyor; Podman sayfasından denetleyin."
+                                    % (row["ad"], text), "uygulama", row["id"]))
 
 
 def share_row(env, pub, shares, wireguard, warnings):
@@ -180,20 +187,29 @@ def share_row(env, pub, shares, wireguard, warnings):
             row["internet"] = cell("acik", [origin], "%d klasör" % len(active["wan"]))
         else:
             row["internet"] = cell("acik", [origin], "%d klasör" % len(active["wan"]), "Şifresiz HTTP")
-            warnings.append({"seviye": "warn", "hizmet": "paylasim",
-                             "metin": "İnternetten gelen WebDAV bağlantıları şifresiz; kullanıcı adı ve parola ağda "
-                                      "okunabilir. Bir HTTPS adı tanımlayınca bağlantı şifrelenir."})
+            warnings.append(warning("warn", "paylasim", "İnternetten gelen WebDAV bağlantıları şifresiz; kullanıcı adı ve parola ağda "
+                                    "okunabilir. Bir HTTPS adı tanımlayınca bağlantı şifrelenir.", "yayinlar", "paylasim"))
     else:
         row["internet"] = cell("kapali", (), "" if wan.get("available") else str(wan.get("reason") or ""))
     return row
 
 
 def tailscale_summary(env, status):
+    """`tailscale status --json --peers=false` as the Erişim page shows it. DD-265 adds the device's
+    name, the client version, its addresses and whether it is offered as an exit node."""
     out = {"ipv4": env.get("TAILSCALE_IPV4", ""), "ipv6": env.get("TAILSCALE_IPV6", ""),
-           "durum": "bilinmiyor", "anahtar_bitis": None}
+           "durum": "bilinmiyor", "anahtar_bitis": None, "ad": "", "surum": "", "adresler": [], "cikis_dugumu": None}
     if isinstance(status, dict) and isinstance(status.get("Self"), dict):
         me = status["Self"]
         out["durum"] = "bagli" if status.get("BackendState") == "Running" and me.get("Online") is True else "bagli-degil"
+        out["ad"] = str(me.get("DNSName") or "").rstrip(".")
+        out["surum"] = str(status.get("Version") or "").split("-")[0]
+        out["adresler"] = [str(a) for a in me.get("TailscaleIPs") or [] if isinstance(a, str)]
+        routes = me.get("AllowedIPs") if isinstance(me.get("AllowedIPs"), list) else []
+        if isinstance(me.get("ExitNodeOption"), bool):
+            out["cikis_dugumu"] = me["ExitNodeOption"]
+        elif routes:
+            out["cikis_dugumu"] = "0.0.0.0/0" in routes or "::/0" in routes
         expiry = me.get("KeyExpiry")
         if isinstance(expiry, str):
             try:
@@ -335,29 +351,33 @@ def build(env, settings, shares, containers, tailscale, networks, packages, name
             "acik" if rule.get("allow") else "kapali", [text], "İzin kuralı" if rule.get("allow") else "Engelleme kuralı")
         rows.append(row)
 
+    owner = {}  # a publication's service id → the row it is shown on
     for row in rows:
+        for service_id in row["yayinlar"]:
+            owner.setdefault(service_id, row["id"])
         for scope in ("yerel", "tailscale", "internet"):
             if row[scope]["durum"] == "hata":
-                warnings.append({"seviye": "warn", "hizmet": row["id"], "metin": "%s: %s" % (row["ad"], row[scope]["not"])})
+                warnings.append(warning("warn", row["id"], "%s: %s" % (row["ad"], row[scope]["not"]), "yayinlar", row["id"]))
 
     summary = tailscale_summary(env, tailscale)
     if summary["durum"] == "bagli-degil":
-        warnings.insert(0, {"seviye": "bad", "hizmet": "tailscale",
-                            "metin": "Tailscale bağlı değil; Konsol'a ve tailnet adlarına öbür cihazlardan ulaşılamaz."})
+        warnings.insert(0, warning("bad", "", "Tailscale bağlı değil; Konsol'a ve tailnet adlarına öbür cihazlardan ulaşılamaz.",
+                                   "tailscale"))
     certificates = []
     for pub in pubs.values():
         if not (pub.get("enabled") and pub.get("domain")):
             continue
         expires = pub.get("expires") if isinstance(pub.get("expires"), (int, float)) and not isinstance(pub.get("expires"), bool) else None
         ready = pub.get("status") == "ready"
-        certificates.append({"ad": pub["domain"], "hizmet": pub["service"], "durum": "gecerli" if ready else "hazir-degil",
+        certificates.append({"ad": pub["domain"], "hizmet": owner.get(pub["service"], ""), "durum": "gecerli" if ready else "hazir-degil",
                              "bitis": int(expires) if expires is not None else None})
         if ready and expires is not None and expires - now <= CERT_WARN_DAYS * 86400:
             left = int((expires - now) // 86400)
-            warnings.append({"seviye": "bad" if expires <= now else "warn", "hizmet": pub["service"],
-                             "metin": "%s sertifikasının süresi doldu." % pub["domain"] if expires <= now else
-                                      "%s sertifikası %d gün sonra doluyor; Caddy kendiliğinden yeniler, yenilemezse "
-                                      "internetten erişim kesilir." % (pub["domain"], left)})
+            row_id = owner.get(pub["service"], "")
+            warnings.append(warning("bad" if expires <= now else "warn", row_id,
+                                    "%s sertifikasının süresi doldu." % pub["domain"] if expires <= now else
+                                    "%s sertifikası %d gün sonra doluyor; Caddy kendiliğinden yeniler, yenilemezse "
+                                    "internetten erişim kesilir." % (pub["domain"], left), "yayinlar", row_id))
     certificates.sort(key=lambda c: (c["bitis"] is None, c["bitis"] or 0, c["ad"]))
     return {
         "read_at": int(now),

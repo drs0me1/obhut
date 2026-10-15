@@ -75,7 +75,10 @@ CONTAINERS = {"runtime": {"ok": True, "version": "5.4.2", "error": ""}, "contain
         {"host_ip": "203.0.113.10", "host_port": 63851, "container_port": 63851, "protocol": "tcp", "scope": "public"},
         {"host_ip": "203.0.113.10", "host_port": 63851, "container_port": 63851, "protocol": "udp", "scope": "public"}]},
 ]}
-TAILSCALE = {"BackendState": "Running", "Self": {"Online": True, "KeyExpiry": "2026-07-01T00:00:00Z"}}
+TAILSCALE = {"BackendState": "Running", "Version": "1.90.1-t0f0b1c2d3",
+             "Self": {"Online": True, "KeyExpiry": "2026-07-01T00:00:00Z", "DNSName": "sunucu.tail0000.ts.net.",
+                      "TailscaleIPs": ["100.64.0.2", "fd7a:115c:a1e0::2"],
+                      "AllowedIPs": ["100.64.0.2/32", "fd7a:115c:a1e0::2/128", "0.0.0.0/0", "::/0"]}}
 NETWORKS = [{"app": "WireGuard", "iface": "wg0", "port": 61001, "label": "home", "active": True,
              "server4": "10.8.0.1", "subnet4": "10.8.0.0/24", "server6": "", "subnet6": ""}]
 PACKAGES = {"torrent": {"name": "qBittorrent", "local": "torrent", "upstream": "127.0.0.1:62947", "check": "", "order": 20}}
@@ -119,12 +122,15 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual(result["uyarilar"], [], "a package's declared peer port is not a warning")
         self.assertEqual(result["hatalar"], [])
         self.assertEqual(result["ozet"]["tailscale"], {"ipv4": "100.64.0.2", "ipv6": "fd7a:115c:a1e0::2", "durum": "bagli",
-                                                      "anahtar_bitis": 1782864000})
+                                                      "anahtar_bitis": 1782864000, "ad": "sunucu.tail0000.ts.net",
+                                                      "surum": "1.90.1", "adresler": ["100.64.0.2", "fd7a:115c:a1e0::2"],
+                                                      "cikis_dugumu": True})
         self.assertEqual([(p["ad"], p["port"], p["proto"], p["aileler"]) for p in result["ozet"]["internet"]["acik"]],
                          [("SSH", 22, "tcp", [4, 6]), ("Caddy HTTPS · Gezgin · WAN", 443, "tcp", [4]),
                           ("Tailscale", 41641, "udp", [4, 6]), ("WireGuard wg0 · home", 61001, "udp", [4]),
                           ("qBittorrent eş portu", 63851, "tcp+udp", [4])])
-        self.assertEqual(result["ozet"]["sertifikalar"], [{"ad": "gezgin.example.org", "hizmet": "elle-gezgin",
+        # DD-265: a certificate names the row its publication is shown on.
+        self.assertEqual(result["ozet"]["sertifikalar"], [{"ad": "gezgin.example.org", "hizmet": "konteyner:gezgin",
                                                            "durum": "gecerli", "bitis": NOW + 90 * 86400}])
         self.assertEqual((result["read_at"], result["alan"]), (NOW, "ev"))
 
@@ -150,6 +156,7 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual(self.row(result, "konteyner:gezgin")["yayinlar"], [])
         self.assertEqual([w["hizmet"] for w in result["uyarilar"]], ["elle:gezgin"])
         self.assertIn("yanıt vermiyor", result["uyarilar"][0]["metin"])
+        self.assertEqual(result["uyarilar"][0]["duzelt"], {"bolum": "yayinlar", "hedef": "elle:gezgin"})
 
     def test_webdav_over_plaintext_http_is_a_warning(self):
         shares = copy.deepcopy(SHARES)
@@ -163,6 +170,7 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual(row["aciklama"], "WebDAV · 2 klasör")
         self.assertEqual([w["hizmet"] for w in result["uyarilar"]], ["paylasim"])
         self.assertIn("şifresiz", result["uyarilar"][0]["metin"])
+        self.assertEqual(result["uyarilar"][0]["duzelt"], {"bolum": "yayinlar", "hedef": "paylasim"})
         shares["wan"].update(mode="https", domain="dav.example.org", port=443)
         shares["items"][0]["connections"]["wan"]["url"] = "https://dav.example.org/s/a1/"
         result = self.build(shares=shares)
@@ -210,6 +218,8 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual(len(texts), 2)
         self.assertIn("192.168.1.5:9000/tcp adresindeki yayın tanınmıyor", texts[0])
         self.assertIn("203.0.113.10:8443 → 443/tcp doğrudan internete açık", texts[1])
+        self.assertEqual({(w["hizmet"], w["duzelt"]["bolum"], w["duzelt"]["hedef"]) for w in result["uyarilar"]},
+                         {("konteyner:gezgin", "uygulama", "konteyner:gezgin")}, "DD-265: fixed on the application's page")
 
     def test_a_container_without_publications_is_closed_not_unknown(self):
         containers = {"runtime": CONTAINERS["runtime"], "containers": [
@@ -240,12 +250,15 @@ class ReadModelTests(unittest.TestCase):
     def test_tailscale_state_and_certificate_expiry(self):
         result = self.build(tailscale={"BackendState": "Stopped", "Self": {"Online": False}})
         self.assertEqual(result["ozet"]["tailscale"]["durum"], "bagli-degil")
-        self.assertEqual((result["uyarilar"][0]["seviye"], result["uyarilar"][0]["hizmet"]), ("bad", "tailscale"))
+        self.assertEqual((result["uyarilar"][0]["seviye"], result["uyarilar"][0]["hizmet"], result["uyarilar"][0]["duzelt"]),
+                         ("bad", "", {"bolum": "tailscale", "hedef": ""}), "DD-265: no row; fixed on the Tailscale tab")
+        self.assertIsNone(self.build(tailscale={"BackendState": "Running", "Self": {"Online": True}})["ozet"]["tailscale"]["cikis_dugumu"])
         self.assertEqual(self.build(tailscale=None)["ozet"]["tailscale"]["durum"], "bilinmiyor")
         settings = copy.deepcopy(SETTINGS)
         settings["manage"]["publications"][2]["expires"] = NOW + 5 * 86400 + 60
         warning = self.build(settings)["uyarilar"]
-        self.assertEqual([(w["seviye"], w["hizmet"]) for w in warning], [("warn", "elle-gezgin")])
+        self.assertEqual([(w["seviye"], w["hizmet"], w["duzelt"]) for w in warning],
+                         [("warn", "konteyner:gezgin", {"bolum": "yayinlar", "hedef": "konteyner:gezgin"})])
         self.assertIn("5 gün sonra doluyor", warning[0]["metin"])
         settings["manage"]["publications"][2]["expires"] = NOW - 60
         self.assertEqual([w["seviye"] for w in self.build(settings)["uyarilar"]], ["bad"])
