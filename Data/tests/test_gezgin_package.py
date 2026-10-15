@@ -72,7 +72,7 @@ class Scratch(unittest.TestCase):
         # DD-203: the rendered package folder with its own settings file; the worker reads it next to itself.
         self.pkg = self.root / "mods" / "gezgin"
         self.pkg.mkdir(parents=True)
-        values = dict(self.env, DOWNLOADS_UID="1000", DOWNLOADS_GID="1000", FILES_PANEL_TRASH=".cop", FILES_ARCHIVE_DIR=".arsiv",
+        values = dict(self.env, DOWNLOADS_UID="1000", DOWNLOADS_GID="1000", FILES_PANEL_TRASH=".cop",
                       TIMEZONE="UTC", SBIN_DIR="/usr/local/sbin", STATE_FILE=str(self.state))
         for name in ("ayar.py", "yayin.py", "paket.env", "gezgin.container"):
             (self.pkg / name).write_text(render((PACKAGE / name).read_text(), values))
@@ -424,7 +424,9 @@ class PackageFileTests(unittest.TestCase):
         self.assertEqual([l for l in lines if l.startswith("Volume=")], [
             "Volume=__GEZGIN_DATA_DIR__/database:/database", "Volume=__GEZGIN_DATA_DIR__/config:/config",
             "Volume=__SERVER_ROOT__:/srv",
-            "Volume=__GEZGIN_DATA_DIR__/bos:/srv/__FILES_PANEL_TRASH__:ro", "Volume=__GEZGIN_DATA_DIR__/bos:/srv/__FILES_ARCHIVE_DIR__:ro"])
+            "Volume=__GEZGIN_DATA_DIR__/bos:/srv/__FILES_PANEL_TRASH__:ro"])
+        # DD-267: Konsol's archive workspace is gone, so nothing covers it any more.
+        self.assertNotIn("ARCHIVE", self.quadlet)
         self.assertFalse([l for l in lines if re.match(r"(AutoUpdate|AddCapability|Requires|PodmanArgs=.*--privileged)", l)])
         self.assertEqual(self.manifest["PAKET_YAYIN_UPSTREAM"], "127.0.0.1:__GEZGIN_UI_PORT__")
         self.assertEqual(self.manifest["PAKET_KONTEYNER_AG"], "__GEZGIN_NETWORK__")

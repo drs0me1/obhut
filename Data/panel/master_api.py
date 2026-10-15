@@ -8,8 +8,9 @@ TypeScript types (tools/konsol-ui/src/api/sema.ts); a committed copy that differ
     python3 panel/master_api.py openapi > docs/konsol-api.json
     python3 panel/master_api.py ts > tools/konsol-ui/src/api/sema.ts
 
-Routes that predate the table keep their place in the backend until their page moves to the new
-interface (docs/redesign.md). Python standard library only.
+Outside the table the backend keeps only the session check Caddy asks (/oturum-denetle), the
+sign-in page's POST /api/konsol/oturum/giris and the packages' own APIs (/api/uygulama/<id>/*).
+Python standard library only.
 """
 import json
 import sys
@@ -89,7 +90,7 @@ SCHEMAS = {
         "tailscale": ref("UygulamaHucresi"), "internet": ref("UygulamaHucresi"),
         "kaynak": obj({"cpu": null(NUM), "bellek": null(INT)}),
         "guncelleme": enum("guncel", "yeni", "denetlenemedi", "bilinmiyor", "sabit"),
-        "adres": obj({"tailscale": null(STR), "internet": null(STR)}), "sayfa": null(STR),
+        "adres": obj({"tailscale": null(STR), "internet": null(STR)}),
         "eylemler": arr(enum("baslat", "durdur", "yeniden-baslat", "kaldir", "guncelle")), "revizyon": null(STR),
         "metinler": null(ref("UygulamaMetinleri")),
         "hesap": BOOL,  # DD-266: a package with a first-login account (GET /api/konsol/uygulamalar/hesap)
@@ -127,13 +128,12 @@ SCHEMAS = {
         "altyapi": obj({"podman": STR, "calisiyor": BOOL, "imaj": INT, "kullanilmayan_imaj": INT, "birim": INT, "ag": INT}),
         "hatalar": arr(STR),
     }),
-    "KonsolBildirimi": open_obj({"ad": STR, "alt": STR, "simge": STR,
-                                 "sayfa": open_obj({"rota": STR, "baslik": STR, "ustbilgi": STR})}),
+    "KonsolBildirimi": open_obj({"ad": STR, "alt": STR, "simge": STR}),
     "Modul": obj({"id": STR, "runtime": STR, "installed": BOOL, "state": enum("calisiyor", "durduruldu", ""), "live": STR,
                   "busy": BOOL, "progress": null(obj({"action": STR, "step": STR, "total": INT, "text": STR})),
-                  "durdurulabilir": BOOL, "hesap": BOOL, "konsol": ref("KonsolBildirimi"), "sayfa": arr(STR),
+                  "durdurulabilir": BOOL, "hesap": BOOL, "konsol": ref("KonsolBildirimi"),
                   "urls": obj({"tailscale": null(STR), "internet": null(STR)})},
-                 optional=("hesap", "konsol", "sayfa", "urls")),
+                 optional=("hesap", "konsol", "urls")),
     "Moduller": obj({"items": arr(ref("Modul"))}),
     "GuncellemeIsi": obj({"durum": enum("yok", "calisiyor", "tamam", "hata"), "hedef": STR, "mesaj": STR,
                           "bitis": null(INT), "asama": STR}),

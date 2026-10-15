@@ -153,7 +153,7 @@ Konsol Model A · App Store (v2-131):
   sağda konumlar ve seçilen ögenin işlemleri (v2-211).
   Mobilde aynı menü Menü düğmesiyle açılır.
   Bu bir KDE veya işletim sistemi oturumu değil, sunucu yönetim panelidir.
-  Dosyalar, WebDAV ve arşiv araçları yerleşiktir. Tailscale, DNS/Caddy ve güvenlik duvarı korunur.
+  Dosyalar ve WebDAV yerleşiktir. Tailscale, DNS/Caddy ve güvenlik duvarı korunur.
   App Store'dan WireGuard ve qBittorrent kurulup kaldırılır; qBittorrent durdurulup başlatılabilir.
   Sade liste: kısa açıklama, durum ve Kur/Aç. Ayrıntı düğmesi teknik bilgileri,
   Günlük, Durdur/Başlat ve Kaldır seçeneklerini açar; aynı anda tek ayrıntı görünür.
@@ -161,19 +161,10 @@ Konsol Model A · App Store (v2-131):
   Sayfa kapansa da kurulum sürer. Dosyalar/WebDAV için kaldır düğmesi veya modül işlemi yoktur.
   Mevcut klasör hesapları kurulum tekrarında korunur; eksik/kapalı yerleşik servisler açılır.
 
-Dosyalar · Arşiv oluştur / Arşiv açıcı:
-  Dosya ve klasörleri seç → Arşiv oluştur (ZIP); tek arşiv/parça seç → Arşiv açıcı.
-  Hedef varsayılan olarak downloads klasörüdür; klasör seçiciyle başka bir yer seçilebilir.
-  İç içe arşivler otomatik açılır; katman seçeneği yoktur, beş katman güvenlik sınırı arka plandadır.
-  Parçalı RAR: tüm .rar/.r00/.r01… veya .part01.rar/.part02.rar… aynı klasörde olmalıdır.
-  İlk parçayı seçin; sonraki parça seçilirse ilk parça otomatik bulunur. Kaynak parçalar silinmez.
-  Aynı adlı sonuç varsa yeniden adlandır, atla veya dur seçenekleri; üzerine yazma yoktur.
-  İşler sunucuda sürer; Dosyalar → Arşiv işleri sekmesinden izle, iptal et veya sonucu aç.
-  ZIP Store/Deflate ve RAR3/RAR5 desteklenir; şifreli arşiv, çok parçalı/büyük ZIP64 ve 7z desteklenmez.
-  Resmi unrar ve python3-rarfile kurulur; gerekirse Debian non-free / Ubuntu universe-multiverse deposu eklenir.
-  İş başına toplam 2 GiB işlenen veri, 10.000 öge ve 15 dakika sınırı vardır; aynı anda tek iş.
-  Hata/iptalde yarım sonuç yayımlanmaz. Sunucu yeniden başlarsa yarım iş sürdürülmez.
-  Son 20 iş hatırlanır; bu dosya yedeği değildir. Kaynak arşivler silinmez.
+Arşivler (DD-267):
+  Konsol'da ZIP/RAR işi yoktur; arşivleri App Store'daki Gezgin açar ve oluşturur.
+  Kurulum tekrarı Konsol'un eski arşiv çalışma alanını (/srv/.arsiv, kullanıcı dosyası değil) ve
+  önceki kurulumların eklediği RAR deposunu kaldırır; kurulu unrar ve python3-rarfile paketlerine dokunmaz.
 
 Konsol · Dosyalar sekmesi (v2-104, v2-105):
   /srv kullanıcı alanı; Dosyalar, Paylaşımlar, Arşiv işleri ve Çöp sekmeleri.
@@ -217,7 +208,7 @@ A) Temiz kurulum
   3. Tailscale Admin: exit-node onayı, restricted DNS alanı ve yeni sunucunun Tailscale IP'si.
      Sunucuyu sıfırlamak aynı Tailscale IP'sini garanti etmez.
   4. http://panel.<alan adı> → Dosyalar açılır.
-     Başlangıçta Dosyalar, App Store ve Ayarlar vardır; WebDAV/ZIP ayrıca kurulmaz.
+     Başlangıçta Dosyalar, App Store ve Ayarlar vardır; WebDAV ayrıca kurulmaz.
   5. Gerekiyorsa App Store'dan qBittorrent/WireGuard kurun.
      WireGuard → Yapılandır ile ilk ağı oluşturun, sonra cihazları ekleyin.
      qBittorrent hesabını kendi sayfasından; klasör paylaşım hesaplarını Dosyalar'dan ayarlayın.
@@ -227,7 +218,7 @@ B) Tekrar çalıştırma ve sınama
   dosyalar ve onaylı panel ayarları korunur. Betik yedekten veri geri yüklemez.
   Temiz sunucuda eski qBittorrent ayarları, WireGuard anahtarları veya kullanıcılar gelmez.
   wireguard.command → 6) ağ seçer; yedek almaz. Mac'teki profiller kendiliğinden yüklenmez.
-  Başarılı kurulumdan sonra Files/WebDAV/ZIP, App Store, Ayarlar ve kaynak göstergelerini sınayın.
+  Başarılı kurulumdan sonra Files/WebDAV, App Store, Ayarlar ve kaynak göstergelerini sınayın.
   Ardından aynı sürümü tekrar çalıştırma ve sunucuyu yeniden başlatma kontrolü yapılmalıdır.
   Ayrıntılı kabul listesi: Data/docs/model-a-clean-install.md
 

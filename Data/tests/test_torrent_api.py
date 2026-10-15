@@ -715,8 +715,9 @@ class DispatcherTests(Scratch):
         self.assertEqual(self.request("POST", "/api/uygulama/torrent/ayar", {"username": "x"})[0], 409)
 
 class InstallRouteTests(Scratch):
-    """DD-210: POST /api/konsol/moduller/<id>/kur with the form of a package that declares PAKET_KUR_AYAR.
-    The base runs the package's worker first (stdin only); the engine starts only after it accepted."""
+    """DD-210: an install (POST /api/konsol/uygulamalar/islem, eylem "kur", DD-266) with the form of a package
+    that declares PAKET_KUR_AYAR. The base runs the package's worker first (stdin only); the engine starts
+    only after it accepted. DD-267: the old shell's /api/konsol/moduller/<id>/kur is gone."""
     def setUp(self):
         super().setUp()
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items() if not k.startswith("TORRENT_")))
@@ -749,8 +750,8 @@ class InstallRouteTests(Scratch):
         self.seed = self.root / "run" / "modul-torrent.kur"
         self.form = {"username": "operator", "password": "dummy-install-password", "save": self.env["DOWNLOADS_PATH"]}
 
-    def request(self, path, data):
-        body = json.dumps(data).encode()
+    def request(self, mid, data, path="/api/konsol/uygulamalar/islem"):
+        body = json.dumps(dict({"id": "paket:" + mid, "eylem": "kur"}, **data)).encode()
         status, _headers, raw = resources.unix_get(self.sock, path, {"X-Konsol": "1", "Content-Type": "application/json"}, "POST", body)
         return status, json.loads(raw)
 
@@ -761,20 +762,20 @@ class InstallRouteTests(Scratch):
         return [r for r in self.runs if r[0][0] == "systemd-run" and "--wait" not in r[0]]
 
     def test_the_form_is_required_validated_by_the_package_and_only_then_installed(self):
-        status, body = self.request("/api/konsol/moduller/torrent/kur", {"veri": False})
+        status, body = self.request("torrent", {"veri": False})
         self.assertEqual(status, 400)
         self.assertIn("Kurulum bilgileri", body["error"])
-        self.assertEqual(self.request("/api/konsol/moduller/torrent/kur", {"form": "x"})[0], 400)
+        self.assertEqual(self.request("torrent", {"form": "x"})[0], 400)
         self.assertEqual((self.worker_runs(), self.spawns()), ([], []), "no form: no worker and no install")
         self.worker_answer = (1, '{"error": "Parola 8–256 karakter olmalı."}')
-        status, body = self.request("/api/konsol/moduller/torrent/kur", {"form": dict(self.form, password="short")})
+        status, body = self.request("torrent", {"form": dict(self.form, password="short")})
         self.assertEqual((status, body["error"]), (400, "Parola 8–256 karakter olmalı."))
         self.assertEqual(self.spawns(), [], "a refused form starts no install")
         self.worker_answer = (0, '{"ok": true, "username": "operator", "save": "/srv/downloads/"}')
         self.runs.clear()
         with patch("builtins.print") as out:
-            status, body = self.request("/api/konsol/moduller/torrent/kur", {"form": self.form})
-        self.assertEqual((status, body), (202, {"id": "torrent", "action": "kur"}))
+            status, body = self.request("torrent", {"form": self.form})
+        self.assertEqual((status, body), (202, {"id": "paket:torrent", "eylem": "kur", "is": None}))
         argv, stdin = self.worker_runs()[0]
         self.assertEqual(argv[-9:], ["/usr/bin/python3", str(self.pkg / "ayar.py"), "--lib", str(self.root / "bin"), "--state",
                                      str(self.state), "kur-hazirla", "--tohum", str(self.seed)])
@@ -790,22 +791,27 @@ class InstallRouteTests(Scratch):
     def test_a_failed_start_removes_the_seed_and_an_installed_or_busy_package_is_refused_first(self):
         self.seed.write_text("{}")
         self.spawn_code = 1
-        status, _body = self.request("/api/konsol/moduller/torrent/kur", {"form": self.form})
+        status, _body = self.request("torrent", {"form": self.form})
         self.assertEqual(status, 502)
         self.assertFalse(self.seed.exists(), "a seed whose install never started is removed")
         self.runs.clear()
         self.items[1]["installed"] = True
-        status, body = self.request("/api/konsol/moduller/torrent/kur", {"form": self.form})
+        status, body = self.request("torrent", {"form": self.form})
         self.assertEqual(status, 409)
         self.assertEqual(self.worker_runs(), [], "an installed package is refused before the worker")
 
     def test_a_package_without_an_install_form_refuses_one(self):
-        status, _body = self.request("/api/konsol/moduller/wireguard/kur", {"form": self.form})
+        status, _body = self.request("wireguard", {"form": self.form})
         self.assertEqual(status, 400)
         self.assertEqual(self.worker_runs(), [])
-        status, _body = self.request("/api/konsol/moduller/wireguard/kur", {"veri": False})
+        status, _body = self.request("wireguard", {"veri": False})
         self.assertEqual(status, 202)
         self.assertEqual(self.worker_runs(), [])
+
+    def test_the_old_install_route_is_gone(self):
+        status, _body = self.request("torrent", {"form": self.form}, path="/api/konsol/moduller/torrent/kur")
+        self.assertEqual(status, 404)
+        self.assertEqual((self.worker_runs(), self.spawns()), ([], []))
 
 if __name__ == "__main__":
     unittest.main()

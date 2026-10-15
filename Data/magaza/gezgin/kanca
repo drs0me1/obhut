@@ -1,7 +1,7 @@
 # Gezgin paketinin kancaları (DD-262). master-modul bu dosyayı `source` eder ve yalnız paket_*
 # işlevlerini çağırır. Gezgin tabandaki Podman'da, özetiyle sabit ghcr.io/drs0me1/gezgin imajıyla
 # çalışır; birimi paketteki gezgin.container'dan (quadlet) üretilir. Süreç Dosyalar hesabı olarak
-# çalışır (DD-227); kullanıcı alanını tek parça görür, Konsol'un çöpü ve arşiv işleri boş bir örtüyle
+# çalışır (DD-227); kullanıcı alanını tek parça görür, Konsol'un çöpü boş bir örtüyle
 # gizlidir. Uygulama verisi (veritabanı, ayar) GEZGIN_DATA_DIR altındadır; `kaldir --veri` onu ve imajı
 # siler, kullanıcı alanına dokunmaz. DD-210: ilk yönetici Konsol'daki pencereden gelir; motor bilgiyi
 # KUR_TOHUM'da verir, kanca parolanın özetini konteyner ilk kez başlamadan önce ilk.env'e yazar ve
@@ -15,14 +15,13 @@ paket_gerekli() {
     [[ "${GEZGIN_UI_PORT:-}" =~ ^[1-9][0-9]{3,4}$ && "${GEZGIN_DATA_DIR:-}" == /var/lib/?* &&
         "${GEZGIN_CONTAINER:-}" =~ ^[a-z][a-z0-9-]{1,30}$ && -n "${GEZGIN_NETWORK:-}" ]] ||
         fail_step "paket ayarı eksik (gezgin.env); kurulumu yeniden çalıştırın"
-    need_keys SERVER_ROOT DOWNLOADS_UID DOWNLOADS_GID FILES_PANEL_TRASH FILES_ARCHIVE_DIR KONTEYNER_BIRIM_DIR \
+    need_keys SERVER_ROOT DOWNLOADS_UID DOWNLOADS_GID FILES_PANEL_TRASH KONTEYNER_BIRIM_DIR \
         LOCAL_DOMAIN TAILSCALE_IPV4 CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR
     command -v podman >/dev/null 2>&1 || fail_step "Podman yok; kurulumu yeniden çalıştırın"
-    # Örtülerin bağlama noktaları: Konsol'un çöpü ve arşiv klasörü her kurulumdan sonra vardır. Yoksa
-    # Podman onları kök sahipliğinde yaratırdı; burada durulur.
-    [[ -d "$SERVER_ROOT/$FILES_PANEL_TRASH" && ! -L "$SERVER_ROOT/$FILES_PANEL_TRASH" &&
-        -d "$SERVER_ROOT/$FILES_ARCHIVE_DIR" && ! -L "$SERVER_ROOT/$FILES_ARCHIVE_DIR" ]] ||
-        fail_step "Konsol'un çöp ya da arşiv klasörü yok; kurulumu yeniden çalıştırın"
+    # Örtünün bağlama noktası: Konsol'un çöpü her kurulumdan sonra vardır. Yoksa Podman onu kök
+    # sahipliğinde yaratırdı; burada durulur.
+    [[ -d "$SERVER_ROOT/$FILES_PANEL_TRASH" && ! -L "$SERVER_ROOT/$FILES_PANEL_TRASH" ]] ||
+        fail_step "Konsol'un çöp klasörü yok; kurulumu yeniden çalıştırın"
 }
 
 gezgin_unit_name() { # Podman üreticisinin yazdığı birim: konteyner adı + .service
@@ -67,7 +66,7 @@ gezgin_dizinler() {
 }
 
 # Servis ayakta; Gezgin Dosyalar hesabıyla çalışıyor; konteyner tam olarak kullanıcı alanını, kendi
-# veri klasörlerini ve Konsol'un çöpüyle arşivinin yerinde salt okunur boş örtüyü görüyor; Podman yalnız
+# veri klasörlerini ve Konsol'un çöpünün yerinde salt okunur boş örtüyü görüyor; Podman yalnız
 # arayüzü 127.0.0.1'de yayımlıyor. --ilk: yeni kurulumda girişsiz istek 401 almalı.
 gezgin_verify() { # [--ilk]
     local unit _ uid="" code="000" mounts want ports listen
@@ -87,8 +86,7 @@ gezgin_verify() { # [--ilk]
     mounts="$(podman inspect --format '{{range .Mounts}}{{.Source}} {{.Destination}} {{.RW}}{{"\n"}}{{end}}' "$GEZGIN_CONTAINER" 2>/dev/null |
         sed '/^$/d' | LC_ALL=C sort || true)"
     want="$(printf '%s\n' "$SERVER_ROOT /srv true" "$GEZGIN_DATA_DIR/bos /srv/$FILES_PANEL_TRASH false" \
-        "$GEZGIN_DATA_DIR/bos /srv/$FILES_ARCHIVE_DIR false" "$GEZGIN_DATA_DIR/config /config true" \
-        "$GEZGIN_DATA_DIR/database /database true" | LC_ALL=C sort)"
+        "$GEZGIN_DATA_DIR/config /config true" "$GEZGIN_DATA_DIR/database /database true" | LC_ALL=C sort)"
     [[ "$mounts" == "$want" ]] || { FAIL="Gezgin'in bağlı klasörleri beklenenden farklı: $(tr '\n' ';' <<<"$mounts")"; return 1; }
     for _ in $(seq 1 40); do
         code="$(http_code "http://127.0.0.1:$GEZGIN_UI_PORT/health")"

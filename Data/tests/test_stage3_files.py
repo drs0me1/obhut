@@ -20,7 +20,7 @@ class Stage3FilesTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name).resolve()
         args = types.SimpleNamespace(root=str(self.root), trash=".cop", share=".pay",
-                                     archive_dir="", domain="", version="test", temp_dir="",
+                                     domain="", version="test", temp_dir="",
                                      allow_host=[])
         self.handler = type("FixtureHandler", (fp.Handler,), {"panel": fp.Panel(args), "timeout": .2})
         self.server = fp.Server(("127.0.0.1", 0), self.handler)

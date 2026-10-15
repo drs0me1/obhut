@@ -25,9 +25,9 @@ PrivateTmp=true
 PrivateDevices=true
 PrivateIPC=true
 ProtectProc=invisible
-# DD-225: tek satır (ikinci bir atama listeyi sıfırlar). Arşiv hazırlık alanı ve paketlerin özel durumu
-# da görünmez; .arsiv'i Dosyalar açılışta kurar, o yüzden '-' yok (yoksa servis güvenli tarafta açılmaz).
-InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__ __SERVER_ROOT__/__FILES_ARCHIVE_DIR__ -__SERVER_ROOT__/__SHARE_DIR__ __PRIVATE_STATE_ROOT__
+# DD-225: tek satır (ikinci bir atama listeyi sıfırlar). Konsol'un çöpü ve paketlerin özel durumu da
+# görünmez; çöpü kurulum her seferinde kurar, o yüzden '-' yok (yoksa servis güvenli tarafta açılmaz).
+InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__ -__SERVER_ROOT__/__SHARE_DIR__ __PRIVATE_STATE_ROOT__
 IPAddressDeny=any
 IPAddressAllow=localhost
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX

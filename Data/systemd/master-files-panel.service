@@ -13,7 +13,7 @@ Type=simple
 # DOWNLOADS_UID/GID'nin adı (kurulum bulur ya da girişsiz sistem hesabı açar).
 User=__FILES_PANEL_USER__
 Group=__FILES_PANEL_GROUP__
-ExecStart=/usr/bin/python3 __SBIN_DIR__/master-files-panel serve --listen 127.0.0.1:__FILES_PANEL_PORT__ --root __SERVER_ROOT__ --trash __FILES_PANEL_TRASH__ --share __SHARE_DIR__ --archive-dir=__FILES_ARCHIVE_DIR__ --domain=__LOCAL_DOMAIN__ --version=__V2_VERSION__ --protected="__PROTECTED_DIRS__" --downloads-dir=__DOWNLOADS_SUBDIR__
+ExecStart=/usr/bin/python3 __SBIN_DIR__/master-files-panel serve --listen 127.0.0.1:__FILES_PANEL_PORT__ --root __SERVER_ROOT__ --trash __FILES_PANEL_TRASH__ --share __SHARE_DIR__ --domain=__LOCAL_DOMAIN__ --version=__V2_VERSION__ --protected="__PROTECTED_DIRS__" --downloads-dir=__DOWNLOADS_SUBDIR__
 # Paylaşım hesabı bu servise hiç açılmaz: Konsol onu root arka ucundan okur (DD-149).
 Environment=PYTHONDONTWRITEBYTECODE=1
 UMask=0002
@@ -25,7 +25,7 @@ PrivateDevices=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=__SERVER_ROOT__
-# DD-225: paketlerin özel durumu görünmez; çöp, arşiv hazırlık alanı ve paylaşım adı bu servisindir.
+# DD-225: paketlerin özel durumu görünmez; çöp ve paylaşım adı bu servisindir.
 InaccessiblePaths=__PRIVATE_STATE_ROOT__
 ProtectKernelModules=true
 ProtectKernelTunables=true
@@ -39,7 +39,7 @@ RestrictNamespaces=true
 LockPersonality=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
-# DD-180: unrar yabancı RAR dosyasını bu serviste açar. Bir açık doğrudan dışarıya ve Caddy'nin
+# DD-180: bu servis tarayıcıdan gelen yabancı dosyaları işler. Bir açık doğrudan dışarıya ve Caddy'nin
 # tailnet adresine bağlanamasın (yalnız loopback), başka süreçleri görmesin ve yalnız sıradan servis
 # sistem çağrılarını kullansın. Loopback'teki host hizmetleri (DNS) açık kalır; loopback'e yayımlanan
 # konteyner portları bu süzgeçle yanıt vermez (DD-180 notu, nrm'de ölçüldü).

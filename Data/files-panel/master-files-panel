@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Konsol'un dosya arka ucu (DD-139, DD-140, DD-141). Kullanıcı alanını tarayıcıdan yönetir:
 # gez, yeni klasör, yeniden adlandır, taşı, çöpe at / geri yükle / kalıcı sil, metin dosyasını
-# oku, indir, yükle ve arşivle. Sayfaları Caddy verir; /api/wg/* ve /api/konsol/* istekleri
+# oku, indir ve yükle. Sayfaları Caddy verir; /api/wg/* ve /api/konsol/* istekleri
 # root arka ucuna (master-panel) gider. Klasör paylaşım hesapları orada yönetilir.
 # Yalnız 127.0.0.1'i dinler; Caddy tailnet'e (http://panel.<alan>) ve isteğe bağlı genel HTTPS
 # adına (DD-195) açar. Konsol oturumunu
@@ -16,7 +16,7 @@
 # DD-235: --sistem kipi aynı kodu root olarak sunucunun tamamı (/) için çalıştırır (ayrı servis,
 # master-sistem-dosya). Yalnız Unix soketinde dinler, yalnız başka bir Tailscale cihazından gelen
 # isteği kabul eder (Caddy'nin yazdığı X-Konsol-Kanal ve X-Forwarded-For), yolları /api/sistem/*
-# altındadır. Çöp ve arşiv yoktur: silme kalıcıdır, onay ister ve bağlama noktasını aşmaz.
+# altındadır. Çöp yoktur: silme kalıcıdır, onay ister ve bağlama noktasını aşmaz.
 # DD-238: /proc, /sys, /dev ve /run de diğer klasörler gibi yönetilir (yöneticinin isteği); var olan
 # bir dosyanın üzerine yine hiçbir işlem yazmaz.
 # DD-248: klasör boyutu burada da hesaplanır, ama yalnız yerel disk dosya sistemlerinde ve bir tarama
@@ -51,9 +51,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from master_archives import Archives, ArchiveError, job_source
 
 TRASH_RE = re.compile(r"^\.[a-z]{1,16}$")
 TOKEN_RE = re.compile(r"^[0-9]{13}-[0-9a-f]{8}$")
@@ -229,27 +226,8 @@ def dir_size(parent_fd, name, budget, dev=None):
     return total
 
 
-def rmtree_at(parent_fd, name):
-    try:
-        st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return
-    if not stat.S_ISDIR(st.st_mode):
-        os.unlink(name, dir_fd=parent_fd)
-        return
-    fd = os.open(name, O_DIR, dir_fd=parent_fd)
-    try:
-        with os.scandir(fd) as it:
-            names = [e.name for e in it]
-        for child in names:
-            rmtree_at(fd, child)
-    finally:
-        os.close(fd)
-    os.rmdir(name, dir_fd=parent_fd)
-
-
 def rmtree_onedev(parent_fd, name, dev):
-    """DD-235: rmtree_at gibi, ama başka bir dosya sistemine (bağlama noktasına) inmez.
+    """DD-235: klasörü içindekilerle siler, ama başka bir dosya sistemine (bağlama noktasına) inmez.
     Bağlama noktaları önceden denetlenir; bu, aradan geçen bir bağlamaya karşı son kilittir."""
     st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     if st.st_dev != dev:
@@ -387,12 +365,11 @@ def local_devices(mountinfo="/proc/self/mountinfo"):
 class Files:
     """Kök altındaki bütün işlemler. Yollar parça listesidir; kök []."""
 
-    def __init__(self, root, trash, share="", archive="", system=False):
+    def __init__(self, root, trash, share="", *, system=False):
         self.root = root
         self.trash = trash
         self.share = share
-        self.archive = archive
-        # DD-235: root olarak / (çöp, arşiv ve ayrılmış ad yok; silme kalıcı).
+        # DD-235: root olarak / (çöp ve ayrılmış ad yok; silme kalıcı).
         self.system = system
         self.dir_mode, self.file_mode = (0o755, 0o644) if system else (0o775, 0o664)
         self.lock = threading.Lock()
@@ -411,14 +388,12 @@ class Files:
             raise PanelError(403, "çöpe yalnız Çöp sekmesinden erişilir")
         if self.share and parts[0] == self.share:
             raise PanelError(403, "eski paylaşım çalışma alanına erişilemez")
-        if self.archive and parts[0] == self.archive:
-            raise PanelError(403, "arşiv çalışma alanına erişilemez")
         return parts
 
     def check_new_name(self, parts, name):
         if not valid_name(name) or CONTROL_RE.search(name) or name != name.strip():
             raise PanelError(400, "geçersiz ad (boş olamaz, / içeremez, en çok 255 bayt)")
-        if not parts and name in (self.trash, self.share, self.archive):
+        if not parts and name in (self.trash, self.share):
             raise PanelError(400, "bu ad sistem çalışma alanı için ayrılmış")
 
     def check_source_names(self, parts, names, destination=False):
@@ -426,7 +401,7 @@ class Files:
         for name in names:
             if not valid_name(name):
                 raise PanelError(400, "geçersiz ad")
-            if not parts and name in (self.trash, self.share, self.archive):
+            if not parts and name in (self.trash, self.share):
                 raise PanelError(403, "kök klasöre sistem çalışma alanı adıyla taşınamaz" if destination
                                  else "sistem çalışma alanı taşınamaz veya yeniden adlandırılamaz")
 
@@ -484,7 +459,7 @@ class Files:
             with os.scandir(fd) as it:
                 names = [e.name for e in it]
             for name in names:
-                if not parts and name in (self.trash, self.share, self.archive):
+                if not parts and name in (self.trash, self.share):
                     continue
                 if not valid_name(name):
                     skipped += 1
@@ -504,7 +479,7 @@ class Files:
             with os.scandir(fd) as it:
                 names = [e.name for e in it]
             for name in names:
-                if name in (self.trash, self.share, self.archive) or not valid_name(name):
+                if name in (self.trash, self.share) or not valid_name(name):
                     continue
                 try:
                     st = os.stat(name, dir_fd=fd, follow_symlinks=False)
@@ -849,7 +824,7 @@ class Files:
     def place(self, src_fd, name, dst_fd, dest):
         candidate = name
         for i in range(2, 102):
-            if dest or candidate not in (self.trash, self.share, self.archive):
+            if dest or candidate not in (self.trash, self.share):
                 try:
                     rename_noreplace(src_fd, name, dst_fd, candidate)
                     return candidate
@@ -911,24 +886,13 @@ def status_for(err):
 
 
 # --------------------------------------------------------------- sunucu
-def report_archive(job):
-    """DD-183: arşiv işinin sonucu, isteğin audit satırıyla aynı biçimde Günlük'e düşer.
-    İş arka planda biter; istemci adresi yoktur ("-")."""
-    ok = job.get("status") in ("done", "skipped", "cancelled")
-    detail = "%s → %s: %s" % (job_source(job), job.get("name", ""), job.get("message", ""))
-    print("dosya: %s - arsiv-sonuc %s -> %s" % (ACTOR, json.dumps(detail, ensure_ascii=False), "ok" if ok else "hata"),
-          flush=True)
-
-
 class Panel:
     def __init__(self, args):
         self.args = args
         self.lock = threading.Lock()
         self.usage_cache = (0.0, None)
         self.system = bool(getattr(args, "sistem", False))
-        self.files = Files(args.root, args.trash, args.share, getattr(args, "archive_dir", ""), system=self.system)
-        self.archives = None if self.system else (Archives(self.files, self.files.archive, rename_noreplace, rmtree_at, report=report_archive)
-                         if self.files.archive else None)
+        self.files = Files(args.root, args.trash, args.share, system=self.system)
 
     def used(self):
         """İndirilenlerin toplamı; ağaç yürüyüşü USAGE_CACHE_SECONDS boyunca önbellekte."""
@@ -1109,7 +1073,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     code, result, detail = fn()
             else:
                 code, result, detail = fn()
-        except (PanelError, ArchiveError) as err:
+        except PanelError as err:
             if action:
                 self.audit(user, action, "%s: %s" % (hint, err.message), False)
             self.error(err.code, err.message)
@@ -1135,8 +1099,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         files = self.panel.files
         if route == "/api/state":
             self.run(user, None, lambda: (200, self.panel.state(), None), lock=False)
-        elif route == "/api/archives" and self.panel.archives:
-            self.run(user, None, lambda: (200, self.panel.archives.status(), None), lock=False)
         elif route == "/api/list":
             self.run(user, None, lambda: (200, files.listing(files.split(arg("path")), arg("dirs") == "1"), None),
                      lock=False)
@@ -1251,20 +1213,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.error(400, "istek gövdesi JSON olmalı")
             return
         files = self.panel.files
-
-        if route in ("/api/archives", "/api/archives/cancel") and self.panel.archives:
-            submit = route == "/api/archives"
-
-            def archive_action():
-                manager = self.panel.archives
-                job = manager.submit(data) if submit else manager.cancel(data.get("id"))
-                # DD-183: readable in Günlük; the result follows as "arsiv-sonuc".
-                return 202, {"job": job}, "%s → %s" % (job_source(job), job["name"])
-            action = ("arsiv-olustur" if data.get("operation") == "zip" else "arsiv-ac") if submit else "arsiv-iptal"
-            names = data.get("names") if isinstance(data.get("names"), list) else []
-            hint = "%s → %s" % (", ".join(str(n) for n in names[:3])[:200], str(data.get("name", ""))[:200]) if submit else ""
-            self.run(user, action, archive_action, lock=False, hint=hint)
-            return
 
         def mkdir():
             parts, name = files.split(data.get("path")), data.get("name")
@@ -1395,7 +1343,7 @@ def serve_system(args):
             group_gid = grp.getgrnam(args.socket_group).gr_gid
         except KeyError:
             fail("soket grubu yok: %s" % args.socket_group)
-    args.trash = args.share = args.archive_dir = args.downloads_dir = ""
+    args.trash = args.share = args.downloads_dir = ""
     args.protected = []
     try:
         os.close(Files(args.root, "", system=True).open_dir([]))
@@ -1426,8 +1374,6 @@ def cmd_serve(args):
         fail("kök mutlak yol, çöp adı noktayla başlayan küçük harfli bir ad olmalı")
     if args.share and (not TRASH_RE.match(args.share) or args.share == args.trash):
         fail("paylaşım klasörü adı noktayla başlayan küçük harfli ve çöpten farklı olmalı")
-    if args.archive_dir and (not TRASH_RE.fullmatch(args.archive_dir) or args.archive_dir in (args.share, args.trash)):
-        fail("arşiv çalışma klasörü noktayla başlayan küçük harfli ve diğer iç alanlardan farklı olmalı")
     # DD-203: paketlerin yazdığı klasörler (köke göre yol ve sahibinin adı); sayfa onları
     # seçtirmez, paylaştırmaz ve kime ait olduğunu söyler. Kurulum listeyi bildirimlerden derler.
     protected = []
@@ -1440,7 +1386,7 @@ def cmd_serve(args):
         protected.append({"path": rel, "owner": owner.strip()})
     args.protected = protected
     try:
-        Files(args.root, args.trash, args.share, args.archive_dir).split(args.downloads_dir)
+        Files(args.root, args.trash, args.share).split(args.downloads_dir)
     except PanelError:
         fail("geçersiz --downloads-dir")
     try:
@@ -1465,7 +1411,6 @@ def main():
     s.add_argument("--trash", default=".cop")
     # DD-171: --share only reserves the retired hidden directory; never reads its marker.
     s.add_argument("--share", default="")
-    s.add_argument("--archive-dir", default="")
     s.add_argument("--domain", default="")
     s.add_argument("--version", default="")
     s.add_argument("--protected", default="")

@@ -103,13 +103,11 @@ PACKAGE_OVERRIDES_DIR=$PACKAGE_OVERRIDES_DIR
 DOWNLOADS_UID=$DOWNLOADS_UID
 DOWNLOADS_GID=$DOWNLOADS_GID
 FILES_PANEL_TRASH=$FILES_PANEL_TRASH
-FILES_ARCHIVE_DIR=$FILES_ARCHIVE_DIR
 CADDYFILE=$CADDYFILE
 CADDY_MODULES_DIR=$CADDY_MODULES_DIR
 VPN_BLOCK_DEST4="$VPN_BLOCK_DEST4"
 VPN_BLOCK_DEST6="$VPN_BLOCK_DEST6"
 DNSMASQ_CONF_DIR=$DNSMASQ_CONF_DIR
-CONSOLE_WEB_DIR=$CONSOLE_WEB_DIR
 RUNTIME_DIR=$RUNTIME_DIR
 LOG_DIR=$LOG_DIR
 GUNCELLEME_REPO=$GUNCELLEME_REPO
@@ -521,37 +519,13 @@ apt_update_caddy_tolerant() {
     return "$status"
 }
 
-# DD-166: distribution-signed RAR dependencies; preserve operator source files.
-# OS-DIVERGENCE: rar-repository (debian/ubuntu) — non-free vs universe/multiverse [DD-166]
-ensure_rar_repository() {
-    local mirror security components keyring package candidate missing=0
-    for package in unrar python3-rarfile; do
-        candidate="$(LC_ALL=C apt-cache policy "$package" | awk '/Candidate:/ {value=$2} END {print value}')"
-        [[ -n "$candidate" && "$candidate" != '(none)' ]] || missing=1
-    done
-    [[ "$missing" -eq 1 ]] || return 0
-    case "$OS_ID" in
-        debian)
-            mirror="https://deb.debian.org/debian"; security="https://security.debian.org/debian-security"
-            components="non-free"; keyring="/usr/share/keyrings/debian-archive-keyring.gpg"
-            ;;
-        ubuntu)
-            mirror="https://archive.ubuntu.com/ubuntu"; security="https://security.ubuntu.com/ubuntu"
-            case "$OS_ARCH" in amd64|i386) ;; *) mirror="https://ports.ubuntu.com/ubuntu-ports"; security="$mirror" ;; esac
-            components="universe multiverse"; keyring="/usr/share/keyrings/ubuntu-archive-keyring.gpg"
-            ;;
-        *) die "RAR deposu için desteklenmeyen işletim sistemi" ;;
-    esac
-    [[ -f "$keyring" ]] || die "Dağıtım arşiv anahtarlığı bulunamadı: $keyring"
-    log INFO "RAR desteği: resmi $OS_CODENAME $components deposu ekleniyor (unrar lisanslı/freeware)."
-    atomic_write "$RAR_APT_SOURCE_FILE" 0644 <<EOF
-# master-stack: RAR dependencies (DD-166); operator repositories are untouched.
-deb [signed-by=$keyring] $mirror $OS_CODENAME $components
-deb [signed-by=$keyring] $mirror $OS_CODENAME-updates $components
-deb [signed-by=$keyring] $security $OS_CODENAME-security $components
-EOF
-    retry "apt-rar-update" 3 "$APT_LOCK_TIMEOUT" -- \
-        apt_update_caddy_tolerant "$CADDY_APT_REPO" /dev/null "${APT_OPTS[@]}"
+# DD-267: Konsol'un ZIP/RAR işleri kalktı. Önceki kurulumların eklediği RAR deposu (DD-166; yalnız bu
+# kurulumun kendi kaynak dosyası, düz dosya) silinir; kurulu unrar ve python3-rarfile paketleri
+# kaldırılmaz. Aşama 1'in apt-get update'inden önce çalışır: listeler aynı adımda yenilenir.
+remove_retired_rar_repository() {
+    [[ -f "$RETIRED_RAR_APT_SOURCE_FILE" && ! -L "$RETIRED_RAR_APT_SOURCE_FILE" ]] || return 0
+    rm -f -- "$RETIRED_RAR_APT_SOURCE_FILE"
+    log INFO "Eski RAR deposu kaldırıldı ($RETIRED_RAR_APT_SOURCE_FILE); kurulu paketlere dokunulmadı"
 }
 
 stage_1() {
@@ -566,6 +540,7 @@ stage_1() {
     # ufw kapısının reddettiği "tek şeyin iki sahibi" sınıfının aynısı.
     # SUSPEND apt kancasınca okunur; Debian'da needrestart kurulu değil, no-op.
     export NEEDRESTART_SUSPEND=1
+    remove_retired_rar_repository
     local caddy_mark
     caddy_mark="$(mktemp)"
     retry "apt-update" 3 "$APT_LOCK_TIMEOUT" -- apt_update_caddy_tolerant "$CADDY_APT_REPO" "$caddy_mark" "${APT_OPTS[@]}"
@@ -573,7 +548,6 @@ stage_1() {
         log WARN "Caddy deposu yanıt vermiyor ($(head -c 80 "$caddy_mark")); Caddy bu kez güncellenmeden devam ediliyor (DD-253)"
     fi
     rm -f "$caddy_mark"
-    ensure_rar_repository
     if [[ "$RUN_FULL_UPGRADE" -eq 1 ]]; then
         retry "apt-upgrade" 2 "$APT_LOCK_TIMEOUT" -- \
             apt-get "${APT_OPTS[@]}" -y -o Dpkg::Options::=--force-confdef \
@@ -584,7 +558,7 @@ stage_1() {
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
         ca-certificates curl ethtool iproute2 procps kmod \
         iptables nftables coreutils util-linux diffutils jq \
-        dnsutils unattended-upgrades python3 python3-rarfile unrar
+        dnsutils unattended-upgrades python3
     # Artık binary kesin var: arka uç denetimi burada zorunlu (DD-108).
     check_nft_iptables required
     # DD-208: konteyner çalışma ortamı, önerileri olmadan (buildah, criu, slirp4netns gelmez).
@@ -694,8 +668,9 @@ ensure_downloads_tree() {
     [[ -d "$root" ]] || die "downloads dizini yok: $root"
     # No pathname-based chown/chmod of service-writable data. Keep one selective
     # descriptor walk; links/special files and private work areas stay untouched.
+    # DD-267: the retired archive workspace keeps its private mode until stage 7 removes it.
     python3 "$V2_ROOT/panel/master_permissions.py" "$root" "$uid" "$gid" \
-        "${FILES_ARCHIVE_DIR:-.arsiv}" "${SHARE_DIR:-.pay}"
+        "${RETIRED_ARCHIVE_DIR:-.arsiv}" "${SHARE_DIR:-.pay}"
 }
 
 # Recursive chown/chmod only under an allowlisted data root (DD-93).
@@ -1367,13 +1342,21 @@ ensure_panel() {
     else
         log INFO "Konsol arka ucu aynı; yeniden başlatılmadı"
     fi
+    # DD-267: Ana Menü düzeni (DD-206) ve Dosyalar'ın favorileri (DD-250) kalktı. Kayıtlar, onları yazan
+    # eski arka uç yenisine geçtikten sonra ve yalnız bu klasördeki düz dosyalarsa silinir.
+    for f in duzen.json favoriler.json; do
+        [[ ! -f "$KONSOL_AUTH_DIR/$f" || -L "$KONSOL_AUTH_DIR/$f" ]] || {
+            rm -f -- "$KONSOL_AUTH_DIR/$f"
+            log INFO "Konsol: kaldırılan özelliğin kaydı silindi ($KONSOL_AUTH_DIR/$f)"
+        }
+    done
 }
 
 # Built-in Files listens on loopback as DOWNLOADS_UID, writing only SERVER_ROOT.
 # Stage 7 applies changed worker/unit files through master-modul yerlesik (DD-159).
 # Caddy directly serves the console's static assets.
 ensure_console_pages() {
-    local f dir id rel
+    local f rel
     install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR"
     for f in index.html konsol.css konsol.js ayarlar.css ayarlar.js dosyalar.css dosyalar.js panel.css arsiv.js \
         konteynerler.css konteynerler.js giris.html giris.js giris.css duzenleyici.js obhut.svg obhut.png; do
@@ -1394,19 +1377,19 @@ ensure_console_pages() {
         rel="${f#"$CONSOLE_WEB_DIR/yeni/"}"
         [[ "${rel##*/}" != .* && -f "$V2_ROOT/console/yeni/$rel" ]] || rm -f -- "$f"
     done < <(find "$CONSOLE_WEB_DIR/yeni" -type f -print0)
-    # DD-200: kurulu paketlerin sayfa dosyaları uygulama/<id>/ altındadır (master-modul koyar ve
-    # kaldırır). Kayıtta olmayan bir paketin klasörü sunucuda durmaz.
-    for dir in "$CONSOLE_WEB_DIR"/uygulama/*/; do
-        [[ -d "$dir" ]] || continue
-        id="${dir%/}"; id="${id##*/}"
-        [[ -z "$(module_state "$id")" ]] || continue
-        rm -rf -- "$dir"
-        log INFO "Konsol: kurulu olmayan $id paketinin sayfa dosyaları kaldırıldı"
-    done
+    # DD-267: paketlerin eski arayüz sayfaları (DD-200, uygulama/<id>/) kalktı; klasörün tamamı bir kez
+    # silinir. Yalnız gerçek bir klasörse ve başka bir dosya sistemine inmeden.
+    if [[ -d "$CONSOLE_WEB_DIR/uygulama" && ! -L "$CONSOLE_WEB_DIR/uygulama" ]]; then
+        if rm -rf --one-file-system -- "$CONSOLE_WEB_DIR/uygulama"; then
+            log INFO "Konsol: paketlerin eski sayfa dosyaları kaldırıldı ($CONSOLE_WEB_DIR/uygulama)"
+        else
+            log WARN "Konsol'un eski paket sayfaları tamamen silinemedi ($CONSOLE_WEB_DIR/uygulama); elle bakın"
+        fi
+    fi
 }
 
 ensure_files_panel() {
-    local changed="${1:-0}" protected user group
+    local changed="${1:-0}" protected user group f
     # systemd User= sayısal uid için de kullanıcı kaydı ister. Varsa mevcut ad (ör. ubuntu),
     # yoksa girişsiz, ev dizinsiz bir sistem hesabı; dosya sahipliği sayısal kaldığı için değişmez.
     # getent bulamayınca 2 döner; pipefail altında kurulumu düşürmesin.
@@ -1427,19 +1410,16 @@ ensure_files_panel() {
     fi
     atomic_write "$SBIN_DIR/master-files-panel" 0755 <"$V2_ROOT/files-panel/master-files-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && { changed=1; FILES_PANEL_SCRIPT_CHANGED=1; }
-    atomic_write "$SBIN_DIR/master_archives.py" 0644 <"$V2_ROOT/files-panel/master_archives.py"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    atomic_write "$SBIN_DIR/master_rar.py" 0644 <"$V2_ROOT/files-panel/master_rar.py"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    python3 "$V2_ROOT/panel/master_permissions.py" --directory-mode 0700 \
-        "$SERVER_ROOT/$FILES_ARCHIVE_DIR" "$DOWNLOADS_UID" "$DOWNLOADS_GID"
+    # DD-267: ZIP/RAR işlerinin yardımcıları kalktı; önceki kurulumların koyduğu kopyalar silinir.
+    for f in master_archives.py master_rar.py; do
+        [[ ! -e "$SBIN_DIR/$f" && ! -L "$SBIN_DIR/$f" ]] || { rm -f -- "$SBIN_DIR/$f"; changed=1; }
+    done
     # DD-144, DD-203: paketlerin yazdığı klasörler (bildirimlerden) köke göre; sayfa orada uyarır.
     protected="$(paket_korunan_klasorler)"
     install -d -m 0755 -o root -g root "$MODULES_DIR/dosya"
     render_template "$V2_ROOT/systemd/master-files-panel.service" "$MODULES_DIR/dosya/master-files-panel.service" 0644 \
         SBIN_DIR="$SBIN_DIR" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
-        FILES_ARCHIVE_DIR="$FILES_ARCHIVE_DIR" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
         SHARE_DIR="$SHARE_DIR" \
         SERVER_ROOT="$SERVER_ROOT" \
@@ -1478,6 +1458,28 @@ ensure_system_files() {
     fi
 }
 
+# DD-267: Konsol'un ZIP/RAR işlerinin özel çalışma alanı (DD-166/170/183: ara dosyalar ve iş geçmişi,
+# kullanıcı dosyası değil) yeniden çalışmada silinir. Dosyalar, Paylaşım ve Gezgin onu artık gizlemediği
+# için yeni birimleri açıldıktan sonra (yerleşikler ve paketler uygulandıktan sonra). Yalnız
+# SERVER_ROOT'un hemen altındaki gerçek bir klasör (sembolik bağ değil), sahibi indirme hesabı ve izni
+# 0700 ise: eski Dosyalar onu hep böyle tutardı, Dosyalar/Gezgin/WebDAV'ın açtığı klasör 0775 olur.
+# Başka bir dosya sistemine inilmez; silinemeyen bir parça kurulumu durdurmaz, uyarı verir.
+remove_retired_archive_dir() {
+    local dir="$SERVER_ROOT/$RETIRED_ARCHIVE_DIR" owner
+    [[ "$RETIRED_ARCHIVE_DIR" =~ ^\.[a-z]{1,16}$ ]] || die "eski arşiv klasörünün adı geçersiz: $RETIRED_ARCHIVE_DIR"
+    [[ -d "$dir" && ! -L "$dir" ]] || return 0
+    owner="$(stat -c '%u:%a' -- "$dir" 2>/dev/null || true)"
+    if [[ "$owner" != "$DOWNLOADS_UID:700" ]]; then
+        log INFO "$dir Konsol'un eski arşiv çalışma alanı değil (sahip:izin ${owner:-?}); dokunulmadı"
+        return 0
+    fi
+    if rm -rf --one-file-system -- "$dir"; then
+        log INFO "Konsol'un eski arşiv çalışma alanı silindi ($dir)"
+    else
+        log WARN "Konsol'un eski arşiv çalışma alanı tamamen silinemedi ($dir); elle bakın"
+    fi
+}
+
 stage_7() {
     log INFO "Aşama 7/7 — doğrulama"
     # Built-in capabilities keep the service registry IDs (DD-159/171).
@@ -1486,6 +1488,7 @@ stage_7() {
     systemctl enable --now master-share-network.timer
     # DD-152: Docker yok; kurulu modüller dosyaları değiştiyse master-modul ile yeniden uygulanır.
     reapply_modules
+    remove_retired_archive_dir
     "$SBIN_DIR/master-firewall" --check
     check_podman
     # DD-181: the timer sleeps while nothing is pending; it must stay enabled for boot and apply.
@@ -1616,7 +1619,7 @@ stage_7() {
             -H "Host: baska.ornek" "${gate_url}${gate_path}" || true)"
         [[ "$code" == "403" ]] || die "Konsol ${gate_path}: yabancı Host ile HTTP $code (beklenen 403)"
     done
-    # DD-180: indirme hesabıyla çalışan bir program (bir paketin servisi, unrar) root arka uca ve
+    # DD-180: indirme hesabıyla çalışan bir program (ör. bir paketin servisi) root arka uca ve
     # Caddy'nin yönetim arayüzüne ulaşamamalı. Soketin izni ve gerçek bir deneme sınanır.
     [[ "$(stat -c '%U:%G:%a' "$PANEL_SOCKET" 2>/dev/null)" == "root:${CADDY_GROUP}:660" ]] ||
         die "Konsol arka ucu soketi root:${CADDY_GROUP} 0660 değil: $PANEL_SOCKET"

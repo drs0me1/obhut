@@ -21,7 +21,6 @@
     "veri_kalir": "ağ anahtarları ve cihaz profilleri sunucuda korunur; yeniden kurunca ağlar geri gelir.",
     "veri_silinir": "Ağ anahtarları ve bütün cihaz profilleri de silinir; cihazları yeniden eklemeniz gerekir."
   },
-  "sayfa": {"rota": "wireguard", "baslik": "WireGuard", "ustbilgi": "Cihazlar ve ağlar"},
   "gunluk": {
     "ekle": "{detail} eklendi",
     "cikar": "{detail} silindi",

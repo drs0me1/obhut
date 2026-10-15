@@ -112,8 +112,8 @@ class RouteReplyTests(Fixture):
             self.assertEqual(self.get("etkinlik"), {"items": []})
         self.assertEqual(self.get("bekleyen"), {"bekleyen": None})
         modules = [{"id": "torrent", "runtime": "konteyner", "installed": True, "state": "calisiyor", "live": "running", "busy": False,
-                    "progress": None, "durdurulabilir": True, "sayfa": ["sayfa.js"],
-                    "konsol": {"ad": "qBittorrent", "neler": [["box", "x"]], "sayfa": {"rota": "torrent", "baslik": "qBittorrent"}},
+                    "progress": None, "durdurulabilir": True,
+                    "konsol": {"ad": "qBittorrent", "neler": [["box", "x"]]},
                     "urls": {"tailscale": "http://torrent.test", "internet": None}},
                    {"id": "wireguard", "runtime": "servis", "installed": False, "state": "", "live": "-", "busy": True,
                     "progress": {"action": "kur", "step": "1", "total": 4, "text": "Paketler"}, "durdurulabilir": False}]
@@ -128,7 +128,7 @@ class RouteReplyTests(Fixture):
     def test_phase_4a_routes_answer_with_their_shapes(self):
         # DD-266: Sistem. No account yet, and the Unix socket is the local channel.
         self.assertEqual(self.get("oturum"), {"durum": "kurulum", "kanal": "yerel"})
-        rows = [{"at": 1, "source": "panel", "user": "-", "client": "100.64.0.9", "action": "duzen", "detail": "x", "ok": True}]
+        rows = [{"at": 1, "source": "panel", "user": "-", "client": "100.64.0.9", "action": "onarim", "detail": "x", "ok": True}]
         with patch.object(self.p, "actions", return_value=rows):
             self.assertEqual(self.get("islemler"), {"items": rows})
         with patch.object(self.p, "repair_log", return_value="satır 1\n") as log:

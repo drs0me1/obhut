@@ -1,5 +1,5 @@
-"""Overview layout and network card (DD-206): the root backend's layout store and endpoints, the
-WAN rate sampler, /api/konsol/ag with package traffic modules, and both packages' trafik.py.
+"""Overview network card (DD-206): the WAN rate sampler, /api/konsol/ag with package traffic modules,
+and both packages' trafik.py; and the retired layout, favourites and old-shell routes (DD-267).
 Temporary directories only; no host changes."""
 import contextlib
 import importlib.util
@@ -57,25 +57,10 @@ class Fixture(unittest.TestCase):
         return folder
 
 
-class LayoutTests(unittest.TestCase):
-    def test_clean_layout_accepts_the_shape_and_refuses_anything_else(self):
-        good = {"kareler": ["dosyalar", "ayarlar"], "widgetlar": [{"id": "saat", "genislik": 1, "gizli": False}]}
-        self.assertEqual(panel.clean_layout(good), dict(good, schema=1))
-        self.assertEqual(panel.clean_layout({}), {"schema": 1, "kareler": [], "widgetlar": []})
-        bad = [None, [], {"x": 1}, {"schema": 2}, {"kareler": "dosyalar"}, {"kareler": ["Dosyalar"]}, {"kareler": ["a"]},
-               {"kareler": ["dosyalar", "dosyalar"]}, {"kareler": ["k%02d" % i for i in range(panel.LAYOUT_MAX_TILES + 1)]},
-               {"kareler": [1]}, {"widgetlar": {}}, {"widgetlar": [{"id": "saat", "genislik": 5, "gizli": False}]},
-               {"widgetlar": [{"id": "saat", "genislik": 0, "gizli": False}]}, {"widgetlar": [{"id": "saat", "genislik": True, "gizli": False}]},
-               {"widgetlar": [{"id": "saat", "genislik": 2, "gizli": 0}]}, {"widgetlar": [{"id": "saat", "genislik": 2}]},
-               {"widgetlar": [{"id": "saat", "genislik": 2, "gizli": False, "yukseklik": 2}]},
-               {"widgetlar": [{"id": "saat", "genislik": 2, "gizli": False}, {"id": "saat", "genislik": 1, "gizli": False}]},
-               {"widgetlar": [{"id": "../x", "genislik": 2, "gizli": False}]}]
-        for value in bad:
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                panel.clean_layout(value)
+class RetiredRoutesTests(Fixture):
+    """DD-267: the overview layout (DD-206), Files' favourites (DD-250) and the routes only the old shell
+    used are gone; the table's routes replace the latter. The gates still answer first."""
 
-
-class LayoutEndpointTests(Fixture):
     def setUp(self):
         super().setUp()
 
@@ -85,46 +70,35 @@ class LayoutEndpointTests(Fixture):
         Handler.panel = self.p
         _server, self.sock = test_resources.start_unix(self, Handler)
 
-    def call(self, path, body=None):
-        headers = {"X-Konsol": "1"}
+    def call(self, path, body=None, headers=None):
+        headers = dict({"X-Konsol": "1"}, **(headers or {}))
         if body is not None:
             headers["Content-Type"] = "application/json"
         return test_resources.unix_get(self.sock, path, headers, method="POST" if body is not None else "GET",
                                        body=json.dumps(body).encode() if body is not None else None)
 
-    def test_layout_is_saved_read_back_and_reset_by_the_root_backend(self):
-        self.assertEqual(json.loads(self.call("/api/konsol/duzen")[2]), {"duzen": None})
-        layout = {"kareler": ["ayarlar", "dosyalar"], "widgetlar": [{"id": "ag", "genislik": 4, "gizli": True}]}
-        printed = io.StringIO()
-        with contextlib.redirect_stdout(printed):
-            status, _, body = self.call("/api/konsol/duzen", {"duzen": layout})
-        self.assertEqual((status, json.loads(body)), (200, {"duzen": dict(layout, schema=1)}))
-        stored = self.root / "konsol" / panel.LAYOUT_FILE
-        self.assertEqual(oct(stored.stat().st_mode & 0o777), "0o600")
-        self.assertEqual(json.loads(stored.read_text()), dict(layout, schema=1))
-        self.assertEqual(json.loads(self.call("/api/konsol/duzen")[2]), {"duzen": dict(layout, schema=1)})
-        self.assertIn("duzen kaydet -> ok", printed.getvalue())
-        # The account records are untouched by a layout save.
-        self.assertEqual(sorted(p.name for p in (self.root / "konsol").iterdir() if not p.name.startswith(".")), [panel.LAYOUT_FILE])
-        with contextlib.redirect_stdout(printed):
-            status, _, body = self.call("/api/konsol/duzen", {"sifirla": True})
-        self.assertEqual((status, json.loads(body)), (200, {"duzen": None}))
-        self.assertFalse(stored.exists())
-        self.assertIn("duzen sifirla -> ok", printed.getvalue())
-        self.assertEqual(self.call("/api/konsol/duzen", {"sifirla": True})[0], 200, "resetting twice is fine")
-
-    def test_bad_requests_and_a_damaged_record(self):
-        for body in ({}, {"duzen": {"kareler": ["X"]}}, {"duzen": {}, "sifirla": True}, {"sifirla": False}, {"duzen": []}):
-            with self.subTest(body=body):
-                status, _, answer = self.call("/api/konsol/duzen", body)
-                self.assertEqual(status, 400)
-                self.assertTrue(json.loads(answer)["error"])
-        self.assertFalse((self.root / "konsol" / panel.LAYOUT_FILE).exists())
-        (self.root / "konsol" / panel.LAYOUT_FILE).write_text("{")
-        self.assertEqual(json.loads(self.call("/api/konsol/duzen")[2]), {"duzen": None}, "a damaged layout falls back to the defaults")
-        (self.root / "konsol" / panel.LAYOUT_FILE).write_text(json.dumps({"kareler": ["X"]}))
-        self.assertEqual(json.loads(self.call("/api/konsol/duzen")[2]), {"duzen": None})
-        self.assertEqual(self.call("/api/konsol/duzen", {"duzen": {"kareler": ["dosyalar"]}})[0], 200, "a new save replaces it")
+    def test_the_removed_routes_answer_404_and_write_nothing(self):
+        self.package("torrent", manifest_extra='PAKET_HESAP="1"\n')
+        with patch.object(self.p, "modul", side_effect=AssertionError("no engine call")), \
+             patch.object(self.p, "module_spawn", side_effect=AssertionError("no engine call")):
+            for path in ("/api/konsol/duzen", "/api/konsol/favoriler", "/api/konsol/ayarlar", "/api/konsol/ayarlar?yenile=1",
+                         "/api/konsol/ayarlar/durum", "/api/konsol/moduller/torrent/gunluk", "/api/konsol/moduller/torrent/hesap",
+                         "/api/konsol/moduller/torrent/hesap?parola=1"):
+                with self.subTest(path=path):
+                    self.assertEqual(self.call(path)[0], 404)
+            for path, body in (("/api/konsol/duzen", {"duzen": {"kareler": ["dosyalar"]}}), ("/api/konsol/duzen", {"sifirla": True}),
+                               ("/api/konsol/favoriler", {"ekle": {"yol": "media", "sistem": False}}),
+                               ("/api/konsol/moduller/torrent/kur", {"form": {"username": "admin"}}),
+                               ("/api/konsol/moduller/torrent/baslat", {}), ("/api/konsol/moduller/torrent/durdur", {}),
+                               ("/api/konsol/moduller/torrent/yeniden-baslat", {}), ("/api/konsol/moduller/torrent/kaldir", {"veri": True})):
+                with self.subTest(path=path):
+                    self.assertEqual(self.call(path, body)[0], 404)
+        self.assertEqual([p.name for p in (self.root / "konsol").iterdir()], [])
+        # The table's routes that took their place, and the module list, stay.
+        self.assertIsNotNone(panel.master_api.find("GET", "/api/konsol/moduller"))
+        self.assertIsNotNone(panel.master_api.find("GET", "/api/konsol/ayarlar/klasorler"))
+        self.assertIsNotNone(panel.master_api.find("POST", "/api/konsol/uygulamalar/islem"))
+        self.assertFalse(hasattr(panel.Panel, "layout") or hasattr(panel.Panel, "favorites"))
 
     def test_the_gates_stay_in_front(self):
         status, _, _ = test_resources.unix_get(self.sock, "/api/konsol/duzen", {})

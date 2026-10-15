@@ -119,14 +119,14 @@ class ReservedNamesTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        for name in (".cop", ".pay", ".arsiv", "dest"):
+        for name in (".cop", ".pay", "dest"):
             (self.root / name).mkdir()
             (self.root / name / "marker").write_text(name)
         (self.root / "ordinary").write_text("keep")
-        self.files = files.Files(str(self.root), ".cop", ".pay", ".arsiv")
+        self.files = files.Files(str(self.root), ".cop", ".pay")
 
     def test_reserved_sources_reject_rename_move_and_trash_before_any_mutation(self):
-        for name in (".cop", ".pay", ".arsiv"):
+        for name in (".cop", ".pay"):
             actions = [lambda: self.files.rename([], name, "renamed"),
                        lambda: self.files.move([], ["ordinary", name], ["dest"]),
                        lambda: self.files.to_trash([], ["ordinary", name])]
@@ -140,7 +140,7 @@ class ReservedNamesTests(unittest.TestCase):
                 self.assertEqual(sorted(p.name for p in (self.root / ".cop").iterdir()), ["marker"])
 
     def test_moving_nested_reserved_name_cannot_create_a_root_system_area(self):
-        for name in (".cop", ".pay", ".arsiv"):
+        for name in (".cop", ".pay"):
             source = self.root / "dest" / name
             source.mkdir()
             with self.subTest(name=name), self.assertRaises(files.PanelError) as error:
@@ -156,9 +156,9 @@ class ReservedNamesTests(unittest.TestCase):
         self.assertEqual((self.root / "dest/renamed").read_text(), "keep")
 
     def test_restore_never_publishes_a_reserved_root_name(self):
-        for name in (".pay", ".arsiv"):
+        for name in (".pay",):
             # A historical/manually edited trash entry must choose a harmless new name.
-            token = "1700000000000-" + ("a" if name == ".pay" else "b") * 8
+            token = "1700000000000-" + "a" * 8
             target = self.root / ".cop" / token
             target.mkdir()
             (target / name).write_text("saved")
@@ -167,6 +167,17 @@ class ReservedNamesTests(unittest.TestCase):
             self.assertNotEqual(result["name"], name)
             self.assertEqual((self.root / result["name"]).read_text(), "saved")
             self.assertEqual((self.root / name / "marker").read_text(), name)
+
+    def test_the_retired_archive_workspace_name_is_an_ordinary_folder(self):
+        # DD-267: the ZIP/RAR jobs and their private .arsiv workspace are gone; the name is no longer reserved.
+        (self.root / ".arsiv").mkdir()
+        self.assertIn(".arsiv", [e["name"] for e in self.files.listing([], False)["entries"]])
+        self.files.rename([], ".arsiv", "arsiv")
+        self.files.mkdir([], ".arsiv")
+        self.assertTrue((self.root / "arsiv").is_dir() and (self.root / ".arsiv").is_dir())
+        # A fourth positional argument (the old archive name) is refused, never read as the system flag.
+        with self.assertRaises(TypeError):
+            files.Files(str(self.root), ".cop", ".pay", ".arsiv")
 
 
 class ListenQueueTests(unittest.TestCase):

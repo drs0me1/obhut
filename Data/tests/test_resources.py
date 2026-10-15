@@ -167,9 +167,9 @@ class ResourceTests(unittest.TestCase):
                 patch.object(panel.master_publications, "packages", return_value={}):
             self.assertNotIn("urls", self.p.modules()[0])
 
-    def test_module_listing_carries_package_konsol_metadata_and_pages(self):
-        # DD-200: App Store texts and the page declaration come from each package's konsol.json;
-        # page files are listed only while the package is installed; nothing is named in the base.
+    def test_module_listing_carries_package_konsol_metadata(self):
+        # DD-200: App Store texts come from each package's konsol.json; nothing is named in the base.
+        # DD-267: packages ship no page of the old interface, so no item names page files.
         root = Path(self.p.args.state).parent
         mods = root / "mods"
         repo = Path(__file__).resolve().parents[1] / "magaza"
@@ -186,20 +186,20 @@ class ResourceTests(unittest.TestCase):
                 patch.object(panel.master_publications, "packages", return_value={}):
             items = {m["id"]: m for m in self.p.modules()}
         self.assertEqual(items["wireguard"]["konsol"]["ad"], "WireGuard")
-        self.assertEqual(items["wireguard"]["konsol"]["sayfa"]["rota"], "wireguard")
-        self.assertEqual(items["wireguard"]["sayfa"], ["sayfa.js", "sayfa.css"])
         self.assertTrue(items["wireguard"]["durdurulabilir"])  # DD-229: the whole of WireGuard stops
         self.assertEqual(items["torrent"]["konsol"]["ad"], "qBittorrent")
         self.assertIn("torrent.test", items["torrent"]["konsol"]["neler"][1][1])
         self.assertTrue(items["torrent"]["durdurulabilir"])
-        self.assertNotIn("sayfa", items["torrent"])  # not installed: no page files are offered
+        for mid in ("wireguard", "torrent"):
+            self.assertNotIn("sayfa", items[mid])
+            self.assertNotIn("sayfa", items[mid]["konsol"])
         # A broken metadata file hides the texts, never the module.
         (mods / "wireguard" / "konsol.json").write_text("{not json")
         with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
                 patch.object(panel.master_publications, "packages", return_value={}):
             items = {m["id"]: m for m in self.p.modules()}
         self.assertNotIn("konsol", items["wireguard"])
-        self.assertEqual(items["wireguard"]["sayfa"], ["sayfa.js", "sayfa.css"])
+        self.assertEqual(items["wireguard"]["state"], "calisiyor")
 
     def test_package_api_loads_only_for_the_registered_package(self):
         # DD-200: /api/uygulama/<id>/* reaches a package module only while the package is registered;

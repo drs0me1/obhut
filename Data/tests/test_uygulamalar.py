@@ -24,14 +24,13 @@ panel = test_resources.panel
 NOW = test_erisim.NOW
 MODULES = [
     {"id": "wireguard", "runtime": "konsol", "installed": True, "state": "calisiyor", "live": "-", "busy": False, "progress": None,
-     "durdurulabilir": True, "konsol": {"ad": "WireGuard", "alt": "VPN ağları ve cihazlar.", "simge": "shield", "sayfa": {"rota": "wireguard"}},
-     "sayfa": ["sayfa.js", "sayfa.css"]},
+     "durdurulabilir": True, "konsol": {"ad": "WireGuard", "alt": "VPN ağları ve cihazlar.", "simge": "shield"}},
     {"id": "torrent", "runtime": "konteyner", "installed": True, "state": "calisiyor", "live": "running", "busy": False, "progress": None,
      "durdurulabilir": True, "konsol": {"ad": "qBittorrent", "alt": "Torrent indirmelerini yönetin.", "simge": "download",
-                                        "sayfa": {"rota": "torrent"}, "durdur_notu": "Süren indirmeler duraklar.",
+                                        "durdur_notu": "Süren indirmeler duraklar.",
                                         "kaldir": {"neler": [["box", "Konteyner durur."], ["bad"], [1, "x"]], "veri_etiket": "Profili de sil",
                                                    "veri_kalir": "indirilenler kalır.", "veri_silinir": "Profil silinir."}},
-     "sayfa": ["sayfa.js"], "urls": {"tailscale": "http://torrent.ev", "internet": None}},
+     "urls": {"tailscale": "http://torrent.ev", "internet": None}},
     {"id": "gezgin", "runtime": "konteyner", "installed": False, "state": "", "live": "-", "busy": False, "progress": None,
      "durdurulabilir": True, "konsol": {"ad": "Gezgin", "alt": "Dosya yöneticisi.", "simge": "compass"}},
 ]
@@ -81,6 +80,8 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual(result["katalog"], [{"id": "gezgin", "ad": "Gezgin", "aciklama": "Dosya yöneticisi.", "simge": "compass"}])
         self.assertEqual(result["altyapi"], {"podman": "5.4.2", "calisiyor": True, "imaj": 3, "kullanilmayan_imaj": 1, "birim": 2, "ag": 3})
         self.assertEqual(result["hatalar"], [])
+        # DD-267: no item names a page of the old interface any more.
+        self.assertFalse([i["id"] for i in result["items"] if "sayfa" in i])
 
     def test_a_package_with_its_container_access_and_update(self):
         torrent = self.item(self.build(), "paket:torrent")
@@ -90,7 +91,7 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual((torrent["guncelleme"], torrent["eylemler"]), ("yeni", ["durdur", "yeniden-baslat", "guncelle", "kaldir"]))
         self.assertEqual(torrent["adres"], {"tailscale": "http://torrent.ev", "internet": None})
         self.assertEqual((torrent["tailscale"]["durum"], torrent["internet"]["durum"]), ("acik", "kismen"))
-        self.assertEqual((torrent["sayfa"], torrent["revizyon"]), ("#/torrent", "r" * 64))
+        self.assertEqual(torrent["revizyon"], "r" * 64)
         # The package's own stop and removal words, malformed pairs left out.
         self.assertEqual(torrent["metinler"], {"durdur": "Süren indirmeler duraklar.", "kaldir": [["box", "Konteyner durur."]],
                                                "veri_etiket": "Profili de sil", "veri_kalir": "indirilenler kalır.",
@@ -105,7 +106,6 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual((gezgin["tur"], gezgin["konteyner"], gezgin["aciklama"]), ("konteyner", "gezgin", "Konteyner · ghcr.io/drs0me1/gezgin"))
         self.assertEqual(gezgin["adres"], {"tailscale": "http://gezgin.ev", "internet": "https://gezgin.example.org"})
         self.assertEqual((gezgin["guncelleme"], gezgin["eylemler"]), ("guncel", ["durdur", "yeniden-baslat", "kaldir"]))
-        self.assertEqual(gezgin["sayfa"], "#/konteynerler/gezgin")
         gece = self.item(self.build(), "konteyner:gece")
         self.assertEqual((gece["durum"], gece["eylemler"]), ("durduruldu", ["baslat", "kaldir"]))
         self.assertIn("Konsol dışında", gece["aciklama"])
@@ -132,8 +132,8 @@ class ReadModelTests(unittest.TestCase):
     def test_built_ins_and_unreadable_sources(self):
         result = self.build()
         share = self.item(result, "yerlesik:paylasim")
-        self.assertEqual((share["durum"], share["aciklama"], share["sayfa"]), ("calisiyor", "WebDAV · yerleşik · 2 klasör", "#/dosyalar/paylasim"))
-        self.assertEqual(self.item(result, "yerlesik:dosya")["sayfa"], "#/dosyalar")
+        self.assertEqual((share["durum"], share["aciklama"]), ("calisiyor", "WebDAV · yerleşik · 2 klasör"))
+        self.assertEqual(self.item(result, "yerlesik:dosya")["durum"], "calisiyor")
         broken = self.build(None, {"runtime": {"ok": False, "version": "", "error": "Podman kullanılamıyor: x"}, "containers": []},
                             view=None, errors=["Uygulama listesi okunamadı."])
         self.assertEqual([i["id"] for i in broken["items"]], ["yerlesik:dosya", "yerlesik:paylasim"])

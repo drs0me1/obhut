@@ -4,8 +4,7 @@
 # üretilir. Süreç indirme klasörünün sahibi olarak çalışır, konteyner yalnız profili ve indirme
 # klasörünü görür. Ayarlara yalnız ilk kurulumda, profil boşken bir kez en az ayar yazılır (indirme
 # yeri, arayüz portu); yeniden kurulum bunları korur (DD-178). Hesap/dizin
-# değişikliklerini paketin kendi çalışanı (ayar.py, Konsol API'si api.py üzerinden) yapar; Konsol
-# sayfası (sayfa.js/css) paketle gelir ve kuruluyken CONSOLE_WEB_DIR/uygulama/torrent altında durur
+# değişikliklerini paketin kendi çalışanı (ayar.py, Konsol API'si api.py üzerinden) yapar
 # (DD-200, DD-202). DD-217: konteyner kendi köprü ağındadır; arayüz yalnız 127.0.0.1'de, eş portu yalnız
 # WAN IPv4 adresinde yayımlanır (Quadlet'teki PublishPort satırları). Kaldırılınca imaj sunucuda kalır; `kaldir --veri`
 # profili ve imajı siler. DD-210: kurulum Konsol'daki pencerenin hesap ve indirme klasörüyle olur;
@@ -140,12 +139,11 @@ torrent_off() {
     paket_konteyner_kaldir
 }
 
-# Başarısız kurulum ve kaldırma aynı yoldan geri alınır: adlar, servis, konteyner birimi, sayfa.
+# Başarısız kurulum ve kaldırma aynı yoldan geri alınır: adlar, servis, konteyner birimi.
 # İmaj ve profil kalır.
 torrent_rollback() {
     paket_adlar_kapat
     torrent_off
-    paket_sayfa_kaldir
 }
 
 # DD-210: kurulum penceresinin bilgisi (hesap, parola özeti, indirme klasörü) paketin çalışanıyla
@@ -233,9 +231,6 @@ paket_kur() {
     progress_step 4 "Ad"
     paket_adlar_ac || { torrent_kur_geri; fail_step "$FAIL"; }
     torrent_verify_names || { torrent_kur_geri; fail_step "$FAIL"; }
-    # DD-200/202: Konsol sayfası paketle gelir; servis doğrulandıktan sonra, kayıt yazılmadan
-    # önce yerleşir ki başarısız bir kurulum sayfa bırakmasın.
-    paket_sayfa_koy || { torrent_kur_geri; fail_step "$FAIL"; }
 }
 
 paket_baslat() {
@@ -274,7 +269,6 @@ paket_veri_sil() {
 paket_uygula() { # KAYIT_DURUMU
     local state="$1"
     paket_gerekli
-    paket_sayfa_koy || fail_step "$FAIL"
     paket_adlar_ac || fail_step "$FAIL"
     if [[ "$state" == calisiyor ]]; then
         torrent_eski_yok
