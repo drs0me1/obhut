@@ -279,6 +279,47 @@ link to the current interface.
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulama-ekle-ui.cjs
 ```
 
+## New interface phase 4b: Dosyalar (DD-258, DD-267)
+
+`yeni-dosyalar-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8775`) drives Dosyalar' Depolama, Sunucu
+klasörleri, Çöp kutusu and Sistem dosyaları through `yeni-harness.cjs`, with an in-memory files backend
+that answers `/api/*` and `/api/sistem/*` in the real backend's shapes and words (state, list with
+`dirs=1`, text with its encoding and version, save, download, raw-body upload, mkdir, rename, move, trash,
+restore, purge, empty, delete with the typed confirmation) and every request body compared exactly. The
+real editor bundle (`console/duzenleyici.js`) is served at `/duzenleyici.js`. Depolama: the disk (used,
+free, the user area without the trash, its own mount), the trash in short with its link, Gezgin's address
+or the way to install it, the top folders in Turkish order with size, count and who uses them
+(applications' binds with access and container path, a bind of the whole user area in short on every
+folder, folder shares, a package's own folder with its owner, binds outside the listed folders, a failed
+`GET /api/konsol/depolama`). Sunucu klasörleri: Turkish order with numbers, sizes and times, the share
+marks with "Paylaş" (`?sekme=paylasimlar&yeni=<path>`) and "Paylaşımı yönet" (`&paylasim=<id>`), the filter
+(`ara=`, Turkish case rules), ticks and "Tümünü seç", folders as history entries (`yol=`), a folder that
+cannot be opened, a package's folder and one that holds it (no ticks, no changes, uploads refused),
+uploads from the picker and a drop (a name already there skipped, one at a time with progress, a waiting
+and a running upload cancelled, a refusal, the leave guard), download, new folder, rename, move (the
+dialog browses with `dirs=1`, never into a moved folder or a package's folder, a refusal) and trash. The
+editor (`dosya=`): CodeMirror under the CSP, the language, the cursor position, Ctrl+S and Kaydet with the
+version the last save returned, a 409 with "Yeniden aç", another encoding, Kapat, Esc and Back with unsaved
+changes asking inside the sheet, read-only files with their reason, a binary refused, the bundle failing
+to load. Çöp kutusu: restore of several items with a taken name numbered, a broken record, a refusal,
+permanent delete and empty with the typed word. Sistem dosyaları: the root warning, no trash or shares, a
+permanent delete confirmed with the item's own name (several with "onayla"), a mount point refused, the
+editor's root-save warning, upload and move on `/api/sistem/*`, the other tab's folder left behind, the
+backend's refusal (403/404) as a tailnet-only explanation and no tab over HTTPS. Also 1440/390/320 px in
+both themes with no horizontal scroll and no style attribute outside CodeMirror's own tree (it positions
+its gutters and cursor through the CSSOM, which the CSP allows).
+
+The harness gained three additive helpers for the files backend: `h.raw(path)` marks POST paths whose
+body is a raw upload (logged as `{size, text}`), `h.unsigned(path)` marks GET paths a plain link opens
+without `X-Konsol` (a download; Playwright does not route downloads, so the static server answers them
+from the same handler), and a handler may return a promise to hold a reply back (an upload in flight that
+the page may cancel). `yeni-ui.cjs` gained fixtures for the files backend's state and listing and for
+`GET /api/konsol/depolama`, which Depolama reads.
+
+```bash
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-dosyalar-ui.cjs
+```
+
 ## Gezgin package (v2-245, DD-262)
 
 `test_gezgin_package.py` drives `magaza/gezgin/ayar.py` with faked commands: the install form (every

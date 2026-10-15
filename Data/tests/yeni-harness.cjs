@@ -12,6 +12,13 @@
                `contentType` is sent as it is (a PNG, a text file) instead of as JSON;
      h.dynamic [[/regex/, (req, match) => reply | undefined], …] answers paths with variable parts (a
                package's /api/uygulama/<id>/… routes) after the exact handlers;
+               a handler may also return a promise of its reply (an upload the suite holds back); the page
+               may give up on such a request meanwhile (it is cancelled), which is not an error;
+     h.raw     (path) => true for POST paths whose body is the raw upload, not JSON (the files backend's
+               …/upload): such a request is logged with body { size, text } of its bytes;
+     h.unsigned(path) => true for GET paths a plain link opens without X-Konsol (a file's download);
+               Playwright does not route a download, so the static server answers such a path from its
+               exact handler (logged like the routed requests);
      expected  URL fragments whose failed loads (4xx/5xx) are part of the current scenario. */
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const assert = require("node:assert/strict");
@@ -51,6 +58,8 @@ function create({ name, url, data, expected = () => [] }) {
     handlers: {},
     calls: {},
     dynamic: [],
+    raw: () => false,
+    unsigned: () => false,
     requests: [],
     errors: [],
     stream: { mode: "live", clients: new Set(), connections: 0, lastConnect: 0, headers: [] },
@@ -72,6 +81,13 @@ function create({ name, url, data, expected = () => [] }) {
       h.stream.lastConnect = Date.now();
       req.on("close", () => h.stream.clients.delete(res));
       return;
+    }
+    if (u.pathname.startsWith("/api/") && req.method === "GET" && h.unsigned(u.pathname) && h.handlers[u.pathname]) {
+      h.calls[u.pathname] = (h.calls[u.pathname] || 0) + 1;
+      h.requests.push({ method: "GET", path: u.pathname, query: u.search, body: null });
+      const r = h.handlers[u.pathname]({ method: "GET", path: u.pathname, query: u.searchParams, body: null }) || { status: 404, body: { error: "fixture" } };
+      res.writeHead(r.status ?? 200, { "Content-Type": r.contentType || "application/json", ...(r.headers || {}) });
+      return res.end(r.contentType ? r.body : JSON.stringify(r.body));
     }
     if (u.pathname.startsWith("/api/")) {
       h.errors.push("API request reached the static server: " + u.pathname);
@@ -110,10 +126,13 @@ function create({ name, url, data, expected = () => [] }) {
   h.answer = async (route) => {
     const request = route.request(), u = new URL(request.url()), p = u.pathname;
     h.calls[p] = (h.calls[p] || 0) + 1;
-    if (request.headers()["x-konsol"] !== "1") h.errors.push("missing X-Konsol: " + p);
+    if (request.headers()["x-konsol"] !== "1" && !(request.method() === "GET" && h.unsigned(p))) h.errors.push("missing X-Konsol: " + p);
     if (p === "/api/konsol/olaylar") return route.continue();
     let body = null;
-    if (request.method() === "POST") {
+    if (request.method() === "POST" && h.raw(p)) {
+      const bytes = request.postDataBuffer() || Buffer.alloc(0);
+      body = { size: bytes.length, text: bytes.toString("utf8") };
+    } else if (request.method() === "POST") {
       if (request.headers()["content-type"] !== "application/json") h.errors.push("POST without application/json: " + p);
       try {
         body = JSON.parse(request.postData() || "null");
@@ -134,10 +153,16 @@ function create({ name, url, data, expected = () => [] }) {
       const match = pattern.exec(p);
       if (match && (handled = answer(req, match))) break;
     }
-    if (handled && handled.contentType) {
-      return route.fulfill({ status: handled.status ?? 200, contentType: handled.contentType, headers: handled.headers, body: handled.body });
-    }
-    if (handled) return reply(handled.status ?? 200, handled.body);
+    const held = Boolean(handled && typeof handled.then === "function");
+    if (held) handled = await handled;
+    const respond = () => {
+      if (handled && handled.contentType) {
+        return route.fulfill({ status: handled.status ?? 200, contentType: handled.contentType, headers: handled.headers, body: handled.body });
+      }
+      return reply(handled.status ?? 200, handled.body);
+    };
+    // A held reply's request may have been cancelled by the page meanwhile (an upload's "İptal").
+    if (handled) return held ? respond().catch(() => undefined) : respond();
     if (p === "/api/konsol/oturum") return reply(200, { durum: "giris", kanal: "internet" });
     if (p === "/api/konsol/oturum/giris") {
       delete h.status["/api/konsol/kaynaklar"];  // signed in: the session works again
