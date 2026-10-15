@@ -12,6 +12,7 @@ import "./styles/pages.css";
 import "./styles/erisim.css";
 import "./styles/sistem.css";
 import "./styles/uygulama.css";
+import "./styles/paylasim.css";
 
 initTheme();
 createApp(App).use(router).mount("#app");

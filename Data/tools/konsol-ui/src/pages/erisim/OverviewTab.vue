@@ -1,7 +1,8 @@
 <!-- Erişim → Genel: warnings first, each with its fix (a publication in the Yayınla flow, an application's
      page, the Tailscale tab); the summaries (Tailscale, the internet with its open ports, WireGuard,
      certificates); then every service with its four cells in plain words. "Teknik ayrıntı" (?teknik=1) adds
-     the addresses and the technical lines. A table on wide screens, cards on narrow ones. -->
+     the addresses and the technical lines. A table on wide screens, cards on narrow ones. WebDAV's row leads
+     to Dosyalar → Paylaşımlar for each folder's connections. -->
 <script setup lang="ts">
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
@@ -13,7 +14,7 @@ import Switch from "../../components/ui/Switch.vue";
 import type { Tone } from "../../components/ui/types";
 import { CELL_TEXT, CELL_TONE } from "../../apps";
 import { fixRoute } from "../../access";
-import { accessRoute } from "../../sections";
+import { accessRoute, filesRoute } from "../../sections";
 import { live, serverNow } from "../../live";
 import { useQueryFlag } from "../../query";
 import { UNKNOWN, date, daysUntil } from "../../format";
@@ -158,6 +159,7 @@ const certLeft = (bitis: number | null) => (bitis ? daysUntil(bitis, serverNow()
                   <th scope="row" class="col-main">
                     <strong>{{ h.ad }}</strong>
                     <span class="cell-sub">{{ h.aciklama || KIND[h.tur] }}</span>
+                    <RouterLink v-if="h.tur === 'paylasim'" :to="filesRoute('paylasimlar')" class="cell-note" data-testid="share-folders">Klasörler: Dosyalar → Paylaşımlar</RouterLink>
                   </th>
                   <td v-for="c in COLUMNS" :key="c.key" :data-label="c.title" :data-hucre="c.key" class="matrix-cell">
                     <span class="matrix-value">

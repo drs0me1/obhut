@@ -1,0 +1,244 @@
+/* Dosyalar → Paylaşımlar (phase 4b, DD-267): the boundary notice, the head with the transports, one card per
+   share with its two connections side by side (stacked in a narrow container) and the share's sheet. */
+
+.shares {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+/* ---- the boundary notice */
+.share-boundary-text,
+.share-boundary-more {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.share-boundary-more {
+  gap: 8px;
+}
+
+/* ---- the head */
+.share-head-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.share-routes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.share-routes > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--surface-muted);
+}
+
+.share-routes dt,
+.share-infuse dt {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.share-routes dd,
+.share-infuse dd {
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+/* ---- a share */
+.share-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.share-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+}
+
+.share-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.share-title {
+  display: flex;
+  flex: 1 1 200px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.share-actions {
+  flex-wrap: wrap;
+}
+
+.share-account {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.share-account-user {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+}
+
+.share-conns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.share-conn {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface-muted);
+}
+
+.share-conn-on {
+  border-color: var(--ok);
+}
+
+.share-conn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.share-conn-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+}
+
+.share-conn-title .icon {
+  color: var(--muted);
+}
+
+.share-conn-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.share-conn-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.share-address {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.share-address > .mono {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.share-infuse {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px 12px;
+  margin: 0;
+}
+
+.share-infuse > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The path is the long one (/s/<24 hex digits>/): a row of its own. */
+.share-infuse > div:last-child {
+  grid-column: 1 / -1;
+}
+
+@container (max-width: 720px) {
+  .share-conns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---- the sheet */
+.share-pass {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.share-pass > .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.share-pass-tools,
+.share-exists {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.share-draft {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.share-draft > legend {
+  padding: 0 6px;
+}

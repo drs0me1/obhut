@@ -1327,3 +1327,43 @@ keyboard, the search box, and the page scroll at 1024 and 390 px.
 selecting never changes, the right column without details, Favoriler's eight entries and switch, the
 folder in the address (pushed on open, opened after a reload, browser back/forward, bare `#/dosyalar`
 keeping the folder, an undecodable address opening the root). `files-ui.cjs` checks the one-line share.
+
+## New interface phase 4b: Paylaşımlar and the old addresses (DD-258, DD-267)
+
+`yeni-paylasim-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8776`) drives Dosyalar → Paylaşımlar
+(`#/dosyalar?sekme=paylasimlar`) through `yeni-harness.cjs`, with every request body compared exactly.
+The page: the boundary notice with its detail in the address (`?sinir=1`, plain HTTP named only while the
+internet connection is HTTP), the service-stopped and not-installed warnings, n/max and the limit, the
+transports (Tailscale, plain HTTP with address and port, an HTTPS name, closed with the server's reason)
+and the way to Erişim's WebDAV publication; one card per share (state, folder under the user area, the
+account with copy) with its two connections: state, reason, switch, permission, duration with the expiry
+and renewal from today, the address with copy and Infuse's host, port and path. The bodies: `{enabled}`,
+`{permission: "rw", ack_write: true}` only after the question, `{permission: "ro"}` at once, `{days}`
+(the current "Süresiz" again sends nothing), `ack_wan_http` only when the internet goes on over plain
+HTTP (declining sends nothing; over HTTPS there is no question); a refusal in the server's words on its
+card with a fresh read; every control off while a change is under way; removal with the typed word, a
+refusal kept in the question, the card gone and focus on the heading. The create sheet (`?yeni=<folder>`):
+the rules before any request, the folder chooser over the user area (`GET /api/list?path=&dirs=1`, hidden
+folders left out, shared ones marked, Esc closing only the panel, the chosen folder in the address), the
+user name (pattern, taken in any case), the password (length, `:`, show/hide, a 40-digit generated one,
+copy), both connections' drafts with their acknowledgements, the whole body, a refusal keeping the form,
+an empty form after closing, an already shared folder offering its share. The edit sheet
+(`?paylasim=<id>`): only changed fields (`username`; `path` with `password`), nothing to save until
+something changes, removal from the sheet. Deep links: a folder, an already shared folder opening its
+share, an unknown share, a hidden folder refused. Erişim's WebDAV rows (Genel and Adresler) and the
+built-in Paylaşımlar (Aç, Ayarlar) lead here; the palette has no "Eski arayüz" group. The old Konsol's
+addresses (32 of them: App Store and its packages, the Podman page and its containers, Settings' tabs,
+Files' folders, trash and shares, WireGuard, a package's own page, unknown ones) land on their new homes on
+a fresh load and inside a running page; without the application list an application address gives up
+after six seconds. Those new homes' own reads answer 404 there (their suites drive them), and each page is
+closed only once its reads have ended, so no intercepted read reaches the static server. 1440/390/320 px
+in both themes: no style attribute, no horizontal scroll, the connections side by side or stacked, the
+sheet at the bottom on a phone.
+
+`yeni-ui.cjs` and `yeni-uygulamalar-ui.cjs` changed only where phase 4b meant them to: the palette has no
+group for the old interface (the trash is Dosyalar' tab, the last entry is an action), an old address
+replaces the legacy links, and a built-in opens its section in this interface (`#/dosyalar?sekme=paylasimlar`).
+
+```bash
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-paylasim-ui.cjs
+```

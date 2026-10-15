@@ -1,14 +1,9 @@
-// The six sections of the new Konsol (DD-258, redesign.md). Genel Bakış and Uygulamalar (phase 2), Erişim
-// (phase 3), Sistem and Gelişmiş (phase 4a) are built; Dosyalar is still a placeholder that links to the
-// current interface ("/#/…").
+// The six sections of the new Konsol (DD-258, redesign.md): Genel Bakış and Uygulamalar (phase 2), Erişim
+// (phase 3), Sistem and Gelişmiş (phase 4a), Dosyalar (phase 4b); each section's tabs and add flows, and
+// where the addresses of the Konsol before phase 4b lead (oldHome).
 import type { IconName } from "./components/icons";
 
 export type SectionId = "genel" | "uygulamalar" | "erisim" | "dosyalar" | "sistem" | "gelismis";
-
-export interface LegacyLink {
-  href: string;
-  label: string;
-}
 
 export interface Section {
   id: SectionId;
@@ -19,7 +14,6 @@ export interface Section {
   icon: IconName;
   /** Extra words the command palette matches. */
   keywords: string;
-  legacy: LegacyLink[];
 }
 
 export const SECTIONS: readonly Section[] = [
@@ -30,7 +24,6 @@ export const SECTIONS: readonly Section[] = [
     description: "Sağlık, uygulamalar, kaynaklar ve sunucu bir bakışta.",
     icon: "home",
     keywords: "ana menü özet durum sağlık kaynaklar",
-    legacy: [{ href: "/#/genel", label: "Ana Menü" }],
   },
   {
     id: "uygulamalar",
@@ -39,7 +32,6 @@ export const SECTIONS: readonly Section[] = [
     description: "App Store paketleri, konteynerler ve yerleşik hizmetler tek listede.",
     icon: "apps",
     keywords: "app store mağaza paket konteyner podman kur kaldır",
-    legacy: [],
   },
   {
     id: "erisim",
@@ -48,7 +40,6 @@ export const SECTIONS: readonly Section[] = [
     description: "Kim, neye, nereden erişebilir.",
     icon: "globe",
     keywords: "yayın yayınla adres alan adı tailscale wireguard internet https sertifika caddy dns güvenlik duvarı",
-    legacy: [],
   },
   {
     id: "dosyalar",
@@ -57,7 +48,6 @@ export const SECTIONS: readonly Section[] = [
     description: "Dosyalar, depolama ve sistem dosyaları.",
     icon: "folder",
     keywords: "klasör dosya depolama disk paylaşım çöp kutusu",
-    legacy: [],
   },
   {
     id: "sistem",
@@ -66,7 +56,6 @@ export const SECTIONS: readonly Section[] = [
     description: "Sağlık, güncellemeler, hesap, sunucu, görünüm ve günlük.",
     icon: "server",
     keywords: "sağlık onarım güncelleme sürüm hesap oturum görünüm tema günlük",
-    legacy: [],
   },
   {
     id: "gelismis",
@@ -75,7 +64,6 @@ export const SECTIONS: readonly Section[] = [
     description: "Teknik görünümler: Caddy, DNS, güvenlik duvarı ve Podman.",
     icon: "sliders",
     keywords: "teknik caddy dns kayıt güvenlik duvarı kural port podman imaj ağ",
-    legacy: [],
   },
 ];
 
@@ -102,14 +90,6 @@ export function accessRoute(tab: AccessTab = "genel", yayinla = ""): string {
   const text = query.toString();
   return "/erisim" + (text ? "?" + text : "");
 }
-
-/** The current interface's views, for the palette's "Eski arayüz" group (Caddy, Dnsmasq and the firewall
-    are Erişim's tabs since phase 3; Settings' system view and its log are Sistem's, App Store and Podman
-    are Uygulamalar' and Gelişmiş's since phase 4a). */
-export const LEGACY_VIEWS: readonly (LegacyLink & { keywords: string })[] = [
-  { href: "/#/genel", label: "Ana Menü", keywords: "genel bakış ana sayfa" },
-  { href: "/#/dosyalar", label: "Dosyalar", keywords: "klasör dosya paylaşım çöp" },
-];
 
 /** Sistem's tabs (phase 4a), in the address as ?sekme=; the palette lists each one. */
 export const SYSTEM_TABS = [
@@ -181,4 +161,52 @@ export type AddFlow = (typeof ADD_FLOWS)[number]["id"];
 /** The address of an add flow over Uygulamalar. */
 export function addRoute(flow: AddFlow, extra: Record<string, string> = {}): string {
   return "/uygulamalar?" + new URLSearchParams({ ekle: flow, ...extra }).toString();
+}
+
+/** A folder path from an old address's parts, each URI-encoded ("Filmler%20Yeni", "Diziler"); "" when a part
+    cannot be decoded or would leave the folder (".", ".."), so the view opens at its top. */
+function oldFolder(parts: readonly string[]): string {
+  try {
+    const decoded = parts.map((p) => decodeURIComponent(p));
+    return decoded.some((p) => !p || p === "." || p === ".." || p.includes("/") || p.includes("\0")) ? "" : decoded.join("/");
+  } catch {
+    return "";
+  }
+}
+
+const OLD_SETTINGS = new Map<string, string>([
+  ["fw", accessRoute("guvenlik-duvari")],
+  ["web", accessRoute("adresler")],
+  ["dns", accessRoute("adresler")],
+  ["log", systemRoute("gunluk")],
+  ["konteynerler", advancedRoute("podman")],
+]);
+
+/** Where an address of the Konsol before phase 4b leads (its hash route, "/ayarlar/fw"): App Store and the
+    Podman page to Uygulamalar, Settings' tabs to Erişim, Sistem and Gelişmiş, Files' views to Dosyalar' tabs,
+    WireGuard's page to Erişim. Null when the new home depends on what is installed (a package's own page
+    "/torrent", "/moduller/<id>", a container "/konteynerler/<ad>") or the address is not an old one. */
+export function oldHome(path: string): string | null {
+  const [head, sub, ...rest] = path.split("/").filter(Boolean);
+  switch (head) {
+    case "moduller":
+      return sub ? null : addRoute("katalog");
+    case "konteynerler":
+      return sub ? null : "/uygulamalar";
+    case "ayarlar":
+      if (sub === "konteynerler" && rest.length) return null;
+      return OLD_SETTINGS.get(sub ?? "") ?? systemRoute();
+    case "dosyalar": {
+      if (sub === "klasor" || sub === "sistem") {
+        const yol = oldFolder(rest);
+        return filesRoute(sub === "klasor" ? "srv" : "sistem", yol ? { yol } : {});
+      }
+      if (sub === "cop") return filesRoute("cop");
+      if (sub === "paylasim") return filesRoute("paylasimlar");
+      return "/dosyalar";
+    }
+    case "wireguard":
+      return sub ? null : accessRoute("wireguard");
+  }
+  return null;
 }

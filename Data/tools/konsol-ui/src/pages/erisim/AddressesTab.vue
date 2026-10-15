@@ -2,10 +2,11 @@
      state, certificate and who guards them, each opening the Yayınla flow; manual addresses are removed
      through a plan. The local DNS names (GET /api/konsol/adlar): switches, the operator's records and the
      forwarding of other names, collected as a draft and saved through the plan review (they commit at
-     once). The local domain change: plan, apply, then a 300 s confirmation from the new address. -->
+     once). The local domain change: plan, apply, then a 300 s confirmation from the new address. WebDAV's row
+     leads to Dosyalar → Paylaşımlar for what each folder allows (the publication and its HTTPS name stay here). -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { RouterLink, useRouter } from "vue-router";
 import { Icon } from "../../components/icons";
 import Card from "../../components/ui/Card.vue";
 import EmptyState from "../../components/ui/EmptyState.vue";
@@ -17,6 +18,7 @@ import type { Tone } from "../../components/ui/types";
 import SettingsPlanSheet from "./SettingsPlanSheet.vue";
 import { readNames, readPublications } from "../../api/erisim";
 import { CANDIDATE_KIND, DOMAIN_RE, publicationState } from "../../access";
+import { filesRoute } from "../../sections";
 import { live } from "../../live";
 import { useLeaveGuard } from "../../leave";
 import { updateQuery } from "../../query";
@@ -386,6 +388,7 @@ const panelAddress = (d: string) => tailnetKonsol(d);
               <th scope="row" class="col-main">
                 <strong>{{ r.c.ad }}</strong>
                 <span class="cell-sub">{{ r.kind }}<template v-if="r.c.hedef"> · <span class="mono">{{ r.c.hedef }}</span></template></span>
+                <RouterLink v-if="r.c.tur === 'paylasim'" :to="filesRoute('paylasimlar')" class="cell-note" data-testid="share-folders">Klasör izinleri ve süreler: Dosyalar → Paylaşımlar</RouterLink>
               </th>
               <td data-label="Tailscale" data-hucre="tailscale">
                 <span v-if="r.c.servis && r.c.yerel_ad" class="mono">{{ r.c.yerel_ad }}</span>

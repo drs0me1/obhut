@@ -1,13 +1,13 @@
-<!-- Command palette (DD-258): ⌘K / Ctrl+K or the search field. Pages (with the tabs of Erişim, Sistem and
-     Gelişmiş), the applications (each opens its own page), actions ("Yayınla" among them) and the current
-     interface's views, matched with Turkish case rules ("İŞ" finds "iş", "ıs" does not find "is"). A combobox
+<!-- Command palette (DD-258): ⌘K / Ctrl+K or the search field. Pages (with the tabs of Erişim, Dosyalar,
+     Sistem and Gelişmiş), the applications (each opens its own page) and actions ("Yayınla" among them),
+     matched with Turkish case rules ("İŞ" finds "iş", "ıs" does not find "is"). A combobox
      over a listbox: focus stays in the field, ↑/↓ move, Enter opens, Esc closes. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Icon, type IconName } from "./icons";
 import { trapTab } from "./focus";
-import { ADD_FLOWS, LEGACY_VIEWS, SECTIONS, SECTION_TABS, accessRoute, addRoute } from "../sections";
+import { ADD_FLOWS, SECTIONS, SECTION_TABS, accessRoute, addRoute } from "../sections";
 import { apps } from "../live";
 import { KIND_TEXT, appIcon } from "../apps";
 import { appRoute } from "../router";
@@ -15,7 +15,7 @@ import { THEMES, setTheme, theme, type ThemeChoice } from "../theme";
 import { closeSurface, openSurface, ui } from "../ui";
 import { fold } from "../format";
 
-type Run = { kind: "route"; to: string } | { kind: "href"; href: string } | { kind: "theme"; value: ThemeChoice } | { kind: "drawer" };
+type Run = { kind: "route"; to: string } | { kind: "theme"; value: ThemeChoice } | { kind: "drawer" };
 
 interface Item {
   key: string;
@@ -27,7 +27,7 @@ interface Item {
   run: Run;
 }
 
-const GROUPS = ["Sayfalar", "Uygulamalar", "Eylemler", "Eski arayüz"] as const;
+const GROUPS = ["Sayfalar", "Uygulamalar", "Eylemler"] as const;
 
 const router = useRouter();
 const query = ref("");
@@ -89,17 +89,6 @@ const items = computed<Item[]>(() => {
     words: "işlemler etkinlik görev",
     run: { kind: "drawer" },
   });
-  for (const view of LEGACY_VIEWS) {
-    list.push({
-      key: "eski-" + view.href,
-      group: "Eski arayüz",
-      label: view.label,
-      hint: view.href,
-      icon: "open",
-      words: view.keywords,
-      run: { kind: "href", href: view.href },
-    });
-  }
   return list;
 });
 
@@ -160,9 +149,6 @@ function choose(item: Item | undefined): void {
     closeSurface();
   } else if (run.kind === "drawer") {
     openSurface("drawer");
-  } else if (run.kind === "href") {
-    closeSurface(false);
-    location.assign(run.href);
   } else if (router.currentRoute.value.fullPath === run.to) {
     closeSurface();
   } else {

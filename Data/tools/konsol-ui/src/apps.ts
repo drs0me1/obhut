@@ -5,6 +5,7 @@ import type { IconName } from "./components/icons";
 import type { Tone } from "./components/ui/types";
 import type { ErisimDurumu, Uygulama, UygulamaHucresi } from "./api/sema";
 import { UNKNOWN, bytes, percent } from "./format";
+import { oldHome } from "./sections";
 
 export type AppState = Uygulama["durum"];
 export type AppAction = Uygulama["eylemler"][number];
@@ -112,18 +113,19 @@ const WEB = /^https?:\/\/[^\s]+$/i;
 
 /** Where "Aç" goes: the application's own address in a new tab (the internet name when this page itself
     came over HTTPS, else the tailnet name; the other one when only that exists), or for a built-in its
-    page in the current interface. None when the application has neither. */
+    section here (builtinHome). None when the application has neither. */
 export function openTarget(app: Pick<Uygulama, "adres" | "tur" | "sayfa">, https = location.protocol === "https:"): { href: string; external: boolean } | null {
   const [first, second] = https ? [app.adres.internet, app.adres.tailscale] : [app.adres.tailscale, app.adres.internet];
   const url = [first, second].find((u): u is string => typeof u === "string" && WEB.test(u));
   if (url) return { href: url, external: true };
-  if (app.tur === "yerlesik" && app.sayfa?.startsWith("#/")) return { href: "/" + app.sayfa, external: false };
-  return null;
+  const home = builtinHome(app);
+  return home ? { href: "#" + home, external: false } : null;
 }
 
-/** The application's page in the current interface ("/#/torrent"), for what is not built here yet. */
-export function legacyPage(app: Pick<Uygulama, "sayfa">): string | null {
-  return app.sayfa?.startsWith("#/") ? "/" + app.sayfa : null;
+/** A built-in's place in this interface: the backend still names the old Konsol's page ("#/dosyalar/paylasim"),
+    which leads where its old address leads (Dosyalar → Paylaşımlar). */
+export function builtinHome(app: Pick<Uygulama, "tur" | "sayfa">): string | null {
+  return app.tur === "yerlesik" && app.sayfa?.startsWith("#/") ? oldHome(app.sayfa.slice(1)) : null;
 }
 
 /** "%1 · 84 MB"; "—" when neither is known. */

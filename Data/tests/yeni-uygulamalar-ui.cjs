@@ -210,7 +210,7 @@ async function noStyles(page, where) {
     assert.equal(await card("paket:wireguard").locator(".app-line").innerText(), "Cihazlarınız için VPN bağlantısı.");
     assert.equal(await card("konteyner:notlar").locator(".pill").innerText(), "Durdurulmuş");
     const shares = card("yerlesik:paylasim").locator('[data-eylem="ac"]');
-    assert.deepEqual([await shares.getAttribute("href"), await shares.getAttribute("target")], ["/#/dosyalar/paylasim", null], "a built-in opens its page in the current interface");
+    assert.deepEqual([await shares.getAttribute("href"), await shares.getAttribute("target")], ["#/dosyalar?sekme=paylasimlar", null], "a built-in opens its section (phase 4b)");
     assert.equal(await card("yerlesik:paylasim").locator(".app-line").innerText(), "paylas.ev · internette açık · Şifresiz HTTP");
     // Resources, network and the server.
     assert.equal(await page.getByTestId("cpu").innerText(), "%2");
@@ -358,7 +358,7 @@ async function noStyles(page, where) {
     assert.equal(await tr("paket:torrent").locator(".col-ver").innerText(), "Yeni sürüm");
     assert.equal(await tr("paket:torrent").locator('[data-eylem="ac"]').getAttribute("href"), "http://torrent.ev");
     assert.deepEqual(await chipsOf("yerlesik:paylasim"), [["Tailscale", "chip-tone-ok"], ["İnternet · Şifresiz HTTP", "chip-tone-warning"]]);
-    assert.equal(await tr("yerlesik:paylasim").locator('[data-eylem="ac"]').getAttribute("href"), "/#/dosyalar/paylasim");
+    assert.equal(await tr("yerlesik:paylasim").locator('[data-eylem="ac"]').getAttribute("href"), "#/dosyalar?sekme=paylasimlar");
     assert.equal(await tr("konteyner:notlar").locator(".col-state").innerText(), "Durdurulmuş");
     assert.deepEqual(await chipsOf("konteyner:notlar"), [["Tailscale kapalı", "chip-tone-neutral"], ["İnternet kapalı", "chip-tone-neutral"]]);
     assert.equal(await tr("konteyner:notlar").locator(".col-ver").innerText(), "Güncel");
@@ -694,7 +694,7 @@ async function noStyles(page, where) {
     await page.locator("main h1").filter({ hasText: "Paylaşımlar" }).waitFor();
     await page.getByTestId("app-actions").waitFor();
     assert.deepEqual(await actions(), ["ac"], "a built-in is not stopped or removed here");
-    assert.deepEqual([await button("ac").getAttribute("href"), await button("ac").getAttribute("target")], ["/#/dosyalar/paylasim", null]);
+    assert.deepEqual([await button("ac").getAttribute("href"), await button("ac").getAttribute("target")], ["#/dosyalar?sekme=paylasimlar", null]);
     assert.equal(await page.getByTestId("summary-resources").count(), 0, "no resources without a container");
     await page.getByRole("tab", { name: "Erişim" }).click();
     const shareInternet = page.locator('[data-hucre="internet"]');
@@ -708,7 +708,7 @@ async function noStyles(page, where) {
     await page.goto(url("#/uygulamalar/yerlesik:dosya"));
     await page.locator("main h1").filter({ hasText: "Dosyalar" }).waitFor();
     await page.getByTestId("app-actions").waitFor();
-    assert.equal(await button("ac").getAttribute("href"), "/#/dosyalar");
+    assert.equal(await button("ac").getAttribute("href"), "#/dosyalar");
     await page.goto(url("#/uygulamalar/paket:wireguard?sekme=erisim"));
     await page.getByText("Bu uygulamanın yayınladığı bir adres yok").waitFor();
     await page.getByRole("tab", { name: "Depolama" }).click();

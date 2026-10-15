@@ -40,7 +40,7 @@ const data = {
 let expectedFailures = [];  // URL fragments whose failed loads (401/404/502/503) are part of the scenario
 const h = require("./yeni-harness.cjs").create({ name: "konsol-yeni-ui", url: process.env.KONSOL_URL || "http://127.0.0.1:8768", data,
   expected: () => expectedFailures });
-const { base, csp, shots, status, calls, errors, stream, push, waitFor, newPage, count, noHorizontalScroll, shot } = h;
+const { base, shots, status, calls, errors, stream, push, waitFor, newPage, count, noHorizontalScroll, shot } = h;
 // Gelişmiş (phase 4a) reads the effective configuration when it opens; yeni-sistem-ui.cjs covers the page.
 h.handlers["/api/konsol/gelismis"] = () => ({ body: { read_at: 1791845000, caddy: { entries: [], raw: [] }, dnsmasq: { listen: [], domains: [], dhcp: false, names: [], raw: [] } } });
 // Phase 4a: Uygulamalar reads Podman's own counts (yeni-uygulama-ekle-ui.cjs covers them); not a Genel read.
@@ -169,10 +169,8 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await palette.waitFor();
     const input = palette.getByRole("combobox");
     assert(await input.evaluate((el) => el === document.activeElement), "the field has focus");
-    assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Eylemler", "Eski arayüz"]);
+    assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Eylemler"], "no group for the old interface (phase 4b)");
     assert.deepEqual(await palette.locator('[aria-labelledby="palet-grup-1"] .palette-label').allInnerTexts(), ["WireGuard", "qBittorrent"]);
-    assert.equal(await palette.locator('[aria-labelledby="palet-grup-3"] [role="option"]').count(), 2,
-      "Caddy, Dnsmasq and the firewall are Erişim's tabs; Settings is Sistem's; App Store and Podman are Uygulamalar' and Gelişmiş's");
     assert.equal(await palette.locator('[data-key="uygulama-paket:wireguard"] .palette-hint').innerText(), "Uygulama", "an application opens its own page (phase 2)");
     await shot(page, "1440-light-palette.png");
     await input.fill("İŞ");
@@ -193,7 +191,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert.equal(await input.getAttribute("aria-activedescendant"), await palette.locator('[aria-selected="true"]').getAttribute("id"));
     await page.keyboard.press("ArrowUp");
     await page.keyboard.press("ArrowUp");
-    assert.equal(await selected(), "Dosyalar", "↑ from the first wraps to the last");
+    assert.equal(await selected(), "Çalışan işlemleri göster", "↑ from the first wraps to the last");
     await input.fill("gel");
     assert.equal(await selected(), "Gelişmiş");
     await page.keyboard.press("Enter");
@@ -224,19 +222,16 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await palette.waitFor({ state: "detached" });
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "dark");
     assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(15, 21, 25)");
-    // A view of the current interface: a full navigation to /#/… (a stub page here).
-    await page.route((u) => u.pathname === "/" , (route) => route.fulfill({ status: 200, contentType: "text/html", headers: { "content-security-policy": csp }, body: "<!doctype html><title>Eski Konsol</title>" }));
+    // Where things moved: Caddy to Erişim, the log to Sistem, Files' views to Dosyalar' tabs.
     await page.keyboard.press("Control+K");
     await input.fill("caddy");
     assert.deepEqual(await optionLabels(page), ["Erişim", "Erişim → Adresler", "Gelişmiş"], "Caddy's addresses are Erişim's (phase 3)");
     await input.fill("günlük");
     assert.deepEqual(await optionLabels(page), ["Sistem", "Sistem → Günlük"], "the log is Sistem's (phase 4a)");
     await input.fill("dosya çöp");
-    assert.deepEqual(await optionLabels(page), ["Dosyalar", "Dosyalar"], "pages first, then the current UI's view");
-    await page.keyboard.press("ArrowDown");
-    assert.equal(await palette.locator('[aria-selected="true"] .palette-hint').innerText(), "/#/dosyalar");
-    await page.keyboard.press("Enter");
-    await page.waitForURL((u) => u.pathname === "/" && u.hash === "#/dosyalar");
+    assert.deepEqual(await optionLabels(page), ["Dosyalar", "Dosyalar → Çöp kutusu"], "the trash is Dosyalar' tab (phase 4b)");
+    await page.keyboard.press("Escape");
+    await palette.waitFor({ state: "detached" });
     await page.goto(new URL("/yeni/#/sistem?sekme=gorunum", base).href);
 
     // Theme on the Sistem page, kept across a reload.
@@ -260,16 +255,14 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert.equal(await page.evaluate(() => document.documentElement.hasAttribute("data-theme")), false, "Sistem follows the system");
     assert.equal(await page.evaluate(() => localStorage.getItem("konsol.tema")), "sistem");
     assert.equal(await page.getByTestId("legacy").count(), 0, "Sistem is built (phase 4a)");
-    // Erişim (phase 3), Sistem and Gelişmiş (phase 4a) are built; Dosyalar still leads to the current interface.
-    for (const [hash, hrefs] of [["#/dosyalar", ["/#/dosyalar"]]]) {
-      await page.evaluate((h) => { location.hash = h; }, hash);
-      await page.waitForFunction((h) => location.hash === h, hash);
-      await page.getByTestId("legacy").locator(`a[href="${hrefs[0]}"]`).waitFor();
-      assert.deepEqual(await page.getByTestId("legacy").locator("a").evaluateAll((as) => as.map((a) => a.getAttribute("href"))), hrefs, hash);
-    }
+    // Every section is built (phase 4b); an old address lands on its new home (yeni-paylasim-ui.cjs covers them all).
+    await page.evaluate(() => { location.hash = "#/ayarlar"; });
+    await page.waitForFunction(() => location.hash === "#/sistem");
+    await page.getByTestId("checks").waitFor();
+    assert.equal(await page.locator('a[href^="/#/"]').count(), 0, "no link to the old interface");
     // The skip link is the first stop and focuses the page.
     await page.reload();
-    await h1.filter({ hasText: "Dosyalar" }).waitFor();
+    await h1.filter({ hasText: "Sistem" }).waitFor();
     await page.keyboard.press("Tab");
     assert.equal(await page.evaluate(() => document.activeElement.className), "skip-link");
     await page.keyboard.press("Enter");
@@ -462,7 +455,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     console.log("PASS: /yeni/ shell (build matches its sources, licence banner) under the production CSP — sidebar counts (Uygulamalar 2, Sistem 1 danger, Erişim 1 warning), problem chip, " +
       "Tailscale and version card, event stream (X-Konsol fetch, multi-line data, unknown events, kapat → immediate reconnect), activity drawer " +
       "(focus trap, Esc, focus return, finished job reloads the applications), pending banner with local countdown and phases, palette (Ctrl+K/Meta+K, groups, " +
-      "İŞ/ıs/is, ↑↓, Enter to a page and to the current UI, theme action, Esc and focus return), theme radios kept across a reload, legacy links, " +
+      "İŞ/ıs/is, ↑↓, Enter to a page, no old-interface group, theme action, Esc and focus return), theme radios kept across a reload, an old address, " +
       "skip link, phone bottom bar and sheet, 1440/390/320 in light and dark, polling without a stream (404/503: 5/10/60 s, no settings status), " +
       "a failing stream (502: 3 s, 6 s, polling after the third failure, polling ends when the stream is back), " +
       "unknown values as —, 401 → sign-in, local Outfit font. Screenshots: " + shots);

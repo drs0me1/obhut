@@ -3,8 +3,8 @@
      container settings when its adapter lets fields change (AdapterEditor), its settings form when its
      konsol.json form names `oku` and `yaz` (PackageSettings; fields the adapter card edits are left out of
      it), and its first-login account when it has one (AccountCard). A container made outside Konsol is
-     adopted first; a VPN package's networks are on Erişim's WireGuard tab; a built-in still has its page in
-     the current interface. -->
+     adopted first; a VPN package's networks are on Erişim's WireGuard tab; a built-in's settings are in its
+     own section (Paylaşımlar: Dosyalar → Paylaşımlar). -->
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
@@ -18,7 +18,7 @@ import PackageSettings from "../uygulama/PackageSettings.vue";
 import { formOf } from "../uygulama/form";
 import { message } from "../uygulama/flows";
 import { readPackages } from "../../api/uygulama";
-import { legacyPage } from "../../apps";
+import { builtinHome } from "../../apps";
 import { accessRoute, addRoute } from "../../sections";
 import type { AdapterConfig, ContainerConfig, ContainerDetail } from "../../api/podman";
 import type { Modul, Uygulama } from "../../api/sema";
@@ -57,11 +57,11 @@ const form = computed(() => {
 });
 const omit = computed(() => (adapter.value ? adapter.value.editable : []));
 const external = computed(() => props.box?.source === "external");
-const legacy = computed(() => (props.app.tur === "yerlesik" ? legacyPage(props.app) : null));
+const home = computed(() => builtinHome(props.app));
 // The VPN package's networks and devices are Erişim's WireGuard tab (as on its Erişim tab).
 const vpn = computed(() => props.app.id === "paket:wireguard");
 const pending = computed(() => props.boxLoading || (isPackage.value && !moduleRead.value));
-const nothing = computed(() => !pending.value && !definition.value && !adapter.value && !form.value && (!isPackage.value || !props.app.hesap || noAccount.value) && !external.value && !legacy.value && !vpn.value);
+const nothing = computed(() => !pending.value && !definition.value && !adapter.value && !form.value && (!isPackage.value || !props.app.hesap || noAccount.value) && !external.value && !home.value && !vpn.value);
 </script>
 
 <template>
@@ -89,9 +89,9 @@ const nothing = computed(() => !pending.value && !definition.value && !adapter.v
       <RouterLink :to="accessRoute('wireguard')" class="btn btn-secondary fit">WireGuard ağları</RouterLink>
     </Card>
 
-    <Card v-if="legacy" title="Ayarlar" data-testid="settings-legacy">
-      <p class="card-text">{{ app.ad }} ayarları şimdilik eski Konsol'daki sayfasında; Dosyalar bölümü yapılınca buraya taşınacak.</p>
-      <a class="btn btn-secondary fit" :href="legacy" data-testid="settings-link">Eski Konsol'da aç<Icon name="open" :size="16" /></a>
+    <Card v-if="home" title="Ayarlar" data-testid="settings-home">
+      <p class="card-text">{{ app.ad }} ayarları kendi bölümünde.</p>
+      <RouterLink :to="home" class="btn btn-secondary fit" data-testid="settings-home-link">{{ app.ad }} bölümünü aç</RouterLink>
     </Card>
 
     <section v-if="nothing" class="card" aria-label="Ayarlar" data-testid="settings-empty">
