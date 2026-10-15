@@ -1,10 +1,12 @@
-<!-- Dosyalar → Sunucu klasörleri (phase 4b, DD-267): placeholder until the page is built. -->
+<!-- Dosyalar → Sunucu klasörleri (phase 4b, DD-267): the user area (/srv) as its owner account — browse,
+     upload, download, new folder, rename, move, trash and the text editor (FolderBrowser), the rescue view
+     for when Gezgin is down. The folder is in the address (?sekme=srv&yol=<relative path>). -->
 <script setup lang="ts">
-import EmptyState from "../../components/ui/EmptyState.vue";
+import FolderBrowser from "./FolderBrowser.vue";
 </script>
 
 <template>
-  <section class="card" aria-label="Sunucu klasörleri">
-    <EmptyState title="Sunucu klasörleri" text="Bu bölüm hazırlanıyor." icon="folder" />
-  </section>
+  <div class="files-tab" data-testid="srv">
+    <FolderBrowser tree="srv" />
+  </div>
 </template>

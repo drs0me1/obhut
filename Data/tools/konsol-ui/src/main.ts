@@ -13,6 +13,7 @@ import "./styles/erisim.css";
 import "./styles/sistem.css";
 import "./styles/uygulama.css";
 import "./styles/paylasim.css";
+import "./styles/dosyalar.css";
 
 initTheme();
 createApp(App).use(router).mount("#app");

@@ -114,6 +114,18 @@ const ICONS = {
   copy: { shapes: [{ x: 8.5, y: 8.5, width: 11, height: 11, rx: 2 }, { d: "M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2" }] },
   eye: { shapes: [{ d: "M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" }, { cx: 12, cy: 12, r: 3 }] },
   eyeOff: { shapes: [{ d: "M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" }, { cx: 12, cy: 12, r: 3 }, { d: "M4 4l16 16" }] },
+  // Dosyalar (phase 4b): a file, an upload, moving into a folder, restoring from the trash, a new name.
+  file: { shapes: [{ d: "M7 3.5h7l4.5 4.5v11a1.5 1.5 0 0 1-1.5 1.5H7a1.5 1.5 0 0 1-1.5-1.5v-14A1.5 1.5 0 0 1 7 3.5z" }, { d: "M14 3.5V8h4.5" }] },
+  upload: { shapes: [{ d: "M12 16V5" }, { d: "m7.5 9.5 4.5-4.5 4.5 4.5" }, { d: "M5 19.5h14" }] },
+  move: {
+    shapes: [
+      { d: "M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2V17.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" },
+      { d: "M8.5 13.5h6.5" },
+      { d: "m12.5 11 2.5 2.5-2.5 2.5" },
+    ],
+  },
+  restore: { shapes: [{ d: "M4.5 12a7.5 7.5 0 1 0 2.2-5.3" }, { d: "M4.5 4.5v4h4" }] },
+  rename: { shapes: [{ d: "M11 7H5.5a1.5 1.5 0 0 0-1.5 1.5v7A1.5 1.5 0 0 0 5.5 17H11" }, { d: "M17 7h1.5A1.5 1.5 0 0 1 20 8.5v7a1.5 1.5 0 0 1-1.5 1.5H17" }, { d: "M14 4.5v15" }, { d: "M12 4.5h4" }, { d: "M12 19.5h4" }] },
 } satisfies Record<string, IconDef>;
 
 export type IconName = keyof typeof ICONS;

@@ -46,6 +46,11 @@ h.handlers["/api/konsol/gelismis"] = () => ({ body: { read_at: 1791845000, caddy
 // Phase 4a: Uygulamalar reads Podman's own counts (yeni-uygulama-ekle-ui.cjs covers them); not a Genel read.
 h.handlers["/api/konsol/konteynerler/liste"] = () => ({ body: { read_at: 1791845000, runtime: { version: "5.4.2", ok: true, error: "" }, containers: [],
   images: [], volumes: [], networks: [], storage: { images: 1, containers: 1, size: null }, resource_errors: {} } });
+// Phase 4b: Dosyalar' Depolama reads the files backend and who uses which folder (yeni-dosyalar-ui.cjs covers it).
+h.handlers["/api/state"] = () => ({ body: { root: "/srv", writable: true, textLimit: 1048576, protected: [], trash: { count: 0, size: 0 },
+  disk: { total: 250700000000, free: 238000000000, used: 0, mount: false } } });
+h.handlers["/api/list"] = () => ({ body: { path: "", entries: [], skipped: 0 } });
+h.handlers["/api/konsol/depolama"] = () => ({ body: { read_at: 1791845000, kok: "/srv", kullananlar: [], hatalar: [] } });
 const clippedBarLabels = (page) => page.locator(".bottom-bar .bb-item span").evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 0.5).map((e) => e.textContent));
 const badge = (page, id) => page.locator(`.sidebar [data-badge="${id}"]`);
 const optionLabels = (page) => page.locator(".palette-option .palette-label").allInnerTexts();
