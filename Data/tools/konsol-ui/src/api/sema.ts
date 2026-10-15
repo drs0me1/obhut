@@ -851,10 +851,12 @@ export interface Gelismis {
   caddy: {
     entries: ({
       address: string;
-      routes: {
-        [key: string]: unknown;
-      }[];
       source: string;
+      routes: ({
+        path: string;
+        kind: "proxy" | "files" | "respond" | "redirect";
+        to: string;
+      })[];
       access: "tailscale" | "wan";
       scheme: string;
     })[];
@@ -864,9 +866,14 @@ export interface Gelismis {
     listen: string[];
     domains: string[];
     dhcp: boolean;
-    names: {
+    names: ({
+      name?: string;
+      iface?: string;
+      family?: number | null;
+      address?: string;
+      source?: string;
       [key: string]: unknown;
-    }[];
+    })[];
     raw: YapilandirmaDosyasi[];
   };
 }

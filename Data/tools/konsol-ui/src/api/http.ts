@@ -1,7 +1,8 @@
 // Requests to Konsol's root backend. Every /api/* request carries X-Konsol (the CSRF rule, DD-147/180)
-// and the session cookie; nothing is cached. A 401 means the internet session ended: the browser goes to
-// the sign-in page, which returns to this interface and the same view afterwards (geri=yeni; DD-194,
-// DD-205, DD-259). Any other failure is an ApiError carrying the backend's own message.
+// and the session cookie; nothing is cached. A 401 marked `giris` means the internet session ended: the
+// browser goes to the sign-in page, which returns to this interface and the same view afterwards
+// (geri=yeni; DD-194, DD-205, DD-259). Any other failure, a 401 without the mark among them (a wrong
+// current password), is an ApiError carrying the backend's own message.
 import type { Hata } from "./sema";
 
 export class ApiError extends Error {
@@ -27,15 +28,15 @@ const isHata = (body: unknown): body is Hata =>
   typeof body === "object" && body !== null && typeof (body as { error?: unknown }).error === "string";
 
 async function failure(res: Response): Promise<ApiError> {
-  if (res.status === 401) {
-    goToSignIn();
-    return new ApiError(401, "Oturum gerekli; yeniden giriş yapın.");
-  }
   let body: unknown = null;
   try {
     body = await res.json();
   } catch {
     body = null;
+  }
+  if (res.status === 401 && (!isHata(body) || body.giris === true)) {
+    goToSignIn();
+    return new ApiError(401, "Oturum gerekli; yeniden giriş yapın.");
   }
   return new ApiError(res.status, isHata(body) ? body.error : `Sunucu yanıtı: HTTP ${res.status}`);
 }

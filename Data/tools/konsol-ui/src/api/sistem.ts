@@ -76,22 +76,9 @@ export async function createAccount(kullanici: string, parola: string): Promise<
 }
 
 /** A new password; `eski` only on the internet channel. A wrong current password is a 401 without the
-    sign-in mark (`giris`): it is shown on the form, while an ended session still goes to the sign-in page
-    (the shared helper would leave for the sign-in page on any 401). */
+    sign-in mark (`giris`), shown on the form; an ended session goes to the sign-in page (http.ts). */
 export async function changePassword(yeni: string, eski?: string): Promise<HesapSonucu> {
-  const res = await fetch(YOLLAR.hesap_parola, {
-    method: "POST",
-    headers: { ...KONSOL_HEADERS, "Content-Type": "application/json" },
-    credentials: "same-origin",
-    cache: "no-store",
-    body: JSON.stringify(eski === undefined ? { yeni } : { eski, yeni }),
-  });
-  if (!res.ok) {
-    const { message, signIn } = await errorOf(res);
-    if (res.status === 401 && signIn) goToSignIn();
-    throw new ApiError(res.status, message);
-  }
-  return shaped<HesapSonucu>(await res.json().catch(() => null), (v) => isText(v.durum));
+  return shaped(await postJson(YOLLAR.hesap_parola, eski === undefined ? { yeni } : { eski, yeni }), (v) => isText(v.durum));
 }
 
 export async function signOut(): Promise<void> {

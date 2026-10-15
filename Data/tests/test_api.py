@@ -139,7 +139,7 @@ class RouteReplyTests(Fixture):
             self.assertEqual(self.get("klasorler", "?path=/srv")["items"][0]["path"], "/srv/downloads")
         manager.return_value.folders.assert_called_once_with("/srv")
         # Gelişmiş: the settings view's Caddy and dnsmasq parts.
-        view = {"read_at": 3, "web": {"entries": [{"address": "panel.test:80", "routes": [{"path": "/", "to": "x"}], "source": "base",
+        view = {"read_at": 3, "web": {"entries": [{"address": "panel.test:80", "routes": [{"path": "/", "kind": "proxy", "to": "x"}], "source": "base",
                                                     "access": "tailscale", "scheme": "http"}],
                                        "raw": [{"file": "/etc/caddy/Caddyfile", "text": "panel.test:80 {}"}]},
                 "dns": {"listen": ["100.64.0.1"], "domains": ["test"], "names": [], "dhcp": False, "raw": []}}

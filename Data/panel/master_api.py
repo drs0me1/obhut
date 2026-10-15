@@ -258,10 +258,13 @@ SCHEMAS = {
     "YapilandirmaDosyasi": obj({"file": STR, "text": STR}),
     "Gelismis": obj({
         "read_at": INT,
-        "caddy": obj({"entries": arr(obj({"address": STR, "routes": arr(open_obj({})), "source": STR,
+        "caddy": obj({"entries": arr(obj({"address": STR, "source": STR,
+                                          "routes": arr(obj({"path": STR, "kind": enum("proxy", "files", "respond", "redirect"),
+                                                             "to": STR})),
                                           "access": enum("tailscale", "wan"), "scheme": STR})),
                       "raw": arr(ref("YapilandirmaDosyasi"))}),
-        "dnsmasq": obj({"listen": arr(STR), "domains": arr(STR), "dhcp": BOOL, "names": arr(open_obj({})),
+        "dnsmasq": obj({"listen": arr(STR), "domains": arr(STR), "dhcp": BOOL,
+                        "names": arr(open_obj({"name": STR, "iface": STR, "family": null(INT), "address": STR, "source": STR})),
                         "raw": arr(ref("YapilandirmaDosyasi"))}),
     }),
 }

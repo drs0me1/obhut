@@ -5900,17 +5900,37 @@
                     "address": {
                       "type": "string"
                     },
+                    "source": {
+                      "type": "string"
+                    },
                     "routes": {
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "properties": {},
-                        "required": [],
-                        "additionalProperties": true
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "proxy",
+                              "files",
+                              "respond",
+                              "redirect"
+                            ]
+                          },
+                          "to": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "kind",
+                          "to"
+                        ],
+                        "additionalProperties": false
                       }
-                    },
-                    "source": {
-                      "type": "string"
                     },
                     "access": {
                       "type": "string",
@@ -5925,8 +5945,8 @@
                   },
                   "required": [
                     "address",
-                    "routes",
                     "source",
+                    "routes",
                     "access",
                     "scheme"
                   ],
@@ -5968,7 +5988,30 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "properties": {},
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "iface": {
+                      "type": "string"
+                    },
+                    "family": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "address": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    }
+                  },
                   "required": [],
                   "additionalProperties": true
                 }
