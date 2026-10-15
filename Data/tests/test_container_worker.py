@@ -507,6 +507,29 @@ class ContainerTests(unittest.TestCase):
         self.assertTrue(self.runner.containers['foreign']['State']['Running'])
         self.assertEqual(self.runner.containers['foreign']['Config']['Env'], ['TOKEN=import-secret'])
 
+    def test_a_job_waits_briefly_for_a_held_install_lock(self):
+        # DD-266: the share guard holds install.lock for a moment every 30 s; a job waits for it.
+        import fcntl
+        import threading
+        lock = self.root / 'run/install.lock'
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        held = open(lock, 'a')
+        self.addCleanup(held.close)
+        fcntl.flock(held, fcntl.LOCK_EX)
+        timer = threading.Timer(0.5, lambda: fcntl.flock(held, fcntl.LOCK_UN))
+        timer.start()
+        self.addCleanup(timer.cancel)
+        self.execute('volume-create', {'name': 'waited'})
+        self.assertIn(['podman', 'volume', 'create', '--label', 'io.master-stack.managed=konsol', 'waited'],
+                      [c[:6] for c in self.runner.calls if c[:3] == ['podman', 'volume', 'create']])
+        # Held for longer than the wait: the job refuses, nothing runs.
+        fcntl.flock(held, fcntl.LOCK_EX)
+        before = len(self.runner.calls)
+        with patch.object(worker, 'LOCK_WAIT', 0.3), self.assertRaises(cfg.ContainerConfigError) as caught:
+            self.execute('volume-create', {'name': 'refused'})
+        self.assertEqual(caught.exception.status, 409)
+        self.assertEqual(len(self.runner.calls), before)
+
     def test_volume_and_network_deletion_checks_stopped_definition_references(self):
         self.config['mounts'] = [{'type': 'volume', 'source': 'my-volume', 'destination': '/data', 'read_only': False}]
         self.create()

@@ -190,6 +190,9 @@ export interface CheckContext {
   /** Names already used by containers on this server. */
   taken: ReadonlySet<string>;
   networks: readonly NetworkChoice[];
+  /** Named volumes on this server; null while the list is unread. The worker mounts only an existing
+      volume (it creates none), so another name is refused here. */
+  volumes: ReadonlySet<string> | null;
 }
 
 /** Each field's first problem, by key: name, image, network, user, cpus, memory, command, p<key>, m<key>, e<key>. */
@@ -225,6 +228,7 @@ export function problems(d: Draft, ctx: CheckContext): Problems {
     const source = m.source.trim();
     const target = m.destination.trim();
     if (m.type === "volume" && !VOLUME_RE.test(source)) add(key, "Birim adı küçük harf ya da rakamla başlar; küçük harf, rakam ve - _ . içerir.");
+    else if (m.type === "volume" && ctx.volumes && !ctx.volumes.has(source)) add(key, "Bu birim yok; önce Gelişmiş → Podman → Birimler'de oluşturun.");
     if (m.type === "bind" && !validPath(source)) add(key, "Sunucu klasörünü seçin.");
     if (!validPath(target)) add(key, "Konteynerdeki yol / ile başlar; harf, rakam, boşluk ve . _ - / içerir.");
     else if (targets.has(target)) add(key, "Bu konteyner yolu iki kez var.");

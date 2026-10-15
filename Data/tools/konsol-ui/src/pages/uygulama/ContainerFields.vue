@@ -191,7 +191,7 @@ function onType(m: Draft["mounts"][number]): void {
               <option value="bind">Sunucu klasörü</option>
             </select>
           </Field>
-          <Field v-if="m.type === 'volume'" v-slot="{ id }" label="Birim adı" :hint="volumes.length ? 'Var olan bir birimi seçin ya da yeni bir ad yazın.' : 'Yeni birim bu adla oluşturulur.'">
+          <Field v-if="m.type === 'volume'" v-slot="{ id }" label="Birim adı" :hint="volumes.length ? 'Var olan bir birimi seçin; yenisi Gelişmiş → Podman → Birimler\'de oluşturulur.' : 'Henüz birim yok; Gelişmiş → Podman → Birimler\'de oluşturun.'">
             <input :id="id" v-model="m.source" class="input mono" type="text" :list="volumeList" autocomplete="off" autocapitalize="none" spellcheck="false"
               placeholder="ornek-veri" :readonly="!can('mounts')" :aria-describedby="errId('m' + m.key)" :aria-invalid="Boolean(err('m' + m.key)) || undefined" data-alan="source" />
           </Field>

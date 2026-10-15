@@ -88,7 +88,8 @@ const networks = computed(() => networkChoices(inventory.value));
 const taken = computed(() => new Set((inventory.value?.containers ?? []).map((c) => c.name)));
 const volumes = computed(() => (inventory.value?.volumes ?? []).map((v) => v.name));
 const runtimeDown = computed(() => (inventory.value && !inventory.value.runtime.ok ? inventory.value.runtime.error || "Podman yanıt vermiyor." : ""));
-const errors = computed(() => problems(draft.value, { create: true, editable: () => true, taken: taken.value, networks: networks.value }));
+const errors = computed(() => problems(draft.value, { create: true, editable: () => true, taken: taken.value, networks: networks.value,
+  volumes: inventory.value ? new Set(volumes.value) : null }));
 const config = computed(() => configOut(draft.value, null));
 const list = computed(() => changes(null, config.value));
 const effects = computed(() => consequences("create", false, list.value, config.value));

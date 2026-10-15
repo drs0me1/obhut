@@ -384,6 +384,9 @@ const guarded = (page) => page.evaluate(() => {
     await field(mounts.nth(0), "destination").fill("/data");
     await mounts.nth(0).getByText("Birim adı küçük harf ya da rakamla başlar; küçük harf, rakam ve - _ . içerir.").waitFor();
     await field(mounts.nth(0), "source").fill("site-veri");
+    // The worker mounts only an existing volume; another name is refused before the review.
+    await mounts.nth(0).getByText("Bu birim yok; önce Gelişmiş → Podman → Birimler'de oluşturun.").waitFor();
+    await field(mounts.nth(0), "source").fill("web-veri");
     await flow.getByRole("button", { name: "Bağlama ekle" }).click();
     await field(mounts.nth(1), "type").selectOption("bind");
     await mounts.nth(1).getByText("Sunucu klasörünü seçin.").waitFor();
@@ -429,7 +432,7 @@ const guarded = (page) => page.evaluate(() => {
     assert(await sheet.getByTestId("review-title").evaluate((el) => el === document.activeElement), "the review's heading has focus");
     assert.deepEqual(await sheet.locator(".review-facts dt").allInnerTexts(), ["Ad", "İmaj", "Ağ", "Port", "Port", "Bağlama", "Bağlama", "Ortam", "Ortam", "Komut", "Başlatma", "İşlemci sınırı", "Bellek sınırı", "Hesap"]);
     assert.deepEqual(await sheet.locator(".review-facts dd").allInnerTexts(), ["site", "docker.io/library/caddy:2.8", "Varsayılan Konsol ağı",
-      "İnternet (herkese açık) · 8080 → 80/tcp", "Tailscale · 8080 → 443/udp", "birim site-veri → /data", "klasör /srv/kitaplik → /kitaplik (salt okunur)",
+      "İnternet (herkese açık) · 8080 → 80/tcp", "Tailscale · 8080 → 443/udp", "birim web-veri → /data", "klasör /srv/kitaplik → /kitaplik (salt okunur)",
       "TZ=Europe/Istanbul", "SIFRE (gizli, yeni değer)", "caddy run --config /etc/caddy/Caddyfile", "açılışta başlar · yeniden başlatma: Her zaman", "0.5 çekirdek", "256m",
       "İmajın kendi hesabı (çoğunlukla root)"]);
     assert.equal(await sheet.getByTestId("public-ports").locator(".notice-title").innerText(), "İnternete açık port: 8080/tcp");
@@ -446,7 +449,7 @@ const guarded = (page) => page.evaluate(() => {
     expectedFailures = [];
     const created = { name: "site", image: "docker.io/library/caddy:2.8", image_ref: "docker.io/library/caddy:2.8", network: "bridge",
       ports: [{ scope: "public", host_port: 8080, container_port: 80, protocol: "tcp", public_ack: true }, { scope: "tailscale", host_port: 8080, container_port: 443, protocol: "udp", public_ack: false }],
-      mounts: [{ type: "volume", source: "site-veri", destination: "/data", read_only: false }, { type: "bind", source: "/srv/kitaplik", destination: "/kitaplik", read_only: true }],
+      mounts: [{ type: "volume", source: "web-veri", destination: "/data", read_only: false }, { type: "bind", source: "/srv/kitaplik", destination: "/kitaplik", read_only: true }],
       environment: [{ name: "TZ", value: "Europe/Istanbul", secret: false }, { name: "SIFRE", value: "cok-gizli", secret: true }],
       command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile"], autostart: true, restart: "always", cpus: "0.5", memory: "256m", user: "image" };
     assert.deepEqual(lastPost("konteynerler/islem"), { action: "create", config: created, start: false }, "the exact create request");

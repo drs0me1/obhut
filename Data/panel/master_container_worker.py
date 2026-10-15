@@ -27,6 +27,9 @@ import master_container_config as cfg
 ACTIONS = ('create', 'save', 'start', 'stop', 'restart', 'remove', 'adopt', 'image-pull', 'image-remove',
            'image-update', 'volume-create', 'volume-remove', 'network-create', 'network-remove')
 LIMIT = 1024 * 1024
+# DD-266: the share guard (every 30 s) and the settings worker hold install/modul.lock for a moment;
+# a container job waits for them as master-modul does (flock -w 5) instead of failing at once.
+LOCK_WAIT = 5.0
 
 
 def run(argv, timeout=60, **kwargs):
@@ -78,10 +81,15 @@ class Manager:
                 f = stack.enter_context(os.fdopen(fd, 'a'))
                 info = os.fstat(f.fileno())
                 cfg.require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid(), 'İşlem kilidi güvenli değil.', 503)
-                try:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError as err:
-                    raise cfg.ContainerConfigError(409, 'Kurulum veya başka bir konteyner işlemi sürüyor; biraz sonra yeniden deneyin.') from err
+                deadline = time.monotonic() + LOCK_WAIT
+                while True:
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError as err:
+                        if time.monotonic() >= deadline:
+                            raise cfg.ContainerConfigError(409, 'Kurulum veya başka bir konteyner işlemi sürüyor; biraz sonra yeniden deneyin.') from err
+                        time.sleep(0.2)
             pending = self.env.get('SETTINGS_PENDING_FILE')
             cfg.require(not pending or not Path(pending).exists(), 'Onay bekleyen sistem ayarını önce tamamlayın.', 409)
             yield

@@ -215,8 +215,13 @@ watch(
     if (job?.durum === "hata") actionError.value = job.adim ? `İşlem başarısız: ${job.adim}` : "İşlem başarısız oldu.";
     actionNote.value = "";
     if (job?.durum === "tamam" && t.eylem === "guncelle" && t.tur === "konteyner") void updateResult(t, app.value?.ad ?? id.value);
-    void load();
     void refreshApps();
+    // A removed application has no page any more: back to the list (the drawer keeps the finished job).
+    if (job?.durum === "tamam" && t.eylem === "kaldir") {
+      void router.replace("/uygulamalar");
+      return;
+    }
+    void load();
   },
 );
 

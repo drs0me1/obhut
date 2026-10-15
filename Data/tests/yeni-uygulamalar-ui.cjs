@@ -654,9 +654,8 @@ async function noStyles(page, where) {
     push("islemler", { items: [job({ tur: "konteyner", id: `is-${jobSeq}`, ad: "notlar · Kaldır" })] });
     await page.waitForTimeout(200);
     push("islemler", { items: [job({ tur: "konteyner", id: `is-${jobSeq}`, ad: "notlar · Kaldır", durum: "tamam", bitis: 1791845500 })] });
-    await page.getByText("Bu uygulama yok").waitFor();
-    assert.equal(await page.getByText("Uygulama bulunamadı.").count(), 1, "the backend's words");
-    assert.equal(await page.getByRole("link", { name: "Uygulamalar'a dön" }).getAttribute("href"), "#/uygulamalar");
+    // A finished removal leads back to the list; the application's page is not read again.
+    await page.waitForURL((u) => u.hash === "#/uygulamalar");
     await page.context().close();
     data.uygulamalar = { ...data.uygulamalar, items: apps() };
 

@@ -43,7 +43,8 @@ const orig = computed(() => props.box.generic);
 const running = computed(() => props.box.state === "running");
 const networks = computed(() => networkChoices(inventory.value, orig.value.network));
 const volumes = computed(() => (inventory.value?.volumes ?? []).map((v) => v.name));
-const errors = computed(() => problems(draft.value, { create: false, editable: (f) => props.box.editable.includes(f), taken: new Set(), networks: networks.value }));
+const errors = computed(() => problems(draft.value, { create: false, editable: (f) => props.box.editable.includes(f), taken: new Set(), networks: networks.value,
+  volumes: inventory.value ? new Set(volumes.value) : null }));
 const config = computed(() => configOut(draft.value, orig.value));
 const list = computed(() => changes(orig.value, config.value));
 const effects = computed(() => consequences("save", running.value, list.value, config.value));
