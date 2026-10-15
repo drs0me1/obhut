@@ -231,6 +231,12 @@ const job = (o) => ({ tur: "konteyner", id: "is-7", ad: "medya · Kaydet", durum
 const url = (hash) => new URL("/yeni/" + hash, base).href;
 const hashOf = (page) => page.evaluate(() => location.hash);
 const lastPost = (key) => posts(key).at(-1);
+/** Whether closing or reloading the tab now would ask first (the leave guard, DD-266). */
+const guarded = (page) => page.evaluate(() => {
+  const event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
+});
 async function noStyles(page, where) {
   assert.deepEqual(await styleAttributes(page), [], "no style attributes: " + where);
 }
@@ -369,8 +375,10 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await shot(page, "1440-light-erisim-adresler.png", true);
     // The draft: a name off, a record added, forwarding to Quad9.
     assert.equal(await page.getByTestId("dns-draft").count(), 0);
+    assert.equal(await guarded(page), false, "no draft, no question");
     await namesCard.getByRole("switch", { name: "paylas.ev açık" }).click();
     await page.getByTestId("dns-draft").filter({ hasText: "1 değişiklik taslakta" }).waitFor();
+    assert.equal(await guarded(page), true, "a DNS draft asks before the tab closes");
     await page.getByTestId("add-record").click();
     let sheet = page.getByRole("dialog", { name: "Yerel ad ekle" });
     await sheet.waitFor();
@@ -427,12 +435,14 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await sheet.waitFor({ state: "detached" });
     await page.getByTestId("dns-draft").getByRole("button", { name: "Vazgeç" }).click();
     await page.getByTestId("dns-draft").waitFor({ state: "detached" });
+    assert.equal(await guarded(page), false, "the dropped draft no longer asks");
     expectedFailures = [];
 
     // The local domain: plan (300 s), apply, then confirmation only from the new address.
     await page.getByTestId("review-domain").click();
     await page.getByTestId("domain").getByText("Yeni alan adını yazın (ör. ev).").waitFor();
     await page.getByTestId("domain-input").fill("Ev");
+    assert.equal(await guarded(page), true, "a typed domain asks before the tab closes");
     await page.getByTestId("review-domain").click();
     await page.getByTestId("domain").getByText("Alan adı zaten bu değerde.").waitFor();
     await page.getByTestId("domain-input").fill("ofis");
@@ -447,6 +457,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await sheet.getByTestId("apply").click();
     await sheet.waitFor({ state: "detached" });
     assert.deepEqual(lastPost("ayarlar/uygula"), { revision: "rev-1", domain: "ofis" });
+    assert.equal(await guarded(page), false, "the applied domain is no draft");
     const banner = page.locator(".pending");
     await banner.waitFor();
     await page.getByTestId("countdown").filter({ hasText: /^(5:00|4:59)$/ }).waitFor();
@@ -760,6 +771,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     assert.equal(await ssh.getByRole("switch").getAttribute("aria-checked"), "false");
     assert.equal(await ssh.getByTestId("rule-state").innerText(), "Taslak · Yeni kural");
     await page.getByTestId("fw-draft").filter({ hasText: "1 değişiklik taslakta" }).waitFor();
+    assert.equal(await guarded(page), true, "a firewall draft asks before the tab closes");
     // "+ Port kuralı": checked before it joins the draft.
     await fwView.getByTestId("add-rule").click();
     sheet = page.getByRole("dialog", { name: "Port kuralı ekle" });
@@ -839,6 +851,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await fwView.getByTestId("fw-locked").waitFor();
     assert(await fwView.locator('tr[data-port="tcp/62001"]').count() >= 0);
     assert.equal(await page.getByTestId("fw-draft").count(), 0, "the draft went to the server");
+    assert.equal(await guarded(page), false, "nothing left to lose");
     assert(await pending.getByTestId("pending-confirm").isEnabled());
     await shot(page, "1440-light-erisim-bekliyor.png");
     data["guvenlik-duvari"] = firewall({ kurallar: fwBody.firewall });
@@ -950,7 +963,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await page.keyboard.press("Escape");
     await page.keyboard.press("Control+K");
     await input.fill("dnsmasq");
-    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Erişim → Adresler"]);
+    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Erişim → Adresler", "Gelişmiş → DNS"], "names are changed in Erişim, read in Gelişmiş");
     await page.keyboard.press("Enter");
     await page.waitForURL((u) => u.hash === "#/erisim?sekme=adresler");
     await page.context().close();
@@ -1015,7 +1028,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
       "through islemler, the exact settings request, a failing second step and a failing job, another port as a manual address, engel and " +
       "Yeniden denetle, both names off, a stopped package, an unknown target), Güvenlik duvarı (catalogue with rules, listeners, locked rows, " +
       "draft with a baseline switch and a new rule, checks, IPv6, tabs, technical rules with counters, plan → apply → 60 s → Onayla and Geri al, " +
-      "a plan that cannot be applied), the stuck rollback (retry, typed discard), a refused confirmation, the internet channel's confirmation " +
+      "a plan that cannot be applied), the leave guard on the DNS, domain and firewall drafts, the stuck rollback (retry, typed discard), a refused confirmation, the internet channel's confirmation " +
       "message, the application page's Erişim tab, the palette, 1440/390/320 in light and dark. Screenshots: " + h.shots);
   } finally {
     await h.stop();

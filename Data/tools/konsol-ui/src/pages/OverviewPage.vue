@@ -238,7 +238,7 @@ watch(() => live.offset, () => (now.value = serverNow()));
             <p class="health-sub" data-testid="health-sub">{{ healthHead.sub }}</p>
           </div>
         </div>
-        <a class="btn btn-secondary" href="/#/ayarlar">Tüm denetimler</a>
+        <RouterLink class="btn btn-secondary" to="/sistem?sekme=saglik">Tüm denetimler</RouterLink>
       </div>
       <ul v-if="problemList.length" class="problems" aria-label="Dikkat isteyen konular">
         <li v-for="p in problemList" :key="p.key" class="problem" :class="'problem-' + p.tone" :data-kind="p.kind">

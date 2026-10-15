@@ -1,13 +1,15 @@
 <!-- The sidebar (DD-258): wordmark and server, the six sections with their counts, and the connection and
-     version card. The phone shows the same content in the "Daha fazla" sheet. -->
+     version card. The phone shows the same content in the "Daha fazla" sheet. An open session on the
+     internet channel adds "Çıkış yap" (DD-205: the tailnet address has no sign-in). -->
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { Icon } from "./icons";
 import Wordmark from "./Wordmark.vue";
 import { SECTIONS, type SectionId } from "../sections";
 import { apps, checkLevel, health, live, type Level } from "../live";
 import { UNKNOWN, fold, shortVersion } from "../format";
+import { canSignOut, leave, loadSession } from "../pages/sistem/session";
 
 const emit = defineEmits<{ navigate: [to: SectionId] }>();
 
@@ -72,6 +74,8 @@ const update = computed<{ text: string; fresh: boolean } | null>(() => {
   if (g.hata) return { text: "denetlenemedi", fresh: false };
   return g.yeni === true ? { text: "yeni sürüm var", fresh: true } : { text: "güncel", fresh: false };
 });
+
+onMounted(() => void loadSession());
 </script>
 
 <template>
@@ -109,5 +113,9 @@ const update = computed<{ text: string; fresh: boolean } | null>(() => {
       </span>
       <span data-testid="version">Obhut {{ version }}<template v-if="update"> · <span :class="{ 'side-fresh': update.fresh }">{{ update.text }}</span></template></span>
     </div>
+    <button v-if="canSignOut" type="button" class="nav-item side-signout" data-testid="sign-out" @click="leave">
+      <Icon name="power" />
+      <span>Çıkış yap</span>
+    </button>
   </div>
 </template>

@@ -198,6 +198,41 @@ names) and that the installer ships `master_yayin.py`.
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_yayin.py'
 ```
 
+## New interface phase 4a: Sistem and Gelişmiş (DD-258, DD-266)
+
+`yeni-sistem-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8773`) drives the committed build through
+`yeni-harness.cjs`. Sistem → Sağlık: every check with problems first and the last check time; the last
+repair report (who ran it, the mode, start and end, each step with its state); "Denetle" at once and "Onar"
+after a confirmation (`POST /api/konsol/onarim` with `{kip}`), a refusal, the report read every 2 s while a
+run goes on and its end through a pushed `islemler` event; the repair log as the server's plain text in a
+sheet (`gunluk=72s|7g` in the address, scrolled to the newest line, copied whole, a failed read, an empty
+log). Güncellemeler: installed and newest version with their builds, "Yeniden denetle" (`?yenile=1`), the
+confirmation's words, a refusal, the stage from the `guncelleme` job, an earlier run's end ignored, the page
+reloading after success, a failed run without reload, a failed check. Hesap: creating the account on the
+tailnet with master_auth's rules and a refusal, the tailnet password without the current one, the internet
+password with it, a wrong current password (401 without `giris`) shown on the form while an ended session
+(401 with `giris`) goes to the sign-in page, and the leave guard. Sunucu: the facts and the reboot (typed
+word, a refusal, the wait, the server going away and back with a shorter uptime, the reload). Görünüm and
+Günlük (newest first, the packages' `gunluk` templates from `moduller`, kind chips `tur=`, a Turkish-aware
+search `ara=`, a missing package list). The internet channel (`newHttpsPage`): repair, update and reboot
+locked with their reasons, "Çıkış yap" in the sidebar and the phone's menu sheet. Gelişmiş: Caddy's sites
+(routes, owner, access, scheme), the raw files (`ham=1`) with copy, "Yenile" past the cache and a failed
+read; DNS from the same read; the firewall tab's links to Erişim's technical rules; Podman's images,
+volumes and networks (`kaynak=`): what may not be removed and why, "İmaj çek" with the reference check, the
+exact `…/konteynerler/islem` bodies, each job's steps and end through `islemler`, a failed job, removal with
+the typed word, a sheet closed while its job runs, an unreadable collection, a runtime that does not answer.
+Also "Tüm denetimler", the palette's new tabs, keyboard and focus, and 1440/390/320 px in both themes with
+no style attribute and no horizontal scroll.
+
+`yeni-ui.cjs`, `yeni-uygulamalar-ui.cjs` and `yeni-erisim-ui.cjs` changed only where phase 4a meant them to:
+Sistem and Gelişmiş are no longer placeholders, the palette's current-interface views no longer list
+Settings' system view and log, "Tüm denetimler" leads to `#/sistem?sekme=saglik`, "dnsmasq" also finds
+Gelişmiş → DNS, and Erişim's DNS, domain and firewall drafts ask before the browser tab closes.
+
+```bash
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-sistem-ui.cjs
+```
+
 ## Gezgin package (v2-245, DD-262)
 
 `test_gezgin_package.py` drives `magaza/gezgin/ayar.py` with faked commands: the install form (every

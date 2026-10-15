@@ -18,6 +18,7 @@ import SettingsPlanSheet from "./SettingsPlanSheet.vue";
 import { readNames, readPublications } from "../../api/erisim";
 import { CANDIDATE_KIND, DOMAIN_RE, publicationState } from "../../access";
 import { live } from "../../live";
+import { useLeaveGuard } from "../../leave";
 import { updateQuery } from "../../query";
 import { tailnetKonsol, tailscaleAdmin } from "../../links";
 import { UNKNOWN, date } from "../../format";
@@ -339,6 +340,8 @@ function reviewDomain(): void {
     danger: false,
   };
 }
+// Closing or reloading the browser tab with a DNS draft or a typed new domain asks first (DD-266).
+useLeaveGuard(() => dirty.value || newDomain.value !== "");
 const pendingDomain = computed(() => live.bekleyen?.domain ?? null);
 const dnsAdmin = tailscaleAdmin("dns");
 const pendingDomainNew = computed(() => (pendingDomain.value ? tailnetKonsol(pendingDomain.value.new, "#/erisim?sekme=adresler") : ""));

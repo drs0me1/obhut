@@ -154,7 +154,7 @@ async function noStyles(page, where) {
     assert.equal(await warn.locator("strong").innerText(), WARNING.metin);
     assert.equal(await warn.locator(".problem-text span").innerText(), "Erişim · Paylaşımlar");
     assert.equal(await warn.getByRole("link", { name: "Düzelt" }).getAttribute("href"), "#/erisim?sekme=adresler&yayinla=paylasim", "its fix (phase 3)");
-    assert.equal(await page.getByRole("link", { name: "Tüm denetimler" }).getAttribute("href"), "/#/ayarlar");
+    assert.equal(await page.getByRole("link", { name: "Tüm denetimler" }).getAttribute("href"), "#/sistem?sekme=saglik", "Sistem → Sağlık (phase 4a)");
     // Applications: every one but Files, which has its own section.
     await page.locator(".app-card").first().waitFor();
     assert.deepEqual(await page.locator(".app-card").evaluateAll((els) => els.map((e) => e.dataset.uygulama)),

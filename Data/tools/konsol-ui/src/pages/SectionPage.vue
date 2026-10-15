@@ -1,10 +1,9 @@
-<!-- Phase 1 (DD-258): every section is a placeholder that leads to the current interface; Sistem also holds
-     the theme choice. -->
+<!-- Phase 1 (DD-258): a section that is not built yet is a placeholder that leads to the current interface
+     (Dosyalar since phase 4a). -->
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import { Icon } from "../components/icons";
-import ThemeControl from "../components/ThemeControl.vue";
 import { sectionById } from "../sections";
 
 const route = useRoute();
@@ -23,10 +22,6 @@ const section = computed(() => sectionById(route.name));
           </a>
         </li>
       </ul>
-    </section>
-    <section v-if="section.id === 'sistem'" class="card" aria-labelledby="gorunum-baslik">
-      <h2 id="gorunum-baslik" class="card-title">Görünüm</h2>
-      <ThemeControl />
     </section>
   </div>
 </template>

@@ -17,6 +17,7 @@ import Tabs from "../../components/ui/Tabs.vue";
 import SettingsPlanSheet from "./SettingsPlanSheet.vue";
 import { readFirewall } from "../../api/erisim";
 import { live } from "../../live";
+import { useLeaveGuard } from "../../leave";
 import { useQueryFlag, useQueryParam } from "../../query";
 import type { AyarIstegi, GuvenlikDuvari, KuralTaslagi } from "../../api/sema";
 
@@ -66,6 +67,8 @@ const saved = computed<KuralTaslagi[]>(() => fw.value?.kurallar ?? []);
 const draft = ref<KuralTaslagi[] | null>(null);
 const rules = computed<KuralTaslagi[]>(() => draft.value ?? saved.value);
 const dirty = computed(() => draft.value !== null && !same(draft.value, saved.value));
+// Closing or reloading the browser tab with a draft asks first (DD-266).
+useLeaveGuard(dirty);
 
 function edit(change: (rules: KuralTaslagi[]) => void): void {
   const next = clone(rules.value);

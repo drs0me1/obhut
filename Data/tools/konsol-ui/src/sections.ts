@@ -1,5 +1,6 @@
-// The six sections of the new Konsol (DD-258, redesign.md). Genel Bakış and Uygulamalar (phase 2) and Erişim
-// (phase 3) are built; the others are still placeholders that link to the current interface ("/#/…").
+// The six sections of the new Konsol (DD-258, redesign.md). Genel Bakış and Uygulamalar (phase 2), Erişim
+// (phase 3), Sistem and Gelişmiş (phase 4a) are built; Dosyalar is still a placeholder that links to the
+// current interface ("/#/…").
 import type { IconName } from "./components/icons";
 
 export type SectionId = "genel" | "uygulamalar" | "erisim" | "dosyalar" | "sistem" | "gelismis";
@@ -65,22 +66,19 @@ export const SECTIONS: readonly Section[] = [
     id: "sistem",
     title: "Sistem",
     short: "Sistem",
-    description: "Sağlık ve onarım, güncellemeler, hesap, görünüm ve günlük.",
+    description: "Sağlık, güncellemeler, hesap, sunucu, görünüm ve günlük.",
     icon: "server",
     keywords: "sağlık onarım güncelleme sürüm hesap oturum görünüm tema günlük",
-    legacy: [
-      { href: "/#/ayarlar", label: "Ayarlar → Sistem" },
-      { href: "/#/ayarlar/log", label: "Ayarlar → Günlük" },
-    ],
+    legacy: [],
   },
   {
     id: "gelismis",
     title: "Gelişmiş",
     short: "Gelişmiş",
-    description: "Teknik görünümler: Caddy yapılandırması, DNS kayıtları, güvenlik duvarı kuralları ve Podman.",
+    description: "Teknik görünümler: Caddy, DNS, güvenlik duvarı ve Podman.",
     icon: "sliders",
     keywords: "teknik caddy dns kayıt güvenlik duvarı kural port podman imaj ağ",
-    legacy: [{ href: "/#/ayarlar/fw", label: "Ayarlar → Güvenlik Duvarı" }],
+    legacy: [],
   },
 ];
 
@@ -109,12 +107,49 @@ export function accessRoute(tab: AccessTab = "genel", yayinla = ""): string {
 }
 
 /** The current interface's views, for the palette's "Eski arayüz" group (Caddy, Dnsmasq and the firewall
-    are Erişim's tabs since phase 3). */
+    are Erişim's tabs since phase 3; Settings' system view and its log are Sistem's since phase 4a). */
 export const LEGACY_VIEWS: readonly (LegacyLink & { keywords: string })[] = [
   { href: "/#/genel", label: "Ana Menü", keywords: "genel bakış ana sayfa" },
   { href: "/#/dosyalar", label: "Dosyalar", keywords: "klasör dosya paylaşım çöp" },
   { href: "/#/moduller", label: "App Store", keywords: "uygulama mağaza paket modül" },
   { href: "/#/konteynerler", label: "Podman", keywords: "konteyner imaj container" },
-  { href: "/#/ayarlar", label: "Ayarlar → Sistem", keywords: "ayarlar sağlık onarım hesap güncelleme" },
-  { href: "/#/ayarlar/log", label: "Ayarlar → Günlük", keywords: "ayarlar log kayıt işlem geçmişi" },
 ];
+
+/** Sistem's tabs (phase 4a), in the address as ?sekme=; the palette lists each one. */
+export const SYSTEM_TABS = [
+  { id: "saglik", label: "Sağlık", keywords: "sağlık denetim onarım denetle onar master-onar günlük" },
+  { id: "guncellemeler", label: "Güncellemeler", keywords: "güncelleme sürüm yeni sürüm github yükselt" },
+  { id: "hesap", label: "Hesap", keywords: "hesap oturum parola giriş çıkış kullanıcı" },
+  { id: "sunucu", label: "Sunucu", keywords: "sunucu çekirdek işletim sistemi yeniden başlat reboot açık kalma" },
+  { id: "gorunum", label: "Görünüm", keywords: "görünüm tema renk" },
+  { id: "gunluk", label: "Günlük", keywords: "günlük kayıt işlem geçmişi log denetim kaydı" },
+] as const;
+
+export type SystemTab = (typeof SYSTEM_TABS)[number]["id"];
+
+/** Gelişmiş's tabs (phase 4a), in the address as ?sekme=. */
+export const ADVANCED_TABS = [
+  { id: "caddy", label: "Caddy", keywords: "caddy site yapılandırma caddyfile ham yönlendirme proxy" },
+  { id: "dns", label: "DNS", keywords: "dns dnsmasq kayıt ad dinleme dhcp" },
+  { id: "guvenlik-duvari", label: "Güvenlik duvarı", keywords: "güvenlik duvarı iptables teknik kural zincir" },
+  { id: "podman", label: "Podman", keywords: "podman imaj birim volume ağ network çek" },
+] as const;
+
+export type AdvancedTab = (typeof ADVANCED_TABS)[number]["id"];
+
+/** The address of a Sistem tab. */
+export function systemRoute(tab: SystemTab = "saglik"): string {
+  return tab === "saglik" ? "/sistem" : "/sistem?sekme=" + tab;
+}
+
+/** The address of a Gelişmiş tab. */
+export function advancedRoute(tab: AdvancedTab = "caddy"): string {
+  return tab === "caddy" ? "/gelismis" : "/gelismis?sekme=" + tab;
+}
+
+/** Each section's tabs for the command palette (its first tab is the section itself). */
+export const SECTION_TABS: Partial<Record<SectionId, readonly { id: string; label: string; keywords: string; to: string }[]>> = {
+  erisim: ACCESS_TABS.map((t) => ({ ...t, to: accessRoute(t.id) })),
+  sistem: SYSTEM_TABS.map((t) => ({ ...t, to: systemRoute(t.id) })),
+  gelismis: ADVANCED_TABS.map((t) => ({ ...t, to: advancedRoute(t.id) })),
+};

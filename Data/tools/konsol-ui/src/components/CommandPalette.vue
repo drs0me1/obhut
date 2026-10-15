@@ -1,14 +1,13 @@
-<!-- Command palette (DD-258): ⌘K / Ctrl+K or the search field. Pages (with Erişim's tabs), the applications
-     (each opens its own page), actions ("Yayınla" among them) and the current interface's views, matched with
-     Turkish case rules ("İŞ" finds "iş", "ıs"
-     does not find "is"). A combobox over a listbox: focus stays in the field, ↑/↓ move, Enter opens, Esc
-     closes. -->
+<!-- Command palette (DD-258): ⌘K / Ctrl+K or the search field. Pages (with the tabs of Erişim, Sistem and
+     Gelişmiş), the applications (each opens its own page), actions ("Yayınla" among them) and the current
+     interface's views, matched with Turkish case rules ("İŞ" finds "iş", "ıs" does not find "is"). A combobox
+     over a listbox: focus stays in the field, ↑/↓ move, Enter opens, Esc closes. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Icon, type IconName } from "./icons";
 import { trapTab } from "./focus";
-import { ACCESS_TABS, LEGACY_VIEWS, SECTIONS, accessRoute } from "../sections";
+import { LEGACY_VIEWS, SECTIONS, SECTION_TABS, accessRoute } from "../sections";
 import { apps } from "../live";
 import { KIND_TEXT, appIcon } from "../apps";
 import { appRoute } from "../router";
@@ -41,10 +40,9 @@ const items = computed<Item[]>(() => {
   const list: Item[] = [];
   for (const s of SECTIONS) {
     list.push({ key: "sayfa-" + s.id, group: "Sayfalar", label: s.title, hint: "Sayfa", icon: s.icon, words: s.keywords, run: { kind: "route", to: "/" + s.id } });
-    if (s.id !== "erisim") continue;
-    for (const t of ACCESS_TABS) {
-      if (t.id === "genel") continue;
-      list.push({ key: "erisim-" + t.id, group: "Sayfalar", label: "Erişim → " + t.label, hint: "Erişim", icon: s.icon, words: t.keywords, run: { kind: "route", to: accessRoute(t.id) } });
+    // A section's tabs after the section (its first tab is the section's own page).
+    for (const t of (SECTION_TABS[s.id] ?? []).slice(1)) {
+      list.push({ key: `${s.id}-${t.id}`, group: "Sayfalar", label: `${s.title} → ${t.label}`, hint: s.title, icon: s.icon, words: t.keywords, run: { kind: "route", to: t.to } });
     }
   }
   for (const app of apps.value ?? []) {
