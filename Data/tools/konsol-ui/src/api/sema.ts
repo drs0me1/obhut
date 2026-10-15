@@ -843,6 +843,89 @@ export interface UygulamaHesabi {
   pass?: string;
 }
 
+export interface PaylasimBaglantisi {
+  enabled: boolean;
+  permission: "ro" | "rw";
+  expires: number | null;
+  expired: boolean;
+  available: boolean;
+  active: boolean;
+  reason: string;
+  url: string;
+}
+
+export interface Paylasim {
+  id: string;
+  path: string;
+  name: string;
+  username: string;
+  created: number | null;
+  changed: number | null;
+  type: string;
+  available: boolean;
+  connections: {
+    tailscale?: PaylasimBaglantisi;
+    wan?: PaylasimBaglantisi;
+  };
+  urls: {
+    tailscale?: string;
+    wan?: string;
+    [key: string]: unknown;
+  };
+  url: string;
+}
+
+export interface Paylasimlar {
+  enabled: boolean;
+  running: boolean;
+  host: string;
+  items: Paylasim[];
+  max: number;
+  wan: {
+    available?: boolean;
+    address?: string;
+    reason?: string;
+    mode?: string;
+    domain?: string;
+    port?: number;
+    [key: string]: unknown;
+  };
+  tail_enabled: boolean;
+  limits: {
+    [key: string]: unknown;
+  };
+}
+
+export interface PaylasimKaydi {
+  id?: string;
+  path?: string;
+  username?: string;
+  password?: string;
+  connections?: {
+    [key: string]: unknown;
+  };
+  ack_wan_http?: boolean;
+  [key: string]: unknown;
+}
+
+export interface PaylasimKimligi {
+  id: string;
+}
+
+export interface Depolama {
+  read_at: number;
+  kok: string;
+  kullananlar: ({
+    yol: string;
+    id: string;
+    ad: string;
+    tur: "paket" | "konteyner" | "paylasim";
+    hedef: string;
+    yazilabilir: boolean;
+  })[];
+  hatalar: string[];
+}
+
 export interface YapilandirmaDosyasi {
   file: string;
   text: string;
@@ -929,5 +1012,9 @@ export const YOLLAR = {
   yeniden_baslat: "/api/konsol/yeniden-baslat",
   onarim_gunlugu: "/api/konsol/onarim/gunluk",
   islemler: "/api/konsol/islemler",
+  paylasimlar: "/api/konsol/paylasim",
+  paylasim_kaydet: "/api/konsol/paylasim/kaydet",
+  paylasim_kaldir: "/api/konsol/paylasim/kaldir",
+  depolama: "/api/konsol/depolama",
   gelismis: "/api/konsol/gelismis",
 } as const;

@@ -11,6 +11,7 @@ import AppPage from "./pages/AppPage.vue";
 import AccessPage from "./pages/AccessPage.vue";
 import SystemPage from "./pages/SystemPage.vue";
 import AdvancedPage from "./pages/AdvancedPage.vue";
+import FilesPage from "./pages/FilesPage.vue";
 import { SECTIONS, type SectionId } from "./sections";
 
 declare module "vue-router" {
@@ -26,6 +27,7 @@ const PAGES: Partial<Record<SectionId, RouteRecordRaw["component"]>> = {
   erisim: AccessPage,
   sistem: SystemPage,
   gelismis: AdvancedPage,
+  dosyalar: FilesPage,
 };
 
 export const router = createRouter({

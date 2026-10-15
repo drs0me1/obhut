@@ -2051,6 +2051,210 @@
         }
       }
     },
+    "/api/konsol/paylasim": {
+      "get": {
+        "operationId": "paylasimlar",
+        "summary": "Klasör paylaşımları ve bağlantıları (WebDAV, DD-192)",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Paylasimlar"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/paylasim/kaydet": {
+      "post": {
+        "operationId": "paylasim_kaydet",
+        "summary": "Bir klasör paylaşımını oluşturur ya da değiştirir; WebDAV yeniden başlar",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Paylasimlar"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaylasimKaydi"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/paylasim/kaldir": {
+      "post": {
+        "operationId": "paylasim_kaldir",
+        "summary": "Bir klasör paylaşımını kaldırır",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Paylasimlar"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaylasimKimligi"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/depolama": {
+      "get": {
+        "operationId": "depolama",
+        "summary": "Sunucu klasörlerini kullanan uygulamalar ve paylaşımlar",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Depolama"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/konsol/gelismis": {
       "get": {
         "operationId": "gelismis",
@@ -5871,6 +6075,315 @@
           "user",
           "temp",
           "host"
+        ],
+        "additionalProperties": false
+      },
+      "PaylasimBaglantisi": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "permission": {
+            "type": "string",
+            "enum": [
+              "ro",
+              "rw"
+            ]
+          },
+          "expires": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expired": {
+            "type": "boolean"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "permission",
+          "expires",
+          "expired",
+          "available",
+          "active",
+          "reason",
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "Paylasim": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changed": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "connections": {
+            "type": "object",
+            "properties": {
+              "tailscale": {
+                "$ref": "#/components/schemas/PaylasimBaglantisi"
+              },
+              "wan": {
+                "$ref": "#/components/schemas/PaylasimBaglantisi"
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "urls": {
+            "type": "object",
+            "properties": {
+              "tailscale": {
+                "type": "string"
+              },
+              "wan": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "additionalProperties": true
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "name",
+          "username",
+          "created",
+          "changed",
+          "type",
+          "available",
+          "connections",
+          "urls",
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "Paylasimlar": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Paylasim"
+            }
+          },
+          "max": {
+            "type": "integer"
+          },
+          "wan": {
+            "type": "object",
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "address": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "domain": {
+                "type": "string"
+              },
+              "port": {
+                "type": "integer"
+              }
+            },
+            "required": [],
+            "additionalProperties": true
+          },
+          "tail_enabled": {
+            "type": "boolean"
+          },
+          "limits": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "enabled",
+          "running",
+          "host",
+          "items",
+          "max",
+          "wan",
+          "tail_enabled",
+          "limits"
+        ],
+        "additionalProperties": false
+      },
+      "PaylasimKaydi": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "connections": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": true
+          },
+          "ack_wan_http": {
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "PaylasimKimligi": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "Depolama": {
+        "type": "object",
+        "properties": {
+          "read_at": {
+            "type": "integer"
+          },
+          "kok": {
+            "type": "string"
+          },
+          "kullananlar": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "yol": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "ad": {
+                  "type": "string"
+                },
+                "tur": {
+                  "type": "string",
+                  "enum": [
+                    "paket",
+                    "konteyner",
+                    "paylasim"
+                  ]
+                },
+                "hedef": {
+                  "type": "string"
+                },
+                "yazilabilir": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "yol",
+                "id",
+                "ad",
+                "tur",
+                "hedef",
+                "yazilabilir"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "hatalar": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "read_at",
+          "kok",
+          "kullananlar",
+          "hatalar"
         ],
         "additionalProperties": false
       },

@@ -57,7 +57,7 @@ export const SECTIONS: readonly Section[] = [
     description: "Dosyalar, depolama ve sistem dosyaları.",
     icon: "folder",
     keywords: "klasör dosya depolama disk paylaşım çöp kutusu",
-    legacy: [{ href: "/#/dosyalar", label: "Dosyalar" }],
+    legacy: [],
   },
   {
     id: "sistem",
@@ -143,11 +143,29 @@ export function advancedRoute(tab: AdvancedTab = "caddy"): string {
   return tab === "caddy" ? "/gelismis" : "/gelismis?sekme=" + tab;
 }
 
+/** Dosyalar's tabs (phase 4b), in the address as ?sekme=. Sistem dosyaları shows only on the tailnet. */
+export const FILES_TABS = [
+  { id: "depolama", label: "Depolama", keywords: "depolama disk alan klasör kullanan uygulama" },
+  { id: "srv", label: "Sunucu klasörleri", keywords: "dosya klasör yükle indir yeni klasör ad taşı srv kullanıcı alanı düzenle" },
+  { id: "cop", label: "Çöp kutusu", keywords: "çöp geri yükle kalıcı sil boşalt" },
+  { id: "paylasimlar", label: "Paylaşımlar", keywords: "paylaşım webdav klasör paylaş infuse finder bağlantı süre" },
+  { id: "sistem", label: "Sistem dosyaları", keywords: "kök root sistem dosya etc yapılandırma düzenle" },
+] as const;
+
+export type FilesTab = (typeof FILES_TABS)[number]["id"];
+
+/** The address of a Dosyalar tab, with extra query values (a folder: yol=). */
+export function filesRoute(tab: FilesTab = "depolama", extra: Record<string, string> = {}): string {
+  const query = new URLSearchParams(tab === "depolama" ? extra : { sekme: tab, ...extra }).toString();
+  return "/dosyalar" + (query ? "?" + query : "");
+}
+
 /** Each section's tabs for the command palette (its first tab is the section itself). */
 export const SECTION_TABS: Partial<Record<SectionId, readonly { id: string; label: string; keywords: string; to: string }[]>> = {
   erisim: ACCESS_TABS.map((t) => ({ ...t, to: accessRoute(t.id) })),
   sistem: SYSTEM_TABS.map((t) => ({ ...t, to: systemRoute(t.id) })),
   gelismis: ADVANCED_TABS.map((t) => ({ ...t, to: advancedRoute(t.id) })),
+  dosyalar: FILES_TABS.map((t) => ({ ...t, to: filesRoute(t.id) })),
 };
 
 /** Uygulamalar' add flows (phase 4a), opened over the list with ?ekle= (a package's install with &paket=,

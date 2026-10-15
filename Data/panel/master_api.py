@@ -255,6 +255,26 @@ SCHEMAS = {
     "Kayitlar": obj({"items": arr(ref("KayitSatiri"))}),
     "Klasorler": obj({"items": arr(obj({"path": STR, "free": INT}))}),
     "UygulamaHesabi": obj({"user": STR, "temp": BOOL, "host": STR, "pass": STR}, optional=("pass",)),
+    # DD-267 (phase 4b): Dosyalar → Paylaşımlar (DD-158/179/190/192), the share manager's own view and requests.
+    "PaylasimBaglantisi": obj({"enabled": BOOL, "permission": enum("ro", "rw"), "expires": null(NUM), "expired": BOOL,
+                               "available": BOOL, "active": BOOL, "reason": STR, "url": STR}),
+    "Paylasim": obj({"id": STR, "path": STR, "name": STR, "username": STR, "created": null(NUM), "changed": null(NUM),
+                     "type": STR, "available": BOOL,
+                     "connections": obj({"tailscale": ref("PaylasimBaglantisi"), "wan": ref("PaylasimBaglantisi")},
+                                        optional=("tailscale", "wan")),
+                     "urls": open_obj({"tailscale": STR, "wan": STR}), "url": STR}),
+    "Paylasimlar": obj({"enabled": BOOL, "running": BOOL, "host": STR, "items": arr(ref("Paylasim")), "max": INT,
+                        "wan": open_obj({"available": BOOL, "address": STR, "reason": STR, "mode": STR, "domain": STR, "port": INT}),
+                        "tail_enabled": BOOL, "limits": open_obj({})}),
+    # The manager checks a save itself (allowed fields, connections, acknowledgements); the table keeps it open.
+    "PaylasimKaydi": open_obj({"id": STR, "path": STR, "username": STR, "password": STR, "connections": open_obj({}),
+                               "ack_wan_http": BOOL}),
+    "PaylasimKimligi": obj({"id": STR}),
+    # DD-267: who uses which server folder (Dosyalar → Depolama), joined with the files backend's folders.
+    "Depolama": obj({"read_at": INT, "kok": STR,
+                     "kullananlar": arr(obj({"yol": STR, "id": STR, "ad": STR, "tur": enum("paket", "konteyner", "paylasim"),
+                                             "hedef": STR, "yazilabilir": BOOL})),
+                     "hatalar": arr(STR)}),
     # DD-266: Gelişmiş, the effective configuration as the server holds it (read-only).
     "YapilandirmaDosyasi": obj({"file": STR, "text": STR}),
     "Gelismis": obj({
@@ -365,6 +385,16 @@ ROUTES = (
           STR, query={"sure": STR}, text=True),
     Route("GET", "/api/konsol/islemler", "islemler", "Konsol günlüğü: son yedi günün işlemleri, yeniden eskiye",
           ref("Kayitlar")),
+    # DD-267 (phase 4b): Dosyalar's shares and storage.
+    Route("GET", "/api/konsol/paylasim", "paylasimlar", "Klasör paylaşımları ve bağlantıları (WebDAV, DD-192)",
+          ref("Paylasimlar")),
+    Route("POST", "/api/konsol/paylasim/kaydet", "paylasim_kaydet",
+          "Bir klasör paylaşımını oluşturur ya da değiştirir; WebDAV yeniden başlar", ref("Paylasimlar"),
+          request=ref("PaylasimKaydi")),
+    Route("POST", "/api/konsol/paylasim/kaldir", "paylasim_kaldir", "Bir klasör paylaşımını kaldırır", ref("Paylasimlar"),
+          request=ref("PaylasimKimligi")),
+    Route("GET", "/api/konsol/depolama", "depolama", "Sunucu klasörlerini kullanan uygulamalar ve paylaşımlar",
+          ref("Depolama")),
     Route("GET", "/api/konsol/gelismis", "gelismis",
           "Gelişmiş: etkin Caddy ve dnsmasq yapılandırması (salt okunur); ?yenile önbelleği atlar", ref("Gelismis"),
           query={"yenile": STR}),

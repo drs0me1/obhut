@@ -2147,6 +2147,41 @@ class Panel:
         access = next((r for r in erisim["hizmetler"] if r["id"] == row_id), None)
         return {"uygulama": item, "konteyner": box, "erisim": access}
 
+    def depolama(self):
+        """GET /api/konsol/depolama (DD-267): who uses which server folder — each application's bind mounts
+        under the user area (its container's inspect) and each folder share. Read-only; Dosyalar joins it
+        with the files backend's folders. A source that fails adds an error line."""
+        env = read_env(self.args.state)
+        root = os.path.realpath(env.get("SERVER_ROOT", "") or "/srv")
+        inside = lambda path: isinstance(path, str) and (path == root or path.startswith(root + "/"))
+        users, errors = [], []
+        listing = self.uygulamalar()
+        view = None
+        for item in listing["items"]:
+            if not item["konteyner"]:
+                continue
+            try:
+                view = view or self.containers.view()
+                row = view.ayrinti(item["konteyner"])
+            except master_containers.ContainerError as err:
+                errors.append("%s: %s" % (item["ad"], err))
+                continue
+            for m in row.get("mounts") or []:
+                if isinstance(m, dict) and m.get("type") == "bind" and inside(m.get("source")):
+                    users.append({"yol": m["source"], "id": item["id"], "ad": item["ad"], "tur": item["tur"],
+                                  "hedef": str(m.get("destination") or ""), "yazilabilir": bool(m.get("rw"))})
+        try:
+            data = master_shares.Manager(self.args.state).read()
+            for share in data["items"]:
+                writable = any(c.get("enabled") and c.get("permission") == "rw" for c in share["connections"].values())
+                users.append({"yol": os.path.join(data["root"], share["path"]), "id": "yerlesik:paylasim",
+                              "ad": share.get("name") or share["path"], "tur": "paylasim", "hedef": "/s/%s/" % share["id"],
+                              "yazilabilir": writable})
+        except (master_shares.ShareError, OSError, ValueError, KeyError):
+            errors.append("Paylaşım kaydı okunamadı.")
+        users.sort(key=lambda u: (u["yol"], u["ad"]))
+        return {"read_at": int(time.time()), "kok": root, "kullananlar": users, "hatalar": errors + listing["hatalar"]}
+
     def uygulama_gunlugu(self, sid, lines):
         """GET /api/konsol/uygulamalar/gunluk: a container's journal or podman log, a package's engine log."""
         if not APP_ID_RE.match(sid or ""):
@@ -2603,12 +2638,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.request_user = user  # for a read that writes an audit line (a package's password shown)
             getattr(self, "api_" + route.name)(query)
             return
-        if path == "/api/konsol/paylasim":
-            try:
-                self.json(200, master_shares.Manager(self.panel.args.state).public())
-            except (master_shares.ShareError, OSError, ValueError, KeyError):
-                self.error(503, "Paylaşım kaydı okunamadı; kurulumu kontrol edin.")
-            return
         if path == "/api/konsol/duzen":
             self.json(200, {"duzen": self.panel.layout()})
             return
@@ -2839,6 +2868,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def api_islemler(self, query):
         self.json(200, {"items": self.panel.actions()})
+
+    # DD-267: Dosyalar → Paylaşımlar. Writes go to the share worker as before; pausing a share is a
+    # connection switch since DD-192, so the old "durum" request is gone.
+    def api_paylasimlar(self, query):
+        try:
+            self.json(200, master_shares.Manager(self.panel.args.state).public())
+        except (master_shares.ShareError, OSError, ValueError, KeyError):
+            self.error(503, "Paylaşım kaydı okunamadı; kurulumu kontrol edin.")
+
+    def share_change(self, user, action, data):
+        code, result = self.panel.settings_run(action, data, shares=True)
+        self.audit(user, "paylasim-" + action, "klasör paylaşımı", code == 200)
+        self.close_connection = True
+        self.json(code, result)
+
+    def api_paylasim_kaydet(self, user, data):
+        self.share_change(user, "save", data)
+
+    def api_paylasim_kaldir(self, user, data):
+        self.share_change(user, "remove", data)
+
+    def api_depolama(self, query):
+        self.json(200, self.panel.depolama())
 
     # DD-266: Gelişmiş — the effective Caddy and dnsmasq configuration, from the settings view's cache.
     def api_gelismis(self, query):
@@ -3098,13 +3150,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             self.audit(user, "favori", detail, True)
             self.json(200, {"favoriler": items})
-            return
-        share_actions = {"kaydet": "save", "durum": "pause", "kaldir": "remove"}
-        if path in {"/api/konsol/paylasim/" + name for name in share_actions}:
-            code, result = self.panel.settings_run(share_actions[path.rsplit("/", 1)[-1]], data, shares=True)
-            self.audit(user, "paylasim-" + share_actions[path.rsplit("/", 1)[-1]], "klasör paylaşımı", code == 200)
-            self.close_connection = True
-            self.json(code, result)
             return
         # DD-182: "birak" ends a stuck rollback (typed "onayla"); the worker checks both.
         m = re.match(r"^/api/konsol/moduller/([a-z]{2,16})/(%s)$" % "|".join(MODULE_ACTIONS), path)

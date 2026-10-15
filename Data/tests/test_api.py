@@ -2,6 +2,7 @@
 description and TypeScript types are what the table generates, the schema check refuses wrong
 shapes, and the table's routes answer through the real handler with replies of their declared shape."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -199,6 +200,46 @@ class RouteReplyTests(Fixture):
         self.assertEqual(status, 400)
         self.assertIn("İstek biçimi geçersiz", answer["error"])
         self.assertEqual(self.post("hesap_parola", {"yeni": 5})[0], 400)
+
+    def test_shares_and_storage_from_the_table(self):
+        # DD-267: Dosyalar → Paylaşımlar reads the share manager's own view; a pause request is gone.
+        conn = {"enabled": True, "permission": "ro", "expires": 1900000000, "expired": False, "available": True, "active": True,
+                "reason": "", "url": "http://100.64.0.1:61010/s/abc/"}
+        view = {"enabled": True, "running": True, "host": "http://100.64.0.1:61010", "max": 32, "tail_enabled": True,
+                "items": [{"id": "abc", "path": "media/filmler", "name": "filmler", "username": "film", "created": 1, "changed": 2,
+                           "type": "dir", "available": True, "connections": {"tailscale": conn}, "urls": {"tailscale": conn["url"]},
+                           "url": conn["url"]}],
+                "wan": {"available": False, "address": "", "reason": "x", "mode": "off", "domain": "", "port": 443}, "limits": {}}
+        with patch.object(panel.master_shares, "Manager") as manager:
+            manager.return_value.public.return_value = view
+            self.assertEqual(self.get("paylasimlar"), view)
+        status, _headers, _body = test_resources.unix_get(self.sock, "/api/konsol/paylasim/durum", {"X-Konsol": "1", "Content-Type": "application/json"},
+                                                          method="POST", body=b'{"id": "abc"}')
+        self.assertEqual(status, 404, "pausing is a connection switch since DD-192")
+        with patch.object(self.p, "settings_run", return_value=(200, view)) as run:
+            self.assertEqual(self.post("paylasim_kaldir", {"id": "abc"}), (200, view))
+        run.assert_called_once_with("remove", {"id": "abc"}, shares=True)
+        self.assertEqual(self.post("paylasim_kaldir", {"id": "abc", "x": 1})[0], 400)
+        # Depolama: an application's bind mounts under the user area and each share.
+        root = str(self.root)
+        apps = {"items": [{"id": "konteyner:notlar", "ad": "notlar", "tur": "konteyner", "konteyner": "notlar"},
+                          {"id": "yerlesik:dosyalar", "ad": "Dosyalar", "tur": "yerlesik", "konteyner": None}], "hatalar": []}
+        mounts = [{"type": "bind", "source": root + "/media", "destination": "/media", "rw": False, "name": ""},
+                  {"type": "bind", "source": "/etc/localtime", "destination": "/etc/localtime", "rw": False, "name": ""},
+                  {"type": "volume", "source": "/var/lib/containers/v", "destination": "/data", "rw": True, "name": "v"}]
+        fake = unittest.mock.Mock()
+        fake.ayrinti.return_value = {"mounts": mounts}
+        registry = {"root": root, "items": [{"id": "abc", "path": "media/filmler", "name": "filmler",
+                                             "connections": {"tailscale": {"enabled": True, "permission": "rw", "expires": None}}}]}
+        with patch.object(self.p, "uygulamalar", return_value=apps), patch.object(self.p.containers, "view", return_value=fake), \
+             patch.object(panel.master_shares, "Manager") as manager:
+            manager.return_value.read.return_value = registry
+            answer = self.get("depolama")
+        self.assertEqual(answer["kok"], os.path.realpath(root))
+        self.assertEqual(answer["kullananlar"], [
+            {"yol": root + "/media", "id": "konteyner:notlar", "ad": "notlar", "tur": "konteyner", "hedef": "/media", "yazilabilir": False},
+            {"yol": root + "/media/filmler", "id": "yerlesik:paylasim", "ad": "filmler", "tur": "paylasim", "hedef": "/s/abc/", "yazilabilir": True}])
+        self.assertEqual(answer["hatalar"], [])
 
     def test_a_real_health_reply_has_the_declared_shape(self):
         # Commands that do not exist on the test machine read as failed checks, not as a broken reply.
