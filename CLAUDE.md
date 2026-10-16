@@ -28,6 +28,12 @@ Authoritative behaviour: [`Data/docs/contract.md`](Data/docs/contract.md).
 Architecture: [`Data/docs/architecture.md`](Data/docs/architecture.md).
 Non-obvious rationale: [`Data/docs/design-decisions.md`](Data/docs/design-decisions.md)
 (`DD-*` entries; one-line index in [`Data/docs/decisions-index.md`](Data/docs/decisions-index.md)).
+
+**Rebuild in progress (DD-271):** on the branch `yeni-yapi`, Obhut moves to one container model
+(Compose or Kubernetes YAML → inspector → Quadlet; no App Store; WireGuard built in; clean installs
+only). Decisions, phases and their checklists: [`Data/docs/rebuild.md`](Data/docs/rebuild.md); follow
+it on that branch. `main` stays on 1.x until the rebuild merges.
+
 Cursor rules for the tree:
 `.cursor/rules/master-stack.mdc`.
 

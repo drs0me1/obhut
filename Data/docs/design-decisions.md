@@ -17,6 +17,35 @@ Konsol's old interface was removed in DD-267 (v2-250). Live entries written
 before it still name its places (Ayarlar → Caddy, Ayarlar → Sistem, App Store,
 the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 
+### DD-271: The rebuild: one container model, Obhut knows no application (accepted 2026-10-17)
+
+- **Request (user, 2026-10-16/17):** Obhut's built-ins stay fixed; external software runs only as Podman
+  containers added from their own Compose or Kubernetes YAML through an inspector that asks for paths,
+  secrets and ports; Obhut must not know Gezgin or qBittorrent; WireGuard is a built-in; a port reaches
+  outside only through a Caddy row or a raw-port row managed in Erişim. "Kalıntı veya arka kapı bırakmadan
+  temiz ilerleyelim."
+- **Plan:** [`rebuild.md`](rebuild.md) holds the decisions (K1–K9, A1–A7, S1–S4), the target architecture,
+  what is removed for good, six phases with checklists and the checks every phase must pass. Work happens
+  on the branch `yeni-yapi` and merges to `main` once, complete (S2); `main` stays installable on 1.x
+  meanwhile.
+- **Key choices:** both formats through one model, inspector and generator, with Quadlet + systemd as the
+  only runtime (no Docker, no Compose runtime, no `kube play`); Obhut's own YAML subset reader in standard
+  library Python (K4); no `x-obhut` block, the inspector guesses and the operator confirms (A3); every TCP
+  port answered by the operator (A1); raw ports closed by default (A2); start mode asked per container (A4);
+  application data in a visible folder under `/var/lib/master-stack/uygulamalar/` (A5); WireGuard installed
+  turned off (K6).
+- **No compatibility layer (K1, S3):** the new generation installs only on a clean operating system; stage 0
+  stops on any older Obhut. No migration, no ignored options, no redirects for old addresses; the store
+  engine, the packages and every leftover of the 1.x line are removed, not disabled.
+- **Supersedes, when the phases land:** the store model and its phases (DD-196 to DD-203, DD-207), the
+  packages (DD-209, DD-210, DD-219 to DD-222, DD-262, DD-264), Konsol's single-container definitions and
+  adoption (DD-211, DD-266 in part), WireGuard as a module (DD-150), package publications (DD-199) and the
+  manual rows (DD-252). Each phase's DD entry retires what it replaces.
+- **Rejected:** keeping the App Store beside the new model (two ways to run software, and Obhut would keep
+  knowing applications); a Compose runtime or `podman kube play` (Obhut's ports, binds and guard rules
+  would have to be patched in afterwards); migrating 1.x hosts (code that exists only to be deleted, against
+  the request); `python3-yaml` (the operator chose a reader with no new package, K4).
+
 ### DD-270: Konsol's layout is measured on every screenshot of its browser suites (v2-254)
 
 - **Request (user, 2026-10-16):** "Webui arayüzü tara ve şablonların sınırlarını koruduğunu taşma silinme
