@@ -457,7 +457,7 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
 <template>
   <div class="access-tab wireguard" data-testid="wireguard">
     <section v-if="installed === false || missing" class="card" aria-label="WireGuard" data-testid="wg-missing">
-      <EmptyState title="WireGuard kurulu değil" text="Cihazlarınızın bu sunucu üzerinden internete çıkması için WireGuard'ı App Store'dan kurun." icon="shield">
+      <EmptyState title="WireGuard kurulu değil" text="Cihazlarınızın bu sunucu üzerinden internete çıkması için WireGuard'ı Uygulamalar'daki katalogdan kurun." icon="shield">
         <RouterLink to="/uygulamalar" class="btn btn-secondary">Uygulamalar → Uygulama ekle</RouterLink>
       </EmptyState>
     </section>

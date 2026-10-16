@@ -2,8 +2,9 @@
 
 ## Caddy publication gates (DD-191)
 
-Settings → Caddy now lists Panel, qBittorrent and WebDAV. The WebDAV row saves
-Tailscale and Internet independently; a disabled HTTPS domain is remembered.
+Erişim → Adresler lists Panel, the packages' publications (qBittorrent, Gezgin) and
+WebDAV. The WebDAV row changes Tailscale and Internet independently, through the
+settings plan (DD-265); a disabled HTTPS domain is remembered.
 Panel's Tailscale address always stays; its optional public HTTPS name (DD-195)
 shares TCP 443 and the socket budgets below. The global WebDAV choice only restricts
 folder connection policies; it never widens them or changes accounts. Both
@@ -120,7 +121,7 @@ and registry. This is not a general service reconciliation engine.
 
 ## Optional public HTTPS (DD-190)
 
-Settings → Caddy has a separate full public-domain field, such as
+Erişim → Adresler has a separate full public-domain field, such as
 `dav.example.com`; it does not rename `LOCAL_DOMAIN` or the private service names.
 Enter only the name, not a URL, port, path, IP address or wildcard. DNS must
 resolve to exactly the assigned `WAN_IPV4`: use a DNS-only A record, with no AAAA
@@ -139,11 +140,11 @@ certificate daemon is used. The public site proxies only `/s/*` to the existing
 WAN backend; `/`, `/api/*` and all other paths return 404. All existing scope,
 authentication, resource and firewall limits apply equally to HTTP and HTTPS.
 
-Save uses the existing Settings worker, revision and operation locks, with durable
+Save uses the existing settings worker, revision and operation locks, with durable
 pending state before any projection. It commits immediately only after a trusted
 certificate chain and hostname verify; there is no second connectivity-confirmation
 step. DNS, Caddy, firewall or certificate failure leaves/restores the previous
-configuration, and the independent Settings guard recovers interrupted pre-commit
+configuration, and the independent settings guard recovers interrupted pre-commit
 work. A durable commit is not undone by a later crash. An unsuccessful first
 HTTPS attempt may restore the previous explicitly consented HTTP mode; a committed
 HTTPS configuration never silently falls back to HTTP when its certificate fails.
@@ -151,11 +152,11 @@ HTTPS configuration never silently falls back to HTTP when its certificate fails
 The certificate probe connects locally to the assigned WAN IPv4 and uses the
 domain for SNI and hostname verification; it does not connect to an arbitrary
 resolved target. “Certificate ready” is **not proof of internet reachability**.
-Settings shows expiry, and health warns at 14 days or less remaining. Check public
+Erişim shows expiry, and health warns at 14 days or less remaining. Check public
 DNS, CAA and inbound TCP 443 separately if issuance or external access fails.
 
-Public WebDAV HTTPS is edited in Settings → Caddy → “Adresler ve erişim”
-(**DD-191**, **DD-193**). Turning the WebDAV internet switch off and saving it
+Public WebDAV HTTPS is edited in Erişim → Adresler, on the WebDAV row
+(**DD-191**, **DD-193**, **DD-265**). Turning the WebDAV internet switch off and applying it
 removes the public site/permission through a graceful Caddy reload, closing new
 WAN connections; existing transfers may finish. The name is remembered for a
 later re-enable. The API form `{"https": {"domain": ""}}` (test tooling) has the
@@ -165,30 +166,31 @@ port 61010 and private names remain unchanged in every mode. A save that enables
 internet access first checks that the listener is up and fails at once with the
 cause otherwise, instead of waiting for a certificate.
 
-The Files layout is implemented in `console/konsol.js`, `dosyalar.js`
-and `dosyalar.css`: list by default, optional cards, selected-item details on
-the right (below on mobile), folder search/breadcrumbs and a WebDAV shares tab,
-next to upload, text view, move, rename and trash.
+Shares are managed in Dosyalar → Paylaşımlar (DD-267; `tools/konsol-ui`,
+`src/pages/dosyalar/SharesTab.vue` and `paylasim/`): one card per share with both
+connections, the create and edit sheets and removal. Sunucu klasörleri marks a
+shared folder and links to its share (`?paylasim=<id>`) or to a new one
+(`?yeni=<folder>`); Erişim's WebDAV rows lead to the tab.
 
 ## Accounts and lifecycle
 
-- Files and WebDAV are built in. Select a folder, open Details,
-  then WebDAV sharing. All accounts appear under Files → Paylaşımlar.
-  No folder is published by default; no App Store installation is needed.
+- Files and WebDAV are built in. Choose "Paylaş" on a folder in Sunucu
+  klasörleri, or "Paylaşım ekle" in Dosyalar → Paylaşımlar, where every account
+  appears. No folder is published by default; no App Store installation is needed.
 - Each of at most 32 non-overlapping folders has an opaque stable 24-hex ID
   and its own unique username/password, shared by its two connections. Each
   connection has its own RO/RW permission and 1/7/30-day or unlimited lifetime.
-- Each Shares entry and its details show two cards: Tailscale and WAN. Each has
+- Each share's card shows its two connections: Tailscale and İnternet. Each has
   its own switch, permission and expiry controls, status/reason, address/copy
   action and Infuse protocol, host, port and path details when an address is
-  available. WAN says HTTPS when configured, or HTTP (WAN) with an explicit
+  available. İnternet says HTTPS when configured, or HTTP with an explicit
   plaintext warning in legacy mode. A switch shows the saved choice; a global
   Caddy gate can still make access unavailable, with the reason shown.
 - Connection controls save nested partial updates immediately. Explicit RW
   requires acknowledgement for that card. Choosing 1/7/30 days starts only that
   connection's duration now; otherwise its exact absolute expiry is preserved.
-  Switching off/on never renews expiry. Both off retains the account. Manage
-  edits only the shared folder/username/password; connection edits never rebind
+  Switching off/on never renews expiry. Both off retains the account. The edit
+  sheet changes only the shared folder/username/password; connection edits never rebind
   a missing or replaced root. Failed writes retain the last confirmed UI values.
 - Address: `http://<tailscale-ip>:<SHARE_PORT>/s/<id>/`. The same path works
   through `paylas.<LOCAL_DOMAIN>` when Tailscale is selected. A WAN-enabled share
@@ -214,7 +216,7 @@ next to upload, text view, move, rename and trash.
 - Every share edit, including a connection switch/permission/expiry change,
   atomically writes the registry and restarts an active
   WebDAV service to reload its credential, interrupting **all** current WebDAV
-  transfers. The Shares and Manage restart warnings remain visible. A stopped
+  transfers. Paylaşımlar and the edit sheet say so. A stopped
   service stays stopped. A failed restart restores the
   previous registry and attempts to restart it. Confirm the list after an
   uncertain/timeout response before repeating a mutation.
@@ -222,7 +224,7 @@ next to upload, text view, move, rename and trash.
   HTTP 401 gate before returning success; automatic crash throttling remains.
 - Installer reruns and reboot preserve the registry. Public module
   operations cannot stop/remove Files or WebDAV, even with `--veri`. Remove
-  individual accounts in Files → Paylaşımlar; this never removes their files.
+  individual accounts in Dosyalar → Paylaşımlar; this never removes their files.
 
 ## Ownership and API
 
@@ -268,7 +270,7 @@ next to upload, text view, move, rename and trash.
 - `panel/master_https.py` owns HTTPS configuration interpretation, bounded DNS
   checks, pinned verified-certificate probes and the generated WAN site.
   `master_settings.py` owns the `SETTINGS_FILE.https` choice and its durable
-  transaction; HTTPS uses the existing gated Settings API, not a public API.
+  transaction; HTTPS uses the existing gated settings API, not a public API.
   The firewall helper receives four fields: active, per-IP limit, total limit
   and selected port. `SHARE_PORT` and `SHARE_HTTPS_PORT` come from defaults/state.
 - `panel/master_webdav.py`: Python stdlib server, loopback only, never root,

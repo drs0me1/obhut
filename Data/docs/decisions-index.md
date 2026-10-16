@@ -146,7 +146,7 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-142 | One rclone; the downloads folder is never published | superseded by DD-158, DD-152 | archive/design-decisions-retired.md |
 | DD-143 | The installer prepares WireGuard; Konsol creates it | live | design-decisions.md |
 | DD-144 | The user area is a fixed /srv, not an asked-for path | live | design-decisions.md |
-| DD-145 | The console uploads into the list; no separate upload area | live | design-decisions.md |
+| DD-145 | The console uploads into the list; no separate upload area | live; amended by DD-267 | design-decisions.md |
 | DD-146 | Retire FileBrowser; Konsol is the file manager | historical | archive/design-decisions-retired.md |
 | DD-147 | Konsol without a password; Tailscale joins by link only | partly superseded (DD-194) | design-decisions.md |
 | DD-148 | A clean install is the base; Konsol installs modules | live | design-decisions.md |
@@ -156,22 +156,22 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-152 | No Docker — Paylaşım runs rclone on the host, Arşiv açıcı is dropped | live; rclone and the trash tmpfs superseded by DD-158 | design-decisions.md |
 | DD-153 | The base installs only what the base uses | live | design-decisions.md |
 | DD-154 | One console name, one current export | partly superseded by DD-228 (no exported installer) | design-decisions.md |
-| DD-155 | Konsol shows the server's settings, read-only | live; parts superseded by DD-156 | design-decisions.md |
+| DD-155 | Konsol shows the server's settings, read-only | live; parts superseded by DD-156; amended by DD-267 | design-decisions.md |
 | DD-156 | Transactional settings management in Konsol | live | design-decisions.md |
 | DD-157 | Rename the local domain as a confirmed transaction | live | design-decisions.md |
 | DD-158 | Independent folder accounts and descriptor-safe WebDAV | live; connection policy extended by DD-192 | design-decisions.md |
-| DD-159 | Desktop shell with protected Files, sharing and bounded ZIP | live | design-decisions.md |
-| DD-160 | Model A, one admin workspace and independent resources | live | design-decisions.md |
-| DD-161 | Compact App Store with optional details | live | design-decisions.md |
+| DD-159 | Desktop shell with protected Files, sharing and bounded ZIP | live; ZIP/RAR and the desktop shell removed by DD-267 | design-decisions.md |
+| DD-160 | Model A, one admin workspace and independent resources | live; amended by DD-267 | design-decisions.md |
+| DD-161 | Compact App Store with optional details | superseded by DD-267 | archive/design-decisions-retired.md |
 | DD-162 | Explicit firewall tables without changing policy authority | live | design-decisions.md |
 | DD-163 | Immediate DNS-only Apply, retaining transactional recovery | live | design-decisions.md |
 | DD-164 | Incoming-network firewall tabs, not service buckets | live | design-decisions.md |
 | DD-165 | One-click qBittorrent account save | live | design-decisions.md |
-| DD-166 | Bounded multipart and nested RAR in Files | live | design-decisions.md |
+| DD-166 | Bounded multipart and nested RAR in Files | superseded by DD-267 | archive/design-decisions-retired.md |
 | DD-167 | Edit a WireGuard network without regenerating it | live | design-decisions.md |
 | DD-168 | Eight-character minimum for service passwords | live | design-decisions.md |
-| DD-169 | Compact trash confirmation and inline share controls | live; Shares layout superseded by DD-192 | design-decisions.md |
-| DD-170 | Contextual Files dock and automatic archive extraction | live | design-decisions.md |
+| DD-169 | Compact trash confirmation and inline share controls | live; Shares layout superseded by DD-192; amended by DD-267 | design-decisions.md |
+| DD-170 | Contextual Files dock and automatic archive extraction | superseded by DD-267 | archive/design-decisions-retired.md |
 | DD-171 | Remove dead sharing lifecycle without deleting legacy data | live | design-decisions.md |
 | DD-172 | Minimum tailnet host ingress without changing VPN requirements | live | design-decisions.md |
 | DD-173 | Tailnet port catalogue is configuration-driven, not socket-driven | live | design-decisions.md |
@@ -181,19 +181,19 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-177 | Retire Local access; WireGuard is internet-only | live | design-decisions.md |
 | DD-178 | Seed qBittorrent integration, not user preferences | live; WebUI address by DD-217 | design-decisions.md |
 | DD-179 | Per-folder HTTP WAN opt-in with separate admission budgets | live; HTTP-only boundary superseded by DD-190, shared policy by DD-192 | design-decisions.md |
-| DD-180 | Private sockets, shared login limits, disk reserve, sandboxed unrar, firewall-first WireGuard | live; qBittorrent reach amended 2026-10-05 | design-decisions.md |
-| DD-181 | Remember WebDAV logins, idle rollback timer, quieter journal, compressed Konsol | live | design-decisions.md |
-| DD-182 | Capped rollback, WAN address change, watchdog resets, damaged history, health card | live | design-decisions.md |
-| DD-183 | No archive jobs page; results in Günlük, running job as a bar | live | design-decisions.md |
+| DD-180 | Private sockets, shared login limits, disk reserve, sandboxed unrar, firewall-first WireGuard | live; qBittorrent reach amended 2026-10-05; amended by DD-267 | design-decisions.md |
+| DD-181 | Remember WebDAV logins, idle rollback timer, quieter journal, compressed Konsol | live; amended by DD-267 | design-decisions.md |
+| DD-182 | Capped rollback, WAN address change, watchdog resets, damaged history, health card | live; amended by DD-267 | design-decisions.md |
+| DD-183 | No archive jobs page; results in Günlük, running job as a bar | superseded by DD-267 | archive/design-decisions-retired.md |
 | DD-184 | Tailscale and Caddy join unattended upgrades, at night | live | design-decisions.md |
-| DD-185 | Fresh-install-only cleanup and a documentation index | live; narrow schema-3 migration exception in DD-192 | design-decisions.md |
+| DD-185 | Fresh-install-only cleanup and a documentation index | live; narrow schema-3 migration exception in DD-192; amended by DD-267 | design-decisions.md |
 | DD-186 | Audit stage 1: listen queues, safe configuration reads and reserved sources | live | design-decisions.md |
 | DD-187 | Audit stage 2: boot recovery guard, pinned permissions and canonical locks | live | design-decisions.md |
 | DD-188 | Audit stage 3: bounded authentication, short write locks and resource sandbox | live | design-decisions.md |
 | DD-189 | Audit stage 4: desired-service/kernel health and IPv4 DNS projection | live | design-decisions.md |
 | DD-190 | Optional public WebDAV HTTPS without widening private administration | live | design-decisions.md |
 | DD-191 | Fixed publication table with independent private and public gates | live; Panel row opened by DD-195; manual loopback addresses by DD-252 | design-decisions.md |
-| DD-192 | Per-connection WebDAV policies and dual-card Shares | live | design-decisions.md |
+| DD-192 | Per-connection WebDAV policies and dual-card Shares | live; amended by DD-267 | design-decisions.md |
 | DD-193 | Cross-review follow-ups for v2-159..v2-164 | live | design-decisions.md |
 | DD-194 | Konsol sign-in with a one-time setup code | live for the public name; public rules by DD-195, tailnet sign-in and the code removed by DD-205 | design-decisions.md |
 | DD-195 | Konsol over public HTTPS through the publication table | live | design-decisions.md |
@@ -201,68 +201,69 @@ Every `DD-*` number with its title, status and file, sorted by number (DD-89 bel
 | DD-197 | The store engine and package format, phase 1a | live | design-decisions.md |
 | DD-198 | Firewall, health and port catalogue from package declarations, phase 1b | live | design-decisions.md |
 | DD-199 | Publication rows from package declarations, phase 1b | live | design-decisions.md |
-| DD-200 | Konsol pages and application API from packages, phase 2a | live; sidebar links removed by DD-216 | design-decisions.md |
+| DD-200 | Konsol pages and application API from packages, phase 2a | live; sidebar links removed by DD-216; amended by DD-267 | design-decisions.md |
 | DD-201 | A neutral backend, package-owned settings and self-checking packages, phase 2b | live | design-decisions.md |
-| DD-202 | The qBittorrent page and its settings in the package, phase 2c | live | design-decisions.md |
+| DD-202 | The qBittorrent page and its settings in the package, phase 2c | live; amended by DD-267 | design-decisions.md |
 | DD-203 | Package-declared folders, settings and backend write paths, phase 3 | live | design-decisions.md |
-| DD-204 | CasaOS-inspired skin and an overview page for Konsol | live; home composition amended by DD-212 | design-decisions.md |
+| DD-204 | CasaOS-inspired skin and an overview page for Konsol | superseded by DD-267 | archive/design-decisions-retired.md |
 | DD-205 | No sign-in on the tailnet; the account is the public name's credential | live | design-decisions.md |
-| DD-206 | Overview edit mode, a server-side layout and a network card | live; widget set, width and totals table presentation amended by DD-212 | design-decisions.md |
+| DD-206 | Overview edit mode, a server-side layout and a network card | live; widget set, width and totals table presentation amended by DD-212; edit mode and layout removed by DD-267, network card data kept | design-decisions.md |
 | DD-207 | A package's backend write paths exist before the backend starts | live | design-decisions.md |
-| DD-208 | Podman is base infrastructure; Settings → Konteynerler is its read-only view | live; page moved by DD-211/216, bridges by DD-211/217 | design-decisions.md |
+| DD-208 | Podman is base infrastructure; Settings → Konteynerler is its read-only view | live; page moved by DD-211/216, bridges by DD-211/217; amended by DD-267 | design-decisions.md |
 | DD-209 | qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network | live; explicit updates by DD-214; own bridge instead of host network by DD-217 | design-decisions.md |
-| DD-210 | App Store install form, direct app launch and the icon-only tile action row | live; action slots and logs extended by DD-212; sidebar launch removed by DD-216 | design-decisions.md |
-| DD-211 | Main-sidebar container manager, explicit ownership and durable Quadlet operations | live; named Podman by DD-216 | design-decisions.md |
-| DD-212 | Installed application home tiles, fixed action slots and one full-width network widget | presentation amended by DD-213; installed-only tiles and cumulative totals retained | design-decisions.md |
-| DD-213 | Compact Ana Menü, five-second refresh and direct container actions | v2-192; row action places amended by DD-214; edit button place and action labels amended by DD-229; widget grid amended by DD-230 | design-decisions.md |
-| DD-214 | Konsol checks image updates, the operator applies them; row controls before the name | v2-193; `--veri` keeps the override since DD-220 | design-decisions.md |
-| DD-215 | The Podman page shows the ports a host-network container listens on | v2-194; qBittorrent left the host network (DD-217) | design-decisions.md |
-| DD-216 | Applications open from Ana Menü only; the container page is named Podman | v2-194 | design-decisions.md |
+| DD-210 | App Store install form, direct app launch and the icon-only tile action row | live; action slots and logs extended by DD-212; sidebar launch removed by DD-216; amended by DD-267 | design-decisions.md |
+| DD-211 | Main-sidebar container manager, explicit ownership and durable Quadlet operations | live; named Podman by DD-216; amended by DD-267 | design-decisions.md |
+| DD-212 | Installed application home tiles, fixed action slots and one full-width network widget | presentation amended by DD-213; tiles and layout removed by DD-267; cumulative totals retained | design-decisions.md |
+| DD-213 | Compact Ana Menü, five-second refresh and direct container actions | superseded by DD-267 | archive/design-decisions-retired.md |
+| DD-214 | Konsol checks image updates, the operator applies them; row controls before the name | v2-193; `--veri` keeps the override since DD-220; amended by DD-267 | design-decisions.md |
+| DD-215 | The Podman page shows the ports a host-network container listens on | v2-194; qBittorrent left the host network (DD-217); amended by DD-267 | design-decisions.md |
+| DD-216 | Applications open from Ana Menü only; the container page is named Podman | superseded by DD-267 | archive/design-decisions-retired.md |
 | DD-217 | qBittorrent on its own bridge; ports published per address in its Quadlet | v2-195; ports moved by DD-219; start check by DD-223 | design-decisions.md |
 | DD-218 | qBittorrent's fresh-profile defaults are the user's choice | retired (v2-196, reverted by DD-219) | archive/design-decisions-retired.md |
 | DD-219 | qBittorrent back to its own defaults; its ports moved to uncommon fixed ports | v2-197 | design-decisions.md |
 | DD-220 | Removing qBittorrent with its data keeps Konsol's port and image choice | v2-198 | design-decisions.md |
-| DD-221 | The Podman page changes qBittorrent's peer port | v2-199 | design-decisions.md |
+| DD-221 | The Podman page changes qBittorrent's peer port | v2-199; amended by DD-267 | design-decisions.md |
 | DD-222 | A package's unapplied change survives a failed install (durable pending marker) | v2-200; live-verified on nrm 2026-10-05 | design-decisions.md |
 | DD-223 | Container units wait for the checked guard, without Requires= | v2-201; live-verified on nrm 2026-10-05 | design-decisions.md |
 | DD-224 | Containers may reach the internet, not private or tailnet destinations | v2-202; live-verified on nrm 2026-10-05 | design-decisions.md |
-| DD-225 | Packages' private state is hidden from the uid-1000 data units | v2-203; live-verified on nrm 2026-10-05 | design-decisions.md |
+| DD-225 | Packages' private state is hidden from the uid-1000 data units | v2-203; live-verified on nrm 2026-10-05; amended by DD-267 | design-decisions.md |
 | DD-226 | A Konsol container's bind sources are pinned at every start | v2-204; live-verified on nrm 2026-10-05 | design-decisions.md |
-| DD-227 | Writable server folders only through the Files account | v2-205; live-verified on nrm 2026-10-05 | design-decisions.md |
+| DD-227 | Writable server folders only through the Files account | v2-205; live-verified on nrm 2026-10-05; amended by DD-267 | design-decisions.md |
 | DD-228 | Install from the public repository with one curl line on the server | v2-206; repository renamed by DD-255 (v2-238) | design-decisions.md |
-| DD-229 | Overview controls, WireGuard as a whole, and a host closed to containers | v2-207; tile word amended by DD-230 | design-decisions.md |
-| DD-230 | Home widgets on the tiles' grid, a "Sunucu" widget and uniform Store cards | v2-208; widget sizes amended by DD-231 | design-decisions.md |
-| DD-231 | Home widgets in 1×1 and 2×2 cells; live rates split from application traffic | v2-210; layout amended by DD-242 | design-decisions.md |
-| DD-233 | Konsol "Güncelle" button: GitHub version check, pinned commit, unattended re-run in its own unit | v2-212 | design-decisions.md |
-| DD-232 | Finder-style Files window (icons, right-hand places/detail column, no dock) and a two-card sidebar | v2-211 | design-decisions.md |
+| DD-229 | Overview controls, WireGuard as a whole, and a host closed to containers | v2-207; tile word amended by DD-230; overview controls removed by DD-267, WireGuard stop and container input guard kept | design-decisions.md |
+| DD-230 | Home widgets on the tiles' grid, a "Sunucu" widget and uniform Store cards | superseded by DD-267 | archive/design-decisions-retired.md |
+| DD-231 | Home widgets in 1×1 and 2×2 cells; live rates split from application traffic | superseded by DD-267 | archive/design-decisions-retired.md |
+| DD-233 | Konsol "Güncelle" button: GitHub version check, pinned commit, unattended re-run in its own unit | v2-212; amended by DD-267 | design-decisions.md |
+| DD-232 | Finder-style Files window (icons, right-hand places/detail column, no dock) and a two-card sidebar | superseded by DD-267 | archive/design-decisions-retired.md |
+| DD-267 | Redesign phase 4b: Dosyalar (Depolama with `GET /api/konsol/depolama`, Sunucu klasörleri, Çöp kutusu, Paylaşımlar with the share routes in the table, Sistem dosyaları on the tailnet; the CodeMirror editor in both trees); Konsol at `/` with `/yeni` redirected and old hash addresses sent to their new homes; the old interface, Konsol's ZIP/RAR jobs (unrar no longer installed), favourites, the Ana Menü layout, the old shell's routes and the packages' page scripts removed; a re-run deletes what earlier runs left | v2-250 | design-decisions.md |
 | DD-266 | Redesign phase 4a: Sistem (health and repair, updates, account, server and reboot, theme, audit log), Gelişmiş (effective Caddy/dnsmasq, Podman images/volumes/networks), Uygulamalar' add flows (catalogue with install forms, an image, adoption) and an application's settings, drawn from package declarations; old routes moved into the table unchanged, `gelismis`, `uygulamalar/hesap` and `kur` added; container jobs wait up to 5 s for the locks | v2-249 | design-decisions.md |
-| DD-265 | Redesign phase 3: `POST /api/konsol/ayarlar/plan` (apply's checks on a copy, before/after, restarts, confirmation window, whether this address and channel can confirm); settings and container writes in the route table; `/guvenlik-duvari`, `/adlar`, `/yayinlar` and the Yayınla plan (a Konsol container first gets a loopback port from `YAYIN_PORT_ILK`–`YAYIN_PORT_SON`, then the row; two ordered steps, not one transaction); WireGuard network rename; Erişim at `/yeni/` | v2-248 | design-decisions.md |
+| DD-265 | Redesign phase 3: `POST /api/konsol/ayarlar/plan` (apply's checks on a copy, before/after, restarts, confirmation window, whether this address and channel can confirm); settings and container writes in the route table; `/guvenlik-duvari`, `/adlar`, `/yayinlar` and the Yayınla plan (a Konsol container first gets a loopback port from `YAYIN_PORT_ILK`–`YAYIN_PORT_SON`, then the row; two ordered steps, not one transaction); WireGuard network rename; Erişim at `/yeni/` | v2-248; amended by DD-267 | design-decisions.md |
 | DD-263 | Container CPU and memory from the container's own cgroup v2 files (`State.CgroupPath` checked; memory less the inactive file cache; CPU between two readings) instead of `podman stats`, which the backend's `RestrictNamespaces` blocks; the sandbox is unchanged | v2-246 | design-decisions.md |
-| DD-262 | Gezgin as an App Store container package: digest-pinned image with a `1.0` update channel, its own bridge, interface on loopback only, the Files account with no capabilities, the user area as one mount with Konsol's trash and archive work covered, data in `/var/lib/gezgin`, the first administrator from the install form (bcrypt by Caddy, handed over in `ilk.env` and emptied), a same-named foreign container refused, a publication check with no setting to read; the container guard rebuilt once an install registers a package | v2-245 | design-decisions.md |
-| DD-261 | Redesign phase 2: `/api/konsol/uygulamalar` read model (packages, containers and built-ins with state, access, resources, update state, actions, a package's own stop and removal words), its detail, log and one action entry; request shapes checked from the table; a stale image-update cache refreshed in the background; Genel Bakış, Uygulamalar and the application page at `/yeni/`; the current Konsol links to `/yeni/` | v2-245 | design-decisions.md |
+| DD-262 | Gezgin as an App Store container package: digest-pinned image with a `1.0` update channel, its own bridge, interface on loopback only, the Files account with no capabilities, the user area as one mount with Konsol's trash and archive work covered, data in `/var/lib/gezgin`, the first administrator from the install form (bcrypt by Caddy, handed over in `ilk.env` and emptied), a same-named foreign container refused, a publication check with no setting to read; the container guard rebuilt once an install registers a package | v2-245; amended by DD-267 | design-decisions.md |
+| DD-261 | Redesign phase 2: `/api/konsol/uygulamalar` read model (packages, containers and built-ins with state, access, resources, update state, actions, a package's own stop and removal words), its detail, log and one action entry; request shapes checked from the table; a stale image-update cache refreshed in the background; Genel Bakış, Uygulamalar and the application page at `/yeni/`; the current Konsol links to `/yeni/` | v2-245; amended by DD-267 | design-decisions.md |
 | DD-260 | Releases carry a semantic version (`OBHUT_SURUM`, tagged `vX.Y.Z`, 1.0.0 first) beside the build number `V2_VERSION`, which alone decides update offers; Konsol, the new interface and the installer show the release version | v2-244, 1.0.0 | design-decisions.md |
-| DD-259 | Redesign phase 1: route table with reply shapes, generated OpenAPI and TypeScript types; `/api/konsol/erisim` read model (four reachability cells per service, warnings); `/api/konsol/olaylar` Server-Sent Events read with fetch (one producer, changed topics only, heartbeat, per-channel limit, session re-check); the Vue shell at `/yeni/` | v2-243 | design-decisions.md |
-| DD-258 | Konsol redesign by task (Genel Bakış, Uygulamalar, Erişim, Dosyalar, Sistem, Gelişmiş), Vue 3 + TS build, exposure read model and SSE, Gezgin as an App Store package; built beside the current UI at `/yeni/` (plan: `redesign.md`) | accepted 2026-10-13; phase 1 in v2-243 (DD-259); phase 2 in v2-245 (DD-261, DD-262) | design-decisions.md |
+| DD-259 | Redesign phase 1: route table with reply shapes, generated OpenAPI and TypeScript types; `/api/konsol/erisim` read model (four reachability cells per service, warnings); `/api/konsol/olaylar` Server-Sent Events read with fetch (one producer, changed topics only, heartbeat, per-channel limit, session re-check); the Vue shell at `/yeni/` | v2-243; amended by DD-267 | design-decisions.md |
+| DD-258 | Konsol redesign by task (Genel Bakış, Uygulamalar, Erişim, Dosyalar, Sistem, Gelişmiş), Vue 3 + TS build, exposure read model and SSE, Gezgin as an App Store package; built beside the current UI at `/yeni/` (plan: `redesign.md`) | accepted 2026-10-13; phase 1 in v2-243 (DD-259); phase 2 in v2-245 (DD-261, DD-262); phase 3 in v2-248 (DD-265); phase 4 in v2-249/v2-250 (DD-266, DD-267) | design-decisions.md |
 | DD-257 | Security and stability review: firewall stops on an unreadable package declaration, qBittorrent rollback restores only snapshotted files, the trash never crosses into a mounted disk, a request body deadline and dot-segment refusal in the root backend, no tree swap under a running install, cleanup | v2-241 | design-decisions.md |
 | DD-256 | The Obhut mark "Ô" (ring + detached chevron, `console/obhut.svg`, PNG touch icon): Konsol's favicon and the README image; the wordmark's first letter; the sign-in page's and Konsol's sidebar brand | v2-239; sign-in wordmark v2-240; sidebar v2-242 | design-decisions.md |
 | DD-255 | The project is named Obhut: repository `drs0me1/obhut`, installer banner and docs; internal paths, units and commands keep their names; hosts with the old name follow GitHub's redirect | v2-238 | design-decisions.md |
 | DD-254 | A failed Caddy publication names the failing step (validate, firewall, reload) and the tool's own reason; folder share saves too | v2-237 | design-decisions.md |
-| DD-253 | A Caddy repository outage (Cloudsmith 402) does not stop stage 1 on a host that has Caddy; Konsol's update message skips systemd-inhibit's "env failed" line | v2-236 | design-decisions.md |
+| DD-253 | A Caddy repository outage (Cloudsmith 402) does not stop stage 1 on a host that has Caddy; Konsol's update message skips systemd-inhibit's "env failed" line | v2-236; amended by DD-267 | design-decisions.md |
 | DD-252 | Manual Caddy addresses: a tailnet name and an optional public HTTPS name for a `127.0.0.1` port, the application's own login as the guard (amends DD-191) | v2-235 | design-decisions.md |
 | DD-251 | Container logs exactly as written: unit journal for Konsol/App Store containers across restarts, no masking (amends DD-208) | v2-234 | design-decisions.md |
-| DD-250 | Favourite folders in Files: a star after the folder's name in the details, listed first in the places column, kept in `KONSOL_AUTH_DIR/favoriler.json` | v2-232; star after the name v2-233 | design-decisions.md |
-| DD-249 | Files text editor (CodeMirror 6 bundle, CSP-safe styles); atomic, version-checked saves, as root in "Sistem (/)" (amends DD-235) | v2-231 | design-decisions.md |
+| DD-250 | Favourite folders in Files: a star after the folder's name in the details, listed first in the places column, kept in `KONSOL_AUTH_DIR/favoriler.json` | superseded by DD-267 | archive/design-decisions-retired.md |
+| DD-249 | Files text editor (CodeMirror 6 bundle, CSP-safe styles); atomic, version-checked saves, as root in "Sistem (/)" (amends DD-235) | v2-231; amended by DD-267 | design-decisions.md |
 | DD-248 | "Sistem (/)" walks folder sizes on local disk file systems, one device at a time (amends DD-235) | v2-230 | design-decisions.md |
-| DD-247 | Folder tiles give the item count and the total size | v2-229 | design-decisions.md |
-| DD-246 | Konsol reboot (typed confirmation, tailnet only, delayed transient unit); Sağlık in two rows; the settings guard timer is on-demand for `master-onar` (amends DD-241, DD-245) | v2-228 | design-decisions.md |
-| DD-245 | Update control as an icon (words only while running); Ayarlar → Sistem in three cards, "Yerleşik altyapı" removed (amends DD-233, DD-239) | v2-227 | design-decisions.md |
-| DD-244 | Files details: one info line under the name, word actions, share actions in the row; a "Seç" picking mode (amends DD-243) | v2-226 | design-decisions.md |
-| DD-243 | Files as three separate panels; an 82 px one-line details panel with icon actions; no count in the path bar (amends DD-237) | v2-225 | design-decisions.md |
-| DD-242 | Home widgets in order: Sunucu and Hız side by side, Ağ a 2×1 row below, ◀ ▶ reorder them (amends DD-231) | v2-224 | design-decisions.md |
-| DD-241 | `master-onar` covers the installer's own settings (sysctl, Tailscale flags, timers, SSH, clock, modes, disk, dpkg) and reports the rest; Sağlık shows the last run and a 72 h / 1 week log | v2-223 | design-decisions.md |
+| DD-247 | Folder tiles give the item count and the total size | v2-229; amended by DD-267 | design-decisions.md |
+| DD-246 | Konsol reboot (typed confirmation, tailnet only, delayed transient unit); Sağlık in two rows; the settings guard timer is on-demand for `master-onar` (amends DD-241, DD-245) | v2-228; amended by DD-267 | design-decisions.md |
+| DD-245 | Update control as an icon (words only while running); Ayarlar → Sistem in three cards, "Yerleşik altyapı" removed (amends DD-233, DD-239) | superseded by DD-267 | archive/design-decisions-retired.md |
+| DD-244 | Files details: one info line under the name, word actions, share actions in the row; a "Seç" picking mode (amends DD-243) | superseded by DD-267 | archive/design-decisions-retired.md |
+| DD-243 | Files as three separate panels; an 82 px one-line details panel with icon actions; no count in the path bar (amends DD-237) | superseded by DD-267 | archive/design-decisions-retired.md |
+| DD-242 | Home widgets in order: Sunucu and Hız side by side, Ağ a 2×1 row below, ◀ ▶ reorder them (amends DD-231) | superseded by DD-267 | archive/design-decisions-retired.md |
+| DD-241 | `master-onar` covers the installer's own settings (sysctl, Tailscale flags, timers, SSH, clock, modes, disk, dpkg) and reports the rest; Sağlık shows the last run and a 72 h / 1 week log | v2-223; amended by DD-267 | design-decisions.md |
 | DD-240 | Address refresh after boot and nightly 03:00–04:00 (amends DD-239) | v2-222 | design-decisions.md |
-| DD-239 | Repair on request (Konsol "Denetle ve onar", `master-onar`, `onar.command`) instead of the 5-minute refresh loop; hourly firewall check | v2-221 | design-decisions.md |
+| DD-239 | Repair on request (Konsol "Denetle ve onar", `master-onar`, `onar.command`) instead of the 5-minute refresh loop; hourly firewall check | v2-221; amended by DD-267 | design-decisions.md |
 | DD-238 | "Sistem (/)": no read-only roots, no root warning strip (amends DD-235) | v2-220 | design-decisions.md |
-| DD-237 | Files details in a fixed bottom panel, one-line share, short Favoriler, folder path in the address | v2-219; panel amended by DD-243 | design-decisions.md |
-| DD-236 | Files navigates like a file manager: frame built once, fixed window, history/cache, inert loading, keyboard | v2-218 | design-decisions.md |
-| DD-235 | Files' "Sistem (/)" view: the whole server as root in a separate unit, tailnet only, permanent delete by name | v2-214 | design-decisions.md |
+| DD-237 | Files details in a fixed bottom panel, one-line share, short Favoriler, folder path in the address | superseded by DD-267 | archive/design-decisions-retired.md |
+| DD-236 | Files navigates like a file manager: frame built once, fixed window, history/cache, inert loading, keyboard | superseded by DD-267 | archive/design-decisions-retired.md |
+| DD-235 | Files' "Sistem (/)" view: the whole server as root in a separate unit, tailnet only, permanent delete by name | v2-214; amended by DD-267 | design-decisions.md |

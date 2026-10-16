@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-16 — Konsol at /, Dosyalar and Paylaşımlar; the old interface removed (v2-250)
+
+- Konsol is the new interface now, at `http://panel.<domain>/`; `/yeni/` sends you there and keeps the
+  view you asked for. Old bookmarks land on their new places: App Store on the catalogue, the Podman
+  page on Uygulamalar or the container's application page, Ayarlar's tabs on Erişim, Sistem or Gelişmiş,
+  Files' folders on Dosyalar, a package's page on its application page (DD-267).
+- Dosyalar has five tabs: Depolama (the disk, the trash and the top folders with their size, item count
+  and which applications and shares use them, with a way to Gezgin), Sunucu klasörleri (browse, filter,
+  upload with progress and cancel, download, new folder, rename, move, trash and edit text files),
+  Çöp kutusu (restore, delete for good and empty after the typed word), Paylaşımlar and, on the tailnet,
+  Sistem dosyaları (the whole server as root, permanent delete by the item's name).
+- Paylaşımlar manages folder shares: one card per share with its Tailscale and internet connections
+  (switch, read-only or read-write, 1/7/30 days or unlimited, the address and Infuse's fields), creating
+  and editing a share with a typed or generated password, and removal after the typed word. A folder
+  in Sunucu klasörleri links to its share or to a new one.
+- The sign-in page for the internet name has its own look in Konsol's colours and returns to the view
+  you came from.
+- Removed with the old interface: Konsol's ZIP/RAR archive jobs (Gezgin opens and creates archives),
+  the favourite folders, the Ana Menü edit mode and its saved layout, and the old Files, App Store,
+  Podman and Ayarlar pages. Package pages are gone too; an application's settings are on its own page.
+- A re-run removes what earlier runs left for these: the old interface's files, the RAR package source,
+  the saved layout and favourites, the old archive helpers and Konsol's old archive work folder
+  (`/srv/.arsiv`, only when it is the one Konsol made). Installed `unrar` and `python3-rarfile` stay;
+  on Debian they no longer get updates, so remove them with `apt purge unrar python3-rarfile` if you
+  do not use them.
+- The installer's summary, its warnings and Konsol's messages name the new places (Sistem → Hesap,
+  Erişim → Adresler, Sistem → Günlük, the catalogue in Uygulamalar).
+
 ### 2026-10-16 — Sistem, Gelişmiş and adding applications in the new interface (v2-249)
 
 - The new interface at `/yeni/` has Sistem: every health check with "Denetle" and "Onar", the last

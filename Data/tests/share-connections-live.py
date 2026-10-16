@@ -153,7 +153,8 @@ print(json.dumps({'expired':True}))
     assert current["connections"]["wan"]["expired"] and not current["connections"]["wan"]["active"]
     assert current["connections"]["tailscale"]["active"]
     api({"id": item["id"], "permission": "rw", "days": 0}, expected=400)
-    api({"id": item["id"], "paused": True}, action="durum", expected=400)
+    # DD-267: the old pause request is gone (a connection switch replaced it in DD-192).
+    api({"id": item["id"], "paused": True}, action="durum", expected=404)
     print("PASS: WAN expiry leaves Tailscale active; stale global-policy API rejected", flush=True)
 finally:
     for own in api()["items"]:

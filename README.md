@@ -22,11 +22,13 @@ the documentation is in English.
 - **Private by default.** Konsol and every local name (`panel.<domain>`, `paylas.<domain>`, …) are
   served by Caddy and dnsmasq on the Tailscale address only, behind a firewall that admits listed
   services alone.
-- **Files and sharing.** A Finder-style file manager with trash and a text editor (archives are
-  Gezgin's); per-folder WebDAV accounts with separate Tailscale and internet switches, read-only
-  or read-write access and expiry.
-- **Applications.** An App Store of declared packages (WireGuard, qBittorrent, Gezgin) and a Podman page for
-  your own containers, with digest-pinned images and explicit port exposure.
+- **Files and sharing.** Storage at a glance, the server folders with trash and a text editor, and
+  a root view of the whole server on the tailnet (archives and previews are Gezgin's); per-folder
+  WebDAV accounts with separate Tailscale and internet switches, read-only or read-write access and
+  expiry.
+- **Applications.** A catalogue of declared packages (WireGuard, qBittorrent, Gezgin) and your own
+  Podman containers in one list, each with its own page, digest-pinned images and explicit port
+  exposure.
 - **Optional public names.** Konsol, an application or WebDAV can get an HTTPS name with a
   Let's Encrypt certificate on port 443 — per service, only when you switch it on.
 - **Changes you can take back.** A firewall or publication change that could cut you off must be
@@ -51,7 +53,7 @@ flowchart LR
 Caddy serves Konsol, WebDAV and published applications. It checks the session for every Konsol
 request and passes it to a root backend that listens on a Unix socket, never on a TCP port. Files and
 WebDAV run as an unprivileged account on loopback; applications listen on loopback unless you publish
-one of their ports, which the Podman page asks for explicitly. dnsmasq answers the local names for
+one of their ports, which Konsol asks for explicitly. dnsmasq answers the local names for
 your tailnet; the firewall admits SSH, Tailscale, WireGuard and what you publish, nothing else.
 WireGuard networks lead only to the internet; they reach no service on the server.
 
@@ -75,20 +77,22 @@ curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo ba
 3. Open `http://panel.<domain>` from any device on your tailnet.
 
 **Update:** Konsol shows *Güncelle* when `main` carries a newer version; running the line again
-works too. **Repair:** Konsol → Ayarlar → Sistem → Sağlık, `sudo master-onar` on the server, or
+works too. **Repair:** Konsol → Sistem → Sağlık, `sudo master-onar` on the server, or
 `onar.command` from a Mac when Konsol cannot be reached.
 
 ## Konsol at a glance
 
+Konsol is organised by task ([plan](Data/docs/redesign.md)); old `/yeni/` links and bookmarks lead
+to the new places.
+
 | Section | What you do there |
 |---|---|
-| **Ana Menü** (home) | Server, speed and traffic widgets, installed applications, the update notice |
-| **Dosyalar** (Files) | Browse, upload, move, trash, edit text; a root view of `/` on the tailnet |
-| **Paylaşımlar** (Shares) | One WebDAV account per folder; Tailscale and internet access, read-only/read-write, expiry |
-| **App Store** | Install, start, stop and remove WireGuard, qBittorrent and Gezgin; WireGuard and qBittorrent then open their own page (networks and devices, account and download folder), Gezgin its own file manager |
-| **Podman** | Containers, images, volumes and networks; ports and mounts with explicit exposure |
-| **Ayarlar** (Settings) | System and health, firewall, Caddy names and public HTTPS, DNS, logs |
-| **`/yeni/`** | The redesigned console, built beside the current one ([plan](Data/docs/redesign.md)) |
+| **Genel Bakış** (Overview) | What needs attention, each with its fix; applications, resources, network and the server |
+| **Uygulamalar** (Applications) | Every application in one list; add one from the catalogue (WireGuard, qBittorrent, Gezgin), from an image or by taking over a container; each application's page with its access, storage, settings and log |
+| **Erişim** (Access) | Who reaches what from where; addresses and public HTTPS names, local names and the domain, Tailscale, WireGuard networks and devices, the firewall; *Yayınla* to publish |
+| **Dosyalar** (Files) | Storage, the server folders, the trash, **Paylaşımlar** (one WebDAV account per folder, Tailscale and internet access, read-only/read-write, expiry) and, on the tailnet, the whole server as root |
+| **Sistem** (System) | Health and repair, updates, the Konsol account, the server and reboot, appearance, the log |
+| **Gelişmiş** (Advanced) | Effective Caddy and DNS configuration; Podman images, volumes and networks |
 
 ## Repository structure
 
@@ -102,9 +106,9 @@ works too. **Repair:** Konsol → Ayarlar → Sistem → Sağlık, `sudo master-
 | `Data/scripts/` | Server tools: firewall, App Store engine, repair, update, Konsol account |
 | `Data/panel/` | Konsol's root backend (Python standard library) and its workers: settings, shares, publications, containers, health; the WebDAV server |
 | `Data/files-panel/` | The unprivileged file backend |
-| `Data/console/` | Konsol's pages; `console/yeni/` holds the built redesign |
+| `Data/console/` | The sign-in page, the editor bundle and the marks; `console/yeni/` holds Konsol's committed build, placed at the console's root |
 | `Data/magaza/` | App Store packages: manifest, hooks and API module per application |
-| `Data/tools/` | Build sources, not shipped: the text editor bundle and the redesigned console (Vue 3 + TypeScript) |
+| `Data/tools/` | Build sources, not shipped: the text editor bundle and Konsol's interface (Vue 3 + TypeScript) |
 | `Data/tests/` | Bats, Python, browser and isolated Linux suites |
 | `Data/docs/` | Behaviour contract, architecture, design decisions, plans |
 
@@ -143,8 +147,8 @@ python3 -m unittest discover -s Data/tests -p 'test_*.py'
 Releases follow semantic versioning and are tagged `vX.Y.Z` (`OBHUT_SURUM` in `Data/install.sh`);
 every behavioural change also raises the build number (`V2_VERSION`) that servers compare when
 Konsol offers an update. Browser and live suites are described in
-[`Data/tests/README.md`](Data/tests/README.md). The
-redesigned console is rebuilt with `npm ci && npm run derle` in `Data/tools/konsol-ui`; a test checks
+[`Data/tests/README.md`](Data/tests/README.md). Konsol's
+interface is rebuilt with `npm ci && npm run derle` in `Data/tools/konsol-ui`; a test checks
 that the committed build matches its sources. `kur.sh` installs whatever `main` holds, so `main`
 stays installable after every push. Working rules for contributors and assistants:
 [`CLAUDE.md`](CLAUDE.md).

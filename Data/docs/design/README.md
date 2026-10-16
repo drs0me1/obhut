@@ -9,11 +9,16 @@ Mockups are references, not code. They are frozen: iterate in a new
 `konsol-vNN.html`, never edit a saved one. The behaviour they imply is
 recorded in `../design-decisions.md`; the mockup only shows it.
 
+Every page these mockups led to belongs to the old interface, which was removed
+in v2-250 (**DD-267**): Konsol is now the redesign of **DD-258**
+([`../redesign.md`](../redesign.md)). "Implemented in" below names the build that
+first shipped a design; it is history, not current behaviour.
+
 | File | Date | Covers |
 |------|------|--------|
 | [konsol-konteynerler-v01.html](konsol-konteynerler-v01.html) + [technical plan](konsol-konteynerler-v01.md) | 2026-10-03 | **Implemented in v2-190 / DD-211; nrm live acceptance passed.** Main-sidebar Podman manager: list/details, start/stop/restart/remove, create/edit port and volume mappings with a change preview, Images/Volumes/Networks tabs. Opus console, Astra backend/integration and independent browser/server acceptance. Frozen sample-data simulation; implemented semantics and evidence are in the contract and SESSION. |
 | `konsol-casa-v01.html` | 2026-10-02 | Implemented in **v2-178 / DD-204** (theme, overview, tiles; the demo controls stayed out). CasaOS-inspired theme study for the live shell (option C of the analysis): wallpaper + glass surfaces (`--glass`, `--blur`, `--radius` tokens over the real token names), a Genel bakış page with clock/status/storage/network widgets and an application tile grid, App Store as tiles with a detail card, Files/qBittorrent/WireGuard/Ayarlar in the same skin; demo controls for theme (system/light/dark), Cam (CasaOS) vs Düz (today) and three generated wallpapers; mobile layout. Self-contained, sample data, no external assets (CSP `img-src 'self'` is respected by design). Frozen reference |
-| Desktop v10 (conversation prototype) | 2026-09-25 | Implemented in **v2-129 / DD-159**: launcher/dock/workspace, protected Files/WebDAV/ZIP, App Store and existing live Settings. Production scope and archive limits: `../desktop-and-archives.md`. The mockup remains a design reference only. |
+| Desktop v10 (conversation prototype) | 2026-09-25 | Implemented in **v2-129 / DD-159**: launcher/dock/workspace, protected Files/WebDAV/ZIP, App Store and existing live Settings. Production scope and archive limits (history): `../archive/desktop-and-archives.md`. The mockup remains a design reference only. |
 | `konsol-dosyalar-v09.md` | 2026-09-25 | Files list/cards/details and independent folder WebDAV, implemented in **v2-128 / DD-158**. Actual protocol and security boundaries: `../folder-shares.md`; the conversation HTML preview remains frozen. |
 | `konsol-ayarlar-v08.html` | 2026-09-24 | Approved four-tab Ayarlar reference, implemented separately in **v2-126 / DD-156**: Güvenlik Duvarı, read-only Caddy, Dnsmasq and qBittorrent. This frozen HTML still uses sample data only and simulates confirmation/rollback; the production implementation uses independent server-side recovery. Scope and boundaries: `konsol-ayarlar-v08.md`. |
 | `konsol-v01.html` | 2026-09-16 | Sidebar and pages (Genel bakış, WireGuard, Dosyalar, Günlük); server card with CPU/RAM graphs and a disk bar; WireGuard network cards with lever switches, peer rows with on/off, QR, delete and an edit dialog; "Arayüz ekle" as its own page; file browser with a trash card; share links over a single read-only WebDAV account |

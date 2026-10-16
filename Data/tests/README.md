@@ -37,6 +37,17 @@ With DD-191, an independently enabled qBittorrent publication keeps the shared
 HTTPS port open; disable both rows to close it. A Tailscale row switch gates
 that named route, not the shared Caddy listener.
 
+**Browser suites.** Konsol's Playwright suites are the `yeni-*.cjs` files (their shared harness is
+`yeni-harness.cjs`) and `giris-ui.cjs`. Since DD-267 the `yeni-*` suites run Konsol at `/`, served as
+the installer lays it out: the build's files from `console/yeni/` at the root, the sign-in page, the
+editor bundle and the marks from `console/` beside them; `/yeni` and `/yeni/*` answer 308 to `/`. Each
+starts its own static server on its `KONSOL_URL` (defaults from 8768 to 8776). The old interface's suites
+were deleted with it (`app-install-ui`, `desktop-live`, `files-nav-ui`, `files-ui`, `konteynerler-ui`,
+`panel-ui`, `publications-ui`, `settings-https-ui`, `settings-ui`, `share-connections-browser`,
+`torrent-ui`, `update-ui` and `wireguard-ui`), and with the archive jobs and favourites
+`archives-live.py`, `test_archives.py`, `test_rar.py` and `test_favorites.py`. Sections below written
+for earlier builds name the suite that covers the behaviour now.
+
 ## Redesign phase 1: route table, Erişim, live events (v2-243, DD-259)
 
 `test_api.py` checks that every route of `panel/master_api.py` has its `api_<name>` handler method,
@@ -59,13 +70,13 @@ socket: headers without `Content-Length`, `retry:`, frames, heartbeats, a change
 stream, the end of a stream, 503 at the limit, the `X-Konsol` gate, and an internet session that ends
 while its stream is open. `common.bats` checks that every module `master-panel` imports is installed,
 the uncompressed stream in the Caddy snippet, the stream limits, the absent gate exception and the
-`/yeni/` copy in the installer.
+installer's placement of the build at the console's root (DD-267).
 
-## New Konsol shell at /yeni/ (v2-243, DD-259)
+## Konsol shell (v2-243, DD-259; at `/` since DD-267)
 
-`yeni-ui.cjs` drives the committed build in `console/yeni/` under the production CSP read from
+`yeni-ui.cjs` drives the committed build at `/` under the production CSP read from
 `templates/Caddyfile` (with `font-src 'self'` for the local Outfit font). Through `yeni-harness.cjs` it
-starts a static server for `console/` on the address in `KONSOL_URL` (default `http://127.0.0.1:8768`); that server
+starts a static server for the installed layout on the address in `KONSOL_URL` (default `http://127.0.0.1:8768`); that server
 also holds `/api/konsol/olaylar` open as an event stream so the suite can push events, while the other
 `/api/*` reads are fixtures. Any console error, CSP violation or page error fails it. It first checks
 that `console/yeni/kaynak.sha256` equals `kaynak-ozeti.sh`'s digest (the build matches its sources) and
@@ -73,8 +84,9 @@ that `app.js` opens with the licence banner naming the pinned Vue and vue-router
 sidebar counts (Uygulamalar, Sistem, Erişim), the problem chip, the Tailscale and version card, the
 stream (an `X-Konsol` fetch, multi-line data, comments and unknown events, `kapat` with an immediate
 reconnect), the activity drawer, the pending-change banner and its local countdown, the command palette
-(Ctrl+K and Meta+K, Turkish case rules, arrow keys, Enter to a page or to the current UI, Esc with focus
-return), the theme kept across a reload, the links to the current UI, the skip link, the phone's bottom
+(Ctrl+K and Meta+K, Turkish case rules, arrow keys, Enter to a page, Esc with focus return), the theme
+kept across a reload, an old address landing on its new home with no link to the old interface, the
+skip link, the phone's bottom
 bar and menu sheet at 390 and 320 px, both themes, polling when the stream answers 404 or 503
 (resources 10 s, health 60 s, jobs and the pending change 5 s; never `ayarlar/durum`) and after three
 failed attempts (retried after 3 s and 6 s, polling ends once the stream is back), unknown values
@@ -108,7 +120,8 @@ description.
 
 ## New interface phase 2: Genel Bakış, Uygulamalar and the application page (v2-245, DD-261)
 
-`yeni-harness.cjs` is the shared harness of the `/yeni/` suites: the static server for `console/` with
+`yeni-harness.cjs` is the shared harness of Konsol's suites: the static server for the installed layout
+(since DD-267) with
 the production CSP, the held-open event stream, fixture replies for `/api/*` (a `handlers` table answers
 by method, path and query before the plain fixtures; every request is logged with its parsed POST body),
 `newHttpsPage()` for a page whose origin is `https://` (Playwright answers every request, no TLS), the
@@ -244,7 +257,7 @@ lock and refuses after the wait.
 `yeni-uygulama-ekle-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8774`) drives Uygulamalar' add flows
 and the application page's container views through `yeni-harness.cjs`, with every request body compared
 exactly and every job's end pushed as an `islemler` event. Uygulamalar: the add card (catalogue links,
-the number of adoptable containers, no links to the current interface's App Store or Podman) and Altyapı
+the number of adoptable containers, no links to the old interface's App Store or Podman) and Altyapı
 (unhealthy, update-available and storage counts from `GET /api/konsol/konteynerler/liste`, links to
 Gelişmiş's Podman lists). Katalogdan (`?ekle=katalog&paket=<id>`): only packages not installed, a
 package's own words, its install form drawn from the `konsol.json` declaration (the declared default, an
@@ -273,7 +286,7 @@ entries, and 1440/390/320 px in both themes with no horizontal scroll or overflo
 `yeni-ui.cjs` and `yeni-uygulamalar-ui.cjs` changed only where phase 4a meant them to: Uygulamalar reads
 Podman's counts, the add card and Altyapı lead to the new flows and Gelişmiş, an application page reads
 its container's detail, a container offers "İmajı güncelle", and Ayarlar holds the settings instead of a
-link to the current interface.
+link to the old interface.
 
 ```bash
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulama-ekle-ui.cjs
@@ -343,32 +356,30 @@ the container guard again after the registry line.
 
 The root backend no longer stores favourites: `test_favorites.py` is gone, and `test_overview.py` checks
 that `/api/konsol/favoriler` answers 404 and writes nothing. A Bats test runs the installer's removal of
-an old `KONSOL_AUTH_DIR/favoriler.json` (regular file only). `files-ui.cjs` still covers the old
-interface's star until that interface is removed.
+an old `KONSOL_AUTH_DIR/favoriler.json` (regular file only).
 
-## Files text editor (v2-231, DD-249)
+## Text editor (v2-231, DD-249)
 
 `test_text_edit.py` covers the backend in temporary directories: the version and the reasons the text
 view gives, an atomic replace that keeps mode, owner (as root) and extended attributes, CRLF and the
 UTF-8 BOM kept, Windows-1254 written back, unencodable text refused, a changed file or a swap before the
 rename refused (409), oversized text, symlinks and folders refused, and no `.konsol-kayit-*` left behind.
 `test_system_files.py` saves through the real handler on the root view (a body above `MAX_BODY`, a stale
-version, the gate). `files-ui.cjs` opens the editor under the production CSP: language label, cursor
-position, Ctrl+S and Kaydet with the returned version, the unsaved-changes question on Kapat and Esc,
-the read-only view of a large file, and the root view's warning and `/api/sistem/text/save`.
+version, the gate). `yeni-dosyalar-ui.cjs` opens the real bundle under the production CSP in both trees
+(phase 4b above).
 `common.bats` checks the bundle's banner against `tools/duzenleyici/package.json`. To rebuild the bundle:
 `cd Data/tools/duzenleyici && npm ci && npm run derle` (the output is byte-identical for the same lockfile).
 
-## Files "Sistem (/)" root view (v2-214, DD-235)
+## Sistem dosyaları, the root view (v2-214, DD-235)
 
 `test_system_files.py` runs the backend's `--sistem` mode in temporary directories and on a temporary
 Unix socket: read-only `/proc` `/sys` `/dev` `/run`, root modes for new items, no reserved names,
 permanent delete refused at a mount point (or a mount below) and at a device change, `mountinfo`
 unescaping, the channel/client/Host gate (200 only for another Tailscale device on the tailnet site),
-system-only routes, name/`onayla` confirmation, and the Settings → Web parser leaving the route out of
-the public site. `common.bats` checks the unit, the tailnet-only Caddy matcher, the installer wiring and
-the stage-7 probes. `files-ui.cjs` checks the sidebar entry, the warning strip, the missing
-trash/archive/share actions, `/api/sistem/` calls and the typed-name delete. The Caddy matcher was also
+system-only routes, name/`onayla` confirmation, and the settings view's Caddy parser leaving the route
+out of the public site. `common.bats` checks the unit, the tailnet-only Caddy matcher, the installer wiring and
+the stage-7 probes. `yeni-dosyalar-ui.cjs` covers the tab (tailnet only, no trash or shares,
+`/api/sistem/` calls, the typed-name delete). The Caddy matcher was also
 adapted with Caddy 2.10 (the `{args[0]}` placeholder needs Caddy ≥ 2.7; Debian's 2.6 cannot check it).
 
 ## Files account for writable folders (v2-205, DD-227)
@@ -386,12 +397,8 @@ adapted with Caddy 2.10 (the `{args[0]}` placeholder needs Caddy ≥ 2.7; Debian
 - the adoption mapping.
 
 The fake runtime reflects the Quadlet's account lines and prints a fully dropped capability set as
-`null`, as Podman 5.4.2 does. `konteynerler-ui.cjs` checks:
-- the preselected account and the payload on create;
-- the running user in the details;
-- the blocked review when an old definition's folder is made writable, cleared by switching;
-- the review's account line and consequence;
-- the account in the adopt payload.
+`null`, as Podman 5.4.2 does. `yeni-uygulama-ekle-ui.cjs` checks the account rule on create, in
+adoption and in the definition editor.
 
 The live worker fixture owns its writable folder by the downloads account, as `/srv` is.
 
@@ -466,7 +473,6 @@ Local checks need no server:
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_container*.py'
-node tests/konteynerler-ui.cjs  # console static server and Playwright required; see browser setup below
 ```
 
 Use Python 3.11 or newer (nrm uses 3.13); macOS's system Python 3.9 does not parse
@@ -475,8 +481,9 @@ inventory/stopped definitions, real Podman JSON shapes, API gates, private resul
 stale revisions, recreate/rollback, explicit adoption, volume/network boundaries,
 package port overrides, bridge DNS INPUT permissions, ownership-aware listener
 conflicts and the existing tailnet event's bounded refresh job.
-Browser fixtures exercise actual console assets with mocked API state; they do not
-prove Podman, firewall or server mutations.
+The browser suites (`yeni-uygulamalar-ui.cjs`, `yeni-uygulama-ekle-ui.cjs`, and `yeni-sistem-ui.cjs` for
+Gelişmiş → Podman) exercise the build with mocked API state; they do not prove Podman, firewall or server
+mutations.
 
 `containers-network-linux.py` requires Linux/root and is run inside a disposable
 network namespace (`unshare --net --fork`). It tests actual TCP/UDP packet paths,
@@ -505,15 +512,12 @@ the 5-second publication cache, and the budget re-check after a hash slot.
 backend Host and that a confirmation through the public channel is refused.
 `common.bats` checks the snippet, the Caddy-written channel header, the backend
 connection cap, the forwarded host and channel on confirmations, and the
-installer cleanup; `publications-ui.cjs`
-drives the editable Panel row and the typed `onayla` dialog; `giris-ui.cjs` the
-Tailscale/internet label.
+installer cleanup; `yeni-erisim-ui.cjs` drives the Konsol row in the Yayınla flow
+with the typed word; `giris-ui.cjs` the Tailscale/internet label.
 
 v2-168: `test_resources.py` checks the module listing's `urls` for qBittorrent
 (tailnet name always; the public name only while that publication is active or
-`null`); `panel-ui.cjs` opens Konsol on an `https://` origin with intercepted
-requests and checks that the qBittorrent page links the public name, falls back
-to a Settings → Caddy hint without one, and keeps the tailnet link on `http://`.
+`null`); `yeni-uygulamalar-ui.cjs` checks "Aç" on an `https://` origin (the internet name).
 
 v2-177 (DD-203, store phase 3): the shared share fixture (`test_share_manager_networks.
 torrent_package`) renders the torrent package folder — manifest with `PAKET_KLASORLER`,
@@ -536,9 +540,8 @@ validation before any service change, stop/write/start order, failed-start recov
 stopped-state preservation, the narrow drop-in and its rollback, the CLI) and its API
 module through a fake context and through the real dispatcher (gates, the package-folder
 rule for worker scripts, the private stdin run, the `torrent:hesap` audit line);
-`torrent-ui.cjs` is the page's browser suite; `panel-ui.cjs` serves the page from the
-package and fixtures `/api/uygulama/torrent/durum`; `settings-ui.cjs` has no application
-section any more; `test_backend_hardening.py` points the profile-reader checks at
+the package's settings form on the application's Ayarlar tab is `yeni-uygulama-ekle-ui.cjs`'s (the
+package's own page went in DD-267); `test_backend_hardening.py` points the profile-reader checks at
 `ayar.read_conf`; `settings-linux.py` runs the worker's functions against real
 qBittorrent; Bats checks the status view, the private worker run and that the shell
 and the settings page name no application.
@@ -577,7 +580,7 @@ legacy HTTP mode, Panel/qBittorrent HTTPS is refused only while a folder is
 actually shared over plaintext HTTP, publishes once that connection is closed,
 keeps legacy HTTP unavailable (cards and the WebDAV row say why) while the
 HTTPS row is on, and reopens it when the row is turned off; the firewall port
-follows. `settings-https-ui.cjs` checks both notes (`wan_active` on/off).
+follows. Paylaşımlar shows the server's reasons (`yeni-paylasim-ui.cjs`).
 
 ```bash
 python3 Data/tests/panel-public-live.py --host nrm --domain konsol.example.com
@@ -592,13 +595,7 @@ address, then restores the Panel row exactly and checks that the name no longer
 reaches Konsol. It exits 3 without changes when there is no account or Panel is
 already public.
 
-## Install form, app launch and tile actions (DD-210, DD-212/213)
-
-Current home assertions cover service → settings → logs, three fixed 44 px slots
-(unsupported WireGuard service slot is noninteractive), narrower cards with unchanged
-height, safe log dialogs with timeout/retry, focus and draft retention, and light/dark
-desktop/320/390 px geometry. `panel-ui.cjs` also asserts that Store card subtitles are
-absent while full package descriptions remain in Details.
+## Install form (DD-210)
 
 `test_torrent_api.py` covers the worker's `kur-hazirla` (every field refused before any write, the seed
 only in `RUNTIME_DIR`, 0600, hash only, writability probed as the service user), `kur-uygula` into a kept
@@ -606,29 +603,16 @@ profile (only the four keys change, other preferences stay, the folder drop-in, 
 `kur-geri` (profile and drop-in restored byte for byte), refusal of a readable, linked or malformed seed,
 the combined `ayar` save (validation first, one stop/start, blank password keeps the hash, failure restores
 both files, a stopped app stays stopped), the CLI, the API module's `/ayar` route, and the real backend's
-install route on a Unix socket (form required, worker before engine, password only on stdin and never in
+install (`POST /api/konsol/uygulamalar/islem` with `eylem: "kur"`) on a Unix socket (form required, worker before engine, password only on stdin and never in
 argv or audit, seed removed when the engine cannot start, installed package refused before the worker,
 WireGuard refuses a form). `common.bats` runs the real engine and hook against the fake Podman/systemd:
 no install without a seed or with a readable one (no image pulled), the form's account and folder in the
 profile at the first start, the seed gone afterwards, a kept profile's preferences preserved with a
 library-folder drop-in, failed installs restoring the previous profile and drop-in, and the backend's
-worker-then-engine order. `app-install-ui.cjs` drives the shell with fixture APIs under the production
-CSP: Kur opens the form (defaults, cancel/Escape send nothing, required and repeated password, folder
-chooser), drafts survive a server refusal and a poll, one request per submission, WireGuard's Kur
-unchanged, launch in a new tab with `noopener` from the tile and App Store, no sidebar entry (DD-216; stub page as the
-target), the tile action row (v2-189: icons only — no text, transparent background, no border at rest, on
-hover and pressed, at desktop and 390 px; aria-label and tooltip names; the keyboard focus ring; a finished
-request leaving focus where the operator moved it; v2-188: Ayarlar opening the form for qBittorrent and linking WireGuard's
-page, Durdur/Başlat only for qBittorrent and nothing on built-in tiles, beneath the icon in one row with a
-larger touch area; Durdur's confirmation and cancel, the busy label without duplicate requests, focus kept
-across poll redraws, the label after completion, a refused Başlat shown and recoverable), the settings
-dialog (keyboard, focus return, only changed fields, blank password not sent, error draft, a late read
-or a late install answer leaving a newer dialog alone), a stopped app's settings read and saved without
-starting it, stopped state falling back to the page, edit mode without the row and with working arrows,
-390 px dark screenshots and the public address (public name or the page, never the tailnet name). `panel-ui.cjs` installs qBittorrent through
-the form and checks the new open actions.
+worker-then-engine order. `yeni-uygulama-ekle-ui.cjs` drives the catalogue's install form and the
+settings form (phase 4a above); `yeni-uygulamalar-ui.cjs` the launch in a new tab and the actions.
 
-## Peer port editor on the Podman page (v2-199, DD-221)
+## Peer port editor (v2-199, DD-221)
 
 `test_container_package.py` changes the peer port through the package adapter (`konteyner_ayar`):
 a stopped app gets both WAN `PublishPort` lines and `TORRENTING_PORT` moved in the rendered Quadlet,
@@ -639,10 +623,8 @@ before the app starts again.
 Refused before any service action: a non-integer, out-of-range or interface-equal port, another
 service's port (base `*_PORT`, a saved definition's UDP port), a port the WAN probe finds taken, a
 Quadlet whose WAN lines or `TORRENTING_PORT` do not match, and an unknown config key. The probe
-itself refuses a held TCP and UDP port. `konteynerler-ui.cjs` edits the field (range and
-interface-equal errors block the review, the review names the change and the closing old port, the
-payload carries `peer_port`) and checks that an adapter without `peer_port` shows no field and sends
-none. `common.bats` pins the guard-before-start order and the allowlist.
+itself refuses a held TCP and UDP port. `yeni-uygulama-ekle-ui.cjs` edits it in the adapter card on the
+application's Ayarlar tab (checks, the diff, the save). `common.bats` pins the guard-before-start order and the allowlist.
 
 ## Data removal keeps Konsol's choices (v2-198, DD-220)
 
@@ -665,24 +647,20 @@ before stopping anything; `test_torrent_api.py` checks that the install writes `
 the bridge in the detail. `common.bats` drives the engine with fake podman: the bridge is created
 once with the guard's interface name and the package label, removed with the package, and an
 unexpected publication stops the install; it also pins the three `PublishPort` lines.
-`konteynerler-ui.cjs` shows the three publications in the row and the detail, and keeps the host-socket
-view on another host-network fixture container.
+`yeni-uygulama-ekle-ui.cjs` shows the ports by scope and a host container's listening sockets on the
+application page.
 
-## Podman page, listening ports and app navigation (v2-194, DD-215, DD-216)
+## Listening ports (v2-194, DD-215)
 
 `test_container_listening.py` builds a small `/proc` and cgroup v2 tree: only the container's own
 processes' sockets count (TCP LISTEN, unconnected bound UDP; peer connections, connected UDP, unbound
 and link-local binds, and the host's own listeners left out), IPv4-mapped and IPv6 addresses, child
 cgroups, the root cgroup never widening to the host, unknown as `None` and never an empty list, the
 address kinds (the server's own WAN address wins over the CGNAT range), and the manager reading only
-running host-network rows with the installer's WAN/Tailscale addresses. `konteynerler-ui.cjs` checks
-the Podman title, eyebrow and sidebar entry, the absence of application entries, a cold load whose
-list answers before the module catalogue (container name first, repaint without another list read),
-the per-port access lines with "+N port daha" and the detail's full address table. `panel-ui.cjs`,
-`wireguard-ui.cjs` and `app-install-ui.cjs` assert that an installed application has no sidebar entry
-and that Ana Menü stays marked on its page; `common.bats` pins both.
+running host-network rows with the installer's WAN/Tailscale addresses. `yeni-uygulama-ekle-ui.cjs`
+shows a host container's listening sockets on its application page.
 
-## Image update check and row controls (v2-193, DD-214)
+## Image update check (v2-193, DD-214)
 
 `test_container_updates.py` covers `update_status()` (index by host platform digest, single
 manifest by config digest, pinned/unreachable/missing answers, manifests only), the manager's
@@ -692,9 +670,9 @@ and the GET-only route behind the gates. `test_torrent_api.py` `ImageUpdateTests
 qBittorrent adapter: no-op when current, exact-digest pull after validation, patched Quadlet and
 manifest lines plus the override (port choice kept), restart/UI/ImageName checks, full rollback on
 a failed restart or a wrong image, a stopped app, and refusals that change nothing.
-`konteynerler-ui.cjs` asserts the lead controls before the name, the home-tile glyphs and bare
-style, keyboard order, the cached check on open, the forced check, the chip, count, confirmation
-and the detail state. `common.bats` pins the manifest-only check, the adapter order, the channel
+`yeni-uygulama-ekle-ui.cjs` checks the update state with its channel and time, "Güncellemeleri denetle"
+(`?yenile=1`) and "Güncelle"/"İmajı güncelle" with their results; `yeni-uygulamalar-ui.cjs` the update
+state in the list. `common.bats` pins the manifest-only check, the adapter order, the channel
 keys and the absence of any automatic update.
 
 ## Podman in the base and qBittorrent in Podman (v2-186, DD-208, DD-209)
@@ -705,16 +683,8 @@ missing or fails, `inspect` mapping (sorted mounts, port bindings, three labels,
 the environment), unfiltered log lines (DD-251) with a bounded tail, name and path
 gates and RFC 3339 parsing; a route test runs the real backend handler on a Unix socket (shared
 gates, 400/404 answers, no write route: POST → 404, no podman write verb).
-`konteynerler-ui.cjs` now drives the main-sidebar manager (DD-211) under the production CSP:
-five Settings tabs and old-link redirects; saved stopped definitions; ownership-derived actions,
-busy/error handling, details and logs; create/edit/review/async apply; private secret preservation,
-explicit public scopes and accurate recreation/stopped-save behavior; a logical default network
-on a fresh host; the App Store listener/folder adapter; images, volumes, networks and adoption.
-Drafts survive polling, stale responses cannot replace a newer sheet, leaving the page closes it,
-and 320/390/768/1024/1440 px layouts retain keyboard access without horizontal overflow.
-DD-213 adds name-only rows, retained status/resources/access columns, three capability-gated
-44 px start/stop/edit/remove controls, busy/disabled refusal, row editor focus return,
-and direct removal that keeps generic data and defaults package data deletion to off.
+The browser side of the container manager is `yeni-uygulama-ekle-ui.cjs` (create, adopt, the definition
+editor) and `yeni-sistem-ui.cjs` (Gelişmiş → Podman's images, volumes and networks).
 `common.bats` pins the stage-1/7 Podman install and check (no daemon units), the base view's
 files and routes, the engine's quadlet slot and digest-only image (`docker|compose` stay banned,
 no `/etc/containers` literal in the engine), the qBittorrent quadlet (its own bridge
@@ -735,10 +705,9 @@ before the backend (re)starts and restarts a backend whose mount table lacks a w
 for one (fixture mountinfo: present rw, missing, read-only, no running backend); that the store
 engine creates a missing path and restarts the backend only when needed after `kur`, `baslat`
 and `uygula`; and that `master-wg` refuses writing commands on a read-only folder with the
-Turkish remedy while reading still works (skipped when the runner is root). `wireguard-ui.cjs`
-checks the new-network screen is one card no wider than the windows.
+Turkish remedy while reading still works (skipped when the runner is root).
 
-## Home edit mode and network card (DD-206, DD-212/213)
+## Network card and retired routes (DD-206, DD-212, DD-267)
 
 `test_overview.py` checks that the retired layout, favourites and old-shell routes (DD-267:
 `/api/konsol/duzen`, `/favoriler`, `/ayarlar`, `/ayarlar/durum`, `/moduller/<id>/…`) answer 404
@@ -749,14 +718,9 @@ stopped, unregistered, undeclared and built-in packages; broken modules reported
 2 s cache; no bytecode in the package folder; the 120 s window) and both packages'
 `trafik.py` (qBittorrent's real `AllStats` line from nrm, large totals through a Qt-style
 escaper, no file yet and damaged records; the WireGuard registry and interface counters).
-`panel-ui.cjs` drives Ana Menü: installed-only tiles, clock/date in the home heading,
-sidebar context, the compact two-of-six-slot network widget, cumulative/missing/zero totals,
-fixed-height overflow and scroll/focus retention. The page clock verifies five-second
-resources/modules/network reads, no duplicate ten-second home tick and no hidden-page
-polling. Düzenle covers wiggle/reduced motion, keyboard moves, mouse drag, legacy layout
-normalization, hide/show, Bitti, another device's order, Escape and Varsayılan. Both themes
-and phone widths are checked. `common.bats` pins the source guards; fixture browsers do
-not establish live deployment or fresh-install acceptance.
+`yeni-uygulamalar-ui.cjs` checks Genel Bakış's network card (read every 5 s only while the page is shown
+and the browser tab visible). `common.bats` pins the source guards; fixture browsers do not establish
+live deployment or fresh-install acceptance.
 
 ## Konsol sign-in (v2-166, DD-194; v2-181, DD-205)
 
@@ -774,14 +738,22 @@ password changes, and audit lines without secrets. `common.bats` checks the Cadd
 `forward_auth` matcher and order, the open sign-in files, the backend's channel
 branches, installer wiring/stage-7 probes and that no setup code remains anywhere.
 
-`giris-ui.cjs` (shared preview on port 8766) drives `giris.html` with intercepted
-APIs and the production CSP: internet sign-in failure/limit/success, return to the
-original page, the no-account notice, the tailnet and signed-in shortcuts back to
-Konsol and Konsol's redirect after a 401. `settings-ui.cjs` covers the account card on
-both channels (signed-in user with current password and sign-out; internet account, new
-password only, account creation, no sign-out) and the sidebar sign-out.
+`giris-ui.cjs` drives `giris.html` with intercepted APIs and the production CSP: internet
+sign-in failure/limit/success, return to the original page, the no-account notice (Sistem →
+Hesap), the tailnet and signed-in shortcuts back to Konsol and Konsol's redirect after a 401 (an
+old address first taken to its new home, `#/ayarlar` → `#/sistem`). It needs a preview on port
+8766 (`KONSOL_URL` overrides it) that serves the installed layout from one folder: the build's
+files from `console/yeni/` with `giris.html`, `giris.js`, `giris.css`, `duzenleyici.js` and
+`obhut.svg`/`obhut.png` from `console/` beside them (the redirect test loads the real interface
+at `/`). `yeni-sistem-ui.cjs` covers Sistem → Hesap on both channels and the sidebar sign-out.
 
 ```bash
+preview="$(mktemp -d)"
+cp -R Data/console/yeni/. "$preview"/
+cp Data/console/giris.html Data/console/giris.js Data/console/giris.css Data/console/duzenleyici.js \
+   Data/console/obhut.svg Data/console/obhut.png "$preview"/
+python3 -m http.server 8766 --bind 127.0.0.1 --directory "$preview"
+# In a second terminal:
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/giris-ui.cjs
 python3 Data/tests/konsol-login-live.py --host nrm
 ```
@@ -799,9 +771,7 @@ Live tests that call Konsol through Caddy from the Mac (`share-connections-live`
 root-issued session with `master-konsol oturum-ac` via `konsol_session.py` and close
 it at the end. Host-side tests (`shares-live.py`) use the
 loopback Files backend and the root socket instead, because Caddy refuses
-host-local Konsol callers (DD-180). The browser live suites
-(`share-connections-browser.cjs`, `desktop-live.cjs`) take a session value in
-`KONSOL_COOKIE`.
+host-local Konsol callers (DD-180).
 
 ## Per-connection WebDAV policies and dual-card Shares (v2-164, DD-192)
 
@@ -818,25 +788,8 @@ locks, preserved omitted expiry, both-off, per-scope RW acknowledgement, legacy
 HTTP consent, global publication gates and candidate-versus-active URLs. Protocol
 checks cover both RO/RW directions, listener/header isolation, cached authentication,
 all DAV writes, disabled/expired scopes, live chunks and staged-publication checks.
-`files-ui.cjs` checks the two-card controls and scoped payloads with intercepted
-APIs; its responsive matrix covers ten widths from 320 to 2560 in both themes.
-
-Optional read-only acceptance against the installed console (Playwright required), from a
-tailnet device: `KONSOL_URL` names the console and the server must hold at least one folder share;
-the suite creates none and refuses every write. Without `KONSOL_URL` it prints `SKIPPED` and exits 0;
-an unreachable console or an empty share list stops it at once with that reason instead of a timeout.
-`PLAYWRIGHT_CHROMIUM` picks a browser binary, as in the fixture suites.
-
-```bash
-KONSOL_URL=http://panel.example PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/share-connections-browser.cjs
-```
-
-This requires at least one existing share and creates none. Every API mutation
-(any method other than GET/HEAD) is aborted and fails the check. It checks two
-cards, four selects and two switches per share, address/Infuse host-port-path
-consistency and copy-button presence, no overflow at 1440/900/390 in both themes,
-and no browser errors. It does not exercise actual clipboard writes. Screenshots
-go to an OS temporary directory, not the Desktop.
+`yeni-paylasim-ui.cjs` checks each connection's controls and the scoped payloads with intercepted
+APIs (phase 4b).
 
 Opt-in **mutating** acceptance from an authorized Tailscale client against a
 disposable host with schema 4, working public HTTPS and both global routes enabled:
@@ -859,9 +812,10 @@ real shares concurrently.
 The main implementation task reports: 36 new tests passed on macOS and Debian;
 full Python suite 366 tests (macOS four skips, Linux one); Bats 165 tests (three
 skips); six browser fixture suites passed with screenshots reviewed. After a
-successful portable deployment on `nrm`, both opt-in scripts above passed: live
-HTTPS/Tailscale policies and byte-identical cleanup, and installed UI at three
-widths/two themes with zero errors or API writes. See [SESSION.md](../SESSION.md)
+successful portable deployment on `nrm`, the opt-in live script above and the (since removed)
+read-only browser check of the installed UI passed: live HTTPS/Tailscale policies and
+byte-identical cleanup, and the installed UI at three widths/two themes with zero errors or API
+writes. See [SESSION.md](../SESSION.md)
 for exact run evidence and final host health. These results do not certify native
 Infuse/Finder clients or a fresh supported-OS installation.
 
@@ -874,7 +828,7 @@ rollback and module projection persistence. It reuses isolated transaction
 fixtures and does not claim real ACME issuance.
 Publication failure causes (v2-237, DD-254): `test_publications.py` reads Caddy's JSON error and `Error:`
 lines and the firewall's "HATA:" line, and checks that a failing `caddy validate`, `master-firewall` or
-reload (Caddy's journal) is named in the Settings error with the previous state restored;
+reload (Caddy's journal) is named in the settings error with the previous state restored;
 `test_https_settings.py` checks the folder share save names the publication's cause.
 Caddy repository outage (v2-236, DD-253): `common.bats` runs `apt_update_caddy_tolerant` against a
 stubbed apt-get/dpkg-query: a 402 on Caddy's repository alone passes and records "402 Payment Required"
@@ -886,15 +840,8 @@ Manual addresses (v2-235, DD-252): the tailnet and public sites and the `modul-e
 Konsol routes on the public site, refused upstreams (other hosts, Konsol's own and package ports,
 malformed ports) and names (fixed, package, DNS-answered, invalid), the limit, the tailnet switch and
 removal leaving no file, a failed dnsmasq restart rolling back sites, name and settings, a local-domain
-rename, and stale-site cleanup that keeps a name ending in `-wan`. `publications-ui.cjs` adds one with
-its validation (a taken name, a bad HTTPS name), saves its switch, cancels and confirms removal, and
-keeps one in the layout checks.
-
-`PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/publications-ui.cjs`
-starts its own local static server and runs the actual console with intercepted
-APIs/CSP. It checks draft-only switches, single-click saves after typing, locked
-Panel, validation, pending/failure/retry, reload and five widths in both themes.
-Screenshots go to an OS temporary directory, not the Desktop.
+rename, and stale-site cleanup that keeps a name ending in `-wan`. `yeni-erisim-ui.cjs` adds one
+through the plan and removes one.
 
 `python3 Data/tests/publications-live.py --host nrm` is an opt-in **mutating**
 test for a provisioned disposable host with verified DAV HTTPS and qBittorrent
@@ -941,20 +888,8 @@ less, unknown/error handling, selected firewall ports, Caddy scheme/source
 parsing and the existing gated Settings API. These are fixtures, not real
 Let's Encrypt issuance or public-reachability tests.
 
-With the local console preview below running on port 8766 and Playwright installed:
-
-```bash
-PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/settings-https-ui.cjs
-```
-
-This runs the production Settings/Shares UI with intercepted APIs and the actual
-Caddy CSP. Since DD-193 public WebDAV HTTPS is edited only in the “Adresler ve
-erişim” table, so the suite drives that row: isolated publication/local-domain
-drafts, validation, long pending saves, repeated-click blocking,
-ready/pending/error/expiry displays, failure/retry, draft switch/discard,
-persisted off with the remembered name, the legacy-HTTP port note,
-scheme-specific share links (a closed WAN card is labelled “WAN”) and HTTP
-consent. It checks four widths in both themes. It does not modify a server.
+The browser side (the WebDAV row and its HTTPS name in Erişim → Adresler, the shares' transports in
+Paylaşımlar) is `yeni-erisim-ui.cjs` and `yeni-paylasim-ui.cjs`.
 
 External acceptance is opt-in, from an authorized Tailscale client to a disposable
 host. Supply a real public domain whose DNS resolves only to that host's assigned
@@ -1061,18 +996,8 @@ Cleanup removes only the fixture prefix/accounts, never existing shares.
 Fresh supported-OS installation, reboot and native Infuse/Finder acceptance are
 separate; protocol tests do not certify every DAV client.
 
-## Model A and compact App Store (DD-160/DD-161, v2-131)
+## Resources (DD-160, v2-131)
 
-Serve the real `Data/console` tree locally as below, then run
-`node Data/tests/panel-ui.cjs` from the repository root. It applies the actual
-Caddy CSP and fixtures all API calls: clean/installed sidebar, qBittorrent
-lifecycle and own settings, keyboard tabs, five widths, resource
-stale/offline/recovery, ZIP create/cancel/nested-unzip/result routes, and async
-WireGuard new-network bookmarks. No server is modified.
-App Store checks include compact row height, only one details panel, keyboard
-focus across polls, real-progress fixtures, failures with details closed,
-stop/start/removal and cancellation, default data retention, log HTTP errors
-and safe text rendering, no account reads, and visible status at mobile widths.
 `test_resources.py` covers independent sampling, guest CPU accounting, unknown
 measurements and real HTTP Host/header/origin gates.
 
@@ -1114,21 +1039,7 @@ DD-267 removed Konsol's archive jobs (archives are Gezgin's): `test_archives.py`
 `archives-live.py` are gone. `common.bats` checks that stage 1 adds no RAR repository and installs
 neither `unrar` nor `python3-rarfile`, removes only the installer's own source file, and that stage 7
 removes the old `SERVER_ROOT/.arsiv` only while it is a real 0700 folder of the downloads uid;
-`test_backend_hardening.py` checks the name is an ordinary folder for the files backend now. The old
-interface's archive checks below go with that interface.
-
-v143 adds automatic nested extraction/default depth-ceiling rollback tests and
-installer-driven default-destination state. The native RAR suite submits without
-the optional depth fields. `panel-ui.cjs` checks the compact form, automatic ZIP
-suffix, default downloads, folder picker navigation/cancel/read-error/retry and
-failed submit draft retention. `files-ui.cjs` checks the bottom selection dock at eight
-widths/both themes, stable breadcrumbs/search, hidden-view/selection lifecycle,
-and notifications never covering its actions. Run browser suites sequentially
-against the simple preview server to avoid parallel request-queue timeouts.
-v144 additionally checks six stable icon/label slots, single-file/archive/folder
-and mixed-selection eligibility, keyboard focus and activation, download excluding
-folders, archive/share/move dialog routing, equal cells, a mobile 3×2 grid and
-unfilled danger styling under both themes.
+`test_backend_hardening.py` checks the name is an ordinary folder for the files backend now.
 
 From the repository root, run all Python suites with an OpenSSL-enabled Python:
 
@@ -1136,28 +1047,15 @@ From the repository root, run all Python suites with an OpenSSL-enabled Python:
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_*.py'
 ```
 
-`desktop-live.cjs` tests the **real host**, not fixtures. Set `ARCHIVE_FIXTURE`
-to the basename of that live test tree; it creates/extracts browser ZIP outputs.
-It checks Model A navigation/resource indicators, built-in shares, settings and five
-viewport widths. `TEST_APP_LIFECYCLE=1` explicitly enables qBittorrent
-install/stop/start/remove (requires it absent initially, leaves its package and
-profile, never requests data deletion). `KONSOL_URL` defaults to `http://panel.ayc/`.
-Playwright variables below also apply; screenshots go to a temporary directory.
-Do not run live tests against an unauthorized host.
-
 ## Settings management (DD-156/DD-157, v2-127)
 
-WireGuard internet-only (DD-177): `wireguard-ui.cjs` tests creation/settings with
-no Local selector, DNS-only saves, polling/error/cancel/stopped-network behavior,
-explicit regeneration and four widths/CSP. Since DD-200 the page is the package's
-(`magaza/wireguard/sayfa.js`): the suite serves `/uygulama/wireguard/*` from the
-`magaza/` folder through Playwright routes and uses `/api/uygulama/wireguard/*`;
-`panel-ui.cjs` does the same for the WireGuard deep link and reads both packages'
-`konsol.json` for the App Store texts. `test_wg_settings.py` drives the package's
+WireGuard internet-only (DD-177): `yeni-wireguard-ui.cjs` tests creation and settings through
+`/api/uygulama/wireguard/*` (no Local selector, DNS-only saves, the name), polling, the stopped
+network and explicit regeneration. `test_wg_settings.py` drives the package's
 API module through the root backend's dispatcher: it rejects a supplied `scope`
 field on both routes, checks revision/gates, the `master-wg` argument lines and
 the `wireguard:<verb>` audit prefix; `test_resources.py` covers the module listing's
-`konsol`/`sayfa` fields and the API module's load/unload with the registry. Bats
+`konsol` field (no `sayfa` since DD-267) and the API module's load/unload with the registry. Bats
 verifies DNS-only preservation and rejects access-scope CLI arguments.
 `firewall-linux.py` tests actual IPv4/IPv6 host deny (including prior flows),
 internet forwarding/NAT, private destinations through WAN, and tailnet isolation.
@@ -1166,9 +1064,8 @@ Veth fixtures pin WG IPv6 neighbors because real WireGuard uses no NDP.
 Firewall categories (DD-164, v2-134): `test_firewall_view.py` covers read-only
 socket scope classification, IPv6 normalization/zones, read failures, public-only
 network metadata, service-name reuse and WAN endpoint versus tunnel permissions.
-`settings-ui.cjs` tests default Tailscale, nested keyboard tabs, draft retention,
-absent/empty/multiple WireGuard networks, read-only internet-only WG policy, protected
-loopback and listener-versus-policy labels (including unknown/unreadable).
+`yeni-erisim-ui.cjs` tests Erişim → Güvenlik duvarı's network tabs, IPv6, locked rows, drafts and
+the listeners.
 
 Minimum tailnet exposure (DD-172, v2-146): `test_tailnet.py` verifies configured
 service ports, validated Self-only PeerAPI discovery and daemon-startup fallback.
@@ -1207,24 +1104,17 @@ Browser fixtures assert a single Apply request, no dialog/countdown/confirmation
 reload persistence, failed-apply draft retention and retry. The isolated Linux
 DNS test checks immediate commit and failed-apply recovery with real dnsmasq.
 
-Firewall tables (DD-162, v2-132): `settings-ui.cjs` additionally verifies full
-semantic tables at five widths, row explanations/source CIDRs, filter/empty
-states, protected loopback, on/off drafts, edit/remove, lock during confirmation,
-payload/rollback, production CSP and keyboard scrolling without page overflow.
+Firewall tables (DD-162, v2-132): the browser side is `yeni-erisim-ui.cjs` (above).
 
 Folder sharing (v2-128, DD-158): also run `python3 -m unittest discover -s
-Data/tests -p test_shares.py` and `node Data/tests/files-ui.cjs` from the repository
+Data/tests -p test_shares.py` and `node Data/tests/yeni-paylasim-ui.cjs` from the repository
 root. Python must have OpenSSL scrypt (the macOS system Python may not; use an
 OpenSSL-enabled Python 3.12+). Linux distribution Python is the production runtime.
-The Files UI suite also checks exact share clipboard input and adjacent address/
-copy-button geometry in the list and folder details at five widths (v2-138).
-Copy APIs are intercepted in fixtures; native iPhone clipboard behavior is not
-covered by those checks.
-Inline Shares and compact trash (v2-142, DD-169): `files-ui.cjs` checks partial
-access/expiry payloads, RW confirmation/cancel/Escape, failed saves, disabled
-in-flight controls, account-only editing, eight responsive widths and short
-long-filename trash dialogs in both themes. Existing permanent-delete guards
-remain tested. `test_shares.py` covers omitted-field preservation, required RW
+`yeni-paylasim-ui.cjs` checks each address with its copy button and Infuse's fields; copy APIs are
+intercepted, so native iPhone clipboard behaviour is not covered.
+Inline Shares and compact trash (v2-142, DD-169): `yeni-paylasim-ui.cjs` checks the partial
+payloads, the RW question, refusals, controls disabled while a change is under way and
+account-only editing; `yeni-dosyalar-ui.cjs` the trash. Permanent-delete guards remain tested. `test_shares.py` covers omitted-field preservation, required RW
 acknowledgement, rollback and never rebinding a replaced folder via inline edits.
 Password policy (v2-141, DD-168): the settings/shares Python and browser suites
 reject seven-character passwords and accept eight, preserving blank edits.
@@ -1242,30 +1132,24 @@ From the repository root:
 ```bash
 LC_ALL=C PYTHONDONTWRITEBYTECODE=1 bats Data/tests/common.bats
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p test_settings.py
-python3 -m http.server 8766 --bind 127.0.0.1 --directory Data/console
-# In a second terminal, with Playwright installed:
-node Data/tests/settings-ui.cjs
 ```
 
 On the operator Mac (2026-09-30) Node comes from Homebrew and Playwright is a
 global npm package outside the repository, so point the suites at it:
 
 ```bash
-PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/panel-ui.cjs
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-ui.cjs
 ```
 
-The fixture suites (`panel-ui`, `files-ui`, `settings-ui`, `settings-https-ui`, `wireguard-ui`,
-`torrent-ui`, `giris-ui`, `app-install-ui`, `update-ui`, `files-nav-ui`) share the same `http.server` on port 8766. `settings-ui.cjs` also covers the
-health card and the stuck-rollback discard (DD-182); `panel-ui.cjs` the archive
-bar that replaced the jobs page (DD-183).
+`giris-ui.cjs` uses a preview on port 8766 (see Konsol sign-in); the `yeni-*` suites start their own
+servers. The health card is `yeni-sistem-ui.cjs`'s and the stuck-rollback discard `yeni-erisim-ui.cjs`'s
+(DD-182).
 
 `PLAYWRIGHT_MODULE`, `PLAYWRIGHT_CHROMIUM` and `KONSOL_URL` may override the
-module, browser executable and preview URL. The test intercepts APIs with
-fixtures; it never modifies a server. It covers tabs, review/discard, custom
-rules, DNS, confirmation/rollback, address explanations (the qBittorrent
-account/folder form is `torrent-ui.cjs` since DD-202),
-domain review/new-address links/old-host confirmation refusal, four widths and dark
-mode. Screenshots go to a fresh temporary directory.
+module, browser executable and preview URL. The suites intercept APIs with
+fixtures and never modify a server; the settings views (rules, DNS, the plan,
+confirmation/rollback, the domain with its new-address links and the old-host
+refusal) are `yeni-erisim-ui.cjs`'s. Screenshots go to a fresh temporary directory.
 
 On a Linux test host with root, iptables/ip6tables, dnsmasq, dig, qBittorrent
 and systemd (no additional packages are installed by these tests):
@@ -1338,21 +1222,8 @@ read-only, pass `--state` explicitly, and gate on `NeedsLogin` before any
 back-off, forced-check gap, malformed answers), the job state/stage, the start rules, the pinned
 `systemd-run` call and the Tailscale-only start route. `common.bats` runs `kur.sh` in update mode
 (pinned commit, refused version mismatch, no terminal) and `master-guncelle` with local fixtures.
-`update-ui.cjs` checks the button beside the clock, confirmation, payload, stage, failure, reload,
-internet lock and phone widths with fixtured APIs.
-
-## Files navigation (v2-218, DD-236)
-
-`files-nav-ui.cjs` drives a 60-folder fixture: the fixed window (no page scroll at 1440×900), the
-frame's DOM nodes surviving every open, no layout shift, the contents' scroll reset on open and
-restored on back, the cache shown at once and read again, the dimmed inert old listing while a held
-folder loads, a stale answer dropped, a failed open staying put, a poll that keeps tile nodes, the
-keyboard, the search box, and the page scroll at 1024 and 390 px.
-
-`files-nav-ui.cjs` also checks DD-237 (v2-219): the detail panel under the contents with a height that
-selecting never changes, the right column without details, Favoriler's eight entries and switch, the
-folder in the address (pushed on open, opened after a reload, browser back/forward, bare `#/dosyalar`
-keeping the folder, an undecodable address opening the root). `files-ui.cjs` checks the one-line share.
+`yeni-sistem-ui.cjs` checks Sistem → Güncellemeler (the confirmation, the stage, a failure, the reload,
+the internet lock) with fixtured APIs.
 
 ## New interface phase 4b: Paylaşımlar and the old addresses (DD-258, DD-267)
 

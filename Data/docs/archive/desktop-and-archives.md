@@ -1,5 +1,8 @@
 # Files and archives (DD-159, DD-166, DD-170, DD-183)
 
+> **Historical.** This describes the old Konsol interface and its ZIP/RAR archive jobs, both removed in
+> DD-267 (v2-250); Dosyalar and Gezgin replace them. Kept for history only.
+
 ## Built-in capabilities and App Store
 
 Konsol is one sidebar workspace, not a desktop or remote OS session. Selecting
@@ -18,7 +21,7 @@ The installer calls `master-modul yerlesik` to enable/check the two data service
 and publish the share name/port. An unchanged rerun does not restart them and
 creates no folder account. Public module actions reject `dosya` and `paylasim`;
 these are internal template/registry IDs used by DNS/Caddy/firewall rendering.
-See [folder shares](folder-shares.md) for credential and recipient-ACL boundaries.
+See [folder shares](../folder-shares.md) for credential and recipient-ACL boundaries.
 
 ## Archive operations (DD-170)
 
@@ -115,6 +118,6 @@ No operation accepts shell arguments, absolute paths or executable plugins.
 
 ## Verification
 
-[`../tests/README.md`](../tests/README.md) lists the unit, browser and live
-archive tests; actual runs are recorded in `../SESSION.md`. A fresh Ubuntu
+[`../../tests/README.md`](../../tests/README.md) lists the unit, browser and live
+archive tests; actual runs are recorded in `../../SESSION.md`. A fresh Ubuntu
 install, native Finder/Infuse clients and recipient ACLs need separate acceptance.

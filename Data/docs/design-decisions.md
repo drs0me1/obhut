@@ -13,6 +13,99 @@ Entries that describe removed or replaced behaviour are kept verbatim in
 and [`decisions-index.md`](decisions-index.md) lists every `DD-*` number
 with its status and the file that holds it.
 
+Konsol's old interface was removed in DD-267 (v2-250). Live entries written
+before it still name its places (Ayarlar → Caddy, Ayarlar → Sistem, App Store,
+the Podman page, Ana Menü, the Files window); DD-267 says where each went.
+
+### DD-267: The redesign's phase 4b: Dosyalar, Paylaşımlar, Konsol at `/` and the old interface removed (v2-250)
+
+- **Request (user, 2026-10-16):** "faz 4b'ye geçelim" (phase 4 of DD-258, second part; DD-266 was 4a).
+  Choices: Dosyalar stays lean and leans on Gezgin; folder shares move under Dosyalar; the old interface
+  goes now; archive jobs and favourites leave the backend with their interface; the text editor works in
+  both the server folders and Sistem dosyaları; the Ana Menü edit mode goes; one delivery.
+- **Dosyalar** (`#/dosyalar`, tabs in `sekme=`): Depolama (the disk, what the user area holds, whether
+  `/srv` is its own mount, the trash, the top folders with size and count and who uses each — every
+  application's bind mounts from the new `GET /api/konsol/depolama`, folder shares, the folders a
+  package writes —, and Gezgin: "Gezgin'de açın" or "Gezgin'i kurun"); Sunucu klasörleri (one folder
+  browser: crumbs, folders first in Turkish order with count and size, a filter, tick boxes, an upload
+  queue with progress and cancel, download, new folder, rename, move, trash, a package's folders locked,
+  share marks leading to Paylaşımlar, the text editor; the folder, filter and open file in the address
+  as `yol=`, `ara=`, `dosya=`); Çöp kutusu (restore, permanent delete and empty behind the typed word);
+  Paylaşımlar; Sistem dosyaları (the same browser over `/api/sistem/*`, tailnet only, permanent delete
+  by the item's own name, the editor warning that it saves as root). The editor is the existing
+  CodeMirror bundle (DD-249) loaded on first use from `/duzenleyici.js`. Not carried over (Gezgin has
+  them): archive jobs, favourites, the Finder-style window, the grid/list switch and its keyboard set.
+- **Paylaşımlar:** the share manager's view and writes move into the route table unchanged
+  (`GET /api/konsol/paylasim`, `POST paylasim/kaydet`, `POST paylasim/kaldir`); the old pause request
+  (`durum`) is gone, as DD-192 made it a connection switch. One card per share with both connections
+  (switch, RO/RW with its question, 1/7/30 days or unlimited, the address with copy and the Infuse
+  fields, the server's reason), the create and edit sheets (folder chooser over the user area, user
+  name, a password typed or generated), removal behind the typed word, and the deep links
+  `yeni=<folder>` and `paylasim=<id>` from the folder lists; Erişim's WebDAV rows lead to the tab.
+- **Konsol at `/`:** the build (still kept in `console/yeni/`) is the console's root; the installer
+  places it with the sign-in page, the editor bundle and the marks, and deletes every other file or link
+  under `CONSOLE_WEB_DIR` (the old interface, the `/yeni/` copy, the packages' `uygulama/<id>/` pages)
+  and the folders left empty; it refuses a `CONSOLE_WEB_DIR` outside `/usr/local/share/master-stack/`
+  and a build file that would overwrite one of the files placed beside it. Caddy sends `/yeni` and
+  `/yeni/*` to `/` (308; the browser keeps the `#view`). The sign-in page carries its own styles in
+  Konsol's colours and loads `/tema.js`; these, the font and the marks are open before a session (they
+  carry nothing private). The session check returns to `/`; `geri=yeni` is gone. Old hash addresses land
+  on their new homes (`#/moduller` → the catalogue, `#/konteynerler/<ad>` → the application,
+  `#/ayarlar/fw` → Erişim's firewall, `#/ayarlar/konteynerler` → Gelişmiş → Podman,
+  `#/dosyalar/klasor/<yol>` → Sunucu klasörleri, `#/wireguard` → Erişim's WireGuard tab, `#/torrent` →
+  the application's page or its install, …; an address that depends on what is installed waits up to 6 s
+  for the application list); the interface has no links to the old one any more.
+- **Removed with the old interface:** the shell's files (`index.html`, `konsol.*`, `panel.css`,
+  `ayarlar.*`, `dosyalar.*`, `arsiv.js`, `konteynerler.*`) and their Playwright suites; the ZIP/RAR jobs
+  (`master_archives.py`, `master_rar.py`, `/api/archives*`, `--archive-dir` — accepted and ignored for
+  one release so an install stopped between stages cannot leave Files down —, the RAR apt source,
+  `unrar`/`python3-rarfile` no longer installed; Files no longer reserves the `.arsiv` name, and WebDAV
+  and Gezgin no longer mask it); favourites (`/api/konsol/favoriler`); the Ana Menü layout
+  (`/api/konsol/duzen`); the routes only the old shell used (GET `/api/konsol/ayarlar` and
+  `/ayarlar/durum`, `/moduller/<id>/*`); the packages' page scripts (`sayfa.js`/`sayfa.css`,
+  `PAKET_SAYFA`, the engine's `paket_sayfa_koy`/`kaldir`, `konsol.json` `sayfa`, `Modul.sayfa`,
+  `Uygulama.sayfa`; `state.env` no longer carries `CONSOLE_WEB_DIR`, which only the engine's page helper
+  read). Outside the route table the root backend keeps only the session check, the sign-in POST and the
+  packages' own APIs.
+- **What a re-run removes,** each only as what an earlier run left: the RAR source file (a regular file,
+  before stage 1's `apt-get update`), `duzen.json` and `favoriler.json` in `KONSOL_AUTH_DIR` (regular
+  files, after the new backend runs), `master_archives.py` and `master_rar.py` in `SBIN_DIR`, and
+  `SERVER_ROOT/.arsiv` in stage 7 after the new units run, only while it is a real directory directly
+  under the user area owned by the downloads uid with mode exactly 0700 (a folder of that name made
+  later is 0775 and stays; the removal does not cross file systems and a failure is a warning).
+  Installed `unrar` and `python3-rarfile` are left; on Debian they get no updates without another
+  non-free source (`apt purge unrar python3-rarfile`).
+- **Operator messages** name the new places (Sistem → Hesap, Erişim → Adresler, Sistem → Günlük, Sistem
+  → Güncellemeler, the catalogue in Uygulamalar, the application's own settings), and the installer's
+  closing summary lists the sections. Gelişmiş's Caddy view now reads a `redir` with a path or a named
+  matcher before its target as that path's route (it showed `redir /yeni / 308` as the root sending to
+  `/yeni`).
+- **Tests:** the `yeni-*.cjs` suites run the interface at `/` (two new ones: `yeni-dosyalar-ui.cjs`,
+  `yeni-paylasim-ui.cjs`); Bats runs the installer's console placement on a fixture.
+- **Retired or amended by this entry:** retired: DD-161 (the App Store page), DD-166, DD-170 and DD-183
+  (archive jobs), DD-204, DD-213, DD-216, DD-230, DD-231 and DD-242 (the old Ana Menü, its skin, tiles,
+  widgets and edit mode, the sidebar entries), DD-232, DD-236, DD-237, DD-243 and DD-244 (the old Files
+  window), DD-245 (the old update control and Ayarlar → Sistem), DD-250 (favourites). Amended, as parts
+  still hold: DD-145, DD-155, DD-159, DD-160, DD-169, DD-180, DD-181, DD-182, DD-185, DD-192, DD-200,
+  DD-202, DD-206 (the network card's data feeds Genel Bakış), DD-208, DD-210, DD-211, DD-212 (cumulative
+  totals), DD-214, DD-215, DD-221, DD-225, DD-227, DD-229 (WireGuard stops as a whole; the host stays
+  closed to containers), DD-233, DD-235, DD-239, DD-241, DD-246, DD-247, DD-249, DD-253, DD-258, DD-259,
+  DD-261, DD-262, DD-265.
+- **Live check (test host, v2-250):** a re-run over v2-249 removed the RAR source (the packages stayed),
+  `/srv/.arsiv` (owned by the downloads uid, 0700), the old archive helpers and every old console file;
+  every service came back. `/` opened Konsol, `/yeni/` answered 308 to `/`, the tailnet's `/giris.html`
+  went back to `/`. Dosyalar: Depolama; a folder made in `/srv`, a file uploaded, edited and saved in the
+  editor (the saved text read back), renamed, moved to the trash, restored, trashed again and deleted for
+  good; Sistem dosyaları opened `/etc/hostname` with the root warnings and made and deleted a folder under
+  `/tmp` by its typed name. Paylaşımlar: a share made for a test folder answered WebDAV from a tailnet
+  device (PROPFIND 207), refused a write while read-only (403), took one after read-write was confirmed
+  (201) and refused the account after removal (401). Seven old addresses opened through `/yeni/` landed on
+  their new places with the `#view` kept.
+- **Rejected:** keeping the old interface at `/eski/` for a release (two interfaces to keep safe and
+  working; the operator chose to remove it now); renaming `console/yeni/` (pure churn across the build,
+  its digest and the tests); keeping archive jobs in the backend without an interface (an
+  untrusted-input parser nobody can reach is still attack surface).
+
 ### DD-266: The redesign's phase 4a: Sistem, Gelişmiş, adding applications and their settings (v2-249)
 
 - **Request (user, 2026-10-15):** "Sıradaki aşamaya geçelim" (phase 4 of DD-258). Choices: Dosyalar
@@ -141,6 +234,8 @@ with its status and the file that holds it.
   and rollback models for a gain the harmless loopback port does not need); a plan that writes a
   candidate file; offering Yayınla for a container the operator manages by hand; renaming a network by
   deleting and adding it again (new keys and profiles for every device).
+- **Amended by DD-267 (v2-250):** the Podman page is gone; a container managed outside Konsol is adopted
+  through Uygulamalar' add flow (DD-266) before Yayınla can choose it.
 
 ### DD-263: Container CPU and memory come from cgroup files, not `podman stats` (v2-246)
 
@@ -237,6 +332,9 @@ with its status and the file that holds it.
 - **Rejected:** mounting only the downloads and media folders (Gezgin's trash and uploads would cross
   mounts); a named Podman volume for the data (removal and backups by name instead of by path); a
   vendored bcrypt in Python; framing Gezgin or a trusted-header sign-in (DD-258).
+- **Amended by DD-267 (v2-250):** with Konsol's archive jobs gone the container mounts only the empty
+  cover over `.cop` (four mounts in all, which the verification expects exactly), and `paket_gerekli`
+  checks only the trash's mount point. The publication row is in Erişim → Adresler.
 
 ### DD-261: The redesign's second phase: Genel Bakış, Uygulamalar and the application page (v2-245)
 
@@ -291,6 +389,9 @@ with its status and the file that holds it.
   manager owns an application); waiting for the registry inside the list request; widening
   `RestrictNamespaces` for `podman stats`; general words in the removal dialog where the package says
   exactly what goes.
+- **Amended by DD-267 (v2-250):** `Uygulama.sayfa` (the old interface's page) and the old sidebar's link
+  to `/yeni/` are gone; a built-in's "Aç" leads to its section (Files to Dosyalar, WebDAV to Dosyalar →
+  Paylaşımlar).
 
 ### DD-260: Releases carry a semantic version beside the build number (v2-244, 1.0.0)
 
@@ -363,6 +464,10 @@ with its status and the file that holds it.
 - **Rejected:** an `X-Konsol` exception for the stream; one producer per stream (cost grows with
   tabs); building the reachability view in the browser from five endpoints (the same rules in two
   languages); reading the container guard's nft state in this view (phase 3, with the plan endpoint).
+- **Amended by DD-267 (v2-250):** the interface is at `/`: the sign-in page and the session check
+  return to `/`, `geri=yeni` is gone and the installer places the build at the console's root.
+  Nearly every route is in the table now; outside it the backend keeps only the session check, the
+  sign-in POST and the packages' own APIs.
 
 ### DD-258: Konsol is redesigned around tasks, with Gezgin as its file application (accepted 2026-10-13)
 
@@ -392,6 +497,10 @@ with its status and the file that holds it.
   purpose).
 - **Revisits, each in its own phase:** DD-159, DD-204, DD-212, DD-216, the no-build rule and the
   `contract.md` sections on the page set, the Settings tabs and the per-row publication save.
+- **Amended by DD-267 (v2-250):** the switch happened in v2-250: the interface is at `/`, `/yeni/`
+  redirects there and the old interface is gone (DD-267). Of the revisits listed here, DD-204 and DD-216
+  are retired, DD-159 and DD-212 amended and `contract.md`'s page sections rewritten; sharing's move to
+  Gezgin is phase 5.
 
 ### DD-257: Security and stability review after Gezgin (v2-241)
 
@@ -514,6 +623,8 @@ with its status and the file that holds it.
 - **Konsol's message:** `install.sh` runs under `systemd-inhibit … env bash install.sh`, which ends a
   failed run with "env failed with exit status N."; `master-guncelle` showed that last line. It now
   skips it and shows the installer's own last line.
+- **Amended by DD-267 (v2-250):** the RAR repository refresh went with the RAR source (DD-267); a re-run
+  deletes that source file before stage 1's refresh.
 
 ### DD-252: Manual Caddy addresses for a loopback port, guarded by the application's own login (v2-235)
 
@@ -562,32 +673,6 @@ with its status and the file that holds it.
   needs the Konsol account). Environment variables stay hidden as before (DD-208). Package pages'
   own logs (`master-modul gunluk`, e.g. qBittorrent's temporary password line) are not part of this.
 
-### DD-250: Favourite folders in Files, kept by the root backend (v2-232)
-
-- **Request (user, 2026-10-07):** "klasörlere bir favoriler tanımı yapalım klasör seçilince alta
-  sabitlediğimiz kartta favoriye ekle seçeneği koyalım. favoriye eklenen klasör sağ menüde root yolunun
-  üstünde kısayol olarak belirsin"; after a mock-up: "klasör görselinin olduğu yere alalım favoriye ekle
-  butonunu, hatta sadece simge olarak yapalım. içi boş ve dolu simge ama temaya uygun renkte olsun".
-- **Control:** a star button on the details' folder picture (`.fx-star`, `aria-pressed`, the accent colour;
-  hollow adds, filled removes), for a selected folder and for the open folder when nothing is selected.
-  Not on a tree's root (Sunucu and Sistem (/) are already places) and not for files or a multi-selection.
-- **Places column:** the favourites come first under "Favoriler", above both trees' rows (so above the
-  root path in either reading of the request), then a thin separator. Each row: a filled star, the
-  folder's name, its parent ("/srv/media", "root · /etc") and a × shown on hover or focus. The automatic
-  top-folder list of DD-237 stays as it was.
-- **Storage:** on the server, not in the browser, so every device shows the same list:
-  `KONSOL_AUTH_DIR/favoriler.json` beside the overview layout (DD-206), through `/api/konsol/favoriler`
-  with add/remove operations instead of whole-list writes (two open tabs cannot undo each other). The
-  store reads only objects, so the file is `{"favoriler": [...]}`. 20 entries, 1024-byte paths: well
-  inside the store's 64 KiB read limit.
-- **Channels:** the system view exists only on the tailnet (DD-235), so its favourites are neither listed
-  to nor changed from the internet channel; a save from there keeps them.
-- **Not done:** no check that the folder still exists (a missing one answers "bulunamadı" and keeps its
-  ×), no renaming of a favourite when its folder is renamed or moved, no reordering.
-- **Amended (v2-233):** "favori simgesini klasör adının bitişine taşıyalım alt menüde": the star left the
-  picture and follows the name inside the title (`h2.fx-titled`: the name in `.fx-title-nm`, cut with an
-  ellipsis on a desktop-width screen, then the star), a plain accent-coloured icon button without a badge.
-
 ### DD-249: Files text editor (CodeMirror 6); saves as root in "Sistem (/)" (v2-231)
 
 - **Request (user, 2026-10-07):** "dosyalar menüsünde sunucu erişimi tam erişim olarak ayarlayalım.
@@ -626,6 +711,10 @@ with its status and the file that holds it.
   undo; Günlük records `duzenle`).
 - **Also fixed:** the text view passed `null` to `replaceChildren` when the file was small, which
   printed a "null" line.
+- **Amended by DD-267 (v2-250):** the editor is opened by Dosyalar' editor sheet in Sunucu klasörleri
+  and Sistem dosyaları, which loads the bundle from `/duzenleyici.js` on the first file opened; its
+  colours come from the new interface's `dosyalar.css` (`tools/konsol-ui`). The bundle and the save
+  rules are unchanged.
 
 ### DD-248: "Sistem (/)" walks folder sizes on local disks, one device at a time (v2-230)
 
@@ -662,6 +751,8 @@ with its status and the file that holds it.
 - **Rendering:** `dirFacts` gives the tile's `.fx-sub`, its `aria-label` and the details' info line the
   same parts. The size is left out when it is `null` or the folder is empty: no "—" and no "0 B". Each
   part is a `nowrap` span, so a narrow tile wraps only at the "·".
+- **Amended by DD-267 (v2-250):** the tiles are gone; Sunucu klasörleri and Depolama show each folder's
+  item count and size from the same `/api/list` fields.
 
 ### DD-246: Reboot from Konsol; Sağlık in two rows; the settings guard timer is on demand (v2-228)
 
@@ -679,93 +770,9 @@ with its status and the file that holds it.
   needs the typed word "onayla".
 - **Sağlık:** the checks split over `ceil(n/2)` columns (two to six), each detail wrapping under its
   name (at most three lines).
-
-### DD-245: Update control as an icon; Ayarlar → Sistem in three cards (v2-227)
-
-- **Request (user, 2026-10-07):** "güncelle yazısını güncelleme simgesine dönüştürelim", then after
-  mock-ups: no words when up to date or when a new version exists, "güncelleme yapılırken aşamayı
-  görebilelim"; the health card and "Denetle ve onar" side by side were rejected because the step list
-  is long: "panel ve sunucu bilgilerini tek kart ... üstte", Sağlık in one row, "uyumlu bir 3 kart";
-  "yerleşik altyapı" removed.
-- **Update control:** a 34 px round button with the update icon. Up to date or check failed (warn
-  colour): plain; new version: accent with a red dot (`::after`); running: the spinning icon with
-  "Güncelleniyor" and the stage. Outside a run there is no visible text and no tooltip; each state's
-  sentence is the `aria-label` (version, failure reason, "yalnız Tailscale adresinden").
-- **Sistem:** `.server-card` (eight facts in four columns; "Son okuma" is already in the page header)
-  ending with the Konsol account (`#konsol-account`, no separate card); `.health-strip` (title, state and
-  last check on the left, each check as a coloured dot, name and one-line detail, `auto-fit` columns
-  that wrap on narrow screens); `.repair-card` (DD-239's box, steps in three columns, two below
-  1100 px, one on phones). The "Yerleşik altyapı" text card is removed.
-
-### DD-244: Files details as one info line with word actions; a "Seç" picking mode (v2-226)
-
-- **Request (user, 2026-10-07):** in the bottom details, the item's description and address "klasör ya da
-  dosya simgesi altında tek satır", the actions as words instead of icons ("yeniden adlandır, arşiv
-  oluştur, sil gibi"); then "çoklu seçici şeklinde bir seç fonksiyonu ... yükle düğmesi yanında";
-  mock-ups were approved.
-- **Info line:** under the name one line (`.fx-line`, its full text as the tooltip): type, count or size,
-  location, last change, the writing package for a reserved folder and, for a shared folder, its open
-  connections with their remaining days ("Paylaşılıyor: Tailscale (6 gün)", else "Paylaşım: <state>")
-  or "Paylaşılamaz". The facts list and the share chips (DD-237/243) are gone from the panel; the
-  account, addresses and cards stay on Paylaşımlar.
-- **Actions:** words; on a desktop-width screen the icon is hidden and the buttons wrap to at most two
-  rows on the right (`fit-content(68%)`, smaller type below 1280 px), narrower screens keep icon and
-  word. "Adlandır" became "Yeniden adlandır"; a shared folder's Yönet/Kaldır became the actions
-  "Paylaşımı yönet"/"Paylaşımı kaldır". Trash stays "Çöpe at" (a delete in the /srv view goes to the
-  trash); "Sistem (/)" keeps "Kalıcı sil".
-- **Seç:** a toggle (`#fs-pick`, `aria-pressed`) beside Yükle. While on, each item shows a round check
-  (drawn with CSS borders: the page's CSP allows no `data:` images), a click on an item or a list row's
-  name adds or removes it and never opens it (Shift still selects a range), and "Tümünü seç" is a detail
-  action, so the bar never changes width. Seç again, Esc, a click on empty space, "Seçimi bırak" or
-  opening another folder ends it and clears the selection.
-
-### DD-243: Files as three separate panels; a one-line details panel; no count in the path bar (v2-225)
-
-- **Request (user, 2026-10-07):** "sağda bulunan favoriler ve root panelini yandaki tablodan ayıralım
-  arada ufak bir boşluk olsun ve tablo tamamen bağımsız hale gelsin", the fixed details panel "%50
-  oranında" lower, separated from the contents by a small gap as its own fixed area, and the item count
-  and total size beside the path removed because they resized the screen; a mock-up was approved.
-- **Panels (≥ 1101 px):** `.fx` is no longer a glass window but a grid with a 12 px gap; the contents
-  (`#fs-body`), the details (`#fs-detail`, 10 px under them) and the places column (`.fx-side`) each
-  have their own glass border, radius and shadow. Narrower screens keep the single stacked window.
-- **Details (≥ 1101 px):** 82 px, half of DD-237's 164 px, never scrolling: a small icon with the name
-  and type/size, a middle column (`.fx-mid`) with the facts on one line or, for a shared folder, the
-  location/date and the one-line share, and the actions as 36 px round icon buttons. Each action keeps
-  its name as `aria-label` and tooltip (the word is a `.fx-act-label` span, visible on narrow screens).
-  "Seçimi bırak" became the last action (it was a link under the buttons). The share line's chips may
-  be cut at the panel's edge; Yönet and Kaldır sit outside the chips and are never cut. A shared
-  folder's "Paylaşım" fact is dropped; its share line says the same.
-- **Path bar:** `#fs-meta` ("N öge · size", "N sonuç", "Yükleniyor…") is gone; it changed the bar's
-  width at every folder and search. With nothing selected the details name the open folder's count and
-  size (filtered while searching); loading shows the existing progress line.
-
-### DD-242: Home widgets in order — Sunucu and Hız side by side, Ağ a 2×1 row below; arrows reorder them (v2-224)
-
-- **Request (user, 2026-10-07):** after mock-ups of a 1×2 network card with direction-aware arrows and
-  a free-placement alternative: "1x1 widgetları yan yana alalım önce sunucu sonra hız, ağ kartını 1 kare
-  yükseklik 2 kare genişlik olarak yatay uzun olarak altına koyalım oklarla değişim daha mantıklı olsun
-  sıralı dursunlar".
-- **Block:** the widgets sit in one `.widget-block` over the first two tile columns (the tiles' column
-  template is kept, so a 1×1 card is exactly one tile wide). The block fills its two cells per row in
-  order: a 1×1 card takes a cell, the 2×1 "Ağ" card a whole row. Phones have two columns, so the block
-  looks the same there. Rows are one `--w-row` (150 px) tall; nothing spans two rows any more.
-- **Order:** the order of the saved `widgetlar` list, used only when it names every widget; records
-  written before this change list some or none (v2-205…209 wrote `[ag]` or `[ag, sunucu]`) and keep
-  the default order (Sunucu, Hız, Ağ). The backend is unchanged: it already keeps the list's order.
-- **Arrows:** every widget has ◀ ▶ ("öne taşı"/"geriye taşı") beside Gizle in an opaque strip at the
-  card's bottom edge, like the tiles' arrows. A step moves the widget one place in the order; the order
-  is kept as the block shows it (rows top to bottom, cells left to right), and a step that the block would
-  show unchanged (a 2×1 card has no room beside a 1×1 card) goes on until the arrangement changes. A
-  button that cannot change anything is disabled: from the default, Sunucu ◀, Hız ▶ and Ağ ▶ are
-  disabled and Ağ ◀ takes Ağ above both 1×1 cards in one press. No widget dragging; tiles keep theirs.
-- **Ağ (2×1):** one line per application; the title and subtitle share a line so four applications fit
-  without scrolling (more scroll inside the card). The column headings stay for screen readers but are
-  visually hidden; each total carries the Hız card's download/upload glyph.
-- **Narrow cards:** below ~162 px of strip the Gizle/Göster word is dropped (the eye stays, the word
-  is the tooltip and the accessible name keeps the widget's name), so the strip never overflows.
-- **Rejected:** direction-aware arrows on a 1×2 card (↓ ↑ ← depending on where the widget would land)
-  and free placement in empty cells, which would need a new stored position and fall back to order on
-  phones anyway.
+- **Amended by DD-267 (v2-250):** the reboot is Sistem → Sunucu's "Yeniden başlat" (the typed word,
+  tailnet only; the page waits and loads itself again, DD-266); the Sağlık card layout went with the old
+  interface. The route and the on-demand timer are unchanged.
 
 ### DD-241: `master-onar` covers what the installer sets up; Sağlık shows the last run and a log (v2-223)
 
@@ -794,6 +801,8 @@ with its status and the file that holds it.
   date and time and whether it came from SSH.
 - `state.env` gains `CONFIG_FILE`, `SYSCTL_FORWARD_FILE`, `SYSCTL_NETBUF_FILE`, `SYSCTL_TCP_FILE` and
   `NET_BUF_FLOOR_BYTES` for these steps.
+- **Amended by DD-267 (v2-250):** the log opens from Sistem → Sağlık as a sheet with 72 saat / 1 hafta
+  (DD-266); the route and the steps are unchanged.
 
 ### DD-240: The address refresh also runs nightly between 03:00 and 04:00 (v2-222)
 
@@ -830,6 +839,8 @@ with its status and the file that holds it.
 - **Trade-off:** a Tailscale address change (rare: the node re-registered) is no longer picked up
   within 5 minutes; Konsol stays unreachable on the tailnet until a repair over SSH. A flushed rule
   set stays open for up to an hour. In return nothing polls every 5 minutes.
+- **Amended by DD-267 (v2-250):** "Denetle ve onar" is in Sistem → Sağlık and on Genel Bakış's problem
+  list (DD-261, DD-266); the report, the unit and the tailnet-only start are unchanged.
 
 ### DD-238: "Sistem (/)" without read-only roots or the root warning strip (v2-220)
 
@@ -847,58 +858,6 @@ with its status and the file that holds it.
   locks) or `/dev` (device nodes) can stop services or devices until they recreate them or the host
   reboots; a mount point or anything with a mount below it is still never deleted, and tailnet-only
   access, the separate root unit and the typed confirmation are unchanged.
-
-### DD-237: Files details in a fixed panel under the contents; the folder in the address (v2-219)
-
-*(Amended by DD-243: three separate panels, an 82 px one-line details panel, no count in the path bar.)*
-
-- **Request (user, 2026-10-07):** "klasör yolunu ekleyelim" and move the area under Favoriler that opens
-  the details and sharing "alta … uzun listelerde karmaşık görülmekte"; mock-up C (a fixed bottom panel,
-  a one-line share, a short Favoriler) was approved over B (details pinned at the column's bottom).
-- **Panel:** `#fs-detail` moved from the right column into `.fx-main`, under the contents. From 1101 px it
-  is a 164 px panel in three columns (icon/name, facts, actions in a 3-wide grid; a share line under
-  them). Its height never changes with the selection, so selecting never resizes the contents; what
-  does not fit scrolls in the panel. Narrow screens keep it in the flow under the contents.
-- **Share line:** `sharesPage.summary()` shows each connection's state and remaining days, the account,
-  Yönet and Kaldır. Addresses, copy buttons, permissions and expiry choices stay on Paylaşımlar and in
-  Yönet; the access note ("Paylaşmadan önce erişim sınırını…") stays on Paylaşımlar.
-- **Favoriler:** the first 8 top folders, plus the one you are in, and "Tümünü göster (N)" /
-  "Daha az göster" (not remembered). Konumlar and the disk no longer move out of view.
-- **Address:** `#/dosyalar/klasor/<parts>` (`/srv`) and `#/dosyalar/sistem/<parts>`, each part
-  URI-encoded. Opening a folder pushes a history entry (`pushState`, no reload, no route run); the
-  browser's back/forward and a typed address open the folder in place with its scroll; a reload or a
-  bookmark opens it. Bare `#/dosyalar` keeps the folder on screen (the sidebar link) and is rewritten
-  with `replaceState`. An undecodable address, `.`/`..` or a part with `/` opens the tree's root; the
-  backends still check every path. A failed open rewrites the address back.
-
-### DD-236: Files navigates like a file manager: a fixed window, only the contents change (v2-218)
-
-- **Request (user, 2026-10-07):** "her klasör tıklamada sayfa yeniden oluşturuyor gibi … pencere ve menü
-  davranışını sabit olarak sabitleyelim. klasör tıklamada sadece klasör layout kısmı güncellensin, gerçek
-  bir dosya yöneticisi davranışını taklit edelim", after a technical review was approved.
-- **Cause:** opening a folder set the listing to null and rebuilt the whole window twice (toolbar,
-  search, archive strip, places column, detail), showed "Yükleniyor…" in between and scrolled the
-  whole page. v2-216 (held height) and v2-217 (`scrollbar-gutter`) only hid the symptoms.
-- **Frame built once:** `renderFs()` builds the toolbar, archive strip and contents box once per tree
-  (`/srv` or "Sistem (/)") and afterwards repaints in place: `paintBar()` updates back/forward/up, the
-  crumbs, the search text, the view switch and the count; the places column is rebuilt only when its
-  entries change, otherwise only the mark moves. The v2-216 held height is gone.
-- **Loading:** the listing on screen stays, inert and dimmed after 120 ms, with a thin bar under the
-  toolbar; the new path shows at once. Answers for a folder no longer wanted are dropped (token). A
-  folder that cannot be opened leaves you where you were (it used to jump to the root).
-- **History and cache:** back/forward (buttons, Alt+←/→) within a tree; each folder's scroll is kept
-  and restored on back/forward, a new folder starts at its top. The last 20 listings are kept for a
-  minute: a cached folder shows at once and is read again behind the scenes; any change (refresh
-  after an operation) drops the cache. Switching tree clears history and cache use.
-- **Fixed window:** from 1101 px the window has the viewport's height (`fitFs`, CSS `--fx-h`, at
-  least 460 px) and the page does not scroll; the contents, the places/detail column and the trash
-  or share lists scroll inside it. Phones and narrow windows keep the page scroll.
-- **Quiet polling:** an unchanged share list repaints nothing; the 10-second state poll only touches
-  counts. Tiles keep their DOM node, focus and hover.
-- **Keyboard (contents focused):** arrows move the selection (Shift extends), Enter or Ctrl/⌘+↓
-  opens, Backspace or Ctrl/⌘+↑ goes up, Ctrl/⌘+A selects all that may be selected.
-- **Not done:** the folder path is not in the browser address (a reload starts at the tree's root);
-  that needs the router to treat a Files sub-path as navigation, a separate step.
 
 ### DD-235: Files' "Sistem (/)" view: the whole server as root, tailnet only (v2-214)
 
@@ -940,6 +899,9 @@ with its status and the file that holds it.
   `NoNewPrivileges`, `RestrictSUIDSGID`, `IPAddressDeny=any` and no listening port.
 - **Not done:** no text editor, no copy, no chmod/chown, no archive jobs in the root view.
   *(Amended by DD-249: a text editor in both views.)*
+- **Amended by DD-267 (v2-250):** the view is Dosyalar → Sistem dosyaları (`#/dosyalar?sekme=sistem`),
+  shown on the tailnet only, beside Sunucu klasörleri for `/srv`; a delete still needs the item's own
+  name (or `onayla` for several). The unit, the socket and the channel checks are unchanged.
 
 ### DD-233: Konsol update button, pinned to a GitHub commit (v2-212)
 
@@ -970,79 +932,9 @@ with its status and the file that holds it.
   commit from the terminal), no authenticated GitHub access.
 - **Trade-off:** convenience against the TTY rule; kept small by the pin, the device check and the
   refusals. A server below v2-212 needs one terminal run to get the button.
-
-### DD-232: Finder-style Files window and a two-card sidebar (v2-211)
-
-- **Request (user, 2026-10-05):** Files like Finder — icons on the left, a "Dosyalar" menu on the
-  right; "alt menüdeki özellikleri … sağdaki menüye taşıyalım ve alt bilgi alanını kaldıralım";
-  a multi-selection shown as "tek simge … iki dosya biçiminde"; the sidebar's server resources
-  as a separate card under the navigation; "nrm menüsünü değiştirmeyelim" otherwise. Approved
-  from mock-ups.
-- **Window:** one glass window: contents left, a right column with Favoriler (Sunucu = the files
-  root, then the root's folders), Konumlar (Paylaşımlar, Çöp with counts), the detail area and the
-  disk. The Files/Paylaşımlar/Çöp tabs and the bottom selection dock (DD-170's dock) are gone;
-  every file action lives in the detail area. Under 1100 px the column becomes a strip of places
-  above the contents and the detail follows the contents, so share cards and the trash table keep
-  the full width; the trash table follows the window's own width (container query).
-- **Icons:** folders and file types are inline SVG drawn by `konsol.js` (extension tag, colour per
-  kind), no image assets. A shared folder carries a small share badge.
-- **Selection:** a click selects one item, a second click (or a double click) opens it once
-  (v2-215: a double click is two clicks, so the click after the opening one is ignored and there
-  is no separate double-click handler, which opened a folder twice and failed as "bulunamadı");
-  Ctrl/Cmd adds, Shift selects a range, Escape or a click on empty space clears. The detail shows the open
-  folder (nothing selected), one item with only the actions that apply, or "N öge seçili" with one
-  two-document icon and a count badge and six fixed action slots (Arşivi aç and Paylaş disabled).
-  Folders a package writes into stay unselectable in the list view, as before.
-- **List view:** the previous table stays one click away (▦/☰ in the bar). The choice is the only
-  value Files keeps in `localStorage` (`konsol-files-view`): a per-browser convenience, no
-  secret, and the page works without it (defaults to icons).
-- **Sidebar:** `.side` is a transparent column holding two glass cards, `.side-main` (brand,
-  navigation, sign-out) and `.resources` (CPU/RAM/disk); nothing else in it changed.
-
-### DD-231: Home widgets in 1×1 and 2×2 cells; live rates split from application traffic (v2-210)
-
-- **Request (user, 2026-10-05):** remove the network chart, keep the numbers; show the overall
-  download/upload on one line and the applications below; then, after mock-ups compared on the page
-  with four applications: "1x1 sunucu ve anlık ağ kartı, 2x2 uygulama kartı", the 1×1 cards
-  stacked to the left of the 2×2 card, the version inside the server card, and
-  "hız kartına indirme, yükleme yazıları yerine download-upload simgesi kullanalım".
-- **Cells:** `--w-row` (150 px) is one row; `.widgets` keeps the tiles' columns and two rows and
-  flows by column, so `sunucu` and `hiz` (1×1) stack in the first column and `ag` (2×2) spans the
-  next two columns and both rows. Phones (two columns) flow by row: the two 1×1 cards share a row
-  under or above the 2×2 card. Every widget clips to its cell; "Ağ" scrolls its table. Edit
-  tools overlay the card instead of growing it.
-  - **Amended by DD-242:** Sunucu and Hız share the first row and "Ağ" is a 2×1 row below them, in
-    an order the operator changes with ◀ ▶.
-- **Hız:** the server's WAN rates with the existing download/upload glyphs in the legend colours;
-  each row keeps "İndirme"/"Yükleme" as its accessible name and tooltip. The chart and its code are
-  gone (`/api/konsol/ag` still returns its points; nothing reads them).
-- **Sunucu:** short labels (TS, WAN, Açık, Sürüm) and the version's last part (`v2-210`, full
-  string as the tooltip); the access channel is the subtitle ("Tailscale ile bağlı").
-- **Polling:** the network is read while "Hız" or "Ağ" is shown (or in edit mode).
-
-### DD-230: Home widgets on the tiles' grid, a "Sunucu" widget and uniform Store cards (v2-208)
-
-- **Request (user, 2026-10-05):** "durdur/başla yerine Dur, Başla yazalım ve puntoyu biraz
-  büyütelim", "ana sayfada sunucu kaynakları en alta alalım. ve ip bilgilerinin olduğu bloğu widget
-  olarak ağ widget yanına alalım", "caddy sayfasındaki yerel alan adı kartını Adresler ve erişim
-  tablosu ile hizalı yapalım", App Store cards narrower and fixed as one standard layout, and the
-  network widget narrower, balanced, "altta bulunan iki uygulamanın yatay toplamı ile hizalayalım".
-- **One grid:** `.widgets`, `.tiles` and `.store-list` share
-  `repeat(auto-fill,minmax(138px,1fr))` (two columns at ≤480 px). A widget spans two columns, so
-  the network card is exactly two tiles wide at every width, and Store cards are the same width as
-  home tiles (supersedes DD-213's six-slot widget area and the 168 px Store minimum).
-- **Sunucu widget:** the sidebar's address block (Tailscale IP, WAN IP, uptime, version, access
-  channel) is a second widget (`sunucu`, hideable like `ag`); its values come from the same
-  resource/system reads and are painted wherever the widget is shown. The sidebar keeps the
-  sign-out button (public channel only) and ends with the resources. The layout backend
-  already accepts any widget id; a saved layout without `sunucu` shows it.
-- **Network card at two tiles (~270 px content):** its halves stay side by side from 240 px of
-  content with a 10 px gutter. Application totals become two-line rows (name across, then
-  download and upload with the legend's colour dots) in the same semantic table, so names fit.
-- **Tile service word:** "Dur"/"Başla" at 13 px; the accessible name and tooltip keep the full
-  verb ("qBittorrent: Durdur").
-- **Caddy:** the local-domain card is full width like "Adresler ve erişim"; its input row stays
-  at most 620 px wide.
+- **Amended by DD-267 (v2-250):** the button is in Sistem → Güncellemeler (DD-266), which follows the
+  run in the activity list and reloads the page when it ends well; the check, the pin and the unattended
+  re-run are unchanged.
 
 ### DD-229: Overview controls, WireGuard as a whole, and a host closed to containers (v2-207)
 
@@ -1083,6 +975,10 @@ with its status and the file that holds it.
   comparison) covers the new chain, and container units still start only behind it (DD-223).
   The namespace test shows the old guard let a container reach a host listener on the bridge
   gateway; the new one refuses every host address.
+- **Amended by DD-267 (v2-250):** the overview controls (the fixed Düzenle, the tiles' action words and
+  icons) and Files' list view went with the old interface. WireGuard's stop as a whole
+  (`PAKET_DURDURULABILIR=1`, `WG_STOPPED_FILE`) and the host closed to containers (the nft `input`
+  chain) are unchanged.
 
 ### DD-228: Install from the public repository with one curl line on the server (v2-206)
 
@@ -1143,6 +1039,9 @@ with its status and the file that holds it.
     account.
   - Images that need root or a port below 1024 may not start under it. The UI says so.
   - qBittorrent's own LSIO image is out of scope.
+- **Amended by DD-267 (v2-250):** the account choice ("Çalıştıran hesap") is in the new interface's
+  container forms: creating from an image, adoption and the definition editor on the application's
+  Ayarlar tab (DD-266).
 
 ### DD-226: A Konsol container's bind sources are pinned at every start (v2-204)
 
@@ -1209,6 +1108,8 @@ with its status and the file that holds it.
     service.
 - **Cost:** the next installer run restarts Files (a running archive job is marked interrupted)
   and WebDAV (open transfers are cut) once.
+- **Amended by DD-267 (v2-250):** `.arsiv` left with the archive jobs: WebDAV's one `InaccessiblePaths=`
+  line lists the trash, `-.pay` and `PRIVATE_STATE_ROOT`, and no unrar child runs.
 
 ### DD-224: Containers may reach the internet, not private or tailnet destinations (v2-202)
 
@@ -1346,6 +1247,8 @@ with its status and the file that holds it.
 - **Limits:** existing peer connections drop with the restart; trackers and the DHT learn the new port
   on the next announce. qBittorrent's own listening-port option is overwritten by `TORRENTING_PORT` at
   every start, so the port is changed here, not in its UI.
+- **Amended by DD-267 (v2-250):** the peer port is changed in the adapter card on qBittorrent's Ayarlar
+  tab (DD-266) instead of the Podman page; the transaction is unchanged.
 
 ### DD-220: Removing qBittorrent with its data keeps Konsol's port and image choice (v2-198)
 
@@ -1453,27 +1356,6 @@ with its status and the file that holds it.
   firewall failed. The package Quadlet now also checks the guard in `ExecStartPre` and retries
   every 10 s until it is in place.
 
-### DD-216: Applications open from Ana Menü only; the container page is named Podman (v2-194)
-
-- **Request (user, 2026-10-04):** remove the sidebar's "Kurulu uygulamalar" group: WireGuard and
-  qBittorrent must not appear in the sidebar after installation; an application is opened from its
-  Ana Menü icon, and a package that gets a home icon gets no sidebar hook. Same request: rename the
-  Konteynerler page in the sidebar to Podman.
-- **Navigation:** every installed package already has a home tile (DD-212), whose link opens the
-  native interface while the app runs and its Konsol page otherwise (DD-210), and whose actions hold
-  start/stop, settings and logs. The sidebar entry only duplicated that link, so the shell builds no
-  application link at all: `paintNav()`, the `installed-label` span and its styles are gone. Package
-  pages are unchanged (DD-200): created from `konsol.json`, reached at `#/<rota>` from the tile, the
-  App Store "Aç" and bookmarks. While one is open, Ana Menü stays marked as the current section.
-- **Podman page:** the sidebar entry, page title and the detail page's way back read "Podman"; the
-  list's eyebrow says "Konteynerler · bu sunucu" and the resource tab keeps "Konteynerler". The route
-  stays `#/konteynerler`, so bookmarks and the Settings redirect keep working. The installer summary
-  points to "Konsol → Podman".
-- **Cold load (fix):** an App Store row's name and icon come from the module catalogue. When the
-  container list answered first, the row showed the internal package id ("torrent") until the next
-  ten-second refresh. The page now repaints when the catalogue arrives (no extra list read), and
-  before that it shows the container's own name, never the package id.
-
 ### DD-215: The Podman page shows the ports a host-network container listens on (v2-194)
 
 - **Request (user, 2026-10-04):** the Access column showed only "Sunucu ağı (host)" for qBittorrent;
@@ -1497,6 +1379,8 @@ with its status and the file that holds it.
 - **Not done:** no firewall evaluation, no process names, no per-port labels from packages.
 - **Amended (v2-195, DD-217):** qBittorrent left the host network; the reader remains for any other
   host-network container.
+- **Amended by DD-267 (v2-250):** the listening sockets are shown in the container details on the
+  application's page (DD-266).
 
 ### DD-214: Konsol checks image updates, the operator applies them; row controls before the name (v2-193)
 
@@ -1534,32 +1418,9 @@ with its status and the file that holds it.
   "Güncelleme var" chip when present, remove.
 - **Not done:** no update for external or Compose/pod containers, no image signature verification, no
   automatic or scheduled update, no rollback after a successful update other than updating again.
-
-### DD-213: Compact Ana Menü, five-second refresh and direct container actions (v2-192)
-
-- **Request (2026-10-04):** refine the installed v191 presentation without changing
-  the underlying service configuration or control authority.
-- **Space:** six desktop widget slots; network spans two. At narrower widths the grid
-  becomes four, then two slots. The network chart and borderless totals table retain
-  fixed, equal-height areas and internal scrolling. Saved network widths normalize
-  to two; visibility and application order keep the existing layout schema.
-- **Applications:** home cards are approximately 16% narrower at desktop sizes, with
-  the same 193 px normal height and 44 px action targets. Bare icons are ordered
-  start/stop → settings → logs; unsupported slots stay blank. Store cards show no
-  subtitle; full descriptions remain in Details.
-- **Header and updates:** Ana Menü labels the sidebar entry; the compatible route
-  remains `#/genel`. Clock/date replace its heading and no longer appear in the
-  sidebar. Home has one five-second resources/modules/network tick, no manual Refresh
-  and no overlapping ten-second home tick. Other pages retain ten-second polling;
-  hidden tabs pause periodic reads and active installation progress keeps its own poll.
-- **Containers:** name only, status/resources/access and three icon controls ordered
-  start/stop → edit → remove. Remove the owner column and overflow menu from the list.
-  Ownership still controls permissions, unsupported actions remain disabled, and
-  details retain image information and additional operations. Existing confirmation,
-  package lifecycle, stopped-save behavior and data-retention semantics are unchanged.
-- **Scope:** frontend presentation only; cumulative traffic sources, authentication,
-  firewall and backend APIs are unchanged. Local browser and source checks are recorded
-  in `SESSION.md`; the portable installer is exported in the repo, not deployed.
+- **Amended by DD-267 (v2-250):** the Podman page's row controls are gone. The check and the approved
+  update are the application page's "Güncellemeleri denetle" and "İmajı güncelle" (DD-266), and
+  Uygulamalar lists the update state (DD-261); the check, its cache and the apply path are unchanged.
 
 ### DD-212: Installed application home tiles and one fixed network widget (v2-191)
 
@@ -1601,6 +1462,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   Per the user's clarified workflow, every version change rebuilds the root and
   `Data/app` installers for the version commit, without a Desktop copy or separate
   snapshot. Local validation is recorded in `SESSION.md`; no live acceptance is claimed.
+- **Amended by DD-267 (v2-250):** the home tiles, their action slots, the sidebar context and the layout
+  went with the old interface. The measurement meaning holds for Genel Bakış's Ağ card: the
+  applications' figures are cumulative totals in bytes; only the server's rates are live speeds.
 
 ### DD-211: Main-sidebar container management with explicit ownership (v2-190)
 
@@ -1660,6 +1524,11 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
 - **Amended (v2-201, DD-223):** generated units no longer carry `Requires=master-firewall.service`,
   so a firewall restart leaves running containers alone. Their `ExecStartPre` only checks the guard
   that the locked writers apply.
+- **Amended by DD-267 (v2-250):** the main-sidebar Podman page is gone. A container's lifecycle,
+  definition editor, log and image update are on its application's page in Uygulamalar, creating one and
+  adopting one are Uygulamalar' add flows, and images, volumes and networks are Gelişmiş → Podman
+  (DD-266). Ownership, the brokered writes, persistence, networking and the resource rules above are
+  unchanged.
 
 ### DD-210: App Store install form, direct app launch and the tile action row (v2-187…v2-189)
 
@@ -1737,6 +1606,11 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   by then instead of pulling it back to the tile. Edit mode renders the
   tiles exactly as before (no row, no link). A poll that redraws the tiles keeps keyboard focus on the same
   tile part (`data-act`), and closing the settings dialog returns focus to Ayarlar.
+- **Amended by DD-267 (v2-250):** the tiles, their action row, the sidebar launch, App Store's "Aç" and
+  the shared-dialog rules went with the old interface; launching and the actions are Uygulamalar' and
+  the application page's (DD-261). The install form (`konsol.json` `form`, `PAKET_KUR_AYAR`, the private
+  seed) and a stopped package's own API stay: the catalogue in Uygulamalar installs through the same
+  `module_install` and the application's Ayarlar tab edits the form (DD-266).
 
 ### DD-209: qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network (v2-186)
 
@@ -1849,6 +1723,11 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   package's own bridge (DD-217) run with Netavark-owned NAT, a project-owned `inet` forward
   guard and a MASTER-INPUT exception for each bridge's own DNS. The project never edits
   Netavark's or Tailscale's rules.
+- **Amended by DD-267 (v2-250):** the read-only Settings tab, the Podman page that followed it and
+  `console/konteynerler.js` are gone. A container's state, mounts, ports and log are on its
+  application's page in Uygulamalar, Podman's images, volumes and networks in Gelişmiş → Podman
+  (DD-266); the read routes and their safety rules are unchanged. An old `#/ayarlar/konteynerler/<name>`
+  address opens the container's application page.
 
 ### DD-207: A package's backend write paths exist before the backend starts (v2-184)
 
@@ -1931,6 +1810,10 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   Ayarlar → Sistem.
 - **Not done:** widget reordering, per-device layouts, all-time application totals, per-peer or
   per-network breakdown in the card.
+- **Amended by DD-267 (v2-250):** the edit mode, the server-side layout (`/api/konsol/duzen`; a re-run
+  deletes `duzen.json`) and the old home cards went with the old interface. The network card's data
+  stays: the WAN sampler, `GET /api/konsol/ag` (in the route table since DD-261) and the packages'
+  `PAKET_TRAFIK` modules feed Genel Bakış's Ağ card, read every 5 s while it is shown.
 
 ### DD-205: No sign-in on the tailnet; the account is the public name's credential (v2-181)
 
@@ -1973,51 +1856,6 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   records them as `hesap-kur` and `parola-degis` with the device's address.
 - **Not done:** no per-device identity on the tailnet (`tailscale whois`), no roles, no
   second factor for the public name, no account deletion in the UI.
-
-### DD-204: CasaOS-inspired skin and an overview page for Konsol (v2-178)
-
-- **Scope (user, 2026-10-02: "casaos yapısına internetten bak … panel yapısını tema olarak
-  casaos temasına uydurabilir miyiz", then "tasarım çok güzel olmuş uygulayalım" on the
-  frozen mockup `docs/design/konsol-casa-v01.html`):** Konsol takes the look of CasaOS — a
-  wallpaper behind translucent, blurred ("glass") surfaces, rounded application tiles with
-  big tinted icons, an overview with widgets — while keeping its own navigation model.
-  CasaOS (studied from casaos.zimaspace.com, the `CasaOS-UI` Vue source and its published
-  screenshots; the public demo needs a login the assistant does not enter) is a single
-  launcher page: a top bar with account/settings/terminal menus, a widget column, a search
-  box and an icon grid; Files and the App Store open as modals. Konsol has deep pages (five
-  Settings tabs, package pages), so the sidebar stays and the launcher idea becomes a new
-  landing page. This is option C of the analysis: A (theme) plus tiles and an overview.
-- **Theme (CSS only, `panel.css`).** The Model A override sheet now carries the palette
-  (blue-teal accent, blue-grey neutrals, light and dark), the glass tokens (`--glass`,
-  `--glass-2`, `--glass-line`, `--glass-shadow`, `--blur`, `--radius`) and the wallpaper
-  colours (`--sky1/2`, `--m1…4`). `index.html` paints the wallpaper with a fixed `.wall`
-  (gradient + inline SVG ridges, `fill="url(#…)"` as an attribute) behind a transparent body;
-  no external asset, so the CSP (`img-src 'self'`, `style-src 'self'`) is untouched. Sidebar,
-  cards, tables, dialogs, rails and store entries are glass; buttons are pills.
-  `prefers-reduced-transparency` and engines without `backdrop-filter` get opaque surfaces
-  and no wallpaper. The Files panel is translucent without blur on purpose: a
-  `backdrop-filter` there would become the containing block of the fixed selection dock
-  (found by `files-ui.cjs`). Eyebrows stay untransformed (Model A).
-- **Overview (`genel`, the landing page).** A shell route like Dosyalar/App Store/Ayarlar:
-  two widgets — clock with host/OS/kernel/uptime, and system status with CPU/RAM rings, a
-  storage pie (used share of the data disk, warn colour from 90 %) and the health checks'
-  pill (v2-178 also had a storage card with the disk bar and a CPU-history sparkline; the
-  user dropped both in v2-179 — the sidebar already carries the figures; v2-182 removed the
-  health-check lines from the card and enlarged the three charts to fill it, the pill alone
-  carries the verdict and Ayarlar → Sistem → Sağlık has the texts) — and the tiles: Dosyalar, every installed application (name,
-  icon and tone from its `konsol.json`, state as text and dot, link to its page), Paylaşımlar,
-  App Store (installed/installable counts) and Ayarlar. Everything comes from the existing
-  endpoints (`kaynaklar`, `saglik`, `/api/state`, `paylasim`, `moduller`); the page computes
-  nothing and polls only while shown. SVG rings and the pie are built from templates like
-  the icons (no namespace URL literal, no inline style). An unknown route opens the overview;
-  DD-160 made Dosyalar the landing page and Model A removed the old overview — this brings a
-  smaller, data-driven one back by the user's choice.
-- **App Store as tiles.** The rows keep their markup, ids, buttons, progress lines and the
-  details panel (`panel-ui.cjs` still drives them); only CSS lays them out as tiles with the
-  same icon shape as the overview. The compact-row height check became a tile check.
-- **Not done, deliberately:** no theme/wallpaper switch in production (the mockup's demo
-  controls were for evaluation; the system colour scheme decides), no operator wallpaper
-  upload (needs a backend and storage), no CasaOS artwork or icons.
 
 ### DD-203: Package-declared folders, settings and backend write paths, phase 3 (v2-177)
 
@@ -2139,6 +1977,10 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   The engine's `kaldir` removes the folder for every package (DD-200).
 - **Fresh install only**, like the rest of the store model; an in-place host gets the new
   package files on the next installer run (`master-modul uygula`).
+- **Amended by DD-267 (v2-250):** the package's page (`sayfa.js`/`sayfa.css`) is gone and its hooks
+  place none. qBittorrent's account and download folder are its settings form on the application's
+  Ayarlar tab (`konsol.json` `form` with `oku: /durum` and `yaz: /ayar`, DD-266), and its first-login
+  account is that tab's account card. The worker, `api.py` and the direct apply are unchanged.
 
 ### DD-201: A neutral backend, package-owned settings and self-checking packages, phase 2b (v2-175)
 
@@ -2233,6 +2075,13 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   so the package reads its defaults from state instead of unit environment lines), the
   qBittorrent page and its Settings form, `master-wg`'s port-collision list and the
   launcher's intro text.
+- **Amended by DD-267 (v2-250):** packages ship no page any more: `PAKET_SAYFA`, `sayfa.js`/`sayfa.css`,
+  the `konsol.json` `sayfa` declaration, `CONSOLE_WEB_DIR/uygulama/<id>/` and `window.Konsol.sayfa` are
+  gone, and a re-run deletes the old page folders. The new interface draws a package from its
+  declarations (App Store texts, install and settings forms, account, stop and removal words; DD-266)
+  and loads no package script. The API module behind `/api/uygulama/<id>/*` and the journal templates
+  are unchanged; an absent package's 409 now says to install it from the catalogue in Uygulamalar.
+  Settings → Güvenlik Duvarı's VPN category is the WireGuard tab of Erişim → Güvenlik duvarı (DD-265).
 
 ### DD-199: Publication rows from package declarations, phase 1b (v2-173)
 
@@ -2630,6 +2479,10 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   task's exact v2-164 results and host health. Main reports successful `nrm`
   deployment, exact migration preservation, real HTTPS/Tailscale acceptance with
   byte-identical registry cleanup, and read-only installed UI acceptance.
+- **Amended by DD-267 (v2-250):** Shares is Dosyalar → Paylaşımlar: one card per share holds both
+  connections with these controls. The backend has no `paylasim/durum` route any more (an unknown route,
+  404); the manager still refuses old global-policy fields and its own `pause` action with the
+  refresh-page message.
 
 ### DD-191: Fixed publication table with independent private and public gates (v2-162)
 
@@ -2883,6 +2736,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   and test notes describe current behaviour only.
 - **Consequence:** a host installed with an older version needs a fresh install;
   the installer no longer rewrites its WireGuard registry, settings or shares.
+- **Amended by DD-267 (v2-250):** the archive API's `nested`/`layers` options kept here left with the
+  archive jobs.
 
 ### DD-184: Tailscale and Caddy join unattended upgrades, at night (v2-158)
 
@@ -2901,22 +2756,6 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   a few seconds; the firewall reapplies through `PartOf`) or Caddy; a bad upstream
   release can arrive unattended. Automatic reboot stays off. Tailscale's own
   `--auto-update` was not used, to keep one mechanism and one schedule.
-
-### DD-183: No archive jobs page; results in Günlük, running job as a bar (v2-157)
-
-- **Request:** remove the "Arşiv işleri" tab from Files: if the job states are in
-  the log, a separate page is not needed.
-- **Finding:** the log held only the start, as an opaque job id, and never the
-  result; the page was also the only place for progress and cancel, and
-  starting a job navigated to it.
-- **Decision (user chose "Günlük + ince çubuk"):** the Files backend audits the
-  start (`arsiv-olustur`/`arsiv-ac`, "sources → result name"), the cancel
-  request (`arsiv-iptal`) and, from the job worker, the result (`arsiv-sonuc`,
-  client "-", ok for done/skipped/cancelled, hata for failed/interrupted,
-  including jobs found interrupted at startup). Konsol shows a one-line bar
-  above the Files list only while a job is queued/running, with "İptal et";
-  completion keeps the existing toast and list refresh. The "Sonucu göster"
-  button went with the page. API and private history are unchanged.
 
 ### DD-182: Capped rollback, WAN address change, watchdog resets, damaged history, health card (v2-156)
 
@@ -2950,6 +2789,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   free space/inodes of `/` and SERVER_ROOT against the upload reserve, pending
   or stuck settings change, and a WAN share whose address is gone. No
   notifications and no automatic repair.
+- **Amended by DD-267 (v2-250):** the archive history bullet no longer applies (archive jobs removed).
+  The health card is Sistem → Sağlık and Genel Bakış's problem list (DD-261, DD-266).
 
 ### DD-181: Remember WebDAV logins, idle rollback timer, quieter journal, compressed Konsol (v2-155)
 
@@ -2991,6 +2832,7 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   media is stored, not deflated, in ZIPs.
 - **Not done:** folder-size caching in Files, reusing the WireGuard sampler for
   `/api/wg/state`, building the settings view from one `iptables-save`.
+- **Amended by DD-267 (v2-250):** Konsol's archive jobs, and with them the niced job threads, are gone.
 
 ### DD-180: Private sockets, shared login limits, disk reserve, sandboxed unrar, firewall-first WireGuard (v2-154)
 
@@ -3060,6 +2902,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   reason is reopened by `refresh-tailnet-config` once the check passes.
 - **Not changed:** qBittorrent's own sandbox, the Files backend's loopback TCP
   (uid 1000 already owns its data), HTTP on WAN (DD-179), Konsol identity.
+- **Amended by DD-267 (v2-250):** unrar no longer runs on the server (Konsol's archive jobs were
+  removed); the Files unit keeps this sandbox for the files and requests the browser sends it.
 
 ### DD-179: Per-folder HTTP WAN opt-in with separate admission budgets (v2-153)
 
@@ -6337,29 +6181,6 @@ failure with an early, named one.
   and private modes, marker symlinks, explicit retired-route errors/gates,
   built-in idempotency, current module lifecycle and temporary-login secrecy.
 
-### DD-170: Contextual Files dock and automatic archive extraction (2026-09-28)
-
-- **Decision (v2-143):** keep the address/search bar stable and show selected-file
-  actions in a bottom dock, confined to Files. Reserve scroll space for the last
-  row and wrap controls on mobile. Other pages never retain the dock.
-- One archive vocabulary: creation always ZIP; extraction resolves supported
-  RAR volumes and nested ZIP/RAR automatically. Default destination comes from
-  `DOWNLOADS_SUBDIR` via file state, not the current source or torrent save path.
-  Browse existing directories with the gated file API; failed/stale picker reads
-  cannot select an unverified folder. Submit failures retain the form draft.
-- Hide nested/depth controls and verbose explanations/statistics, not server
-  protections. Keep shared byte/entry/time/depth limits, cancellation, safe paths,
-  private staging and atomic no-replace publication. Automatic depth overflow
-  fails the whole job; explicit legacy depth requests keep their earlier contract.
-- Preserve original archives and per-archive output directories; assembling
-  multipart contents does not mean flattening paths or overwriting same-name data.
-- **Visual follow-up (v2-144):** implement approved alternative B: six equal
-  icon-over-label cells, count and dismiss in a separate header, compact floating
-  surface and a mobile 3×2 grid. Keep ineligible actions disabled in fixed slots
-  so selection changes do not shift targets. Trash uses red ink, not a filled
-  button; global keyboard focus and existing action/confirmation guards remain.
-  No API, archive-worker, permission or sharing behavior changes.
-
 ### DD-169: Compact trash confirmation and inline share controls (2026-09-28)
 
 - **Shares layout superseded by DD-192:** two connection cards replace the
@@ -6384,6 +6205,10 @@ failure with an early, named one.
   confirmed values on failure and avoid polling redraws while a select has focus.
   The existing active WebDAV restart/rollback and stopped-service behavior remain.
   Durations start now, never silently extend during account/permission changes.
+- **Amended by DD-267 (v2-250):** the trash dialog and the share columns described here went with the
+  old interface. Dosyalar' Çöp kutusu asks for the typed word before a permanent delete or emptying, and
+  Paylaşımlar (DD-192, DD-267) keeps the backend rules above: partial saves read omitted fields under
+  the registry's locks, an explicit RW needs its acknowledgement, durations start now.
 
 ### DD-168: Eight-character minimum for service passwords (2026-09-28)
 
@@ -6433,34 +6258,6 @@ failure with an early, named one.
   retains Host/header/origin/module gates and validates IPs before delegation.
   Invalidate Settings' read cache after the attempt. Polling never overwrites
   the open form; failures preserve the draft and stale forms must be reopened.
-
-### DD-166: Bounded multipart and nested RAR in Files (2026-09-28)
-
-- **Need:** downloaded multipart RAR and inner RAR sets must open through the
-  same Files workflow as ZIP, without deleting seeding/source files.
-- **Decision:** install distribution `unrar` + `python3-rarfile` as base
-  dependencies. Full unrar supports solid/RAR3/RAR5/volumes consistently;
-  unrar-free/libarchive is not an equivalent backend. When apt has no candidate,
-  add a dedicated signed Debian non-free or Ubuntu universe/multiverse source,
-  including updates/security and Ubuntu ports for non-x86. Preserve other sources.
-  The package carries the distro's non-free unrar license; no arbitrary binary,
-  pip install or root extraction endpoint is introduced.
-- **Boundary:** the existing unprivileged worker owns all destination writes.
-  Copy descriptor-validated source volumes into bounded private staging, inspect
-  metadata in a resource-limited child, then stream each member using `unrar p`.
-  Never use extractor-controlled output paths. Bound time/output/memory, kill
-  and reap the whole helper process group on cancel/error; reject links, duplicate
-  or ambiguous names, encrypted/invalid archives, missing parts and changed sources.
-  Preserve atomic publication and the existing aggregate ZIP byte/entry/layer limits.
-- **Compatibility:** keep API operation `unzip` for both formats; label it
-  “Arşivi aç”. Normalize later-part selection to the first, deduplicate nested
-  volume sets and retain every source and inner archive. Compression still creates ZIP.
-  Solid archives may re-decompress earlier members per streamed file; time limits
-  deliberately win over unlimited CPU for pathological inputs.
-- **Evidence:** `test_rar.py` covers volume selection, traversal/link/duplicate
-  boundaries, budgets, CRC/source mutation, mixed nesting and real subprocess
-  cancellation. Optional upstream fixtures exercise real RAR3/RAR5/solid/volumes;
-  current live verification is recorded in `SESSION.md`, not inferred for Ubuntu.
 
 ### DD-165: One-click qBittorrent account save (2026-09-27)
 
@@ -6537,22 +6334,6 @@ failure with an early, named one.
 - No API, firewall worker, transaction deadline or privilege boundary changes.
   Switching a row only edits the in-memory draft until reviewed and applied.
 
-### DD-161: Compact App Store with optional details (2026-09-27)
-
-- **Decision (v2-131):** implement the user's approved second model: a compact
-  list, not a grid of large cards. Each row shows icon, name, one-line description,
-  live status, Details and Install/Open. A single selected panel below the list
-  holds technical information and service/log/removal controls.
-- Collapse explanations, not operational feedback. Server progress and failures
-  stay visible in rows; mobile keeps both status and controls. Polling retains
-  selected details, keyboard focus and log position; unchanged data avoids DOM
-  replacement. Log HTTP errors cannot masquerade as successfully fetched logs.
-- qBittorrent credentials are requested only from its own page, not by opening
-  App Store or expanding technical details. Removal still requires confirmation
-  and defaults to retaining profiles; files are not deleted.
-- This changes presentation only: no backend/catalogue/dependency, firewall,
-  DNS, privilege, CSP or transaction changes. Existing Model A routes remain.
-
 ### DD-160: Model A, one admin workspace and independent resources (2026-09-27)
 
 - **Decision (v2-130):** implement the user's approved Model A. Remove the
@@ -6575,6 +6356,10 @@ failure with an early, named one.
   external assets, auth bypass, network ports or automatic restore are introduced.
 - v130 is prepared locally. Deployment/reset and fresh Debian/Ubuntu acceptance
   are separate steps; details and verification are in `model-a-clean-install.md`.
+- **Amended by DD-267 (v2-250):** the page set described here (Files as the landing route, the sidebar,
+  Settings' and Files' tabs, qBittorrent's own page, archive jobs) went with the old interface; Genel
+  Bakış is the landing page and the sections are DD-258's. The separate CPU sampling thread and the
+  gated resource endpoint stay.
 
 ### DD-159: Desktop shell with protected Files, sharing and bounded ZIP (2026-09-25)
 
@@ -6599,6 +6384,11 @@ failure with an early, named one.
   to resume work. Source ZIPs remain, including nested ZIPs; unsafe duplicates,
   links and cross-device paths fail closed.
 - Exact limits, API and recovery caveats: `desktop-and-archives.md`.
+- **Amended by DD-267 (v2-250):** Files keeps the server folders, the trash and Sistem dosyaları
+  (Dosyalar); Konsol's ZIP/RAR jobs and `/srv/.arsiv` are gone, archives are Gezgin's, an App Store
+  package (DD-262), and `desktop-and-archives.md` moved to `docs/archive/` as history. The catalogue
+  is WireGuard, qBittorrent and Gezgin. Files and folder WebDAV stay built in with their internal
+  `dosya`/`paylasim` IDs.
 
 ### DD-158: Independent folder accounts and descriptor-safe WebDAV (2026-09-25)
 
@@ -6758,6 +6548,9 @@ failure with an early, named one.
 - **Found on `nrm`:** the WireGuard registry writes an IPv6 subnet as
   `…::0:0/112` while `ip6tables` prints `…::/112`; subnets are compared as
   networks (`ipaddress`), not as text.
+- **Amended by DD-267 (v2-250):** `GET /api/konsol/ayarlar` and its Ayarlar page are gone with the old
+  interface. The same settings view (the live firewall classification, the Caddy and dnsmasq parser)
+  feeds Erişim's reads (`erisim`, `guvenlik-duvari`) and Gelişmiş (`gelismis`, DD-259, DD-265, DD-266).
 
 ### DD-154: One console name, one current export (2026-09-19)
 
@@ -7231,6 +7024,10 @@ failure with an early, named one.
 - **Cost:** the frontend grew a selection model and an upload queue; the backend
   gained one endpoint. In return FileBrowser, its account, its port and its name
   can be retired next.
+- **Amended by DD-267 (v2-250):** Dosyalar' Sunucu klasörleri takes a drop or the file picker into an
+  upload queue beside the browser (one file at a time whatever the folder, progress and cancel, a name
+  the folder already holds skipped before anything is sent). `POST /api/upload` and its no-overwrite
+  rename are unchanged.
 
 ### DD-144: The user area is a fixed /srv, not an asked-for path (2026-09-16)
 

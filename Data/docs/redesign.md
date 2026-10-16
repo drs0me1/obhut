@@ -6,16 +6,18 @@ its WireGuard tab, the Yayınla flow, Dosyalar, Sistem, Gelişmiş, the command 
 screens) was approved the same day. Phase 1 is in v2-243 (**DD-259**): the route table, `/erisim`,
 `/olaylar` and the shell at `/yeni/`. Phase 2 is in v2-245 (**DD-261**, **DD-262**): Genel Bakış,
 Uygulamalar and the application page with their read model and action route, and the Gezgin package.
-Phase 3 is in v2-248 (**DD-265**): Erişim, the Yayınla flow and the settings plan. Phase 4 lands in two
-parts: 4a in v2-249 (**DD-266**: Sistem, Gelişmiş, adding applications and their settings, beside the
-current interface); 4b (Dosyalar with Paylaşımlar, `/yeni/` becoming `/`, the old shell removed) is next.
+Phase 3 is in v2-248 (**DD-265**): Erişim, the Yayınla flow and the settings plan. Phase 4 is done, in
+two parts: 4a in v2-249 (**DD-266**: Sistem, Gelişmiş, adding applications and their settings) and 4b in
+v2-250 (**DD-267**: Dosyalar with Paylaşımlar, the interface at `/` with `/yeni` redirected, the old
+interface, Konsol's archive jobs and favourites removed). Phase 5 is next.
 
 This document is the plan. Each phase lands with its own `DD-*` entry, tests and a live check on the
 test host, and `main` stays installable at every step.
 
 ## Why
 
-A review of the current Konsol (code, documents and the live panel) found:
+A review of the Konsol of 2026-10-13 (code, documents and the live panel; the interface it describes
+was removed in v2-250) found:
 
 - **Navigation follows technologies, not tasks.** Settings has tabs named after daemons
   (Güvenlik Duvarı, Caddy, Dnsmasq).
@@ -121,15 +123,18 @@ Shared behaviour:
   separate tailnet and internet policies). Until then Konsol's WebDAV stays. Konsol decides whether
   Gezgin is reachable at all (Erişim).
 - Konsol keeps a lean file tool: the root "Sistem dosyaları" view (tailnet only) and a rescue view of
-  `/srv` for when Podman or Gezgin is down. DD-159 is amended when this lands.
+  `/srv` for when Podman or Gezgin is down (done in v2-250, **DD-267**: Dosyalar with Depolama, Sunucu
+  klasörleri, Çöp kutusu, Paylaşımlar and Sistem dosyaları; DD-159 amended). Konsol's archive jobs and
+  favourites left with the old interface; Gezgin has them.
 - Gezgin keeps its own sign-in (it has no proxy authentication, by design); Konsol opens it in a new
   tab.
 - Gezgin should publish tagged releases so the package pins a meaningful version.
 
 ## Migration
 
-The new interface is built beside the current one at `/yeni/` on the same origin, behind the same
-`forward_auth` and CSP, and replaces `/` when it covers every view.
+The new interface was built beside the old one at `/yeni/` on the same origin, behind the same
+`forward_auth` and CSP, and replaced `/` in v2-250, once it covered every view (**DD-267**); `/yeni` and
+`/yeni/*` now redirect to `/`, and the old interface's addresses open their new places.
 
 | Phase | Delivers |
 |---|---|
@@ -138,16 +143,21 @@ The new interface is built beside the current one at `/yeni/` on the same origin
 | 2 | Genel Bakış and Uygulamalar; the Gezgin package (v2-245, DD-261, DD-262) |
 | 3 | Erişim, the Yayınla flow and the plan endpoint (v2-248, DD-265) |
 | 4a | Sistem, Gelişmiş, Uygulamalar' add flows (catalogue with install forms, an image, adoption) and an application's settings (v2-249, DD-266) |
-| 4b | Dosyalar (storage and folders, a lean `/srv` view, the root view) with Paylaşımlar; `/yeni/` becomes `/`; the old shell and its scripts are removed |
+| 4b | Dosyalar (storage and folders, a lean `/srv` view, the root view) with Paylaşımlar; `/yeni/` becomes `/`; the old shell and its scripts are removed (v2-250, DD-267) |
 | 5 | PWA, the `obhut` tool, sharing moved to Gezgin after parity |
 
 ## Decisions revisited
 
 These rules change when their phase lands, each with its own DD entry:
 
-- DD-159: Files and WebDAV as permanent built-ins (phases 4 and 5).
-- DD-204: the glass skin on every page (wallpaper only on the overview).
-- DD-212 and DD-216: home cards and sidebar entries (one Uygulamalar section replaces both).
+- DD-159: Files and WebDAV as permanent built-ins (phases 4 and 5). Amended in phase 4b (DD-267):
+  Files keeps the server folders, the trash and Sistem dosyaları, archives are Gezgin's; WebDAV stays
+  until sharing moves to Gezgin in phase 5.
+- DD-204: the glass skin on every page (wallpaper only on the overview). Retired in phase 4b (DD-267).
+- DD-212 and DD-216: home cards and sidebar entries (one Uygulamalar section replaces both). DD-216
+  retired and DD-212 amended in phase 4b (DD-267; its cumulative-totals rule holds for Genel Bakış).
 - The "no frontend build step" rule (`architecture.md`, `contract.md`): the Konsol UI is built from
-  `Data/tools/konsol-ui` into committed static files.
+  `Data/tools/konsol-ui` into committed static files (since phase 1, DD-259).
 - `contract.md`: the page set and sidebar, the five Settings tabs and the per-row publication save.
+  Rewritten in phases 3 and 4 (DD-265, DD-266, DD-267): the sections, the plan before every
+  reachability write and Dosyalar.

@@ -1,41 +1,34 @@
-# Model A and clean-install readiness
+# Clean-install readiness
 
 ## What ships
 
-This is the approved Model A implemented in the real panel, not a new mockup.
-Ana Menü (`#/genel`, DD-213) is the landing page: clock/date in the heading,
-one compact network widget and only installed application cards. The sidebar contains
-Ana Menü, Files, App Store, Konteynerler, installed applications and Settings, then live
-CPU/RAM/disk indicators and IP/version/uptime. Mobile uses the same sidebar behind an
-accessible menu button. The old desktop dock, Applications and window controls are
-removed. Files is a Finder-style
-window whose right-hand column holds places and the selection's actions (DD-232).
-App Store uses compact cards with no description below the name. Install/Open stays on the card;
-technical details, logs, service controls and removal share an optional panel.
+Konsol is the task-based interface of DD-258 at `/` (since v2-250, **DD-267**; the
+Model A interface this file once described, with Ana Menü, the Files window, App Store,
+Konteynerler and Settings, is gone). Genel Bakış (`#/genel`) is the landing page: health
+first, then the applications, resources, the network card and the server. The sidebar
+(a bottom bar on phones) holds the six sections with the server's name, the command
+palette, the problem count and the activity list.
 
-| Area | Responsibility |
+| Section | Responsibility |
 | --- | --- |
-| Ana Menü | Five-second refresh; network uses two of six desktop slots; narrower cards with start/stop → settings → logs |
-| Files | Icons or list; right column: Favoriler, Konumlar (Shares, Trash), details/actions, disk (DD-232); running archive-job bar |
-| App Store | Install/remove optional WireGuard/qBittorrent, progress and service logs |
-| qBittorrent | Start/stop, Web UI, first login, account and new-download directory |
-| WireGuard | Existing networks, peers, profiles and switches |
-| Settings | System, Firewall, Caddy, Dnsmasq, Log |
-| Konteynerler | Name/status/resources/access; start/stop → edit → remove; image and other operations in details |
+| Genel Bakış | Problems with their fix ("Denetle ve onar", "Düzelt"), application cards with "Aç", resources, the network card (every 5 s while shown), the server |
+| Uygulamalar | Every application (packages, Konsol's containers, built-ins); add from the catalogue with its install form, from an image or by adoption; an application's page with Özet, Erişim, Depolama, Ayarlar and Günlük |
+| Erişim | Who reaches what from where; Adresler (publications, local names, the local domain), Tailscale, WireGuard (networks, devices, QR and profiles), Güvenlik duvarı; Yayınla and the plan before every write |
+| Dosyalar | Depolama, Sunucu klasörleri, Çöp kutusu, Paylaşımlar (folder WebDAV) and, on the tailnet, Sistem dosyaları |
+| Sistem | Sağlık and repair, Güncellemeler, Hesap, Sunucu (reboot), Görünüm, Günlük |
+| Gelişmiş | Effective Caddy and dnsmasq configuration, Podman images, volumes and networks |
 
-Unknown routes open Ana Menü. A bookmark for an absent app opens App Store.
-Old Settings/Containers links redirect to Konteynerler; installed application pages
-and the compatible `#/genel` route remain available.
-CPU sampling is independent of WireGuard. Resource polling is single-flight,
-has a 12-second timeout and hides measurements after failure or 30-second
-staleness. Missing CPU samples do not hide valid RAM/disk measurements. Disk is
-the filesystem containing the configured user root, not a sum of directory sizes.
+`/` and unknown routes open Genel Bakış; `/yeni` redirects to `/`, and the old
+interface's bookmarks open their new places. Resource values come from
+`/api/konsol/kaynaklar` and the event stream; missing or stale values show as unknown,
+never as zero. Disk is the filesystem containing the configured user root, not a sum
+of directory sizes.
 
 No production dependency or privilege boundary changed. Tailscale, Caddy,
 Dnsmasq, firewall, Files and per-folder WebDAV remain protected (Konsol's ZIP/RAR jobs were
-removed in DD-267; archives are Gezgin's). Optional
+removed in DD-267; archives are Gezgin's, an App Store package). Optional
 app removal preserves profiles unless the user separately confirms data deletion.
-Existing Settings review, timed confirmation, server rollback, folder boundaries,
+The settings plan, timed confirmation, server rollback, folder boundaries,
 same-origin gates and CSP remain in force.
 
 ## Before installing
@@ -67,25 +60,25 @@ for exact scope and results.
 
 - Installer exits 0 after all seven stages, including rendered Caddy/dnsmasq/
   systemd validation and firewall/API gate checks.
-- `panel.<domain>` opens Ana Menü over the tailnet, with no application tiles before
-  installation; an empty-state link opens App Store. Initial navigation includes
-  Ana Menü/Files/App Store/Konteynerler/Settings. No old settings, peers or accounts appear.
+- `panel.<domain>` opens Genel Bakış over the tailnet, with only the built-ins before
+  installation; Uygulamalar offers the catalogue. The six sections are present. No old
+  settings, peers or accounts appear.
 - Resource values become live without installing WireGuard. Disconnecting
   marks values unknown; reconnecting recovers them.
-- File upload/create/move/trash/restore and per-folder RO/RW/pause sharing work.
-  The file backend remains unprivileged.
-- App Store qBittorrent install → own page → settings → stop/start → removal
-  succeeds; menu entries follow installed state. WireGuard install → first
-  network → test peer succeeds; removal closes network access.
-- DNS-only Apply and qBittorrent account-only Save commit immediately. Account
-  save must accept the new login after restart, preserve unrelated drafts and
-  report failures without claiming success. Folder/firewall and mixed drafts
-  still confirm or roll back after 60 seconds.
+- In Dosyalar, upload/create/move/trash/restore and per-folder RO/RW sharing with
+  each connection switched on and off (Paylaşımlar) work. The file backend remains
+  unprivileged.
+- qBittorrent from the catalogue (install form) → its application page → Ayarlar →
+  stop/start → removal succeeds; Uygulamalar follows the installed state. WireGuard
+  install → first network in Erişim → WireGuard → test peer succeeds; removal closes
+  network access.
+- DNS-only changes and qBittorrent's settings form commit immediately. An account
+  save must accept the new login after restart and report failures without claiming
+  success. Firewall and mixed changes still confirm or roll back after 60 seconds.
   Domain changes require the existing separate five-minute new-host confirmation.
 - Same-version rerun preserves accounts/profiles/history; reboot returns core
   services, DNS, panel and firewall. Test Ubuntu targets separately.
 
-The existing `tests/desktop-live.cjs` is adapted to Model A; it writes only
-inside a named disposable archive fixture. Optional lifecycle mutation still
-requires `TEST_APP_LIFECYCLE=1`. See `tests/README.md` before running live suites.
-Local fixtures validate UI/API integration, not a real apt installation or boot.
+The interface's Playwright suites (`tests/yeni-*.cjs`) run Konsol at `/` against
+local fixtures; they validate UI/API integration, not a real apt installation or
+boot. See `tests/README.md` before running live suites.
