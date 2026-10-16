@@ -142,8 +142,7 @@ class HttpsPanelTests(unittest.TestCase):
         for scheme, port in (("https", 443), ("http", 61010), ("http", 62010)):
             with self.subTest(scheme=scheme, port=port):
                 self.wan.update(mode=scheme, scheme=scheme, port=port)
-                with patch.object(panel.master_settings, "tailnet_ports", return_value=tailnet), \
-                        patch.object(self.p, "module_state", return_value="calisiyor"):
+                with patch.object(panel.master_settings, "tailnet_ports", return_value=tailnet):
                     rows = self.p.settings_ports(self.env, [], listeners=[])
                 wan_rows = [r for r in rows if r["scope"] == "wan"]
                 self.assertEqual(wan_rows, [{"name": "Paylaşım WebDAV %s · WAN" % scheme.upper(),
@@ -155,8 +154,7 @@ class HttpsPanelTests(unittest.TestCase):
     def test_disabled_listener_has_no_wan_permission_even_if_socket_exists(self):
         self.shares.wan_active.return_value = False
         self.wan.update(mode="off", scheme="", port=0)
-        with patch.object(panel.master_settings, "tailnet_ports", return_value=[]), \
-                patch.object(self.p, "module_state", return_value=""):
+        with patch.object(panel.master_settings, "tailnet_ports", return_value=[]):
             rows = self.p.settings_ports(self.env, [], listeners=[dict(family=4, proto="tcp", port=443)])
         self.assertFalse(any(r["scope"] == "wan" for r in rows))
         self.assertTrue(any(r["scope"] == "lo" and r["port"] == 443 for r in rows))
@@ -176,7 +174,7 @@ class HttpsPanelTests(unittest.TestCase):
         for address in ("panel.test", "paylas.test", "100.64.0.2:61010"):
             self.assertEqual((rows[address]["access"], rows[address]["scheme"]), ("tailscale", "http"))
 
-    def test_caddy_legacy_http_and_https_source_do_not_imply_public_access(self):
+    def test_caddy_plain_http_and_https_source_do_not_imply_public_access(self):
         (self.modules / "paylasim-wan.caddy").write_text("http://:61010 {\n reverse_proxy 127.0.0.2:61010\n}\n")
         (self.modules / "other.caddy").write_text("https://private.example.com {\n respond 404\n}\n")
         rows = {r["source"]: r for r in self.p.web_view(self.env)["entries"]}
@@ -185,8 +183,7 @@ class HttpsPanelTests(unittest.TestCase):
         self.assertEqual((rows["other"]["scheme"], rows["other"]["access"]), ("https", "tailscale"))
 
     def test_settings_returns_manager_https_metadata_unchanged(self):
-        with patch.object(self.p, "package_networks", return_value=[]), \
-                patch.object(self.p, "module_state", return_value=""), \
+        with patch.object(self.p.wireguard, "networks", return_value=[]), \
                 patch.object(self.p, "firewall_check", return_value={}), \
                 patch.object(self.p, "web_view", return_value={}), \
                 patch.object(self.p, "dns_view", return_value={}), \

@@ -169,7 +169,7 @@ class Acceptance:
         self.cfg.image_of(self.image)
         env = dict(KONTEYNER_STATE_DIR=str(self.root / 'state'), KONTEYNER_BIRIM_DIR=str(quadlet_root),
                    KONTEYNER_LOCK=str(self.root / 'run/containers.lock'), RUNTIME_DIR=str(self.root / 'run'),
-                   SBIN_DIR=str(self.root / 'helpers'), MODULES_DIR=str(self.root / 'mods'),
+                   SBIN_DIR=str(self.root / 'helpers'),
                    SERVER_ROOT=str(self.root / 'srv'), FILES_PANEL_TRASH='.cop',
                    KONTEYNER_NETWORK=self.network, KONTEYNER_BRIDGE_PREFIX=self.prefix,
                    KONTEYNER_NFT_TABLE=self.table, TAILSCALE_IF='tailscale0', VPN_BLOCK_DEST4=block_list(self.source),

@@ -18,7 +18,7 @@ const isNumber = (v: unknown): v is number => typeof v === "number" && Number.is
 const isBool = (v: unknown): v is boolean => typeof v === "boolean";
 const query = (path: string, params: Record<string, string>) => `${path}?${new URLSearchParams(params).toString()}`;
 
-// ---- a generic definition and an App Store adapter's fields, as the detail's `config` carries them
+// ---- a generic definition, as the detail's `config` carries it
 export type Scope = "local" | "tailscale" | "public";
 export type Restart = "no" | "on-failure" | "always";
 export type Account = "downloads" | "image";
@@ -65,19 +65,6 @@ export interface ContainerConfig {
   [key: string]: unknown;
 }
 
-/** An App Store package's container settings (DD-219, DD-221): the peer port only when the adapter has one. */
-export interface AdapterConfig {
-  listener_port: number;
-  peer_port?: number;
-  save?: string;
-}
-
-export interface ProtectedMount {
-  destination: string;
-  source: string;
-  reason: string;
-}
-
 export interface Listening {
   address: string;
   port: number;
@@ -106,8 +93,7 @@ export interface Container {
   health: string;
   /** False for a managed definition without a live Podman container (its service is stopped). */
   live: boolean;
-  source: "appstore" | "konsol" | "external";
-  module_id: string | null;
+  source: "konsol" | "external";
   revision: string | null;
   actions: string[];
   restricted_reason: string;
@@ -122,9 +108,7 @@ export interface Container {
 export interface ContainerDetail extends Container {
   mounts_detail: { type: string; source: string; destination: string; rw: boolean; name: string }[];
   generic: ContainerConfig | null;
-  adapter: AdapterConfig | null;
   editable: string[];
-  protected: ProtectedMount[];
   effective_autostart: boolean | null;
   user: string;
   command: string;
@@ -133,21 +117,17 @@ export interface ContainerDetail extends Container {
 export interface Inventory {
   runtime: { version: string; ok: boolean; error: string };
   containers: Container[];
-  images: { id: string; name: string; used_by: string[]; pinned: boolean; size: number | null }[];
+  images: { id: string; name: string; used_by: string[]; size: number | null }[];
   volumes: { name: string; driver: string; used_by: string[]; managed: boolean; size: number | null }[];
   networks: { name: string; driver: string; managed: boolean; internal: boolean; used_by: string[] }[];
   storage: { images: number; containers: number; size: number | null };
   resource_errors: Record<string, string>;
 }
 
-const SOURCES = new Set(["appstore", "konsol", "external"]);
+const SOURCES = new Set(["konsol", "external"]);
 
 export function isGenericConfig(v: unknown): v is ContainerConfig {
   return isObject(v) && isText(v.name) && isText(v.image) && isList(v.ports) && isList(v.mounts) && isList(v.environment);
-}
-
-export function isAdapterConfig(v: unknown): v is AdapterConfig {
-  return isObject(v) && isNumber(v.listener_port) && !("image" in v);
 }
 
 function update(v: unknown): Update | null {
@@ -179,7 +159,6 @@ function row(v: Record<string, unknown>): Container {
     health: textOf(v.health),
     live: v.live !== false,
     source: isText(v.source) && SOURCES.has(v.source) ? (v.source as Container["source"]) : "external",
-    module_id: isText(v.module_id) ? v.module_id : null,
     revision: isText(v.revision) ? v.revision : null,
     actions: isList(v.actions) ? v.actions.filter(isText) : [],
     restricted_reason: textOf(v.restricted_reason),
@@ -189,13 +168,6 @@ function row(v: Record<string, unknown>): Container {
     listening: listening(v.listening),
     update: update(v.update),
   };
-}
-
-function protectedMounts(v: unknown): ProtectedMount[] {
-  if (!isList(v)) return [];
-  return v
-    .map((m) => (isText(m) ? { destination: m, source: "", reason: "" } : isObject(m) && isText(m.destination) ? { destination: m.destination, source: isText(m.source) ? m.source : "", reason: isText(m.reason) ? m.reason : "" } : null))
-    .filter((m): m is ProtectedMount => m !== null);
 }
 
 export async function readInventory(): Promise<Inventory> {
@@ -208,7 +180,7 @@ export async function readInventory(): Promise<Inventory> {
   return {
     runtime: { version: textOf(runtime.version), ok: runtime.ok === true, error: textOf(runtime.error) },
     containers: objects(v.containers).map(row),
-    images: objects(v.images).map((o) => ({ id: textOf(o.id), name: o.name as string, used_by: names(o.used_by), pinned: o.pinned === true, size: numberOr(o.size) })),
+    images: objects(v.images).map((o) => ({ id: textOf(o.id), name: o.name as string, used_by: names(o.used_by), size: numberOr(o.size) })),
     volumes: objects(v.volumes).map((o) => ({ name: o.name as string, driver: textOf(o.driver), used_by: names(o.used_by), managed: o.managed === true, size: numberOr(o.size) })),
     networks: objects(v.networks).map((o) => ({ name: o.name as string, driver: textOf(o.driver), managed: o.managed === true, internal: o.internal === true, used_by: names(o.used_by) })),
     storage: { images: isNumber(storage.images) ? storage.images : 0, containers: isNumber(storage.containers) ? storage.containers : 0, size: numberOr(storage.size) },
@@ -229,9 +201,7 @@ export async function readContainer(name: string): Promise<ContainerDetail> {
         })
       : [],
     generic: isGenericConfig(config) ? config : null,
-    adapter: isAdapterConfig(config) ? config : null,
     editable: isList(v.editable) ? v.editable.filter(isText) : [],
-    protected: protectedMounts(v.protected_mounts),
     effective_autostart: isBool(v.effective_autostart) ? v.effective_autostart : null,
     user: textOf(v.user),
     command: textOf(v.command),

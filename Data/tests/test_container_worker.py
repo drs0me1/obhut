@@ -115,13 +115,13 @@ class ContainerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix='container-manager-')
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
-        for name in ('srv/data', 'srv/.pay', 'srv/media', 'state', 'run', 'quadlet', 'mods'):
+        for name in ('srv/data', 'srv/.gizli', 'srv/media', 'state', 'run', 'quadlet'):
             (self.root / name).mkdir(parents=True)
         self.env = {'KONTEYNER_STATE_DIR': str(self.root / 'state'), 'KONTEYNER_BIRIM_DIR': str(self.root / 'quadlet'),
                     'KONTEYNER_LOCK': str(self.root / 'run/container.lock'), 'RUNTIME_DIR': str(self.root / 'run'),
                     'SBIN_DIR': str(self.root / 'sbin'),
                     'SERVER_ROOT': str(self.root / 'srv'), 'FILES_PANEL_TRASH': '.cop',
-                    'MODULES_DIR': str(self.root / 'mods'), 'TAILSCALE_IPV4': '100.64.0.7',
+                    'TAILSCALE_IPV4': '100.64.0.7',
                     'KONTEYNER_BAGLAMA_DIR': str(self.root / 'run/konteyner-baglama'),
                     'DOWNLOADS_UID': '1000', 'DOWNLOADS_GID': '1000'}
         self.state = self.root / 'state.env'
@@ -153,14 +153,21 @@ class ContainerTests(unittest.TestCase):
         self.assertEqual(self.runner.calls, [])
         self.assertEqual(self.store.list(), [])
 
-    def test_bind_symlinks_and_package_protected_ancestors_are_refused(self):
+    def test_bind_symlinks_hidden_folders_and_the_trash_are_refused(self):
         (self.root / 'srv/link').symlink_to(self.root / 'srv/data', target_is_directory=True)
-        (self.root / 'mods/example').mkdir()
-        (self.root / 'mods/example/paket.env').write_text('PAKET_KLASORLER="' + str(self.root / 'srv/data/private') + '"\n')
-        for source in ('srv/link', 'srv/data', 'srv/.pay'):
-            c = dict(self.config, mounts=[{'type': 'bind', 'source': str(self.root / source), 'destination': '/data', 'read_only': True}])
-            with self.assertRaises(cfg.ContainerConfigError):
-                cfg.validate(c, self.env)
+        bind = lambda source: dict(self.config, mounts=[{'type': 'bind', 'source': str(self.root / source),
+                                                         'destination': '/data', 'read_only': True}])
+        for source in ('srv/link', 'srv/.gizli'):
+            with self.subTest(source=source), self.assertRaises(cfg.ContainerConfigError):
+                cfg.validate(bind(source), self.env)
+        # The Files trash stays out of containers under any name, and so does everything inside it.
+        env = dict(self.env, FILES_PANEL_TRASH='cop')
+        (self.root / 'srv/cop/eski').mkdir(parents=True)
+        for source in ('srv/cop', 'srv/cop/eski'):
+            with self.subTest(source=source), self.assertRaises(cfg.ContainerConfigError) as caught:
+                cfg.validate(bind(source), env)
+            self.assertEqual(str(caught.exception), 'Çöp klasörü konteynere bağlanamaz.')
+        self.assertEqual(cfg.validate(bind('srv/data'), env)['mounts'][0]['source'], str(self.root / 'srv/data'))
 
     def test_create_pins_image_and_persists_private_definition_without_secrets_in_unit_or_result(self):
         result = self.execute('create', {'name': 'demo', 'config': self.config, 'start': False})
@@ -366,17 +373,23 @@ class ContainerTests(unittest.TestCase):
             self.manager.execute('create', {'name': 'demo', 'config': self.config}, op)
         self.assertEqual(len(self.runner.calls), count)
 
-    def test_foreign_controllers_and_reserved_app_names_refuse_mutation(self):
+    def test_foreign_controllers_and_reserved_system_names_refuse_mutation(self):
         for attrs in ({'Config': {'Labels': {'PODMAN_SYSTEMD_UNIT': 'foreign.service'}}},
                       {'Pod': 'somepod'}, {'Config': {'Labels': {'com.docker.compose.project': 'p'}}}):
             self.runner.containers['foreign'] = dict({'Name': 'foreign', 'State': {'Running': False}}, **attrs)
             with self.assertRaises(cfg.ContainerConfigError):
                 self.execute('remove', {'name': 'foreign'})
         self.assertFalse(any(c[:2] == ['podman', 'rm'] for c in self.runner.calls))
-        (self.root / 'mods/torrent').mkdir()
-        (self.root / 'mods/torrent/paket.env').write_text('PAKET_KONTEYNER="qbittorrent.container"\n')
-        with self.assertRaises(cfg.ContainerConfigError):
-            self.execute('create', {'name': 'qbittorrent', 'config': dict(self.config, name='qbittorrent')})
+        for name in ('konsol-notlar', 'master-notlar', 'libpod-notlar'):
+            with self.subTest(name=name), self.assertRaises(cfg.ContainerConfigError) as caught:
+                self.execute('create', {'name': name, 'config': dict(self.config, name=name)})
+            self.assertEqual((caught.exception.status, str(caught.exception)), (409, 'Bu ad bir sistem hizmetine ait.'))
+            with self.assertRaises(cfg.ContainerConfigError) as caught:
+                self.execute('start', {'name': name})
+            self.assertEqual(caught.exception.status, 409)
+        self.assertTrue(cfg.reserved('konsol-notlar'))
+        self.assertFalse(cfg.reserved('notlar'))
+        self.assertEqual(self.store.list(), [])
 
     def test_redact_never_modifies_stored_values(self):
         d = self.create()
@@ -541,16 +554,16 @@ class ContainerTests(unittest.TestCase):
         self.execute('volume-remove', {'name': 'unused'})
         self.assertIn(['podman', 'volume', 'rm', 'unused'], self.runner.calls)
 
-    def test_image_delete_protects_package_and_saved_definition_pins(self):
+    def test_image_delete_protects_saved_definition_pins(self):
         self.create()
-        with self.assertRaises(cfg.ContainerConfigError):
+        with self.assertRaises(cfg.ContainerConfigError) as caught:
             self.execute('image-remove', {'image': 'sha256:' + 'a'*64})
-        self.store.delete('demo')
-        (self.root / 'mods/app').mkdir()
-        (self.root / 'mods/app/paket.env').write_text('PAKET_IMAJ="' + DIGEST + '"\n')
-        with self.assertRaises(cfg.ContainerConfigError):
-            self.execute('image-remove', {'image': 'sha256:' + 'a'*64})
+        self.assertEqual(caught.exception.status, 409)
         self.assertFalse(any(c[:3] == ['podman', 'image', 'rm'] for c in self.runner.calls))
+        # Once no saved definition or container uses it, the image goes.
+        self.store.delete('demo')
+        self.assertTrue(self.execute('image-remove', {'image': 'sha256:' + 'a'*64})['removed'])
+        self.assertIn(['podman', 'image', 'rm', 'sha256:' + 'a'*64], self.runner.calls)
 
     def test_image_update_is_explicit_and_preserves_stopped_state(self):
         d = self.create()

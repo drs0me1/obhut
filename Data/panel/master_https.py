@@ -57,8 +57,8 @@ def config(env, value=None):
         name = domain(row["domain"])
         require(not row["enabled"] or bool(name), "HTTPS alan adı gerekli.")
         value = dict(value, https={"domain": name if row["enabled"] else ""})
-    # Existing explicit HTTP opt-ins survive the upgrade. Once HTTPS has been
-    # configured, clearing its domain closes WAN instead of exposing plaintext.
+    # With no HTTPS name ever saved, a folder's internet connection is consent-gated HTTP on SHARE_PORT.
+    # Once HTTPS has been configured, clearing its domain closes WAN instead of exposing plaintext.
     if "https" not in value:
         return {"domain": "", "mode": "http", "scheme": "http", "port": int(env.get("SHARE_PORT", 0))}
     item = value["https"]
@@ -110,7 +110,7 @@ def wait_certificate(env, name, seconds=60):
 
 def status(env):
     cfg = config(env)
-    # In legacy HTTP mode "port" is SHARE_PORT.
+    # In HTTP mode "port" is SHARE_PORT.
     result = dict(cfg, expires=None)
     if cfg["mode"] == "http":
         return dict(result, status="http", message="HTTPS alan adı tanımlanmadı. Mevcut WAN paylaşımları HTTP kullanıyor.")

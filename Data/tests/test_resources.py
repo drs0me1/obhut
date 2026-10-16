@@ -63,12 +63,12 @@ class ResourceTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name).resolve()
         state = root / "state.env"
-        (root / "modules").write_text("")
-        state.write_text(f"SERVER_ROOT={root}\nLOCAL_DOMAIN=test\nV2_VERSION=test\nMODULES_FILE={root / 'modules'}\n")
-        self.p = panel.Panel(types.SimpleNamespace(state=str(state), allow_host=[], master_modul="/fixture/master-modul"))
+        state.write_text(f"SERVER_ROOT={root}\nLOCAL_DOMAIN=test\nV2_VERSION=test\n"
+                         f"WG_NETWORKS_FILE={root / 'wg-networks'}\nWG_STOPPED_FILE={root / 'wg-stopped'}\n")
+        self.p = panel.Panel(types.SimpleNamespace(state=str(state), allow_host=[], state_env=False))
 
     def test_resources_do_not_enumerate_wireguard_ports_or_processes(self):
-        with patch.object(self.p, "package_networks", side_effect=AssertionError("WG")), \
+        with patch.object(self.p.wireguard, "networks", side_effect=AssertionError("WG")), \
              patch.object(self.p, "ports", side_effect=AssertionError("ports")), \
              patch.object(panel.subprocess, "run", side_effect=AssertionError("process")):
             data = self.p.system()
@@ -101,8 +101,9 @@ class ResourceTests(unittest.TestCase):
         self.assertIsNone(self.p.cpu_sample)
 
     def test_resource_sampler_does_not_wait_for_wireguard(self):
-        # DD-200: no package command runs here; only the package API list is refreshed.
+        # The host sampler reads the CPU and the WAN counters only; no tool runs and no network is listed.
         with patch.object(self.p, "run_tool", side_effect=AssertionError("WG")) as wg, \
+             patch.object(self.p.wireguard, "networks", side_effect=AssertionError("WG")), \
              patch.object(self.p, "sample_system") as sample, \
              patch.object(panel.time, "sleep", side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
@@ -110,206 +111,27 @@ class ResourceTests(unittest.TestCase):
         wg.assert_not_called()
         sample.assert_called_once()
 
-    def test_port_rows_follow_installed_modules(self):
-        modules = Path(self.tmp.name) / "moduller"
-        # DD-198: package port rows come from the rendered manifests, only while registered.
-        mods_dir = Path(self.tmp.name).resolve() / "mods"  # the no-follow reader refuses a symlinked /var
-        repo = Path(__file__).resolve().parents[1] / "magaza"
-        for mid in ("wireguard", "torrent", "paylasim", "dosya"):
-            (mods_dir / mid).mkdir(parents=True)
-            (mods_dir / mid / "paket.env").write_bytes((repo / mid / "paket.env").read_bytes())
-        # DD-203: a package's port key resolves from its own env file when the state does not carry it.
-        (mods_dir / "torrent" / "torrent.env").write_text("TORRENT_UI_PORT=61006\nTORRENT_PROFILE_DIR=/var/lib/qbittorrent\n")
-        env = {"MODULES_FILE": str(modules), "MODULES_DIR": str(mods_dir), "FILES_PANEL_PORT": "61009",
-               "SHARE_PORT": "61010", "SSH_PUBLIC_PORT": "22", "TAILSCALE_UDP_PORT": "41641"}
-        rows = lambda: {(r["name"], r["scope"]) for r in self.p.ports(env, [])}  # noqa: E731
-        modules.write_text("wireguard\tcalisiyor\n")
-        names = {n for n, _ in rows()}
-        self.assertFalse({n for n in names if "qBittorrent" in n or n.startswith("WireGuard") or "dosya" in n})
-        modules.write_text("torrent\tcalisiyor\ndosya\tcalisiyor\n")
-        self.assertIn(("qBittorrent arayüzü", "loopback"), rows())
-        self.assertIn(("Konsol · dosya arka ucu", "loopback"), rows())
-        self.assertNotIn(("Paylaşım WebDAV — yalnız Konsol'dan paylaşılanlar (Infuse)", "tailscale"), rows())
-        modules.write_text("paylasim\tcalisiyor\n")
-        self.assertIn(("Paylaşım WebDAV — yalnız Konsol'dan paylaşılanlar (Infuse)", "tailscale"), rows())
-        # A malformed manifest line disables that package's rows instead of guessing.
-        (mods_dir / "torrent" / "paket.env").write_text('PAKET_PORTLAR="x"\nbroken line\n')
-        modules.write_text("torrent\tcalisiyor\n")
-        self.assertFalse({n for n, _ in rows() if "qBittorrent" in n})
+    def test_port_rows_come_from_state_and_the_wireguard_networks(self):
+        # The base's rows come from state.env (a missing key gives no row, never a default); WireGuard's
+        # from its own networks. Nothing is scanned.
+        env = {"FILES_PANEL_PORT": "61009", "SHARE_PORT": "61010", "SSH_PUBLIC_PORT": "22", "TAILSCALE_UDP_PORT": "41641"}
+        networks = [{"iface": "wg0", "port": 61001, "label": "Ev", "active": True},
+                    {"iface": "wg1", "port": 61002, "label": "", "active": False}]
+        rows = self.p.ports(env, networks)
+        self.assertEqual([(r["name"], r["port"], r["proto"], r["scope"]) for r in rows], [
+            ("WireGuard wg0 · Ev", 61001, "udp", "internet"),
+            ("WireGuard wg1", 61002, "udp", "internet"),
+            ("Tailscale", 41641, "udp", "internet"),
+            ("SSH", 22, "tcp", "internet"),
+            ("Paylaşım WebDAV — yalnız Konsol'dan paylaşılanlar (Infuse)", 61010, "tcp", "tailscale"),
+            ("Konsol · dosya arka ucu", 61009, "tcp", "loopback")])
+        self.assertEqual([r.get("vpn") for r in rows], [True, True, None, None, None, None])
+        self.assertEqual(self.p.ports({}, []), [])
+        self.assertEqual(self.p.ports(dict(env, CADDY_HTTP_PORT="80", DNS_PORT="53"), [])[2:4], [
+            {"port": 80, "proto": "tcp", "scope": "tailscale", "name": "Caddy — panel ve öbür adresler"},
+            {"port": 53, "proto": "udp+tcp", "scope": "tailscale", "name": "dnsmasq — yerel adlar"}])
         self.assertNotIn("share", self.p.system())
         self.assertNotIn("ports", self.p.system())
-
-    def test_module_listing_carries_qbittorrent_addresses(self):
-        # DD-195 (v2-168): the tailnet name always; the public name only while that publication is active.
-        state = Path(self.p.args.state)
-        state.write_text(state.read_text() + "SHARE_HTTPS_PORT=443\n")
-        rows = {"torrent": {"tail": True, "enabled": True, "domain": "qbit.example.net"}}
-        # DD-199: the package declares its publication; the manifest gives the local and public names.
-        pkgs = {"torrent": {"name": "qBittorrent", "local": "torrent", "upstream": "127.0.0.1:61006", "check": "", "order": 20}}
-        listing = (0, "torrent\thost\tcalisiyor\trunning\t-\t-\t-\t-\nwireguard\tkonsol\tyok\t-\t-\t-\t-\t-\n", "")
-        with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
-                patch.object(panel.master_publications, "packages", return_value=pkgs), \
-                patch.object(panel.master_publications, "config", return_value=rows), \
-                patch.object(panel.master_publications, "package_active", return_value=True):
-            items = {m["id"]: m for m in self.p.modules()}
-            self.assertEqual(items["torrent"]["urls"], {"tailscale": "http://torrent.test", "internet": "https://qbit.example.net"})
-            self.assertNotIn("urls", items["wireguard"])
-        with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
-                patch.object(panel.master_publications, "packages", return_value=pkgs), \
-                patch.object(panel.master_publications, "package_active", return_value=False):
-            self.assertEqual(self.p.modules()[0]["urls"], {"tailscale": "http://torrent.test", "internet": None})
-        # A broken publication record never hides the module list or the tailnet name.
-        with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
-                patch.object(panel.master_publications, "packages", return_value=pkgs), \
-                patch.object(panel.master_publications, "config", side_effect=panel.master_settings.SettingsError("bozuk")):
-            self.assertIsNone(self.p.modules()[0]["urls"]["internet"])
-        # A package without a publication row has no addresses to show.
-        with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
-                patch.object(panel.master_publications, "packages", return_value={}):
-            self.assertNotIn("urls", self.p.modules()[0])
-
-    def test_module_listing_carries_package_konsol_metadata(self):
-        # DD-200: App Store texts come from each package's konsol.json; nothing is named in the base.
-        # DD-267: packages ship no page of the old interface, so no item names page files.
-        root = Path(self.p.args.state).parent
-        mods = root / "mods"
-        repo = Path(__file__).resolve().parents[1] / "magaza"
-        for mid in ("wireguard", "torrent"):
-            (mods / mid).mkdir(parents=True)
-            for name in ("paket.env", "konsol.json"):
-                text = (repo / mid / name).read_text().replace("__TORRENT_UI_PORT__", "61006")
-                (mods / mid / name).write_text(text.replace("__LOCAL_DOMAIN__", "test").replace("__DOWNLOADS_PATH__", "/srv/downloads")
-                                               .replace("__TORRENT_PROFILE_DIR__", "/var/lib/qbittorrent").replace("__WG_CONF_DIR__", "/etc/wireguard"))
-        state = Path(self.p.args.state)
-        state.write_text(state.read_text() + "MODULES_DIR=%s\n" % mods)
-        listing = (0, "wireguard\tkonsol\tcalisiyor\trunning\t-\t-\t-\t-\ntorrent\thost\tyok\t-\t-\t-\t-\t-\n", "")
-        with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
-                patch.object(panel.master_publications, "packages", return_value={}):
-            items = {m["id"]: m for m in self.p.modules()}
-        self.assertEqual(items["wireguard"]["konsol"]["ad"], "WireGuard")
-        self.assertTrue(items["wireguard"]["durdurulabilir"])  # DD-229: the whole of WireGuard stops
-        self.assertEqual(items["torrent"]["konsol"]["ad"], "qBittorrent")
-        self.assertIn("torrent.test", items["torrent"]["konsol"]["neler"][1][1])
-        self.assertTrue(items["torrent"]["durdurulabilir"])
-        for mid in ("wireguard", "torrent"):
-            self.assertNotIn("sayfa", items[mid])
-            self.assertNotIn("sayfa", items[mid]["konsol"])
-        # A broken metadata file hides the texts, never the module.
-        (mods / "wireguard" / "konsol.json").write_text("{not json")
-        with patch.object(self.p, "modul", return_value=listing), patch.object(self.p, "busy_units", return_value=set()), \
-                patch.object(panel.master_publications, "packages", return_value={}):
-            items = {m["id"]: m for m in self.p.modules()}
-        self.assertNotIn("konsol", items["wireguard"])
-        self.assertEqual(items["wireguard"]["state"], "calisiyor")
-
-    def test_package_api_loads_only_for_the_registered_package(self):
-        # DD-200: /api/uygulama/<id>/* reaches a package module only while the package is registered;
-        # a missing or broken module answers for that package alone and the base keeps running.
-        root = Path(self.p.args.state).parent
-        mods = root / "mods"
-        repo = Path(__file__).resolve().parents[1] / "magaza" / "wireguard"
-        (mods / "wireguard").mkdir(parents=True)
-        for name in ("paket.env", "api.py"):
-            shutil.copy(repo / name, mods / "wireguard" / name)
-        (root / "bin").mkdir()
-        (root / "bin" / "master-modul").write_text("#!/bin/sh\nexit 1\n")
-        state = Path(self.p.args.state)
-        state.write_text(state.read_text() + "MODULES_DIR=%s\n" % mods)
-        self.p.args.master_modul = str(root / "bin" / "master-modul")
-        self.addCleanup(lambda: [self.p.api_stop(mid, api) for mid, (_key, api) in list(self.p.apis.items())])
-        class Handler(panel.Handler):
-            def log_message(self, *_args):
-                pass
-        Handler.panel = self.p
-        _server, sock = start_unix(self, Handler)
-        headers = {"X-Konsol": "1"}
-        status, _h, body = unix_get(sock, "/api/uygulama/wireguard/state", headers)
-        self.assertEqual((status, json.loads(body)["error"]), (404, "WireGuard kurulu değil"))
-        self.assertEqual(self.p.apis, {})
-        (root / "modules").write_text("wireguard\tcalisiyor\n")
-        with patch.object(self.p, "run_tool", return_value=(0, "", "")) as run:
-            status, _h, body = unix_get(sock, "/api/uygulama/wireguard/state", headers)
-            self.assertEqual(status, 200)
-            self.assertEqual(json.loads(body)["networks"], [])
-            self.assertEqual(run.call_args_list[0].args[0], [str(root / "bin" / "master-wg"), "nets"])
-            # Unknown sub-paths are the package's 404; other packages have no module.
-            self.assertEqual(unix_get(sock, "/api/uygulama/wireguard/sistem", headers)[0], 404)
-            self.assertEqual(unix_get(sock, "/api/uygulama/torrent/state", headers)[0], 404)
-        self.assertEqual(list(self.p.apis), ["wireguard"])
-        # Removing the package drops the module; the sampler stops with it.
-        api = self.p.apis["wireguard"][1]
-        (root / "modules").write_text("")
-        self.assertEqual(unix_get(sock, "/api/uygulama/wireguard/state", headers)[0], 404)
-        self.assertEqual(self.p.apis, {})
-        self.assertTrue(api.stopped.is_set())
-        # A broken module file closes only this package's API.
-        (root / "modules").write_text("wireguard\tcalisiyor\n")
-        (mods / "wireguard" / "api.py").write_text("def create(ctx):\n    raise RuntimeError('fixture')\n")
-        with patch("sys.stdout", io.StringIO()):
-            self.assertEqual(unix_get(sock, "/api/uygulama/wireguard/state", headers)[0], 404)
-        self.assertEqual(unix_get(sock, "/api/konsol/kaynaklar", headers)[0], 200)
-
-    def test_a_stopped_package_answers_its_requests_without_background_work(self):
-        # DD-210: an installed but stopped (durduruldu) package still answers its own requests, so its
-        # settings can change while it is stopped; it is not offered to background callers (sampler,
-        # VPN networks) and its start() runs only while the package runs. Unregistered stays 404/409.
-        root = Path(self.p.args.state).parent
-        mods = root / "mods"
-        (mods / "demo").mkdir(parents=True)
-        (mods / "demo" / "paket.env").write_text('PAKET_AD="Demo"\nPAKET_DURDURULABILIR=1\nPAKET_API="api.py"\n')
-        marks = root / "marks"
-        (mods / "demo" / "api.py").write_text(
-            "import os\n"
-            "def create(ctx):\n    return Api(ctx)\n"
-            "class Api:\n"
-            "    def __init__(self, ctx):\n        self.ctx = ctx\n"
-            "    def mark(self, word):\n"
-            "        with open(%r, 'a') as fh:\n            fh.write(word + '\\n')\n" % str(marks) +
-            "    def start(self):\n        self.mark('start')\n"
-            "    def stop(self):\n        self.mark('stop')\n"
-            "    def networks(self):\n        return []\n"
-            "    def handle(self, req):\n        return 200, {'ok': True, 'method': req.method}\n")
-        (root / "bin").mkdir()
-        (root / "bin" / "master-modul").write_text("#!/bin/sh\nexit 1\n")
-        state = Path(self.p.args.state)
-        state.write_text(state.read_text() + "MODULES_DIR=%s\n" % mods)
-        self.p.args.master_modul = str(root / "bin" / "master-modul")
-        self.addCleanup(lambda: [self.p.api_stop(mid, api) for mid, (_key, api) in list(self.p.apis.items())])
-        class Handler(panel.Handler):
-            def log_message(self, *_args):
-                pass
-        Handler.panel = self.p
-        _server, sock = start_unix(self, Handler)
-        headers = {"X-Konsol": "1"}
-        post = {"X-Konsol": "1", "Content-Type": "application/json"}
-        read = lambda: marks.read_text().split() if marks.exists() else []
-        (root / "modules").write_text("demo\tdurduruldu\n")
-        self.assertEqual(self.p.package_apis(), [], "background callers never see a stopped package")
-        self.assertEqual(read(), [])
-        status, _h, body = unix_get(sock, "/api/uygulama/demo/x", headers)
-        self.assertEqual((status, json.loads(body)), (200, {"ok": True, "method": "GET"}))
-        status, _h, body = unix_get(sock, "/api/uygulama/demo/x", post, "POST", b"{}")
-        self.assertEqual((status, json.loads(body)["method"]), (200, "POST"))
-        self.assertEqual(read(), [], "answering a stopped package's request starts nothing in the background")
-        self.assertEqual(self.p.package_apis(), [])
-        self.assertEqual(self.p.vpn_apps(), [])
-        # Started again: background callers get it and its start() runs once.
-        (root / "modules").write_text("demo\tcalisiyor\n")
-        self.assertEqual([mid for mid, _api in self.p.package_apis()], ["demo"])
-        self.assertEqual(unix_get(sock, "/api/uygulama/demo/x", headers)[0], 200)
-        self.assertEqual(read().count("start"), 1)
-        # Stopped again: the running object is stopped; requests still work without a new start().
-        (root / "modules").write_text("demo\tdurduruldu\n")
-        self.assertEqual(self.p.package_apis(), [])
-        self.assertEqual(read()[-1], "stop")
-        self.assertEqual(unix_get(sock, "/api/uygulama/demo/x", headers)[0], 200)
-        self.assertEqual(read().count("start"), 1)
-        # Not registered: no module at all.
-        (root / "modules").write_text("")
-        status, _h, body = unix_get(sock, "/api/uygulama/demo/x", headers)
-        self.assertEqual((status, json.loads(body)["error"]), (404, "Demo kurulu değil"))
-        self.assertEqual(unix_get(sock, "/api/uygulama/demo/x", post, "POST", b"{}")[0], 409)
-        self.assertEqual(self.p.apis, {})
 
     def test_http_resources_have_same_host_header_and_origin_gates(self):
         class Handler(panel.Handler):
@@ -322,7 +144,7 @@ class ResourceTests(unittest.TestCase):
                         {"X-Konsol": "1", "Sec-Fetch-Site": "cross-site"},
                         {"X-Konsol": "1", "Host": "127.0.0.1:61008"}):
             self.assertEqual(unix_get(sock, url, headers)[0], 403)
-        with patch.object(self.p, "package_networks", side_effect=RuntimeError("WG failed")):
+        with patch.object(self.p.wireguard, "networks", side_effect=RuntimeError("WG failed")):
             status, headers, body = unix_get(sock, url, {"X-Konsol": "1"})
             self.assertEqual(status, 200)
             self.assertEqual(headers["Cache-Control"], "no-store")
@@ -335,8 +157,8 @@ class ResourceTests(unittest.TestCase):
                 pass
         Handler.panel = self.p
         _server, sock = start_unix(self, Handler)
-        for path in ("/api/uygulama/demo/a/../../../konsol/oturum/giris", "/api/uygulama/demo/%2e%2e/x",
-                     "/api/konsol//kaynaklar", "/api/konsol/kaynaklar/.", "/api/uygulama/demo/a%2f..%2fb"):
+        for path in ("/api/konsol/wireguard/a/../../../konsol/oturum/giris", "/api/konsol/wireguard/%2e%2e/x",
+                     "/api/konsol//kaynaklar", "/api/konsol/kaynaklar/.", "/api/konsol/wireguard/a%2f..%2fb"):
             status, _h, body = unix_get(sock, path, {"X-Konsol": "1"})
             self.assertEqual((status, json.loads(body)["error"]), (400, "geçersiz adres"), path)
         self.assertEqual(unix_get(sock, "/api/konsol/kaynaklar", {"X-Konsol": "1"})[0], 200)
@@ -398,7 +220,7 @@ class ResourceTests(unittest.TestCase):
         with patch.object(server, "shutdown_request", side_effect=finish), \
                 patch.object(panel.UnixConnection, "send", new=send_after_rejection), \
                 patch.object(self.p, "run_tool", side_effect=AssertionError("must not mutate")):
-            status, headers, raw = unix_get(sock, "/api/uygulama/wireguard/nets", {"Content-Type": "application/json"}, "POST", body)
+            status, headers, raw = unix_get(sock, "/api/konsol/wireguard/nets", {"Content-Type": "application/json"}, "POST", body)
         self.assertEqual(attempted, [True])
         self.assertEqual(status, 403)
         self.assertEqual(headers["Connection"], "close")
@@ -410,7 +232,7 @@ class ResourceTests(unittest.TestCase):
             conn.request.side_effect = BrokenPipeError("write closed")
             conn.getresponse.side_effect = panel.http.client.RemoteDisconnected("no HTTP response")
             with self.assertRaises(panel.http.client.RemoteDisconnected):
-                unix_get("unused", "/api/uygulama/wireguard/nets", {}, "POST", b'{}')
+                unix_get("unused", "/api/konsol/wireguard/nets", {}, "POST", b'{}')
             conn.close.assert_called_once()
 
     def test_socket_is_private_and_the_group_is_opt_in(self):
@@ -472,7 +294,7 @@ class ResourceTests(unittest.TestCase):
         _server, sock = start_unix(self, Handler)
         inner = (b"POST /api/konsol/paylasim/kaydet HTTP/1.1\r\nHost: panel.test\r\nX-Konsol: 1\r\n"
                  b"X-Forwarded-For: 100.64.0.9\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}")
-        outer = (b"POST /api/uygulama/wireguard/peers HTTP/1.1\r\nHost: panel.test\r\nContent-Type: text/plain\r\n"
+        outer = (b"POST /api/konsol/wireguard/nets/wg0/peers HTTP/1.1\r\nHost: panel.test\r\nContent-Type: text/plain\r\n"
                  b"Sec-Fetch-Site: cross-site\r\nX-Forwarded-For: 100.64.0.8\r\nContent-Length: %d\r\n\r\n" % len(inner)) + inner
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(3)

@@ -1,6 +1,5 @@
 // The six sections of Konsol (DD-258, redesign.md): Genel Bakış and Uygulamalar (phase 2), Erişim
-// (phase 3), Sistem and Gelişmiş (phase 4a), Dosyalar (phase 4b); each section's tabs and add flows, and
-// where the addresses of the Konsol before phase 4b lead (oldHome).
+// (phase 3), Sistem and Gelişmiş (phase 4a), Dosyalar (phase 4b); each section's tabs and add flows.
 import type { IconName } from "./components/icons";
 
 export type SectionId = "genel" | "uygulamalar" | "erisim" | "dosyalar" | "sistem" | "gelismis";
@@ -29,9 +28,9 @@ export const SECTIONS: readonly Section[] = [
     id: "uygulamalar",
     title: "Uygulamalar",
     short: "Uygulamalar",
-    description: "App Store paketleri, konteynerler ve yerleşik hizmetler tek listede.",
+    description: "Sunucudaki konteynerler tek listede.",
     icon: "apps",
-    keywords: "app store mağaza paket konteyner podman kur kaldır",
+    keywords: "konteyner podman imaj ekle kaldır yönetime al",
   },
   {
     id: "erisim",
@@ -148,10 +147,9 @@ export const SECTION_TABS: Partial<Record<SectionId, readonly { id: string; labe
   dosyalar: FILES_TABS.map((t) => ({ ...t, to: filesRoute(t.id) })),
 };
 
-/** Uygulamalar' add flows (phase 4a), opened over the list with ?ekle= (a package's install with &paket=,
-    one container's adoption with &ad=); the palette lists each one. */
+/** Uygulamalar' add flows (phase 4a), opened over the list with ?ekle= (one container's adoption with
+    &ad=); the palette lists each one. */
 export const ADD_FLOWS = [
-  { id: "katalog", label: "Katalogdan uygulama kur", keywords: "app store mağaza paket kur katalog ekle" },
   { id: "imaj", label: "İmajdan konteyner oluştur", keywords: "konteyner podman imaj yeni oluştur docker ekle" },
   { id: "sahiplen", label: "Var olan konteyneri yönetime al", keywords: "benimse sahiplen konteyner podman dışarıda yönet" },
 ] as const;
@@ -161,52 +159,4 @@ export type AddFlow = (typeof ADD_FLOWS)[number]["id"];
 /** The address of an add flow over Uygulamalar. */
 export function addRoute(flow: AddFlow, extra: Record<string, string> = {}): string {
   return "/uygulamalar?" + new URLSearchParams({ ekle: flow, ...extra }).toString();
-}
-
-/** A folder path from an old address's parts, each URI-encoded ("Filmler%20Yeni", "Diziler"); "" when a part
-    cannot be decoded or would leave the folder (".", ".."), so the view opens at its top. */
-function oldFolder(parts: readonly string[]): string {
-  try {
-    const decoded = parts.map((p) => decodeURIComponent(p));
-    return decoded.some((p) => !p || p === "." || p === ".." || p.includes("/") || p.includes("\0")) ? "" : decoded.join("/");
-  } catch {
-    return "";
-  }
-}
-
-const OLD_SETTINGS = new Map<string, string>([
-  ["fw", accessRoute("guvenlik-duvari")],
-  ["web", accessRoute("adresler")],
-  ["dns", accessRoute("adresler")],
-  ["log", systemRoute("gunluk")],
-  ["konteynerler", advancedRoute("podman")],
-]);
-
-/** Where an address of the Konsol before phase 4b leads (its hash route, "/ayarlar/fw"): App Store and the
-    Podman page to Uygulamalar, Settings' tabs to Erişim, Sistem and Gelişmiş, Files' views to Dosyalar' tabs,
-    WireGuard's page to Erişim. Null when the new home depends on what is installed (a package's own page
-    "/torrent", "/moduller/<id>", a container "/konteynerler/<ad>") or the address is not an old one. */
-export function oldHome(path: string): string | null {
-  const [head, sub, ...rest] = path.split("/").filter(Boolean);
-  switch (head) {
-    case "moduller":
-      return sub ? null : addRoute("katalog");
-    case "konteynerler":
-      return sub ? null : "/uygulamalar";
-    case "ayarlar":
-      if (sub === "konteynerler" && rest.length) return null;
-      return OLD_SETTINGS.get(sub ?? "") ?? systemRoute();
-    case "dosyalar": {
-      if (sub === "klasor" || sub === "sistem") {
-        const yol = oldFolder(rest);
-        return filesRoute(sub === "klasor" ? "srv" : "sistem", yol ? { yol } : {});
-      }
-      if (sub === "cop") return filesRoute("cop");
-      if (sub === "paylasim") return filesRoute("paylasimlar");
-      return "/dosyalar";
-    }
-    case "wireguard":
-      return sub ? null : accessRoute("wireguard");
-  }
-  return null;
 }

@@ -10,10 +10,13 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
+# status() and the publication rows import their siblings (master_https, master_publications).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "panel"))
 SPEC = importlib.util.spec_from_file_location("master_settings", Path(__file__).resolve().parents[1] / "panel/master_settings.py")
 settings = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(settings)
@@ -27,20 +30,16 @@ class SettingsTests(unittest.TestCase):
         self.env = {
             "SETTINGS_FILE": str(self.root / "settings.json"), "SETTINGS_PENDING_FILE": str(self.root / "pending.json"),
             "SETTINGS_DNS_FILE": str(self.root / "dns/konsol.conf"), "DNSMASQ_CONF_FILE": str(self.root / "dns/base.conf"),
-            "DNSMASQ_CONF_DIR": str(self.root / "dns"), "TORRENT_PROFILE_DIR": str(self.root / "profile"),
-            "UNIT_DIR": str(self.root / "units"), "MODULES_FILE": str(self.root / "modules"),
-            "MODULES_DIR": str(self.root / "templates"), "RUNTIME_DIR": str(self.root / "run"),
+            "DNSMASQ_CONF_DIR": str(self.root / "dns"), "UNIT_DIR": str(self.root / "units"),
+            "SHARE_CADDY_SOURCE": str(self.root / "share/paylasim.caddy"), "RUNTIME_DIR": str(self.root / "run"),
             "SERVER_ROOT": str(self.root / "srv"), "DOWNLOADS_PATH": str(self.root / "srv/downloads"), "MEDIA_SUBDIR": "media",
             "LOCAL_DOMAIN": "ayc", "TAILSCALE_IF": "tailscale0", "WAN_INTERFACE": "eth0", "WAN_IPV4": "203.0.113.1",
             "TAILSCALE_IPV4": "100.64.0.2", "DOWNLOADS_UID": str(os.getuid()), "DOWNLOADS_GID": str(os.getgid()),
             "SBIN_DIR": str(self.root / "bin"), "DNS_PORT": "53", "CADDY_HTTP_PORT": "80",
             "CADDYFILE": str(self.root / "Caddyfile"), "CADDY_MODULES_DIR": str(self.root / "caddy-modules"),
         }
-        for rel in ("dns", "templates/torrent", "srv/downloads", "srv/media/movies", "srv/.pay", "units", "run"):
+        for rel in ("dns", "share", "srv/downloads", "srv/media/movies", "srv/.cop", "units", "run"):
             (self.root / rel).mkdir(parents=True, exist_ok=True)
-        (self.root / "modules").write_text("torrent\tcalisiyor\n")
-        (self.root / "networks").write_text("wg0\t61001\tui\n")
-        (self.root / "templates/torrent/dnsmasq.conf").write_text("interface-name=torrent.ayc,tailscale0\n")
         (self.root / "dns/base.conf").write_text("interface=lo\ninterface=tailscale0\nno-resolv\nlocal=/ayc/\ninterface-name=panel.ayc,tailscale0\ninterface-name=health.ayc,tailscale0\n")
         self.state = self.root / "state.env"
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
@@ -302,9 +301,17 @@ class SettingsTests(unittest.TestCase):
         for ip in ["127.0.0.1", "100.100.100.100", "192.168.1.1", "::1", "224.0.0.1", "not-an-ip", "1.1.1.1\nserver=evil"]:
             with self.subTest(ip=ip), self.assertRaises(settings.SettingsError):
                 self.m.validate(self.payload(dns=self.dns(forward=True, servers=[ip])))
-        for name in ["panel.ayc", "torrent.ayc", "evil.example", "bad..ayc", "-bad.ayc", "*.ayc"]:
+        # WebDAV's name comes from its own DNS file next to the base's.
+        (self.root / "dns/modul-paylasim.conf").write_text("interface-name=paylas.ayc,tailscale0/4\n")
+        for name in ["panel.ayc", "paylas.ayc"]:
+            with self.subTest(name=name), self.assertRaisesRegex(settings.SettingsError, "^Bu DNS adı zaten tanımlı.$"):
+                self.m.validate(self.payload(dns=self.dns(records=[{"name": name, "target": "tailscale", "enabled": True}])))
+        for name in ["evil.example", "bad..ayc", "-bad.ayc", "*.ayc"]:
             with self.subTest(name=name), self.assertRaises(settings.SettingsError):
                 self.m.validate(self.payload(dns=self.dns(records=[{"name": name, "target": "tailscale", "enabled": True}])))
+        twice = [{"name": "nas.ayc", "target": "tailscale", "enabled": True}] * 2
+        with self.assertRaisesRegex(settings.SettingsError, "^Bu DNS adı zaten tanımlı.$"):
+            self.m.validate(self.payload(dns=self.dns(records=twice)))
 
     def test_apply_failure_restores_dns_and_preserves_pending_on_recovery_failure(self):
         before = Path(self.env["DNSMASQ_CONF_FILE"]).read_bytes()
@@ -317,7 +324,7 @@ class SettingsTests(unittest.TestCase):
         self.assertIsNone(self.m.pending())
 
     def test_directory_scope_and_symlinks(self):
-        for value in (str(self.root / "srv"), str(self.root / "srv/.pay"), "/etc", str(self.root / "srv/downloads/../media")):
+        for value in (str(self.root / "srv"), str(self.root / "srv/.cop"), "/etc", str(self.root / "srv/downloads/../media")):
             with self.subTest(value=value), self.assertRaises(settings.SettingsError):
                 self.m.safe_dir(value)
         link = self.root / "srv/downloads/link"
@@ -329,9 +336,19 @@ class SettingsTests(unittest.TestCase):
 
     def test_lock_blocks_mutation(self):
         with self.m.locked():
-            with self.assertRaises(settings.SettingsError):
+            with self.assertRaisesRegex(settings.SettingsBusy,
+                                        "^Kurulum ya da ayar işlemi sürüyor; biraz sonra yeniden deneyin.$"):
                 with self.m.locked():
                     pass
+        # The installer's, the settings' and the state file's locks each hold a transaction back; no other is taken.
+        for name in ("install.lock", "settings.lock", "state.lock"):
+            with self.subTest(lock=name), open(self.root / "run" / name, "a") as held:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with self.assertRaises(settings.SettingsBusy):
+                    with self.m.locked():
+                        pass
+        self.assertEqual(sorted(p.name for p in (self.root / "run").glob("*.lock")),
+                         ["install.lock", "settings.lock", "state.lock"])
 
     def test_commit_crash_window_does_not_undo_confirmed_transaction(self):
         self.m.apply(self.payload(firewall=[self.rule()]))
@@ -453,15 +470,17 @@ class SettingsTests(unittest.TestCase):
     def domain_fixture(self):
         (self.root / "Caddyfile").write_text('(konsol) {\n\treverse_proxy x {\n\t\theader_up Host panel.ayc\n\t}\n}\n'
                                              'http://panel.ayc {\n respond "test"\n}\n# leave /some.ayc unchanged\n')
-        for rel in ("caddy-modules", "templates/dosya"):
-            (self.root / rel).mkdir(exist_ok=True)
+        (self.root / "caddy-modules").mkdir(exist_ok=True)
         unit = "[Service]\nExecStart=/bin/backend --domain=ayc --version=test\n"
-        for rel in ("units/master-files-panel.service", "templates/dosya/master-files-panel.service"):
+        for rel in ("units/master-files-panel.service", "units/master-sistem-dosya.service"):
             (self.root / rel).write_text(unit)
         site = 'http://paylas.ayc, http://{$TAILSCALE_IPV4}:61010 {\n respond "test"\n}\n'
+        # WebDAV's tailnet site: the installer's rendering and the copy Caddy reads.
+        Path(self.env["SHARE_CADDY_SOURCE"]).write_text(site)
         (self.root / "caddy-modules/paylasim.caddy").write_text(site)
+        (self.root / "dns/modul-paylasim.conf").write_text("interface-name=paylas.ayc,tailscale0/4\n")
         settings.save_json(self.m.config_path, dict(copy.deepcopy(settings.DEFAULT), dns=self.dns(
-            disabled=["torrent.ayc"], records=[dict(name="nas.ayc", target="192.0.2.8", enabled=False)],
+            disabled=["paylas.ayc"], records=[dict(name="nas.ayc", target="192.0.2.8", enabled=False)],
             forward=True, servers=["1.1.1.1"])))
 
     def test_domain_migration_templates_names_and_new_host_confirmation(self):
@@ -474,10 +493,12 @@ class SettingsTests(unittest.TestCase):
         self.assertIn("\t\theader_up Host panel.ev\n", (self.root / "Caddyfile").read_text())
         self.assertIn("/some.ayc", (self.root / "Caddyfile").read_text())
         self.assertIn("http://paylas.ev, http://{$TAILSCALE_IPV4}:61010", (self.root / "caddy-modules/paylasim.caddy").read_text())
-        self.assertIn("torrent.ev", (self.root / "templates/torrent/dnsmasq.conf").read_text())
-        self.assertIn("--domain=ev ", (self.root / "templates/dosya/master-files-panel.service").read_text())
+        self.assertIn("http://paylas.ev, http://{$TAILSCALE_IPV4}:61010", Path(self.env["SHARE_CADDY_SOURCE"]).read_text())
+        self.assertIn("interface-name=paylas.ev,", (self.root / "dns/modul-paylasim.conf").read_text())
+        for unit in ("master-files-panel.service", "master-sistem-dosya.service"):
+            self.assertIn("--domain=ev ", (self.root / "units" / unit).read_text())
         self.assertIn("local=/ev/", Path(self.env["DNSMASQ_CONF_FILE"]).read_text())
-        self.assertEqual(self.m.current()["dns"]["disabled"], ["torrent.ev"])
+        self.assertEqual(self.m.current()["dns"]["disabled"], ["paylas.ev"])
         self.assertEqual(self.m.current()["dns"]["records"], [dict(name="nas.ev", target="192.0.2.8", enabled=False)])
         self.assertEqual(self.m.current()["dns"]["servers"], ["1.1.1.1"])
         for host in ("panel.ayc", "127.0.0.1", "panel.ev.evil", ""):

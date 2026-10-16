@@ -1,6 +1,6 @@
-/* Phase 4a (DD-258): Uygulamalar' add flows (the catalogue, a container from an image, adoption), the
-   container editor and its review, an application's settings, account and ports, the log's search and the
-   folder picker. Colours only from tokens.css; nothing needs a style attribute (the CSP allows none). */
+/* Phase 4a (DD-258): Uygulamalar' add flows (a container from an image, adoption), the container editor
+   and its review, an application's settings and ports, the log's search and the folder picker. Colours
+   only from tokens.css; nothing needs a style attribute (the CSP allows none). */
 
 /* ---- a sheet that holds a form with rows (the container editor) is wider on a wide screen */
 @media (min-width: 761px) {
@@ -237,8 +237,7 @@
 /* A long line of text is easier to read than a field across the whole page. */
 .form-section > .field,
 .form-section > .form-row,
-.settings-tab .form-stack > .field,
-.package-form > .field {
+.settings-tab .form-stack > .field {
   max-width: 640px;
 }
 
@@ -247,12 +246,6 @@
   padding: 10px 14px;
   line-height: 1.5;
   resize: vertical;
-}
-
-.form-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 /* ---- the review */
@@ -266,75 +259,6 @@
 
 .plan-warning[data-ton="ok"] .icon {
   color: var(--ok);
-}
-
-/* ---- the catalogue */
-.catalog-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.catalog-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-}
-
-.catalog-text {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  font-size: 13.5px;
-}
-
-.catalog-text strong {
-  font-size: 14.5px;
-}
-
-.catalog-item .btn {
-  flex: none;
-}
-
-.catalog-head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.catalog-head-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.catalog-name {
-  font-family: var(--font-head);
-  font-size: 19px;
-}
-
-.catalog-facts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.fact-chip {
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--sunken);
-  color: var(--ink-2);
-  font-size: 12.5px;
-  font-weight: 600;
 }
 
 /* ---- Uygulamalar' add card and infrastructure */
@@ -386,14 +310,6 @@
   font-size: 13px;
 }
 
-.mount-flag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 12.5px;
-}
-
 .settings-tab .card {
   padding: 18px 20px;
   border-radius: var(--r-lg);
@@ -406,22 +322,6 @@
 
 .settings-tab .draft-bar:has(.btn-primary:disabled) {
   border-color: var(--line);
-}
-
-/* ---- the first-login account */
-.cred-value {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-}
-
-.cred-facts dt {
-  align-self: center;
-}
-
-.masked {
-  letter-spacing: 2px;
 }
 
 /* ---- the log's tools and matches */

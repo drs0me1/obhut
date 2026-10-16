@@ -8,12 +8,15 @@ TypeScript types (tools/konsol-ui/src/api/sema.ts); a committed copy that differ
     python3 panel/master_api.py openapi > docs/konsol-api.json
     python3 panel/master_api.py ts > tools/konsol-ui/src/api/sema.ts
 
-Outside the table the backend keeps only the session check Caddy asks (/oturum-denetle), the
-sign-in page's POST /api/konsol/oturum/giris and the packages' own APIs (/api/uygulama/<id>/*).
+Outside the table the backend answers only the session check Caddy asks (/oturum-denetle) and the
+sign-in page's POST /api/konsol/oturum/giris. A path segment written {name} is a parameter whose
+shape is in PATH_PARAMS (the WireGuard routes name a network and a device that way).
 Python standard library only.
 """
 import json
+import re
 import sys
+import urllib.parse
 
 STR = {"type": "string"}
 INT = {"type": "integer"}
@@ -27,8 +30,8 @@ def obj(props, optional=()):
 
 
 def open_obj(props):
-    """An object whose listed fields are all optional and which may carry others (a package's own
-    konsol.json): the shell reads what it knows and checks it at run time."""
+    """An object whose listed fields are all optional and which may carry others: the shell reads what
+    it knows and checks it at run time."""
     return {"type": "object", "properties": props, "required": [], "additionalProperties": True}
 
 
@@ -61,7 +64,7 @@ SCHEMAS = {
     "Saglik": obj({"status": ref("SaglikDurumu"),
                    "checks": arr(obj({"id": STR, "name": STR, "status": ref("SaglikDurumu"), "detail": STR})),
                    "read_at": INT}),
-    "Islem": obj({"tur": enum("modul", "konteyner", "guncelleme", "onarim"), "id": STR, "ad": STR,
+    "Islem": obj({"tur": enum("konteyner", "guncelleme", "onarim"), "id": STR, "ad": STR,
                   "durum": enum("calisiyor", "tamam", "hata"), "adim": STR, "bitis": null(INT)}),
     "Islemler": obj({"items": arr(ref("Islem"))}),
     "BekleyenDegisiklik": obj({"id": STR, "phase": enum("applying", "awaiting", "committed", "rollback", "stuck"),
@@ -73,7 +76,7 @@ SCHEMAS = {
     "ErisimDurumu": enum("acik", "kismen", "kapali", "yok", "hata"),
     "ErisimHucresi": obj({"durum": ref("ErisimDurumu"), "adresler": arr(STR), "not": STR, "uyari": STR}),
     "Hizmet": obj({
-        "id": STR, "ad": STR, "tur": enum("konsol", "paket", "konteyner", "elle", "paylasim", "sistem", "vpn", "kural"),
+        "id": STR, "ad": STR, "tur": enum("konsol", "konteyner", "elle", "paylasim", "sistem", "vpn", "kural"),
         "aciklama": STR, "uygulama": null(STR), "calisiyor": null(BOOL),
         "yerel": ref("ErisimHucresi"), "tailscale": ref("ErisimHucresi"), "wireguard": ref("ErisimHucresi"),
         "internet": ref("ErisimHucresi"), "yayinlar": arr(STR), "ayrinti": arr(obj({"baslik": STR, "deger": STR})),
@@ -82,20 +85,16 @@ SCHEMAS = {
     "Uyari": obj({"seviye": enum("warn", "bad"), "hizmet": STR, "metin": STR,
                   "duzelt": null(obj({"bolum": enum("yayinlar", "uygulama", "tailscale"), "hedef": STR}))}),
     "UygulamaHucresi": obj({"durum": ref("ErisimDurumu"), "adresler": arr(STR), "uyari": STR, "not": STR}),
+    # DD-271 (phase 1): Konsol's containers only, until the application engine replaces them (phase 3).
     "Uygulama": obj({
-        "id": STR, "ad": STR, "tur": enum("paket", "konteyner", "yerlesik"), "aciklama": STR,
-        "modul": null(STR), "konteyner": null(STR), "simge": null(STR),
+        "id": STR, "ad": STR, "tur": enum("konteyner"), "aciklama": STR, "konteyner": STR,
         "durum": enum("calisiyor", "durduruldu", "islemde", "hata", "bilinmiyor"),
-        "islem": null(obj({"eylem": STR, "adim": STR, "metin": STR})),
         "tailscale": ref("UygulamaHucresi"), "internet": ref("UygulamaHucresi"),
         "kaynak": obj({"cpu": null(NUM), "bellek": null(INT)}),
         "guncelleme": enum("guncel", "yeni", "denetlenemedi", "bilinmiyor", "sabit"),
         "adres": obj({"tailscale": null(STR), "internet": null(STR)}),
         "eylemler": arr(enum("baslat", "durdur", "yeniden-baslat", "kaldir", "guncelle")), "revizyon": null(STR),
-        "metinler": null(ref("UygulamaMetinleri")),
-        "hesap": BOOL,  # DD-266: a package with a first-login account (GET /api/konsol/uygulamalar/hesap)
     }),
-    "UygulamaMetinleri": obj({"durdur": STR, "kaldir": arr(arr(STR)), "veri_etiket": STR, "veri_kalir": STR, "veri_silinir": STR}),
     "UygulamaAyrinti": obj({
         "uygulama": ref("Uygulama"),
         "konteyner": null(obj({
@@ -106,12 +105,10 @@ SCHEMAS = {
         "erisim": null(ref("Hizmet")),
     }),
     "UygulamaGunlugu": obj({"satirlar": arr(STR), "kesik": BOOL}),
-    # DD-266: "kur" installs a catalogue package (id paket:<id>); its install form goes as `form`.
-    "UygulamaIslemi": obj({"id": STR, "eylem": enum("kur", "baslat", "durdur", "yeniden-baslat", "guncelle", "kaldir"),
-                           "revizyon": STR, "veri": BOOL, "form": open_obj({})}, optional=("revizyon", "veri", "form")),
+    "UygulamaIslemi": obj({"id": STR, "eylem": enum("baslat", "durdur", "yeniden-baslat", "guncelle", "kaldir"),
+                           "revizyon": STR}, optional=("revizyon",)),
     "UygulamaIslemiBasladi": obj({"id": STR, "eylem": STR, "is": null(STR)}),
-    "Ag": obj({"read_at": INT, "sampled_at": null(INT), "rx": null(INT), "tx": null(INT),
-               "apps": arr(obj({"id": STR, "name": STR, "down": null(INT), "up": null(INT)}))}),
+    "Ag": obj({"read_at": INT, "sampled_at": null(INT), "rx": null(INT), "tx": null(INT)}),
     "OnarimAdimi": obj({"id": STR, "ad": STR, "durum": enum("ok", "onarildi", "sorun", "hata", "atlandi", "calisiyor"),
                         "detay": STR}),
     "Onarim": obj({"calisiyor": BOOL, "kurulu": BOOL, "baslatilabilir": BOOL,
@@ -122,17 +119,9 @@ SCHEMAS = {
     "OnarimBasladi": obj({"kip": STR}),
     "Uygulamalar": obj({
         "read_at": INT, "items": arr(ref("Uygulama")),
-        "katalog": arr(obj({"id": STR, "ad": STR, "aciklama": STR, "simge": null(STR)})),
         "altyapi": obj({"podman": STR, "calisiyor": BOOL, "imaj": INT, "kullanilmayan_imaj": INT, "birim": INT, "ag": INT}),
         "hatalar": arr(STR),
     }),
-    "KonsolBildirimi": open_obj({"ad": STR, "alt": STR, "simge": STR}),
-    "Modul": obj({"id": STR, "installed": BOOL, "state": enum("calisiyor", "durduruldu", ""), "live": STR,
-                  "busy": BOOL, "progress": null(obj({"action": STR, "step": STR, "total": INT, "text": STR})),
-                  "durdurulabilir": BOOL, "hesap": BOOL, "konsol": ref("KonsolBildirimi"),
-                  "urls": obj({"tailscale": null(STR), "internet": null(STR)})},
-                 optional=("hesap", "konsol", "urls")),
-    "Moduller": obj({"items": arr(ref("Modul"))}),
     "GuncellemeIsi": obj({"durum": enum("yok", "calisiyor", "tamam", "hata"), "hedef": STR, "mesaj": STR,
                           "bitis": null(INT), "asama": STR}),
     "Guncelleme": obj({"kurulu": STR, "kurulu_surum": STR, "son": null(STR), "son_surum": null(STR), "commit": null(STR),
@@ -147,8 +136,9 @@ SCHEMAS = {
             "internet": obj({"ipv4": STR, "ipv6": STR,
                              "acik": arr(obj({"ad": STR, "port": INT, "proto": STR, "aileler": arr(INT),
                                               "kaynak": enum("temel", "kural")}))}),
-            "wireguard": obj({"kurulu": BOOL, "not": STR,
-                              "aglar": arr(obj({"uygulama": STR, "arayuz": STR, "ad": STR, "etkin": BOOL, "port": INT}))}),
+            # kurulu: WireGuard has a network; durduruldu: it is stopped as a whole (its networks are then not listed).
+            "wireguard": obj({"kurulu": BOOL, "durduruldu": BOOL, "not": STR,
+                              "aglar": arr(obj({"arayuz": STR, "ad": STR, "etkin": BOOL, "port": INT}))}),
             "sertifikalar": arr(obj({"ad": STR, "hizmet": STR, "durum": enum("gecerli", "hazir-degil"), "bitis": null(INT)})),
         }),
         "hizmetler": arr(ref("Hizmet")), "uyarilar": arr(ref("Uyari")), "hatalar": arr(STR),
@@ -173,11 +163,11 @@ SCHEMAS = {
     "Tamam": open_obj({"ok": BOOL}),
     "GuvenlikDuvari": obj({
         "revizyon": STR, "denetim": obj({"ok": BOOL, "metin": STR}), "kurallar": arr(ref("KuralTaslagi")),
-        "katalog": arr(obj({"ad": STR, "aile": INT, "proto": STR, "port": INT, "kapsam": enum("wan", "tail", "lo"), "sabit": BOOL})),
+        "portlar": arr(obj({"ad": STR, "aile": INT, "proto": STR, "port": INT, "kapsam": enum("wan", "tail", "lo"), "sabit": BOOL})),
         "dinleyiciler": null(arr(obj({"proto": STR, "aile": INT, "port": INT, "adres": STR, "kapsam": STR}))),
         "teknik": arr(obj({"aile": INT, "tablo": STR, "zincir": STR, "sira": STR, "paket": INT, "bayt": INT,
                            "kural": STR, "sahip": STR})),
-        "aglar": arr(obj({"uygulama": STR, "arayuz": STR, "ad": STR, "etkin": BOOL})), "vpn": STR, "hatalar": arr(STR),
+        "aglar": arr(obj({"arayuz": STR, "ad": STR, "etkin": BOOL})), "hatalar": arr(STR),
     }),
     "Adlar": obj({
         "revizyon": STR, "alan": STR,
@@ -186,7 +176,7 @@ SCHEMAS = {
     }),
     # DD-265: the Yayınla flow.
     "YayinAdayi": obj({
-        "id": STR, "tur": enum("konsol", "paket", "konteyner", "elle", "paylasim"), "ad": STR, "servis": null(STR),
+        "id": STR, "tur": enum("konsol", "konteyner", "elle", "paylasim"), "ad": STR, "servis": null(STR),
         "yerel_ad": null(STR), "tailscale": BOOL, "internet": BOOL, "alan_adi": STR, "durum": STR, "mesaj": STR,
         "bitis": null(INT), "hedef": null(STR), "giris": STR, "onay_kelimesi": BOOL, "internet_engel": STR,
         "kullanilabilir": BOOL, "neden": STR,
@@ -213,8 +203,8 @@ SCHEMAS = {
     "KonteynerSatiri": open_obj({
         "id": STR, "name": STR, "image": STR, "state": STR, "status": STR, "unit": STR, "network": STR,
         "ports": arr(ref("KonteynerPortu")), "created": null(INT), "started": null(INT), "exit_code": INT, "restarts": INT,
-        "health": STR, "live": BOOL, "source": enum("appstore", "konsol", "external"), "management_id": STR,
-        "module_id": null(STR), "revision": null(STR), "actions": arr(STR), "restricted_reason": STR,
+        "health": STR, "live": BOOL, "source": enum("konsol", "external"), "management_id": STR,
+        "revision": null(STR), "actions": arr(STR), "restricted_reason": STR,
         "cpu_percent": null(NUM), "memory_bytes": null(INT), "busy": null(STR),
         "listening": null(arr(obj({"address": STR, "port": INT, "protocol": STR, "scope": STR}))),
         "update": null(ref("KonteynerGuncellemesi")),
@@ -223,7 +213,7 @@ SCHEMAS = {
         "read_at": INT, "runtime": obj({"version": STR, "ok": BOOL, "error": STR}),
         "containers": arr(ref("KonteynerSatiri")),
         "images": arr(open_obj({"id": STR, "name": STR, "size": null(INT), "created": null(INT), "used_by": arr(STR),
-                                "managed": BOOL, "pinned": BOOL})),
+                                "managed": BOOL})),
         "volumes": arr(open_obj({"name": STR, "driver": STR, "size": null(INT), "used_by": arr(STR), "managed": BOOL})),
         "networks": arr(open_obj({"name": STR, "id": STR, "driver": STR, "subnets": arr(STR), "used_by": arr(STR),
                                   "managed": BOOL, "internal": BOOL})),
@@ -251,7 +241,6 @@ SCHEMAS = {
     "KayitSatiri": obj({"at": INT, "source": STR, "user": STR, "client": STR, "action": STR, "detail": STR, "ok": BOOL}),
     "Kayitlar": obj({"items": arr(ref("KayitSatiri"))}),
     "Klasorler": obj({"items": arr(obj({"path": STR, "free": INT}))}),
-    "UygulamaHesabi": obj({"user": STR, "temp": BOOL, "host": STR, "pass": STR}, optional=("pass",)),
     # DD-267 (phase 4b): Dosyalar → Paylaşımlar (DD-158/179/190/192), the share manager's own view and requests.
     "PaylasimBaglantisi": obj({"enabled": BOOL, "permission": enum("ro", "rw"), "expires": null(NUM), "expired": BOOL,
                                "available": BOOL, "active": BOOL, "reason": STR, "url": STR}),
@@ -260,7 +249,7 @@ SCHEMAS = {
                      "connections": obj({"tailscale": ref("PaylasimBaglantisi"), "wan": ref("PaylasimBaglantisi")},
                                         optional=("tailscale", "wan")),
                      "urls": open_obj({"tailscale": STR, "wan": STR}), "url": STR}),
-    "Paylasimlar": obj({"enabled": BOOL, "running": BOOL, "host": STR, "items": arr(ref("Paylasim")), "max": INT,
+    "Paylasimlar": obj({"host": STR, "items": arr(ref("Paylasim")), "max": INT,
                         "wan": open_obj({"available": BOOL, "address": STR, "reason": STR, "mode": STR, "domain": STR, "port": INT}),
                         "tail_enabled": BOOL, "limits": open_obj({})}),
     # The manager checks a save itself (allowed fields, connections, acknowledgements); the table keeps it open.
@@ -269,7 +258,7 @@ SCHEMAS = {
     "PaylasimKimligi": obj({"id": STR}),
     # DD-267: who uses which server folder (Dosyalar → Depolama), joined with the files backend's folders.
     "Depolama": obj({"read_at": INT, "kok": STR,
-                     "kullananlar": arr(obj({"yol": STR, "id": STR, "ad": STR, "tur": enum("paket", "konteyner", "paylasim"),
+                     "kullananlar": arr(obj({"yol": STR, "id": STR, "ad": STR, "tur": enum("konteyner", "paylasim"),
                                              "hedef": STR, "yazilabilir": BOOL})),
                      "hatalar": arr(STR)}),
     # DD-266: Gelişmiş, the effective configuration as the server holds it (read-only).
@@ -285,16 +274,58 @@ SCHEMAS = {
                         "names": arr(open_obj({"name": STR, "iface": STR, "family": null(INT), "address": STR, "source": STR})),
                         "raw": arr(ref("YapilandirmaDosyasi"))}),
     }),
+    # DD-271: WireGuard, a built-in (DD-133, DD-136, DD-137, DD-143, DD-229). Every change goes through master-wg.
+    "WireGuardCihazi": obj({
+        "name": STR, "ipv4": STR, "ipv6": STR, "handshake": INT, "rx": INT, "tx": INT, "profile": BOOL, "dns": STR,
+        "provider": STR, "keepalive": INT, "mtu": INT, "enabled": BOOL, "online": BOOL, "active_at": null(INT),
+    }),
+    # revision guards the network's settings (a stale one is refused with 409).
+    "WireGuardAgi": obj({
+        "iface": STR, "port": INT, "server4": STR, "subnet4": STR, "server6": STR, "subnet6": STR, "dns": STR, "label": STR,
+        "active": BOOL, "count": INT, "revision": STR, "peers": arr(ref("WireGuardCihazi")),
+    }),
+    # kurulu: master-wg works; durduruldu: WireGuard is stopped as a whole; max: how many networks there may be;
+    # reserved: UDP ports a new network may not take.
+    "WireGuard": obj({
+        "kurulu": BOOL, "durduruldu": BOOL, "endpoint": STR, "max": INT, "reserved": arr(INT),
+        "defaults": obj({"dns": STR, "keepalive": INT, "mtu": INT, "port": INT}),
+        "now": INT, "active_window": INT, "networks": arr(ref("WireGuardAgi")),
+    }),
+    "WireGuardCalismasi": obj({"durduruldu": BOOL}),
+    "WireGuardAgIstegi": obj({"port": INT, "dns": STR, "label": STR}, optional=("label",)),
+    "WireGuardAgEklendi": obj({"iface": STR, "port": INT}),
+    "WireGuardAgKaldirildi": obj({"iface": STR, "peers": INT}),
+    "WireGuardAgDurumu": obj({"iface": STR, "active": BOOL}),
+    "WireGuardYenidenUretildi": obj({"peers": INT, "profiles": INT}),
+    "WireGuardAgAyari": obj({"dns": STR, "revision": STR, "label": STR}, optional=("label",)),
+    "WireGuardAgAyarSonucu": obj({"iface": STR, "dns": STR, "label": STR}, optional=("label",)),
+    "WireGuardCihazIstegi": obj({"name": STR, "dns": STR, "keepalive": INT, "mtu": INT}),
+    "WireGuardCihazEklendi": obj({"name": STR, "ipv4": STR}),
+    "WireGuardDns": obj({"dns": STR}),
+    "WireGuardKeepalive": obj({"keepalive": INT}),
+    "Onay": obj({"confirm": STR}),
+    "Acik": obj({"on": BOOL}),
 }
+
+# Path parameters ({name} segments); a segment is percent-decoded before its shape is checked.
+PATH_PARAMS = {
+    "iface": {"type": "string", "pattern": "^wg[0-9]$"},
+    "name": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"},
+}
+JSON = "application/json"
 
 
 class Route:
-    """text: the reply is plain text (a log), its schema a string."""
+    """content: the reply's media type; anything but JSON (a log, a device profile, a QR code) is sent as
+    it is, its schema a string. params: the path's {name} segments, in order."""
 
-    def __init__(self, method, path, name, summary, reply=None, events=None, request=None, query=None, status=200, text=False):
+    def __init__(self, method, path, name, summary, reply=None, events=None, request=None, query=None, status=200,
+                 content=JSON):
         self.method, self.path, self.name, self.summary = method, path, name, summary
         self.reply, self.events, self.request, self.query, self.status = reply, events, request, query or {}, status
-        self.text = text
+        self.content = content
+        self.segments = path.split("/")
+        self.params = [seg[1:-1] for seg in self.segments if seg.startswith("{") and seg.endswith("}")]
 
 
 ROUTES = (
@@ -308,9 +339,7 @@ ROUTES = (
     Route("GET", "/api/konsol/saglik", "saglik", "Sağlık kartı (30 sn önbellekli)", ref("Saglik")),
     Route("GET", "/api/konsol/etkinlik", "etkinlik", "Süren ve yeni biten işlemler (olay akışı yokken)", ref("Islemler")),
     Route("GET", "/api/konsol/bekleyen", "bekleyen", "Onay ya da geri alma bekleyen ayar değişikliği", ref("Bekleyen")),
-    Route("GET", "/api/konsol/moduller", "moduller", "App Store paketleri ve yerleşikler (DD-148, DD-200)", ref("Moduller")),
-    Route("GET", "/api/konsol/uygulamalar", "uygulamalar",
-          "Uygulamalar: paketler, Konsol konteynerleri ve yerleşikler tek listede (DD-261)", ref("Uygulamalar")),
+    Route("GET", "/api/konsol/uygulamalar", "uygulamalar", "Uygulamalar: Konsol'un konteynerleri (DD-261)", ref("Uygulamalar")),
     Route("GET", "/api/konsol/uygulamalar/ayrinti", "uygulama_ayrinti", "Bir uygulamanın konteyneri, bağlı klasörleri ve erişimi",
           ref("UygulamaAyrinti"), query={"id": STR}),
     Route("GET", "/api/konsol/uygulamalar/gunluk", "uygulama_gunlugu", "Bir uygulamanın günlüğü (son satırlar)",
@@ -318,7 +347,7 @@ ROUTES = (
     Route("POST", "/api/konsol/uygulamalar/islem", "uygulama_islemi",
           "Bir uygulamayı başlat, durdur, yeniden başlat, güncelle ya da kaldır; ilerleme olay akışında (islemler)",
           ref("UygulamaIslemiBasladi"), request=ref("UygulamaIslemi"), status=202),
-    Route("GET", "/api/konsol/ag", "ag", "WAN'ın son hızı ve uygulamaların trafik toplamları (DD-206)", ref("Ag")),
+    Route("GET", "/api/konsol/ag", "ag", "WAN'ın son hızı (DD-206)", ref("Ag")),
     Route("GET", "/api/konsol/onarim", "onarim", "Son denetim ve onarım raporu (DD-239)", ref("Onarim")),
     Route("POST", "/api/konsol/onarim", "onarim_baslat", "Denetimi ya da onarımı başlatır; yalnız Tailscale'den",
           ref("OnarimBasladi"), request=ref("OnarimIstegi"), status=202),
@@ -357,9 +386,6 @@ ROUTES = (
           query={"yenile": STR}),
     Route("GET", "/api/konsol/konteynerler/islem", "konteyner_isi", "Bir konteyner işinin durumu", ref("KonteynerIsi"),
           query={"id": STR}),
-    Route("GET", "/api/konsol/uygulamalar/hesap", "uygulama_hesabi",
-          "Bir paketin ilk giriş hesabı (PAKET_HESAP); geçici parola yalnız ?parola=1 ile", ref("UygulamaHesabi"),
-          query={"id": STR, "parola": STR}),
     Route("GET", "/api/konsol/ayarlar/klasorler", "klasorler", "Klasör seçici: bir klasörün alt klasörleri ve boş yer",
           ref("Klasorler"), query={"path": STR}),
     Route("GET", "/api/konsol/oturum", "oturum", "Konsol hesabı ve bu oturum (DD-194, DD-205)", ref("Oturum")),
@@ -376,7 +402,7 @@ ROUTES = (
     Route("POST", "/api/konsol/yeniden-baslat", "yeniden_baslat", "Sunucuyu yeniden başlatır (DD-246); yalnız Tailscale'den",
           ref("YenidenBaslatma"), request=ref("Bos"), status=202),
     Route("GET", "/api/konsol/onarim/gunluk", "onarim_gunlugu", "Denetim ve onarım günlüğü (72s ya da 7g, düz metin)",
-          STR, query={"sure": STR}, text=True),
+          STR, query={"sure": STR}, content="text/plain"),
     Route("GET", "/api/konsol/islemler", "islemler", "Konsol günlüğü: son yedi günün işlemleri, yeniden eskiye",
           ref("Kayitlar")),
     # DD-267 (phase 4b): Dosyalar's shares and storage.
@@ -392,17 +418,70 @@ ROUTES = (
     Route("GET", "/api/konsol/gelismis", "gelismis",
           "Gelişmiş: etkin Caddy ve dnsmasq yapılandırması (salt okunur); ?yenile önbelleği atlar", ref("Gelismis"),
           query={"yenile": STR}),
+    # DD-271: WireGuard (Erişim → WireGuard); every change through master-wg, the audit line wireguard-<verb>.
+    Route("GET", "/api/konsol/wireguard/state", "wireguard",
+          "WireGuard: ağlar ve cihazları, yeni ağın varsayılanları, durdurulmuş mu", ref("WireGuard")),
+    Route("POST", "/api/konsol/wireguard/durdur", "wireguard_durdur",
+          "WireGuard'ı bütünüyle durdurur: ağlar kapanır, portları ve yönlendirmesi kalkar (DD-229)",
+          ref("WireGuardCalismasi"), request=ref("Bos")),
+    Route("POST", "/api/konsol/wireguard/baslat", "wireguard_baslat",
+          "WireGuard'ı başlatır: durdurmadan önce açık olan ağlar geri gelir", ref("WireGuardCalismasi"), request=ref("Bos")),
+    Route("POST", "/api/konsol/wireguard/nets", "wireguard_ag_ekle", "Yeni WireGuard ağı (wg0…wg9); ilk ağ WireGuard'ı açar",
+          ref("WireGuardAgEklendi"), request=ref("WireGuardAgIstegi"), status=201),
+    Route("POST", "/api/konsol/wireguard/nets/{iface}/remove", "wireguard_ag_kaldir",
+          "Ağı, anahtarını ve bütün cihazlarını siler (onayla yazılarak)", ref("WireGuardAgKaldirildi"), request=ref("Onay")),
+    Route("POST", "/api/konsol/wireguard/nets/{iface}/reset", "wireguard_ag_yeniden_uret",
+          "Ağın sunucu anahtarını yeniden üretir; bütün cihazlar silinir (onayla yazılarak)", ref("WireGuardYenidenUretildi"),
+          request=ref("Onay")),
+    Route("POST", "/api/konsol/wireguard/nets/{iface}/peers", "wireguard_cihaz_ekle", "Ağa yeni cihaz ekler",
+          ref("WireGuardCihazEklendi"), request=ref("WireGuardCihazIstegi"), status=201),
+    Route("POST", "/api/konsol/wireguard/nets/{iface}/durum", "wireguard_ag_durum", "Ağı açar ya da kapatır",
+          ref("WireGuardAgDurumu"), request=ref("Acik")),
+    Route("POST", "/api/konsol/wireguard/nets/{iface}/ayarlar", "wireguard_ag_ayarlar",
+          "Ağın varsayılan DNS'i ve adı; revizyon eskiyse 409", ref("WireGuardAgAyarSonucu"), request=ref("WireGuardAgAyari")),
+    Route("POST", "/api/konsol/wireguard/nets/{iface}/peers/{name}/remove", "wireguard_cihaz_kaldir", "Cihazı siler",
+          ref("Tamam"), request=ref("Bos")),
+    Route("POST", "/api/konsol/wireguard/nets/{iface}/peers/{name}/dns", "wireguard_cihaz_dns",
+          "Cihaz profilindeki DNS; anahtarlar aynı kalır", ref("Tamam"), request=ref("WireGuardDns")),
+    Route("POST", "/api/konsol/wireguard/nets/{iface}/peers/{name}/keepalive", "wireguard_cihaz_keepalive",
+          "Cihaz profilindeki canlı tutma süresi (0 = kapalı)", ref("Tamam"), request=ref("WireGuardKeepalive")),
+    Route("POST", "/api/konsol/wireguard/nets/{iface}/peers/{name}/durum", "wireguard_cihaz_durum",
+          "Cihazı ağdan düşürür ya da geri koyar", ref("Tamam"), request=ref("Acik")),
+    Route("GET", "/api/konsol/wireguard/nets/{iface}/peers/{name}/profile", "wireguard_profil",
+          "Cihaz profili (indirme; gizli anahtarı taşır, yalnız açıkça istenince)", STR, content="text/plain"),
+    Route("GET", "/api/konsol/wireguard/nets/{iface}/peers/{name}/qr.png", "wireguard_qr",
+          "Cihaz profilinin QR kodu (PNG indirme; gizli anahtarı taşır, yalnız açıkça istenince)", STR, content="image/png"),
 )
 
 
-def find(method, path):
+def match(method, path):
+    """(route, path parameters) for a request path, or (None, None). A parameter that does not have its
+    shape matches nothing."""
+    segments = path.split("/")
     for route in ROUTES:
-        if route.method == method and route.path == path:
-            return route
-    return None
+        if route.method != method or len(route.segments) != len(segments):
+            continue
+        params = {}
+        for want, got in zip(route.segments, segments):
+            if want.startswith("{") and want.endswith("}"):
+                value = urllib.parse.unquote(got)
+                try:
+                    check(PATH_PARAMS[want[1:-1]], value)
+                except SchemaError:
+                    break
+                params[want[1:-1]] = value
+            elif want != got:
+                break
+        else:
+            return route, params
+    return None, None
 
 
-# -- validation (tests)
+def find(method, path):
+    return match(method, path)[0]
+
+
+# -- validation (request bodies, path parameters and tests)
 class SchemaError(ValueError):
     pass
 
@@ -428,6 +507,8 @@ def check(schema, value, path="$"):
         raise SchemaError("%s: %s bekleniyordu, %s geldi" % (path, kind, type(value).__name__))
     if "enum" in schema and value not in schema["enum"]:
         raise SchemaError("%s: %r izinli değerlerden değil" % (path, value))
+    if "pattern" in schema and not re.fullmatch(schema["pattern"], value):
+        raise SchemaError("%s: biçimi geçersiz" % path)
     if kind == "array":
         for i, item in enumerate(value):
             check(schema["items"], item, "%s[%d]" % (path, i))
@@ -449,10 +530,10 @@ def openapi():
     for route in ROUTES:
         if route.events:
             content = {"text/event-stream": {"schema": STR}}
-        elif route.text:
-            content = {"text/plain": {"schema": STR}}
+        elif route.content == JSON:
+            content = {JSON: {"schema": route.reply}}
         else:
-            content = {"application/json": {"schema": route.reply}}
+            content = {route.content: {"schema": STR if route.content.startswith("text/") else {}}}
         responses = {str(route.status): {"description": "Başarılı", "content": content},
                      "403": {"description": "Host, köken ya da X-Konsol denetimi",
                              "content": {"application/json": {"schema": ref("Hata")}}}}
@@ -461,6 +542,7 @@ def openapi():
                                 "content": {"application/json": {"schema": ref("Hata")}}}
         op = {"operationId": route.name, "summary": route.summary,
               "parameters": [{"name": "X-Konsol", "in": "header", "required": True, "schema": enum("1")}]
+              + [{"name": key, "in": "path", "required": True, "schema": PATH_PARAMS[key]} for key in route.params]
               + [{"name": key, "in": "query", "required": key == "id", "schema": schema} for key, schema in route.query.items()],
               "responses": responses}
         if route.request:

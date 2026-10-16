@@ -9,9 +9,9 @@ const assert = require("node:assert/strict");
 // Documentation values only (RFC 5737/6598 addresses, the DD examples' host and domain); shapes as in
 // tools/konsol-ui/src/api/sema.ts.
 const cell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
-const app = (id, ad, extra) => ({ id, ad, tur: "paket", aciklama: "", modul: id.split(":")[1], konteyner: null, simge: null, durum: "calisiyor", islem: null,
+const app = (name, ad, extra) => ({ id: "konteyner:" + name, ad, tur: "konteyner", aciklama: "", konteyner: name, durum: "calisiyor",
   tailscale: cell("yok"), internet: cell("yok"), kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null },
-  eylemler: ["durdur", "yeniden-baslat", "kaldir"], revizyon: null, hesap: false, ...extra });
+  eylemler: ["durdur", "yeniden-baslat", "kaldir"], revizyon: null, ...extra });
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.08.06-v2-242", surum: "1.0.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
     cores: 4, read_at: 1791845000, sampled_at: 1791845000, cpu: 2.0, mem: { total: 8300000000, used: 700000000 },
@@ -19,14 +19,12 @@ const data = {
   saglik: { status: "bad", read_at: 1791845000, checks: [
     { id: "units", name: "Servisler", status: "bad", detail: "Çalışmayan: konsol-eski.service" },
     { id: "tailscale", name: "Tailscale", status: "ok", detail: "çalışıyor" }] },
-  // Files (yerlesik:dosya) is not counted: it has its own section.
-  uygulamalar: { read_at: 1791845000, katalog: [], hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 1, kullanilmayan_imaj: 0, birim: 0, ag: 1 },
+  // Two containers; the sidebar counts every item of the list.
+  uygulamalar: { read_at: 1791845000, hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 1, kullanilmayan_imaj: 0, birim: 0, ag: 1 },
     items: [
-      app("paket:wireguard", "WireGuard", { simge: "shield" }),
-      app("paket:torrent", "qBittorrent", { konteyner: "torrent", simge: "download", tailscale: cell("acik", ["torrent.ev"]), adres: { tailscale: "http://torrent.ev", internet: null },
-        revizyon: "r1" }),
-      app("yerlesik:dosya", "Dosyalar", { tur: "yerlesik", modul: null, eylemler: [] })] },
-  ag: { read_at: 1791845000, sampled_at: 1791845000, rx: 1024, tx: 2048, apps: [] },
+      app("notlar", "Notlar", { tailscale: cell("acik", ["notlar.ev"]), adres: { tailscale: "http://notlar.ev", internet: null }, revizyon: "r1" }),
+      app("medya", "Medya")] },
+  ag: { read_at: 1791845000, sampled_at: 1791845000, rx: 1024, tx: 2048 },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
   guncelleme: { kurulu: "2026.08.06-v2-242", kurulu_surum: "1.0.0", son: "2026.08.06-v2-242", son_surum: "1.0.0", commit: "0".repeat(40), yeni: false, denetlendi: 1791845000, hata: "",
     is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true },
@@ -34,7 +32,7 @@ const data = {
   etkinlik: { items: [] },
   erisim: { read_at: 1791845000, alan: "ev", hizmetler: [], hatalar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null }, internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
-      wireguard: { kurulu: true, not: "", aglar: [] }, sertifikalar: [] },
+      wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] },
     uyarilar: [{ seviye: "warn", hizmet: "paylasim", metin: "Paylaşımlar internete şifresiz HTTP ile açık" }] },
 };
 let expectedFailures = [];  // URL fragments whose failed loads (401/404/502/503) are part of the scenario
@@ -47,7 +45,7 @@ h.handlers["/api/konsol/gelismis"] = () => ({ body: { read_at: 1791845000, caddy
 h.handlers["/api/konsol/konteynerler/liste"] = () => ({ body: { read_at: 1791845000, runtime: { version: "5.4.2", ok: true, error: "" }, containers: [],
   images: [], volumes: [], networks: [], storage: { images: 1, containers: 1, size: null }, resource_errors: {} } });
 // Phase 4b: Dosyalar' Depolama reads the files backend and who uses which folder (yeni-dosyalar-ui.cjs covers it).
-h.handlers["/api/state"] = () => ({ body: { root: "/srv", writable: true, textLimit: 1048576, protected: [], trash: { count: 0, size: 0 },
+h.handlers["/api/state"] = () => ({ body: { root: "/srv", writable: true, textLimit: 1048576, trash: { count: 0, size: 0 },
   disk: { total: 250700000000, free: 238000000000, used: 0, mount: false } } });
 h.handlers["/api/list"] = () => ({ body: { path: "", entries: [], skipped: 0 } });
 h.handlers["/api/konsol/depolama"] = () => ({ body: { read_at: 1791845000, kok: "/srv", kullananlar: [], hatalar: [] } });
@@ -131,7 +129,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await page.locator(".brand-host").filter({ hasText: /^sunucu · panel\.ev$/ }).waitFor();
 
     // Running jobs and the activity drawer.
-    const job = { tur: "modul", id: "torrent", ad: "qBittorrent", durum: "calisiyor", adim: "İmaj indiriliyor", bitis: null };
+    const job = { tur: "konteyner", id: "notlar", ad: "Notlar", durum: "calisiyor", adim: "İmaj indiriliyor", bitis: null };
     push("islemler", { items: [job] });
     const activity = page.getByRole("button", { name: "İşlemler, 1 çalışıyor" });
     await activity.waitFor();
@@ -140,8 +138,8 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await drawer.waitFor();
     assert.equal(await page.evaluate(() => document.querySelector(".app").inert), true, "the page behind the drawer is inert");
     assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), "Kapat");
-    assert.equal(await drawer.locator(".job-name").innerText(), "qBittorrent");
-    assert.equal(await drawer.locator(".job-meta").innerText(), "Uygulama · İmaj indiriliyor");
+    assert.equal(await drawer.locator(".job-name").innerText(), "Notlar");
+    assert.equal(await drawer.locator(".job-meta").innerText(), "Konteyner · İmaj indiriliyor");
     assert.equal(await drawer.locator(".pill").innerText(), "Çalışıyor");
     assert.equal(await drawer.getByTestId("connection").innerText(), "Canlı bağlantı açık.");
     for (let n = 0; n < 3; n++) await page.keyboard.press("Tab");
@@ -150,9 +148,9 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await page.keyboard.press("Escape");
     await drawer.waitFor({ state: "detached" });
     assert.equal(await page.evaluate(() => document.activeElement.classList.contains("activity-btn")), true, "focus returns to İşlemler");
-    const modulesBefore = count("uygulamalar");
+    const appsBefore = count("uygulamalar");
     push("islemler", { items: [{ ...job, durum: "tamam", adim: "", bitis: 1791845100 }] });
-    await waitFor(() => count("uygulamalar") > modulesBefore, "a finished job reloads the applications");
+    await waitFor(() => count("uygulamalar") > appsBefore, "a finished job reloads the applications");
     await page.getByRole("button", { name: "İşlemler", exact: true }).click();
     await drawer.locator(".empty").filter({ hasText: "Şu an çalışan işlem yok" }).waitFor();
     assert.equal(await drawer.locator('.job[data-durum="tamam"] .pill').innerText(), "Tamamlandı");
@@ -191,8 +189,8 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     const input = palette.getByRole("combobox");
     assert(await input.evaluate((el) => el === document.activeElement), "the field has focus");
     assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Eylemler"], "no group for the old interface (phase 4b)");
-    assert.deepEqual(await palette.locator('[aria-labelledby="palet-grup-1"] .palette-label').allInnerTexts(), ["WireGuard", "qBittorrent"]);
-    assert.equal(await palette.locator('[data-key="uygulama-paket:wireguard"] .palette-hint').innerText(), "Uygulama", "an application opens its own page (phase 2)");
+    assert.deepEqual(await palette.locator('[aria-labelledby="palet-grup-1"] .palette-label').allInnerTexts(), ["Notlar", "Medya"]);
+    assert.equal(await palette.locator('[data-key="uygulama-konteyner:notlar"] .palette-hint').innerText(), "Uygulama", "an application opens its own page (phase 2)");
     await shot(page, "1440-light-palette.png");
     await input.fill("İŞ");
     let labels = await optionLabels(page);
@@ -275,11 +273,18 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert(await page.getByRole("radio", { name: "Sistem" }).evaluate((el) => el === document.activeElement));
     assert.equal(await page.evaluate(() => document.documentElement.hasAttribute("data-theme")), false, "Sistem follows the system");
     assert.equal(await page.evaluate(() => localStorage.getItem("konsol.tema")), "sistem");
-    // Every section is built (phase 4b); an old address lands on its new home (yeni-paylasim-ui.cjs covers them all).
-    await page.evaluate(() => { location.hash = "#/ayarlar"; });
-    await page.waitForFunction(() => location.hash === "#/sistem");
-    await page.getByTestId("checks").waitFor();
+    // Only the six sections and an application's page exist: any other address (an old one too) lands on Genel Bakış.
+    for (const unknown of ["#/moduller/x", "#/bilinmeyen"]) {
+      await page.evaluate(() => { location.hash = "#/sistem"; });
+      await h1.filter({ hasText: "Sistem" }).waitFor();
+      await page.evaluate((hash) => { location.hash = hash; }, unknown);
+      await page.waitForFunction(() => location.hash === "#/genel");
+      await h1.filter({ hasText: "Genel Bakış" }).waitFor();
+      assert.deepEqual(await page.locator('.sidebar .nav-item[aria-current="page"]').allInnerTexts(), ["Genel Bakış"], unknown);
+    }
     // The skip link is the first stop and focuses the page.
+    await page.evaluate(() => { location.hash = "#/sistem"; });
+    await h1.filter({ hasText: "Sistem" }).waitFor();
     await page.reload();
     await h1.filter({ hasText: "Sistem" }).waitFor();
     await page.keyboard.press("Tab");
@@ -473,7 +478,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     console.log("PASS: Konsol shell (build matches its sources, licence banner) under the production CSP — sidebar counts (Uygulamalar 2, Sistem 1 danger, Erişim 1 warning), problem chip, " +
       "Tailscale and version card, event stream (X-Konsol fetch, multi-line data, unknown events, kapat → immediate reconnect), activity drawer " +
       "(focus trap, Esc, focus return, finished job reloads the applications), pending banner with local countdown and phases, palette (Ctrl+K/Meta+K, groups, " +
-      "İŞ/ıs/is, ↑↓, Enter to a page, no old-interface group, theme action, Esc and focus return), theme radios kept across a reload, an old address, " +
+      "İŞ/ıs/is, ↑↓, Enter to a page, no old-interface group, theme action, Esc and focus return), theme radios kept across a reload, an unknown address → Genel Bakış, " +
       "skip link, phone bottom bar and sheet, 1440/390/320 in light and dark, polling without a stream (404/503: 5/10/60 s, no settings status), " +
       "a failing stream (502: 3 s, 6 s, polling after the third failure, polling ends when the stream is back), " +
       "unknown values as —, 401 → sign-in, local Outfit font. Screenshots: " + shots);

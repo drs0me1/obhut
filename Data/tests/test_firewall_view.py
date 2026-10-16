@@ -17,10 +17,10 @@ class FirewallViewTests(unittest.TestCase):
     def setUp(self):
         self.tailnet = patch.object(panel.master_settings, "tailnet_ports", return_value=[]).start()
         self.addCleanup(patch.stopall)
-        self.p = panel.Panel(types.SimpleNamespace(state="/unused", state_env=False))
+        self.p = panel.Panel(types.SimpleNamespace(state="/unused", allow_host=[], state_env=False))
         self.env = {"TAILSCALE_IF": "tailscale0", "TAILSCALE_IPV4": "100.64.0.2",
                     "TAILSCALE_IPV6": "fd7a:115c:a1e0::2", "WAN_INTERFACE": "eth0",
-                    "WAN_IPV4": "192.0.2.1", "WAN_IPV6": "2001:db8::1", "TORRENT_UI_PORT": "61004", "FILES_PANEL_PORT": "61009"}
+                    "WAN_IPV4": "192.0.2.1", "WAN_IPV6": "2001:db8::1", "FILES_PANEL_PORT": "61009"}
         self.nets = [{"iface": "wg0", "server4": "10.8.0.1", "server6": "fd00::1",
                       "label": "Home", "active": True, "scope": "ui", "port": 51820},
                      {"iface": "wg1", "server4": "10.9.0.1", "server6": "fd01::1",
@@ -60,63 +60,71 @@ class FirewallViewTests(unittest.TestCase):
                     run.return_value = result
                 self.assertIsNone(self.p.listeners(self.env, []))
 
-    def test_bridge_package_peer_port_is_a_fixed_ipv4_publication(self):
-        # DD-217/219: the peer port is published into the package bridge on IPv4 only and let through by
-        # the container guard; Settings shows it without an INPUT toggle and without an IPv6 row.
-        import shutil
-        import tempfile
-        mods = Path(tempfile.mkdtemp(prefix="fw-view-mods-")).resolve()
-        self.addCleanup(shutil.rmtree, mods, True)
-        (mods / "torrent").mkdir()
-        manifest = (Path(__file__).resolve().parents[1] / "magaza/torrent/paket.env").read_text()
-        (mods / "torrent/paket.env").write_text(manifest.replace("__TORRENT_NETWORK__", "torrent"))
-        (mods / "torrent/torrent.env").write_text("TORRENT_PEER_PORT=63851\n")
-        with patch.object(self.p, "module_state", return_value="calisiyor"), \
-                patch.dict(self.env, {"MODULES_DIR": str(mods)}):
-            rows = self.p.settings_ports(self.env, [], [])
-        peer = [r for r in rows if r["port"] == 63851]
-        self.assertEqual(sorted((r["family"], r["proto"], r["scope"]) for r in peer), [(4, "tcp", "wan"), (4, "udp", "wan")])
-        self.assertTrue(all(r.get("fixed") for r in peer))
-        self.assertFalse(any(r.get("fixed") for r in rows if r["port"] != 63851))
-
     def test_known_service_names_are_retained_across_scopes(self):
-        # DD-198: the Files backend's loopback row is declared by the built-in dosya manifest.
-        import shutil
-        import tempfile
-        mods = Path(tempfile.mkdtemp(prefix="fw-view-mods-")).resolve()
-        self.addCleanup(shutil.rmtree, mods, True)
-        (mods / "dosya").mkdir()
-        shutil.copy(Path(__file__).resolve().parents[1] / "magaza/dosya/paket.env", mods / "dosya/paket.env")
-        with patch.object(self.p, "module_state", return_value="calisiyor"), \
-                patch.dict(self.env, {"MODULES_DIR": str(mods)}):
-            rows = self.p.settings_ports(self.env, [], [{"family": 4, "proto": "tcp", "port": 61009},
-                                                       {"family": 4, "proto": "tcp", "port": 54321}])
+        # DD-271: the Files backend's loopback row is a base row of the port catalogue.
+        rows = self.p.settings_ports(self.env, [], [{"family": 4, "proto": "tcp", "port": 61009},
+                                                   {"family": 4, "proto": "tcp", "port": 54321}])
         keys = [(r["family"], r["proto"], r["port"], r["scope"]) for r in rows]
         self.assertEqual(len(keys), len(set(keys)))
         by_scope = {r["scope"]: r for r in rows if r["port"] == 61009 and r["family"] == 4}
         self.assertNotIn("tail", by_scope)
-        self.assertIn("Konsol", by_scope["lo"]["name"])
+        self.assertEqual(by_scope["lo"]["name"], "Konsol · dosya arka ucu")
         self.assertNotIn("wan", by_scope)
         self.assertTrue(by_scope["lo"]["baseline"])
         self.assertEqual(next(r["name"] for r in rows if r["port"] == 54321), "Diğer dinleyici")
+        # No base row is a fixed publication.
+        self.assertFalse(any(r.get("fixed") for r in rows))
 
-    def test_settings_network_metadata_is_public_only_and_includes_stopped_install(self):
+    def test_base_rows_come_only_from_configured_keys(self):
+        self.assertEqual(self.p.ports({}, []), [])
+        env = {"SHARE_PORT": "61010", "FILES_PANEL_PORT": "61009", "SSH_PUBLIC_PORT": "not-a-port"}
+        self.assertEqual(self.p.ports(env, []), [
+            {"port": 61010, "proto": "tcp", "scope": "tailscale",
+             "name": "Paylaşım WebDAV — yalnız Konsol'dan paylaşılanlar (Infuse)"},
+            {"port": 61009, "proto": "tcp", "scope": "loopback", "name": "Konsol · dosya arka ucu"}])
+        names = [r["name"] for r in self.p.ports({}, self.nets)]
+        self.assertEqual(names, ["WireGuard wg0 · Home", "WireGuard wg1 · Mobile"])
+        self.assertEqual([r["name"] for r in self.p.ports({}, [{**self.nets[0], "label": ""}])], ["WireGuard wg0"])
+
+    def test_settings_network_metadata_is_public_only_and_includes_inactive_networks(self):
         nets = [{**n, "private_key": "must-not-leak"} for n in self.nets]
         with patch.object(panel, "read_env", return_value=self.env), \
-             patch.object(self.p, "package_networks", return_value=nets), \
-             patch.object(self.p, "vpn_apps", return_value=["WireGuard"]), \
+             patch.object(self.p.wireguard, "networks", return_value=nets) as networks, \
              patch.object(self.p, "firewall_check", return_value={}), \
              patch.object(self.p, "web_view", return_value={}), \
              patch.object(self.p, "dns_view", return_value={}):
             fw = self.p.settings(fresh=True)["firewall"]
-        self.assertEqual(fw["vpn_name"], "WireGuard")
+        networks.assert_called_once_with()
+        self.assertNotIn("vpn_name", fw)
         self.assertEqual(len(fw["networks"]), 2)
-        self.assertEqual(set(fw["networks"][0]), {"app", "iface", "label", "active"})
+        self.assertEqual(set(fw["networks"][0]), {"iface", "label", "active"})
         self.assertFalse(fw["networks"][1]["active"])
 
+    def test_firewall_page_names_ports_and_networks_without_application_fields(self):
+        view = {"firewall": {"ok": True, "check": "firewall: tamam",
+                             "networks": [{"iface": "wg0", "label": "Home", "active": True},
+                                          {"iface": "wg1", "label": "", "active": False}],
+                             "ports": [{"name": "WireGuard wg0 · Home", "family": 4, "proto": "udp", "port": 51820,
+                                        "scope": "wan", "baseline": True},
+                                       {"name": "Konsol · dosya arka ucu", "family": 6, "proto": "tcp", "port": 61009,
+                                        "scope": "lo", "baseline": True},
+                                       {"name": "unknown scope", "family": 4, "proto": "tcp", "port": 1, "scope": "wg0"}],
+                             "listeners": None, "rules": {"rows": [], "errors": ["IPv6 kuralları okunamadı"]}},
+                "manage": {"revision": "r1", "config": {"firewall": []}}}
+        with patch.object(self.p, "settings", return_value=view):
+            fw = self.p.guvenlik_duvari()
+        self.assertEqual(set(fw), {"revizyon", "denetim", "kurallar", "portlar", "dinleyiciler", "teknik", "aglar", "hatalar"})
+        self.assertEqual(fw["portlar"], [
+            {"ad": "WireGuard wg0 · Home", "aile": 4, "proto": "udp", "port": 51820, "kapsam": "wan", "sabit": False},
+            {"ad": "Konsol · dosya arka ucu", "aile": 6, "proto": "tcp", "port": 61009, "kapsam": "lo", "sabit": False}])
+        self.assertEqual(fw["aglar"], [{"arayuz": "wg0", "ad": "Home", "etkin": True},
+                                       {"arayuz": "wg1", "ad": "", "etkin": False}])
+        self.assertIsNone(fw["dinleyiciler"])
+        self.assertEqual((fw["revizyon"], fw["denetim"], fw["hatalar"]),
+                         ("r1", {"ok": True, "metin": "firewall: tamam"}, ["IPv6 kuralları okunamadı"]))
+
     def test_wireguard_endpoints_have_no_tunnel_host_service(self):
-        with patch.object(self.p, "module_state", return_value="calisiyor"):
-            rows = self.p.settings_ports(self.env, self.nets)
+        rows = self.p.settings_ports(self.env, self.nets)
         endpoints = [r for r in rows if r["port"] in (51820, 51821)]
         self.assertTrue(endpoints)
         self.assertTrue(all(r["scope"] in ("wan", "tail") and r["proto"] == "udp" for r in endpoints))
@@ -131,8 +139,7 @@ class FirewallViewTests(unittest.TestCase):
         self.tailnet.return_value.append(dict(family=4, proto="tcp", port=54321, name="Tailscale PeerAPI"))
         sockets = [dict(family=f, proto=p, port=n) for f in (4, 6) for p in ("tcp", "udp")
                    for n in (20902, 61006, 61008, 61009, 2019, 54321, 49876)]
-        with patch.object(self.p, "module_state", return_value="calisiyor"):
-            rows = self.p.settings_ports(self.env, self.nets, sockets)
+        rows = self.p.settings_ports(self.env, self.nets, sockets)
         tail = {(r["family"], r["proto"], r["port"]): r for r in rows if r["scope"] == "tail"}
         self.assertEqual(set(tail), {(4, "tcp", 80), (6, "tcp", 80), (4, "tcp", 54321)} |
                          {(f, "udp", p) for f in (4, 6) for p in (51820, 51821)})
@@ -154,7 +161,7 @@ class FirewallViewTests(unittest.TestCase):
         self.tailnet.return_value += [dict(family=f, proto=p, port=5353, name="dnsmasq")
                                      for f in (4, 6) for p in ("tcp", "udp")]
         for sockets in (None, [], [dict(family=6, proto="tcp", port=8081)]):
-            with self.subTest(sockets=sockets), patch.object(self.p, "module_state", return_value="calisiyor"):
+            with self.subTest(sockets=sockets):
                 rows = self.p.settings_ports(env, [], sockets)
             tail = {(r["family"], r["proto"], r["port"]) for r in rows if r["scope"] == "tail"}
             self.assertEqual(tail, {(r["family"], r["proto"], r["port"]) for r in self.tailnet.return_value})
@@ -165,7 +172,7 @@ class FirewallViewTests(unittest.TestCase):
                    for n in (53, 80, 61004, 61008, 61009, 61010, 2019, 20902, 55221)]
         self.tailnet.return_value = [dict(family=4, proto="tcp", port=55221, name="Tailscale PeerAPI")]
         for discovered in (None, [], sockets):
-            with self.subTest(discovered=bool(discovered)), patch.object(self.p, "module_state", return_value="calisiyor"):
+            with self.subTest(discovered=bool(discovered)):
                 rows = self.p.settings_ports(env, self.nets, discovered)
             wan = [r for r in rows if r["scope"] == "wan"]
             self.assertEqual({(r["family"], r["proto"], r["port"]) for r in wan},
@@ -173,21 +180,17 @@ class FirewallViewTests(unittest.TestCase):
                              {(4, "udp", 51820), (4, "udp", 51821)})
             self.assertTrue(all(r["baseline"] for r in wan))
 
-    def test_tunnel_catalogue_has_no_host_services_even_with_legacy_scope(self):
+    def test_tunnel_catalogue_has_no_host_services(self):
         for active in (True, False):
             nets = [{**n, "active": active, "count": 0} for n in self.nets]
-            with self.subTest(active=active), patch.object(self.p, "module_state", return_value="calisiyor"):
+            with self.subTest(active=active):
                 rows = self.p.settings_ports(self.env, nets, [])
             tunnel = [r for r in rows if r["scope"].startswith("wg")]
             self.assertEqual(tunnel, [])
             self.assertTrue(any(r["scope"] == "wan" and r["port"] == 51821 for r in rows))
-        with patch.object(self.p, "module_state", return_value="calisiyor"):
-            rows = self.p.settings_ports(self.env, [{**n, "scope": "inet"} for n in self.nets])
-        self.assertFalse(any(r["scope"].startswith("wg") for r in rows))
 
     def test_no_networks_means_no_wireguard_placeholder_ports(self):
-        with patch.object(self.p, "module_state", return_value=""):
-            rows = self.p.settings_ports(self.env, [])
+        rows = self.p.settings_ports(self.env, [])
         self.assertFalse(any(r["scope"].startswith("wg") or r["name"].startswith("WireGuard ") for r in rows))
 
     def test_the_firewall_check_reports_its_last_line_and_a_failure_is_never_healthy(self):

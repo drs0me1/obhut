@@ -20,20 +20,11 @@ function at(tree: Tree, route: string, params?: Record<string, string>): string 
 const isNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const numberOrNull = (v: unknown): number | null => (isNumber(v) ? v : null);
 
-export interface ProtectedFolder {
-  /** Relative to the root. */
-  path: string;
-  /** The package that writes there ("qBittorrent"). */
-  owner: string;
-}
-
 export interface FilesState {
   root: string;
   writable: boolean;
   textLimit: number;
   disk: { total: number | null; free: number | null; used: number | null; mount: boolean };
-  /** The packages' folders (DD-203): not selectable, not shared, not changed here. None in the root view. */
-  protected: ProtectedFolder[];
   /** The trash's count and size; null in the root view (it has none). */
   trash: { count: number; size: number } | null;
 }
@@ -107,15 +98,11 @@ export async function readState(tree: Tree): Promise<FilesState> {
   const v = shaped<Record<string, unknown>>(await getJson(at(tree, "/state")), (s) => isText(s.root) && isObject(s.disk));
   const disk = v.disk as Record<string, unknown>;
   const trash = isObject(v.trash) && isNumber(v.trash.count) ? { count: v.trash.count, size: isNumber(v.trash.size) ? v.trash.size : 0 } : null;
-  const guarded = Array.isArray(v.protected)
-    ? v.protected.filter((p): p is ProtectedFolder => isObject(p) && isText(p.path) && p.path !== "" && isText(p.owner))
-    : [];
   return {
     root: v.root as string,
     writable: v.writable !== false,
     textLimit: isNumber(v.textLimit) ? v.textLimit : 0,
     disk: { total: numberOrNull(disk.total), free: numberOrNull(disk.free), used: numberOrNull(disk.used), mount: disk.mount === true },
-    protected: tree === "srv" ? guarded.map((p) => ({ path: p.path, owner: p.owner })) : [],
     trash: tree === "srv" ? trash : null,
   };
 }

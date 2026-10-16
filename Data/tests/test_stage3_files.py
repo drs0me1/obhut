@@ -1,5 +1,6 @@
 """Stage 3 Files JSON and idle cleanup; no system service or host mutations."""
 import http.client
+import json
 import os
 from pathlib import Path
 import socket
@@ -43,6 +44,14 @@ class Stage3FilesTests(unittest.TestCase):
             return response.status, response.read(), response.will_close
         finally:
             conn.close()
+
+    def test_state_reply_names_the_user_area_only(self):
+        code, data, _ = self.request(path="/api/state")
+        self.assertEqual(code, 200)
+        state = json.loads(data)
+        self.assertEqual(set(state), {"host", "version", "root", "downloads", "domain", "writable", "disk",
+                                      "trash", "textLimit"})
+        self.assertEqual((state["root"], state["version"], state["trash"]), (str(self.root), "test", {"count": 0, "size": 0}))
 
     def test_deep_json_returns_400_and_closes_then_next_request_succeeds(self):
         body = b'{"path":' + b"[" * 20000 + b"0" + b"]" * 20000 + b"}"

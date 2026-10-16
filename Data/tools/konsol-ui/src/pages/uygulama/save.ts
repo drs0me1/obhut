@@ -46,7 +46,7 @@ export function useContainerSave() {
     state.value = "running";
     step.value = first;
     void refreshApps();
-    const f = followJob("konteyner", id, null, (job) => {
+    const f = followJob("konteyner", id, (job) => {
       if (job.adim) step.value = job.adim;
     });
     following = f;

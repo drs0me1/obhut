@@ -1,6 +1,7 @@
 """DD-233: Konsol's update button backend: the GitHub version check (pinned commit, cache, failure
-back-off, forced re-check gap), the comparison with the installed version, the unit's job state
-and stage, the start rules, the systemd-run call and the Tailscale-only start route.
+back-off, forced re-check gap), the comparison with the installed version, the generation gate
+(DD-271, S3), the unit's job state and stage, the start rules, the systemd-run call and the
+Tailscale-only start route.
 Temporary directories, a fake fetcher and fake systemd tools only; no network, no host changes."""
 import json
 import os
@@ -20,8 +21,12 @@ OLD, NEW, SHA = "2026.08.06-v2-211", "2026.08.06-v2-212", "0123456789abcdef01234
 
 
 class Fetcher:
-    def __init__(self, sha=SHA, version=NEW, surum=None):
+    """GitHub: the tip commit, then that commit's install.sh. `nesil` is its OBHUT_NESIL value (None:
+    no line, generation 1); `extra` is appended verbatim."""
+
+    def __init__(self, sha=SHA, version=NEW, surum=None, nesil="2", extra=""):
         self.sha, self.version, self.surum, self.calls, self.fail = sha, version, surum, [], None
+        self.nesil, self.extra = nesil, extra
 
     def __call__(self, url, accept):
         self.calls.append((url, accept))
@@ -30,7 +35,9 @@ class Fetcher:
         if url.startswith("https://api.github.com/"):
             return self.sha + "\n"
         text = '#!/usr/bin/env bash\nset -Eeuo pipefail\n\nV2_VERSION="%s"\n' % self.version
-        return text + ('# yorum\nOBHUT_SURUM="%s"\n' % self.surum if self.surum is not None else "")
+        text += '# yorum\nOBHUT_SURUM="%s"\n' % self.surum if self.surum is not None else ""
+        text += 'OBHUT_NESIL="%s"\n' % self.nesil if self.nesil is not None else ""
+        return text + self.extra
 
 
 class Clock:
@@ -42,7 +49,7 @@ class Clock:
 
 
 def env_for(root, version=OLD):
-    return {"V2_VERSION": version, "GUNCELLEME_REPO": "drs0me1/obhut", "GUNCELLEME_DAL": "main",
+    return {"V2_VERSION": version, "OBHUT_NESIL": "2", "GUNCELLEME_REPO": "drs0me1/obhut", "GUNCELLEME_DAL": "main",
             "GUNCELLEME_UNIT": "master-guncelle.service",
             "GUNCELLEME_DURUM_FILE": str(root / "guncelleme.durum"), "GUNCELLEME_LOG_FILE": str(root / "guncelleme.log")}
 
@@ -163,14 +170,91 @@ class CheckTests(unittest.TestCase):
             self.u.check_start(self.env, offer, True, "")
         self.assertEqual(err.exception.status, 409)
         with self.assertRaises(mu.UpdateError) as err:
-            self.u.check_start(self.env, offer, False, "Bir uygulama işlemi sürüyor")
-        self.assertEqual(str(err.exception), "Bir uygulama işlemi sürüyor")
+            self.u.check_start(self.env, offer, False, "Konsol'da bekleyen bir ayar işlemi var")
+        self.assertEqual((err.exception.status, str(err.exception)), (409, "Konsol'da bekleyen bir ayar işlemi var"))
         for bad in [{}, {"surum": NEW}, {"surum": NEW, "commit": "f" * 40}, {"surum": "2026.08.06-v2-999", "commit": SHA}]:
             with self.assertRaises(mu.UpdateError, msg=bad):
                 self.u.check_start(self.env, bad, False, "")
         self.assertEqual(self.u.check_start(self.env, offer, False, ""), (SHA, NEW))
         with self.assertRaises(mu.UpdateError):
             self.u.check_start(env_for(self.root, NEW), offer, False, "")
+
+
+class GenerationTests(unittest.TestCase):
+    """DD-271 (S3): only a build of the host's own generation is an update; another generation needs a
+    clean install. The remote generation is install.sh's OBHUT_NESIL (absent: 1), the local one state.env's."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.env = env_for(self.root)
+        self.offer = {"surum": NEW, "commit": SHA}
+
+    def check(self, env, **remote):
+        u = mu.Updates(Fetcher(**remote), Clock())
+        info = u.status(env, False)
+        return u, info
+
+    def refused(self, u, env):
+        with self.assertRaises(mu.UpdateError) as err:
+            u.check_start(env, self.offer, False, "")
+        self.assertEqual(err.exception.status, 409)
+
+    def test_a_newer_build_of_the_same_generation_is_offered(self):
+        u, info = self.check(self.env, nesil="2")
+        self.assertEqual((info["son"], info["commit"], info["yeni"], info["hata"]), (NEW, SHA, True, ""))
+        self.assertEqual(u.latest(self.env)["nesil"], 2)
+        self.assertEqual(u.check_start(self.env, self.offer, False, ""), (SHA, NEW))
+        # The generation must match, not be a fixed number.
+        env = dict(self.env, OBHUT_NESIL="3")
+        u, info = self.check(env, nesil="3")
+        self.assertTrue(info["yeni"])
+        # The same generation without a newer build is still not an update.
+        u, info = self.check(self.env, nesil="2", version=OLD)
+        self.assertEqual((info["yeni"], info["hata"]), (False, ""))
+
+    def test_a_remote_without_the_line_is_generation_one_and_never_offered(self):
+        for extra in ("", 'OBHUT_NESIL=2\n', 'OBHUT_NESIL="0"\n', 'OBHUT_NESIL="02"\n', '# OBHUT_NESIL="2"\n'):
+            with self.subTest(extra=extra):
+                u, info = self.check(self.env, nesil=None, extra=extra)
+                self.assertEqual(u.latest(self.env)["nesil"], 1)
+                self.assertEqual((info["son"], info["commit"], info["yeni"]), (NEW, SHA, False))
+                self.assertIn("başka bir nesilden (1)", info["hata"])
+                self.assertIn("temiz", info["hata"])
+                self.refused(u, self.env)
+
+    def test_another_generation_is_never_offered(self):
+        for remote in ("1", "3", "10"):
+            with self.subTest(remote=remote):
+                u, info = self.check(self.env, nesil=remote, version="2026.08.06-v2-999")
+                self.assertFalse(info["yeni"])
+                self.assertIn("başka bir nesilden (%s)" % remote, info["hata"])
+                self.assertIn("temiz bir işletim sistemine", info["hata"])
+                self.refused(u, self.env)
+
+    def test_a_host_without_a_generation_is_never_offered(self):
+        for local in (None, "", "0", "02", "x", "1000", "2 "):
+            with self.subTest(local=local):
+                env = dict(self.env)
+                if local is None:
+                    del env["OBHUT_NESIL"]
+                else:
+                    env["OBHUT_NESIL"] = local
+                u, info = self.check(env, nesil="2")
+                self.assertFalse(info["yeni"])
+                self.assertIn("nesil yok", info["hata"])
+                self.refused(u, env)
+
+    def test_an_unreachable_github_keeps_its_own_message(self):
+        u = mu.Updates(Fetcher(), Clock())
+        u.fetcher.fail = OSError("down")
+        info = u.status(self.env, False)
+        self.assertFalse(info["yeni"])
+        self.assertIn("GitHub", info["hata"])
+        self.assertNotIn("nesil", info["hata"])
+        self.assertIsNone(u.latest(self.env)["nesil"])
+        self.assertIsNone(mu.Updates(Fetcher(), Clock()).latest(dict(self.env, GUNCELLEME_REPO=""))["nesil"])
 
 
 class PanelStartTests(unittest.TestCase):
@@ -187,18 +271,16 @@ class PanelStartTests(unittest.TestCase):
         for name, body in {
             "systemd-run": 'printf "%s\\n" "$*" >> "$(dirname "$0")/calls"',
             # list-units prints the units named in the "active" file that match the pattern.
-            "systemctl": 'for u in $(cat "$(dirname "$0")/active"); do case "$u" in $(eval echo \\${$#})) echo "$u loaded active running x";; esac; done',
-            "master-modul": "exit 0"}.items():
+            "systemctl": 'for u in $(cat "$(dirname "$0")/active"); do case "$u" in $(eval echo \\${$#})) echo "$u loaded active running x";; esac; done'}.items():
             path = self.bin / name
             path.write_text("#!/bin/sh\n" + body + "\n")
             path.chmod(0o755)
         self.pending = self.root / "bekleyen.json"
         env = env_for(self.root)
-        env.update(SETTINGS_PENDING_FILE=str(self.pending))
+        env.update(SETTINGS_PENDING_FILE=str(self.pending), SBIN_DIR=str(self.bin))
         self.state = self.root / "state.env"
         self.state.write_text("".join("%s=%s\n" % kv for kv in env.items()))
-        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=["panel.test"], state_env=True,
-                                                   master_modul=str(self.bin / "master-modul")))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=["panel.test"], state_env=True))
         self.p.updates = mu.Updates(Fetcher(), Clock())
 
     def calls(self):
@@ -210,15 +292,23 @@ class PanelStartTests(unittest.TestCase):
         self.assertEqual(self.calls(), ["--unit=master-guncelle.service --collect --quiet --description=Konsol güncellemesi: %s "
                                         "--setenv=STATE_FILE=%s %s uygula %s %s" % (NEW, self.state, self.bin / "master-guncelle", SHA, NEW)])
 
-    def test_refuses_beside_a_running_update_a_package_operation_or_a_pending_setting(self):
-        for active, pending, word in [("master-guncelle.service", False, "zaten"), ("master-modul-torrent.service", False, "uygulama"),
-                                      ("", True, "bekleyen bir ayar")]:
+    def test_refuses_beside_a_running_update_or_a_pending_setting(self):
+        for active, pending, word in [("master-guncelle.service", False, "zaten"), ("", True, "bekleyen bir ayar")]:
             self.active.write_text(active)
             if pending:
                 self.pending.write_text("{}")
             with self.assertRaises(mu.UpdateError) as err:
                 self.p.update_start({"surum": NEW, "commit": SHA})
+            self.assertEqual(err.exception.status, 409)
             self.assertIn(word, str(err.exception))
+        self.assertEqual(self.calls(), [])
+
+    def test_another_generation_is_not_started(self):
+        self.p.updates = mu.Updates(Fetcher(nesil=None), Clock())
+        self.assertFalse(self.p.update_info()["yeni"])
+        with self.assertRaises(mu.UpdateError) as err:
+            self.p.update_start({"surum": NEW, "commit": SHA})
+        self.assertEqual(err.exception.status, 409)
         self.assertEqual(self.calls(), [])
 
     def test_info_reports_the_running_unit(self):

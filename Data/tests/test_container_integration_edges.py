@@ -19,16 +19,13 @@ class IntegrationEdges(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="container-edges-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
-        self.env = {"KONTEYNER_STATE_DIR": str(self.root / "state"), "MODULES_FILE": str(self.root / "modules"),
-                    "MODULES_DIR": str(self.root / "packages"), "RUNTIME_DIR": str(self.root / "run"),
+        self.env = {"KONTEYNER_STATE_DIR": str(self.root / "state"), "RUNTIME_DIR": str(self.root / "run"),
                     "KONTEYNER_LOCK": str(self.root / "run/containers.lock"), "KONTEYNER_NETWORK": "konsol",
                     "TAILSCALE_IPV4": "100.64.0.2"}
-        (self.root / "modules").write_text("")
         self.state = self.root / "state.env"
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
         self.raw, self.networks, self.calls = {}, [], []
-        panel = types.SimpleNamespace(args=types.SimpleNamespace(state=str(self.state)), run_tool=self.fake_run,
-                                      env=lambda: {}, module_busy=lambda _: False)
+        panel = types.SimpleNamespace(args=types.SimpleNamespace(state=str(self.state)), run_tool=self.fake_run, env=lambda: {})
         self.service = manager.Service(panel)
 
     def fake_run(self, argv, timeout=30, **kwargs):

@@ -1,6 +1,6 @@
-<!-- The DNS choice of a WireGuard device or network (as magaza/wireguard/sayfa.js): five providers and
-     "Özel" with the operator's own addresses. v-model is the normalised list ("1.1.1.1, 1.0.0.1, …"), or ""
-     while "Özel" holds nothing valid; `badge` marks a choice ("şu an", "ağın varsayılanı", "önerilen"). -->
+<!-- The DNS choice of a WireGuard device or network: five providers and "Özel" with the operator's own
+     addresses. v-model is the normalised list ("1.1.1.1, 1.0.0.1, …"), or "" while "Özel" holds nothing
+     valid; `badge` marks a choice ("şu an", "ağın varsayılanı", "önerilen"). -->
 <script setup lang="ts">
 import { computed, ref, useId, watch } from "vue";
 import Field from "../../components/ui/Field.vue";

@@ -12,9 +12,8 @@ const DAY = 86400;
 const VPN_NOTE = "WireGuard cihazları yalnız internete çıkar; bu sunucudaki hizmetlere ulaşamaz.";
 const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
 const ucell = (durum, adresler = [], uyari = "", not = "") => ({ durum, adresler, uyari, not });
-const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: ucell("yok"), internet: ucell("yok"),
-  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
-  metinler: null, hesap: false, aciklama: "", ...o });
+const app = (o) => ({ tur: "konteyner", durum: "calisiyor", tailscale: ucell("yok"), internet: ucell("yok"), kaynak: { cpu: null, bellek: null },
+  guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null, aciklama: "", ...o });
 const row = (id, ad, tur, cells, ayrinti = [], aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, calisiyor: true, yerel: cell("yok"),
   tailscale: cell("yok"), wireguard: cell("kapali", [], VPN_NOTE), internet: cell("yok"), yayinlar: [], ayrinti, ...cells });
 
@@ -23,18 +22,17 @@ const WARNINGS = [
     duzelt: { bolum: "yayinlar", hedef: "paylasim" } },
   { seviye: "warn", hizmet: "konteyner:medya", metin: "medya: 203.0.113.10:8096/tcp doğrudan internete açık; şifreleme ve giriş uygulamanın kendisinde.",
     duzelt: { bolum: "uygulama", hedef: "konteyner:medya" } },
-  { seviye: "warn", hizmet: "paket:torrent", metin: "torrent.example.org sertifikası 10 gün sonra doluyor; Caddy kendiliğinden yeniler, yenilemezse internetten erişim kesilir.",
-    duzelt: { bolum: "yayinlar", hedef: "paket:torrent" } },
+  { seviye: "warn", hizmet: "konteyner:notlar", metin: "notlar.example.org sertifikası 10 gün sonra doluyor; Caddy kendiliğinden yeniler, yenilemezse internetten erişim kesilir.",
+    duzelt: { bolum: "yayinlar", hedef: "konteyner:notlar" } },
 ];
 const ROWS = [
   row("panel", "Konsol", "konsol", { tailscale: cell("acik", ["panel.ev"], "Giriş istemez; cihazı Tailscale doğrular."), internet: cell("kapali") }, [], "Yönetim paneli"),
-  row("paket:torrent", "qBittorrent", "paket", { yerel: cell("acik", ["127.0.0.1:62947 → 8080/tcp"]), tailscale: cell("acik", ["torrent.ev"]),
-    internet: cell("acik", ["torrent.example.org", "203.0.113.10:63851/tcp+udp"], "qBittorrent'in kendi girişi korur") },
-  [{ baslik: "Caddy", deger: "torrent.example.org → 127.0.0.1:62947" }, { baslik: "DNS", deger: "torrent.ev → 100.64.0.2" }], "Uygulama"),
-  row("konteyner:notlar", "notlar", "konteyner", { yerel: cell("acik", ["127.0.0.1:8090 → 80/tcp"]), tailscale: cell("acik", ["notlar.ev"]), internet: cell("kapali") }, [], "Konteyner"),
+  row("konteyner:notlar", "notlar", "konteyner", { yerel: cell("acik", ["127.0.0.1:8090 → 80/tcp"]), tailscale: cell("acik", ["notlar.ev"]),
+    internet: cell("acik", ["notlar.example.org"]) }, [{ baslik: "Konteyner portu", deger: "127.0.0.1:8090 → 80/tcp" },
+    { baslik: "DNS", deger: "notlar.ev → 100.64.0.2" }, { baslik: "Caddy", deger: "notlar.example.org → 127.0.0.1:8090" }], "Konteyner"),
   row("konteyner:medya", "medya", "konteyner", { yerel: cell("kapali"), tailscale: cell("acik", ["100.64.0.2:8096/tcp"]),
     internet: cell("acik", ["203.0.113.10:8096/tcp"], "", "Doğrudan WAN") }, [{ baslik: "Port", deger: "0.0.0.0:8096 → 8096/tcp" }], "Konteyner"),
-  row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"], "2 klasör"), internet: cell("acik", ["http://203.0.113.10:61010"], "1 klasör", "Şifresiz HTTP") },
+  row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev", "100.64.0.2:61010"], "2 klasör"), internet: cell("acik", ["http://203.0.113.10:61010"], "1 klasör", "Şifresiz HTTP") },
     [{ baslik: "Klasör · Filmler", deger: "Tailscale açık · İnternet açık" }], "WebDAV · 2 klasör"),
   row("sistem:ssh", "SSH", "sistem", { tailscale: cell("acik", ["22/tcp"]), internet: cell("acik", ["203.0.113.10:22/tcp"]) }, [], "Uzak kabuk"),
   row("vpn:wg0", "WireGuard wg0", "vpn", { wireguard: cell("yok"), tailscale: cell("acik", ["61001/udp"]), internet: cell("acik", ["203.0.113.10:61001/udp"]) }, [], "Ana ağ"),
@@ -49,8 +47,8 @@ function erisim(o = {}) {
         { ad: "SSH", port: 22, proto: "tcp", aileler: [4, 6], kaynak: "temel" },
         { ad: "WireGuard wg0", port: 61001, proto: "udp", aileler: [4], kaynak: "temel" },
         { ad: "Oyun", port: 27015, proto: "udp", aileler: [4], kaynak: "kural" }] },
-      wireguard: { kurulu: true, not: VPN_NOTE, aglar: [{ uygulama: "WireGuard", arayuz: "wg0", ad: "Ana ağ", etkin: true, port: 61001 }] },
-      sertifikalar: [{ ad: "torrent.example.org", hizmet: "paket:torrent", durum: "gecerli", bitis: NOW + 10 * DAY }],
+      wireguard: { kurulu: true, durduruldu: false, not: VPN_NOTE, aglar: [{ arayuz: "wg0", ad: "Ana ağ", etkin: true, port: 61001 }] },
+      sertifikalar: [{ ad: "notlar.example.org", hizmet: "konteyner:notlar", durum: "gecerli", bitis: NOW + 10 * DAY }],
     },
     ...o,
   };
@@ -63,12 +61,8 @@ const box = (o) => ({ kaynak: "konsol", calisiyor: true, yerel_portlar: [], dige
 function candidates() {
   return [
     cand({ id: "panel", tur: "konsol", ad: "Konsol", servis: "panel", yerel_ad: "panel.ev", tailscale: true, giris: "İnternetten Konsol hesabıyla giriş istenir.", onay_kelimesi: true }),
-    cand({ id: "paket:torrent", tur: "paket", ad: "qBittorrent", servis: "torrent", yerel_ad: "torrent.ev", tailscale: true, internet: true, alan_adi: "torrent.example.org",
-      durum: "ready", mesaj: "Sertifika doğrulandı.", bitis: NOW + 10 * DAY, hedef: "127.0.0.1:62947",
-      giris: "qBittorrent'in kendi girişi korur; Konsol açmadan önce girişin açık olduğunu denetler." }),
-    cand({ id: "paket:gezgin", tur: "paket", ad: "Gezgin", servis: "gezgin", yerel_ad: "gezgin.ev", tailscale: true, hedef: "127.0.0.1:62983",
-      internet_engel: "Gezgin durdurulmuş; önce başlatın." }),
-    cand({ id: "konteyner:notlar", tur: "konteyner", ad: "notlar", servis: "elle-notlar", yerel_ad: "notlar.ev", tailscale: true, hedef: "127.0.0.1:8090",
+    cand({ id: "konteyner:notlar", tur: "konteyner", ad: "notlar", servis: "elle-notlar", yerel_ad: "notlar.ev", tailscale: true, internet: true,
+      alan_adi: "notlar.example.org", durum: "ready", mesaj: "Sertifika doğrulandı.", bitis: NOW + 10 * DAY, hedef: "127.0.0.1:8090",
       konteyner: box({ ad: "notlar", yerel_portlar: [{ host_port: 8090, container_port: 80 }], onerilen_port: 80 }) }),
     cand({ id: "konteyner:medya", tur: "konteyner", ad: "medya", konteyner: box({ ad: "medya", diger_portlar: [{ kapsam: "internet", host_port: 8096, container_port: 8096 }],
       onerilen_port: 8096 }) }),
@@ -82,11 +76,11 @@ function candidates() {
   ];
 }
 
-const KATALOG = [
+const PORTS = [
   { ad: "SSH", aile: 4, proto: "tcp", port: 22, kapsam: "wan", sabit: false },
   { ad: "SSH", aile: 6, proto: "tcp", port: 22, kapsam: "wan", sabit: false },
   { ad: "WireGuard wg0", aile: 4, proto: "udp", port: 61001, kapsam: "wan", sabit: false },
-  { ad: "qBittorrent eş portu", aile: 4, proto: "tcp", port: 63851, kapsam: "wan", sabit: true },
+  { ad: "medya · konteyner portu", aile: 4, proto: "tcp", port: 8096, kapsam: "wan", sabit: true },
   { ad: "Caddy", aile: 4, proto: "tcp", port: 80, kapsam: "tail", sabit: false },
   { ad: "dnsmasq", aile: 4, proto: "udp", port: 53, kapsam: "tail", sabit: false },
   { ad: "Konsol · dosya", aile: 4, proto: "tcp", port: 62001, kapsam: "lo", sabit: false },
@@ -94,7 +88,7 @@ const KATALOG = [
 const RULES = [{ id: "u_medya", name: "Medya", family: 4, scope: "tail", proto: "tcp", port: 8096, source: "", allow: true }];
 function firewall(o = {}) {
   return {
-    revizyon: "rev-1", denetim: { ok: true, metin: "Güvenlik duvarı kuralları beklendiği gibi." }, kurallar: JSON.parse(JSON.stringify(RULES)), katalog: KATALOG,
+    revizyon: "rev-1", denetim: { ok: true, metin: "Güvenlik duvarı kuralları beklendiği gibi." }, kurallar: JSON.parse(JSON.stringify(RULES)), portlar: PORTS,
     dinleyiciler: [
       { proto: "tcp", aile: 4, port: 22, adres: "0.0.0.0", kapsam: "any" },
       { proto: "tcp", aile: 4, port: 80, adres: "100.64.0.2", kapsam: "tail" },
@@ -104,7 +98,7 @@ function firewall(o = {}) {
       { aile: 4, tablo: "filter", zincir: "INPUT", sira: "1", paket: 12345, bayt: 6789012, kural: "-A INPUT -i lo -j ACCEPT", sahip: "Konsol" },
       { aile: 4, tablo: "filter", zincir: "ts-input", sira: "1", paket: 10, bayt: 900, kural: "-A ts-input -j RETURN", sahip: "Tailscale" },
       { aile: 6, tablo: "filter", zincir: "INPUT", sira: "1", paket: 7, bayt: 560, kural: "-A INPUT -i lo -j ACCEPT", sahip: "Konsol" }],
-    aglar: [{ uygulama: "WireGuard", arayuz: "wg0", ad: "Ana ağ", etkin: true }], vpn: "WireGuard", hatalar: [], ...o,
+    aglar: [{ arayuz: "wg0", ad: "Ana ağ", etkin: true }], hatalar: [], ...o,
   };
 }
 function names() {
@@ -114,7 +108,7 @@ function names() {
       { ad: "panel.ev", aile: 4, hedef: "tailscale", kaynak: "base", kapali: false, kilitli: true },
       { ad: "panel.ev", aile: 6, hedef: "fd7a:115c:a1e0::2", kaynak: "base", kapali: false, kilitli: true },
       { ad: "paylas.ev", aile: 4, hedef: "tailscale", kaynak: "base", kapali: false, kilitli: false },
-      { ad: "torrent.ev", aile: 4, hedef: "tailscale", kaynak: "torrent", kapali: true, kilitli: false },
+      { ad: "yedek.ev", aile: 4, hedef: "tailscale", kaynak: "yedek", kapali: true, kilitli: false },
       { ad: "notlar.ev", aile: 4, hedef: "tailscale", kaynak: "elle", kapali: false, kilitli: false }],
     kayitlar: [{ name: "yazici.ev", target: "192.0.2.40", enabled: true }], yonlendirme: true, sunucular: ["1.1.1.1", "1.0.0.1"],
   };
@@ -130,17 +124,17 @@ const data = {
   bekleyen: { bekleyen: null },
   etkinlik: { items: [] },
   erisim: erisim(),
-  uygulamalar: { read_at: NOW, hatalar: [], katalog: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 3, kullanilmayan_imaj: 0, birim: 2, ag: 3 }, items: [
-    app({ id: "paket:torrent", ad: "qBittorrent", tur: "paket", modul: "torrent", konteyner: "torrent", simge: "download", aciklama: "Torrent indirmelerini yönetin.",
-      tailscale: ucell("acik", ["torrent.ev"]), internet: ucell("acik", ["torrent.example.org"]), adres: { tailscale: "http://torrent.ev", internet: "https://torrent.example.org" } }),
-    app({ id: "paket:wireguard", ad: "WireGuard", tur: "paket", modul: "wireguard", simge: "shield", aciklama: "Cihazlarınız için VPN bağlantısı." }),
-    app({ id: "konteyner:medya", ad: "medya", tur: "konteyner", konteyner: "medya", aciklama: "Konteyner · docker.io/library/nginx",
+  uygulamalar: { read_at: NOW, hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 3, kullanilmayan_imaj: 0, birim: 2, ag: 3 }, items: [
+    app({ id: "konteyner:notlar", ad: "notlar", konteyner: "notlar", aciklama: "Konteyner · docker.io/library/nginx",
+      tailscale: ucell("acik", ["notlar.ev"]), internet: ucell("acik", ["notlar.example.org"]), adres: { tailscale: "http://notlar.ev", internet: "https://notlar.example.org" },
+      eylemler: ["durdur", "kaldir"] }),
+    app({ id: "konteyner:medya", ad: "medya", konteyner: "medya", aciklama: "Konteyner · docker.io/library/nginx",
       tailscale: ucell("acik", ["100.64.0.2:8096/tcp"]), internet: ucell("acik", ["203.0.113.10:8096/tcp"], "Doğrudan WAN"), eylemler: ["durdur", "kaldir"] }),
-    app({ id: "yerlesik:paylasim", ad: "Paylaşımlar", tur: "yerlesik", aciklama: "WebDAV · yerleşik · 2 klasör" })] },
+    app({ id: "konteyner:kutu", ad: "kutu", konteyner: "kutu", aciklama: "Konteyner · docker.io/library/busybox", eylemler: ["durdur", "kaldir"] })] },
   yayinlar: { revizyon: "rev-1", alan: "ev", wan_ipv4: "203.0.113.10", adaylar: candidates(), hatalar: [] },
   adlar: names(),
   "guvenlik-duvari": firewall(),
-  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048, apps: [] },
+  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048 },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
 };
 
@@ -220,7 +214,7 @@ h.handlers["/api/konsol/yayinlar/plan"] = ({ method, body }) => {
 h.handlers["/api/konsol/uygulamalar/ayrinti"] = ({ query }) => {
   const item = data.uygulamalar.items.find((a) => a.id === query.get("id"));
   if (!item) return { status: 404, body: { error: "Uygulama bulunamadı." } };
-  return { body: { uygulama: item, konteyner: null, erisim: data.erisim.hizmetler.find((r) => r.id === (item.id === "yerlesik:paylasim" ? "paylasim" : item.id)) ?? null } };
+  return { body: { uygulama: item, konteyner: null, erisim: data.erisim.hizmetler.find((r) => r.id === item.id) ?? null } };
 };
 let jobSeq = 6;
 h.handlers["/api/konsol/konteynerler/islem"] = ({ method, body }) =>
@@ -259,8 +253,8 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     const fixes = page.getByTestId("access-warnings").locator(".problem");
     assert.deepEqual(await fixes.locator("strong").allInnerTexts(), WARNINGS.map((w) => w.metin));
     assert.deepEqual(await fixes.getByRole("link", { name: "Düzelt" }).evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
-      ["#/erisim?sekme=adresler&yayinla=paylasim", "#/uygulamalar/konteyner:medya", "#/erisim?sekme=adresler&yayinla=paket%3Atorrent"]);
-    await page.getByTestId("page-desc").filter({ hasText: "7 hizmet Tailscale'de · 5 hizmet internette · 3 uyarı" }).waitFor();
+      ["#/erisim?sekme=adresler&yayinla=paylasim", "#/uygulamalar/konteyner:medya", "#/erisim?sekme=adresler&yayinla=konteyner%3Anotlar"]);
+    await page.getByTestId("page-desc").filter({ hasText: "6 hizmet Tailscale'de · 5 hizmet internette · 3 uyarı" }).waitFor();
     // Summaries.
     const ts = page.getByTestId("sum-tailscale");
     assert.equal(await ts.locator(".pill").innerText(), "Bağlı");
@@ -269,15 +263,15 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     assert.deepEqual(await page.getByTestId("sum-internet").locator(".fact-list li").allInnerTexts(),
       ["SSH · 22/tcp", "WireGuard wg0 · 61001/udp · yalnız IPv4", "Oyun · 27015/udp · yalnız IPv4 · sizin kuralınız"]);
     assert.deepEqual(await page.getByTestId("sum-wireguard").locator(".fact-list li").allInnerTexts(), ["wg0 · Ana ağ · UDP 61001 · açık"]);
-    assert.equal(await page.getByTestId("sum-certs").locator(".fact-list li").innerText(), `torrent.example.org · ${KEY_DATE} tarihine kadar`);
+    assert.equal(await page.getByTestId("sum-certs").locator(".fact-list li").innerText(), `notlar.example.org · ${KEY_DATE} tarihine kadar`);
     // The matrix in plain words.
     const matrix = page.getByTestId("matrix");
     assert.deepEqual(await matrix.locator("thead th").allInnerTexts(), ["Hizmet", "Bu sunucu", "Tailscale", "WireGuard", "İnternet"]);
     assert.deepEqual(await matrix.locator("tbody tr[data-hizmet]").evaluateAll((trs) => trs.map((t) => t.dataset.hizmet)), ROWS.map((r) => r.id));
-    const torrent = matrix.locator('tr[data-hizmet="paket:torrent"]');
-    assert.deepEqual(await torrent.locator(".matrix-cell .pill").allInnerTexts(), ["Açık", "Açık", "Kapalı", "Açık"]);
-    assert.equal(await torrent.locator('[data-hucre="wireguard"] .cell-note').count(), 0, "the VPN note is said once, under the table");
-    assert.equal(await torrent.locator(".cell-addr").count(), 0, "addresses only with Teknik ayrıntı");
+    const notlar = matrix.locator('tr[data-hizmet="konteyner:notlar"]');
+    assert.deepEqual(await notlar.locator(".matrix-cell .pill").allInnerTexts(), ["Açık", "Açık", "Kapalı", "Açık"]);
+    assert.equal(await notlar.locator('[data-hucre="wireguard"] .cell-note').count(), 0, "the VPN note is said once, under the table");
+    assert.equal(await notlar.locator(".cell-addr").count(), 0, "addresses only with Teknik ayrıntı");
     const shares = matrix.locator('tr[data-hizmet="paylasim"] [data-hucre="internet"]');
     assert.match(await shares.locator(".pill").getAttribute("class"), /pill-warning/);
     assert.equal(await shares.locator(".warn-text").innerText(), "Şifresiz HTTP");
@@ -287,8 +281,10 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     // Teknik ayrıntı: addresses and the technical lines, kept in the address.
     await matrix.getByRole("switch", { name: "Teknik ayrıntı" }).click();
     await page.waitForURL((u) => u.hash === "#/erisim?teknik=1");
-    assert.equal(await torrent.locator('[data-hucre="internet"] .cell-addr').innerText(), "torrent.example.org · 203.0.113.10:63851/tcp+udp");
-    assert.deepEqual(await matrix.locator('[data-ayrinti="paket:torrent"] dd').allInnerTexts(), ["torrent.example.org → 127.0.0.1:62947", "torrent.ev → 100.64.0.2"]);
+    assert.equal(await notlar.locator('[data-hucre="internet"] .cell-addr').innerText(), "notlar.example.org");
+    assert.equal(await matrix.locator('tr[data-hizmet="paylasim"] [data-hucre="tailscale"] .cell-addr').innerText(), "paylas.ev · 100.64.0.2:61010");
+    assert.deepEqual(await matrix.locator('[data-ayrinti="konteyner:notlar"] dd').allInnerTexts(),
+      ["127.0.0.1:8090 → 80/tcp", "notlar.ev → 100.64.0.2", "notlar.example.org → 127.0.0.1:8090"]);
     await page.reload();
     await matrix.locator('[data-ayrinti="paylasim"]').waitFor();
     assert.equal(await matrix.getByRole("switch", { name: "Teknik ayrıntı" }).getAttribute("aria-checked"), "true", "from the address");
@@ -334,6 +330,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     data.erisim = erisim({ uyarilar: [{ seviye: "bad", hizmet: "", metin: "Tailscale bağlı değil; Konsol'a ve tailnet adlarına öbür cihazlardan ulaşılamaz.",
       duzelt: { bolum: "tailscale", hedef: "" } }] });
     data.erisim.ozet.tailscale = { ...data.erisim.ozet.tailscale, durum: "bagli-degil", anahtar_bitis: null, cikis_dugumu: false };
+    data.erisim.ozet.wireguard = { kurulu: false, durduruldu: true, not: "", aglar: [] };
     page = await newPage();
     await page.goto(url("#/genel"));
     const overviewFix = page.locator('.problem[data-kind="erisim"]').getByRole("link", { name: "Düzelt" });
@@ -343,19 +340,33 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     assert.equal(await page.getByTestId("ts-device").locator(".pill").innerText(), "Bağlı değil");
     assert.equal(await page.getByTestId("ts-key").innerText(), "Süresiz ya da bilinmiyor");
     assert.equal(await page.getByTestId("ts-exit").innerText(), "Sunulmuyor.");
+    // A stopped WireGuard has no networks to list; the summary says so.
+    await page.goto(url("#/erisim"));
+    assert.equal(await page.getByTestId("sum-wireguard-none").innerText(), "WireGuard durduruldu; ağlar kapalı.");
     await page.context().close();
     data.erisim = erisim();
+    // Erişim that cannot be read (any failure, a 404 too) says so and waits for the server.
+    h.status["/api/konsol/erisim"] = 404;
+    expectedFailures = ["/api/konsol/erisim"];
+    page = await newPage();
+    await page.goto(url("#/erisim"));
+    const unread = page.locator('section[aria-label="Erişim"]');
+    await unread.getByText("Erişim henüz okunamadı").waitFor();
+    assert.match(await unread.innerText(), /Sunucu yanıt verince burada görünür\./);
+    await page.context().close();
+    delete h.status["/api/konsol/erisim"];
+    expectedFailures = [];
 
     // ================= Adresler: publications, local names (draft → plan → apply), the local domain
     page = await newPage();
     await page.goto(url("#/erisim?sekme=adresler"));
     const pubs = page.getByTestId("publications");
-    await pubs.locator('tr[data-yayin="paket:torrent"]').waitFor();
+    await pubs.locator('tr[data-yayin="konteyner:notlar"]').waitFor();
     assert.deepEqual(await pubs.locator("tbody tr").evaluateAll((trs) => trs.map((t) => t.dataset.yayin)), candidates().map((c) => c.id));
-    const torrentRow = pubs.locator('tr[data-yayin="paket:torrent"]');
-    assert.equal(await torrentRow.locator('[data-hucre="tailscale"]').innerText(), "torrent.ev\naçık");
-    assert.match(await torrentRow.locator('[data-hucre="internet"]').innerText(), /^torrent\.example\.org\nqBittorrent'in kendi girişi korur/);
-    assert.match(await torrentRow.locator('[data-hucre="durum"]').innerText(), new RegExp(`Sertifika hazır[\\s\\S]*Sertifika: ${KEY_DATE}`));
+    const notlarRow = pubs.locator('tr[data-yayin="konteyner:notlar"]');
+    assert.equal(await notlarRow.locator('[data-hucre="tailscale"]').innerText(), "notlar.ev\naçık");
+    assert.equal(await notlarRow.locator('[data-hucre="internet"]').innerText(), "notlar.example.org\n" + GUARD_APP);
+    assert.match(await notlarRow.locator('[data-hucre="durum"]').innerText(), new RegExp(`Sertifika hazır[\\s\\S]*Sertifika: ${KEY_DATE}`));
     assert.equal(await pubs.locator('tr[data-yayin="konteyner:medya"] [data-eylem="duzenle"]').innerText(), "Yayınla", "not published yet");
     assert(await pubs.locator('tr[data-yayin="konteyner:dis"] [data-eylem="duzenle"]').isDisabled(), "unavailable");
     assert.match(await pubs.locator('tr[data-yayin="konteyner:dis"]').innerText(), /yönetime alın/);
@@ -364,11 +375,12 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     // Local names: one row per name, the locked one disabled, the operator's record, forwarding.
     const namesCard = page.getByTestId("names");
     assert.deepEqual(await namesCard.locator("tbody tr").evaluateAll((trs) => trs.map((t) => t.dataset.ad || "k:" + t.dataset.kayit)),
-      ["panel.ev", "paylas.ev", "torrent.ev", "notlar.ev", "k:yazici.ev"]);
+      ["panel.ev", "paylas.ev", "yedek.ev", "notlar.ev", "k:yazici.ev"]);
     assert.equal(await namesCard.locator('tr[data-ad="panel.ev"] td').first().innerText(), "Tailscale adresi · 100.64.0.2 · fd7a:115c:a1e0::2");
     assert(await namesCard.getByRole("switch", { name: "panel.ev açık" }).isDisabled(), "Konsol's own name is locked");
-    assert.equal(await namesCard.getByRole("switch", { name: "torrent.ev açık" }).getAttribute("aria-checked"), "false");
-    assert.equal(await namesCard.locator('tr[data-ad="torrent.ev"] td').nth(1).innerText(), "qBittorrent", "a package's name");
+    assert.equal(await namesCard.getByRole("switch", { name: "yedek.ev açık" }).getAttribute("aria-checked"), "false");
+    assert.equal(await namesCard.locator('tr[data-ad="paylas.ev"] td').nth(1).innerText(), "Temel");
+    assert.equal(await namesCard.locator('tr[data-ad="yedek.ev"] td').nth(1).innerText(), "yedek", "any other source as it is");
     assert.equal(await namesCard.locator('tr[data-ad="notlar.ev"] td').nth(1).innerText(), "Elle adres");
     await noStyles(page, "erisim adresler");
     await shot(page, "1440-light-erisim-adresler.png", true);
@@ -399,7 +411,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await page.getByTestId("review-dns").click();
     sheet = page.getByRole("dialog", { name: "Yerel ad değişiklikleri" });
     await sheet.getByTestId("plan").waitFor();
-    const DNS_BODY = { revision: "rev-1", dns: { disabled: ["torrent.ev", "paylas.ev"], records: [{ name: "yazici.ev", target: "192.0.2.40", enabled: true },
+    const DNS_BODY = { revision: "rev-1", dns: { disabled: ["yedek.ev", "paylas.ev"], records: [{ name: "yazici.ev", target: "192.0.2.40", enabled: true },
       { name: "nas.ev", target: "192.0.2.50", enabled: true }], forward: true, servers: ["9.9.9.9", "149.112.112.112"] } };
     assert.deepEqual(lastPost("ayarlar/plan"), DNS_BODY, "the plan asks for exactly the draft");
     assert.equal(await sheet.getByTestId("plan-window").innerText(), "Hemen kaydedilir; onay beklenmez.");
@@ -487,21 +499,22 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await page.getByTestId("addresses-note").filter({ hasText: "Adres kaldırıldı." }).waitFor();
     await page.context().close();
 
-    // ================= Yayınla: a package's internet name (Kim → Ad with the DNS record → Plan → Uygula)
+    // ================= Yayınla: a published container's internet name (Kim → Ad with the DNS record → Plan → Uygula)
     page = await newPage();
     await page.goto(url("#/erisim?sekme=adresler"));
-    await page.getByTestId("publications").locator('tr[data-yayin="paket:torrent"] [data-eylem="duzenle"]').click();
-    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("yayinla") === "paket:torrent");
+    await page.getByTestId("publications").locator('tr[data-yayin="konteyner:notlar"] [data-eylem="duzenle"]').click();
+    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("yayinla") === "konteyner:notlar");
     flow = flowSheet(page);
     await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
     assert.equal(await currentStep(flow), "2Kim");
     assert.equal(await flow.getByRole("switch", { name: "Tailscale adı" }).getAttribute("aria-checked"), "true");
     assert.equal(await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).getAttribute("aria-checked"), "true");
-    assert.match(await flow.getByTestId("flow-guard").innerText(), /qBittorrent'in kendi girişi korur/);
+    assert.equal(await flow.getByTestId("flow-guard").innerText(), GUARD_APP);
     const go = flow.getByTestId("flow-go");
     await go.click();
     assert.equal(await currentStep(flow), "3Ad");
-    assert.equal(await flow.getByTestId("flow-domain").inputValue(), "torrent.example.org");
+    assert.equal(await flow.getByTestId("flow-domain").inputValue(), "notlar.example.org");
+    assert.equal(await flow.getByTestId("flow-local").count(), 0, "a published container keeps its tailnet name");
     await flow.getByTestId("flow-domain").fill("indir.example.org/");
     await go.click();
     await flow.getByText("Tam alan adını girin; URL, IP, port veya yol eklemeyin.").waitFor();
@@ -511,10 +524,10 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await go.click();
     assert.equal(await currentStep(flow), "4Plan");
     await flow.getByTestId("plan").waitFor();
-    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "paket:torrent", revizyon: "rev-1", tailscale: true, internet: true, alan_adi: "indir.example.org" });
+    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "konteyner:notlar", revizyon: "rev-1", tailscale: true, internet: true, alan_adi: "indir.example.org" });
     assert.deepEqual(await flow.getByTestId("flow-steps").locator(".flow-run strong").allInnerTexts(), ["1. Ad ve erişim"]);
     assert.equal(await flow.getByTestId("plan-dns").locator(".mono").innerText(), "indir.example.org · A · 203.0.113.10");
-    assert.deepEqual(await flow.locator(".plan-item .plan-object").allInnerTexts(), ["qBittorrent · internet adı"]);
+    assert.deepEqual(await flow.locator(".plan-item .plan-object").allInnerTexts(), ["notlar · internet adı"]);
     await shot(page, "1440-light-yayinla-plan.png");
     // Applying waits for the certificate (held back here) and says so.
     let release;
@@ -531,11 +544,11 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     release();
     await flow.getByTestId("flow-done").waitFor();
     await page.unroute("**/api/konsol/ayarlar/uygula");
-    assert.deepEqual(lastPost("ayarlar/uygula"), { revision: "rev-1", web: { service: "torrent", tail: true, enabled: true, domain: "indir.example.org" } },
+    assert.deepEqual(lastPost("ayarlar/uygula"), { revision: "rev-1", web: { service: "elle-notlar", tail: true, enabled: true, domain: "indir.example.org" } },
       "the plan's settings step, unchanged");
     assert.equal(await flow.getByTestId("run-state").innerText(), "Tamam");
     assert.deepEqual(await flow.getByTestId("flow-done").getByRole("link").evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
-      ["http://torrent.ev/", "https://indir.example.org/"]);
+      ["http://notlar.ev/", "https://indir.example.org/"]);
     assert.equal(await go.innerText(), "Kapat");
     await shot(page, "1440-light-yayinla-tamam.png");
     await go.click();
@@ -703,7 +716,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
 
     // What blocks a plan ("engel") is shown, and "Yeniden denetle" asks again.
     yayinReplies.push((body) => ({ body: { ...publicationPlan(body), engel: "indir.example.org adı 203.0.113.10 adresine çözülmüyor; DNS kaydını denetleyin." } }));
-    await page.goto(url("#/erisim?sekme=adresler&yayinla=paket:torrent"));
+    await page.goto(url("#/erisim?sekme=adresler&yayinla=konteyner:notlar"));
     flow = flowSheet(page);
     await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
     await flow.getByTestId("flow-go").click();
@@ -726,27 +739,30 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await flow.getByTestId("flow-go").click();
     await flow.getByTestId("flow-go").click();
     await flow.getByTestId("plan").waitFor();
-    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "paket:torrent", revizyon: "rev-1", tailscale: false, internet: false, alan_adi: "torrent.example.org" },
+    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "konteyner:notlar", revizyon: "rev-1", tailscale: false, internet: false, alan_adi: "notlar.example.org" },
       "the remembered internet name is kept while off");
     await flow.getByTestId("flow-go").click();
     await flow.getByTestId("flow-done").filter({ hasText: "Yayın kaldırıldı." }).waitFor();
     await page.context().close();
 
-    // A stopped package cannot open its internet name; the reason is shown.
+    // Konsol without an account cannot open its internet name; the reason is shown.
+    const NO_ACCOUNT = "Önce Konsol hesabı oluşturun (Tailscale adresinden, Sistem → Hesap).";
+    data.yayinlar = { ...data.yayinlar, adaylar: candidates().map((c) => (c.id === "panel" ? { ...c, internet_engel: NO_ACCOUNT } : c)) };
     page = await newPage();
-    await page.goto(url("#/erisim?yayinla=paket:gezgin"));
+    await page.goto(url("#/erisim?yayinla=panel"));
     flow = flowSheet(page);
     await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).waitFor();
     assert(await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).isDisabled());
-    assert.equal(await flow.getByTestId("internet-block").innerText(), "Gezgin durdurulmuş; önce başlatın.");
+    assert.equal(await flow.getByTestId("internet-block").innerText(), NO_ACCOUNT);
     assert.equal(await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).getAttribute("aria-describedby"), "yayin-engel");
+    data.yayinlar = { ...data.yayinlar, adaylar: candidates() };
     // An unknown target falls back to the choice.
-    await page.goto(url("#/erisim?yayinla=paket:yok"));
+    await page.goto(url("#/erisim?yayinla=konteyner:yok"));
     await flowSheet(page).getByTestId("flow-notice").filter({ hasText: "yayımlanabilecekler arasında yok" }).waitFor();
     assert.equal(await currentStep(flowSheet(page)), "1Ne");
     await page.context().close();
 
-    // ================= Güvenlik duvarı: the catalogue with the rules, a draft → plan → apply → 60 s → Onayla
+    // ================= Güvenlik duvarı: the base's ports with the rules, a draft → plan → apply → 60 s → Onayla
     page = await newPage();
     await page.goto(url("#/erisim?sekme=guvenlik-duvari"));
     const fwView = page.getByTestId("firewall");
@@ -754,12 +770,12 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     const nets = fwView.getByRole("tablist", { name: "Gelen ağlar" }).getByRole("tab");
     assert.deepEqual(await nets.allInnerTexts(), ["İnternet", "Tailscale", "WireGuard", "Sunucu içi"]);
     const fwRows = () => fwView.locator(".fw-table tbody tr");
-    assert.deepEqual(await fwRows().evaluateAll((trs) => trs.map((t) => t.dataset.port)), ["tcp/22", "udp/61001", "tcp/63851"], "İnternet · IPv4");
+    assert.deepEqual(await fwRows().evaluateAll((trs) => trs.map((t) => t.dataset.port)), ["tcp/22", "udp/61001", "tcp/8096"], "İnternet · IPv4");
     const ssh = fwView.locator('tr[data-port="tcp/22"]');
     assert.equal(await ssh.locator('td[data-label="Dinleme"]').innerText(), "Bu ağda dinliyor\n0.0.0.0");
     assert.equal(await ssh.getByTestId("rule-state").innerText(), "Temel");
     assert.equal(await ssh.getByRole("switch").getAttribute("aria-checked"), "true");
-    const fixed = fwView.locator('tr[data-port="tcp/63851"]');
+    const fixed = fwView.locator('tr[data-port="tcp/8096"]');
     assert(await fixed.getByRole("switch").isDisabled(), "a container publication is locked");
     assert.match(await fixed.innerText(), /Konteyner yayını · uygulamayla açılır, kapanır/);
     assert.equal(await fwView.locator('tr[data-port="udp/61001"] td[data-label="Dinleme"]').innerText(), "Dinleyici yok");
@@ -813,7 +829,10 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     assert.deepEqual(await fwRows().evaluateAll((trs) => trs.map((t) => t.dataset.port)), ["tcp/80", "udp/53", "tcp/8096"]);
     assert.equal(await fwView.locator('tr[data-kural="u_medya"]').getByTestId("rule-state").innerText(), "Kural");
     await nets.filter({ hasText: "WireGuard" }).click();
-    assert.match(await fwView.locator(".fw-panel").innerText(), /WireGuard cihazları yalnız internete çıkar[\s\S]*wg0 · Ana ağ · açık/);
+    const wgPanel = fwView.locator('.fw-panel[data-kapsam="wireguard"]');
+    assert.equal(await wgPanel.locator(".card-text").innerText(), "WireGuard cihazları yalnız internete çıkar. Sunucu servisleri, özel ağlar ve diğer " +
+      "cihazlar engellenir; bu politika değiştirilemez. WireGuard'ın UDP bağlantı portu İnternet sekmesindedir; yönlendirme ve NAT kuralları Teknik kurallar'dadır.");
+    assert.deepEqual(await wgPanel.getByRole("list", { name: "WireGuard ağları" }).locator("li").allInnerTexts(), ["wg0 · Ana ağ · açık"]);
     await nets.filter({ hasText: "Sunucu içi" }).click();
     const lo = fwView.locator('tr[data-port="tcp/62001"]');
     assert(await lo.getByRole("switch").isDisabled());
@@ -884,8 +903,19 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await shot(page, "1440-light-erisim-uygulanamaz.png");
     await sheet.getByRole("button", { name: "Vazgeç" }).click();
     await sheet.waitFor({ state: "detached" });
-    data["guvenlik-duvari"] = firewall();
     await page.context().close();
+    // Without a WireGuard network the tab stays and says where networks are set up.
+    data["guvenlik-duvari"] = firewall({ aglar: [] });
+    page = await newPage();
+    await page.goto(url("#/erisim?sekme=guvenlik-duvari&kapsam=wireguard"));
+    const noNets = page.getByTestId("firewall").locator('.fw-panel[data-kapsam="wireguard"]');
+    await noNets.waitFor();
+    assert.deepEqual(await page.getByTestId("firewall").getByRole("tablist", { name: "Gelen ağlar" }).getByRole("tab").allInnerTexts(),
+      ["İnternet", "Tailscale", "WireGuard", "Sunucu içi"]);
+    assert.equal(await noNets.locator(".meter-note").innerText(), "Henüz WireGuard ağı yok; ağlar Erişim → WireGuard'da kurulur.");
+    await shot(page, "1440-light-erisim-guvenlik-wg-yok.png");
+    await page.context().close();
+    data["guvenlik-duvari"] = firewall();
 
     // ================= a rollback that failed five times: retry, or discard with the typed word
     page = await newPage();
@@ -938,18 +968,25 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
 
     // ================= an application's Erişim tab opens the flow over its page
     page = await newPage();
-    await page.goto(url("#/uygulamalar/paket:torrent?sekme=erisim"));
+    await page.goto(url("#/uygulamalar/konteyner:notlar?sekme=erisim"));
     await page.getByTestId("access-edit").click();
-    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("yayinla") === "paket:torrent" && u.hash.startsWith("#/uygulamalar/paket:torrent"));
+    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("yayinla") === "konteyner:notlar" && u.hash.startsWith("#/uygulamalar/konteyner:notlar"));
     flow = flowSheet(page);
     await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
     assert.equal(await currentStep(flow), "2Kim");
     await page.keyboard.press("Escape");
     await flow.waitFor({ state: "detached" });
-    assert.equal(await hashOf(page), "#/uygulamalar/paket:torrent?sekme=erisim");
+    assert.equal(await hashOf(page), "#/uygulamalar/konteyner:notlar?sekme=erisim");
     assert(await page.getByTestId("access-edit").evaluate((el) => el === document.activeElement), "focus returns to the button");
-    await page.goto(url("#/uygulamalar/paket:wireguard?sekme=erisim"));
-    assert.equal(await page.getByRole("link", { name: "WireGuard ağları" }).getAttribute("href"), "#/erisim?sekme=wireguard");
+    // Without an Erişim row, "Yayınla" opens the flow for the application's own id.
+    await page.goto(url("#/uygulamalar/konteyner:kutu?sekme=erisim"));
+    await page.getByTestId("access-publish").click();
+    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("yayinla") === "konteyner:kutu" && u.hash.startsWith("#/uygulamalar/konteyner:kutu"));
+    flow = flowSheet(page);
+    await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
+    assert.equal(await currentStep(flow), "2Kim");
+    await page.keyboard.press("Escape");
+    await flow.waitFor({ state: "detached" });
     // The palette: Erişim's tabs and the Yayınla action.
     await page.keyboard.press("Control+K");
     const palette = page.getByRole("dialog", { name: "Komut paleti" });
@@ -993,7 +1030,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
         await shot(page, `390-${colorScheme}-${name}.png`, true);
       }
       assert.equal(await page.locator(".fw-table tbody tr").first().evaluate((el) => getComputedStyle(el).display), "grid", "cards on a phone");
-      await page.goto(url("#/erisim?sekme=adresler&yayinla=paket:torrent"));
+      await page.goto(url("#/erisim?sekme=adresler&yayinla=konteyner:notlar"));
       flow = flowSheet(page);
       await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
       const sheetBox = await flow.boundingBox();
@@ -1019,16 +1056,16 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
 
     assert.deepEqual(h.errors, []);
     console.log("PASS: Konsol phase 3 Erişim under the production CSP — Genel (warnings first with Düzelt by duzelt: Yayınla, the application, " +
-      "Tailscale; summaries; the matrix in plain words with Teknik ayrıntı in the address), Tailscale (device, addresses, version, key expiry " +
+      "Tailscale; summaries, a stopped WireGuard; the matrix in plain words with Teknik ayrıntı in the address; an unreadable Erişim), Tailscale (device, addresses, version, key expiry " +
       "warning, exit node, admin console link, disconnected), Adresler (publications with state, certificate and guard; local names with the " +
-      "locked one; DNS draft → plan → apply with exact bodies; a refused plan and re-check; the local domain: plan, 300 s, confirmation only " +
-      "from the new address, rollback; removing a manual address), the Yayınla flow (a package's internet name with the DNS record and the " +
+      "locked one and raw sources; DNS draft → plan → apply with exact bodies; a refused plan and re-check; the local domain: plan, 300 s, " +
+      "confirmation only from the new address, rollback; removing a manual address), the Yayınla flow (a published container's internet name with the DNS record and the " +
       "certificate wait, the Konsol row with the typed word as onay, a container needing a port: the exact container request, the job's end " +
       "through islemler, the exact settings request, a failing second step and a failing job, another port as a manual address, engel and " +
-      "Yeniden denetle, both names off, a stopped package, an unknown target), Güvenlik duvarı (catalogue with rules, listeners, locked rows, " +
+      "Yeniden denetle, both names off, Konsol without an account, an unknown target), Güvenlik duvarı (the base's ports with rules, listeners, locked rows, " +
       "draft with a baseline switch and a new rule, checks, IPv6, tabs, technical rules with counters, plan → apply → 60 s → Onayla and Geri al, " +
-      "a plan that cannot be applied), the leave guard on the DNS, domain and firewall drafts, the stuck rollback (retry, typed discard), a refused confirmation, the internet channel's confirmation " +
-      "message, the application page's Erişim tab, the palette, 1440/390/320 in light and dark. Screenshots: " + h.shots);
+      "a plan that cannot be applied, the WireGuard tab without networks), the leave guard on the DNS, domain and firewall drafts, the stuck rollback (retry, typed discard), a refused confirmation, the internet channel's confirmation " +
+      "message, the application page's Erişim tab (with a row, and Yayınla without one), the palette, 1440/390/320 in light and dark. Screenshots: " + h.shots);
   } finally {
     await h.stop();
   }

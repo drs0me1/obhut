@@ -195,7 +195,8 @@ number), plus the fixed rows of Konsol and Paylaşımlar.
 `wireguard-tools` and `qrencode` in stage 1; `master-wg` installed by stage 4 from `scripts/`; the
 `wg-quick@` drop-in from `systemd/`; the `WG_*` keys in `config/defaults.env`; the firewall reads the
 networks file and the stopped marker itself; Konsol talks to `panel/master_wireguard.py` through typed
-routes. Off after install (K6); turning it on, off or regenerating a network is a settings plan.
+routes. Off after install (K6). From phase 4 on, turning it on, off or regenerating a network is a
+settings plan like every other access change; phase 1 keeps today's immediate writes.
 
 ### 4.5 Konsol
 
@@ -261,15 +262,16 @@ a `CHANGELOG.md` entry under `[Unreleased]`.
 ### Phase 1: a clean base
 
 The base installs and runs with its built-ins only; no store engine, no package, WireGuard built in.
+Done in v2-255 (DD-272), live-verified on the test host on 2026-10-17.
 
-- [ ] Generation gate in stage 0 and the new generation marker
-- [ ] Files and folder WebDAV installed directly by `install.sh` (no manifests)
-- [ ] WireGuard in the base (4.4), off after install
-- [ ] Store engine, packages and every `PAKET_*` consumer removed (section 5)
-- [ ] 1.x leftovers removed (section 5)
-- [ ] Konsol: catalogue and package views removed; WireGuard tab on the new routes; Uygulamalar shows
+- [x] Generation gate in stage 0 and the new generation marker
+- [x] Files and folder WebDAV installed directly by `install.sh` (no manifests)
+- [x] WireGuard in the base (4.4), off after install
+- [x] Store engine, packages and every `PAKET_*` consumer removed (section 5)
+- [x] 1.x leftovers removed (section 5)
+- [x] Konsol: catalogue and package views removed; WireGuard tab on the new routes; Uygulamalar shows
       an empty state until phase 3
-- [ ] Tests for the gate, the built-ins and WireGuard; package tests removed
+- [x] Tests for the gate, the built-ins and WireGuard; package tests removed
 
 ### Phase 2: reading and inspecting
 
@@ -300,7 +302,10 @@ Pure functions, no writes: the YAML reader, both format readers, the model and t
 - [ ] Tailscale port (K5) with its tailnet allow entries (DD-172 amended)
 - [ ] Raw ports through the container guard; locked rows in the firewall view
 - [ ] "Adres aç" for a port without an address; plan → apply → timed confirmation
-- [ ] `elle-*` rows, package rows and the Yayınla flow removed
+- [ ] WireGuard on/off and network regeneration through the settings plan (4.4)
+- [ ] `elle-*` rows, package rows and the Yayınla flow removed; the settings writer for the old
+      WebDAV-only `https` key goes with them (it passes the route check only because `AyarIstegi` is an
+      open object)
 
 ### Phase 5: Konsol
 
@@ -316,7 +321,10 @@ Pure functions, no writes: the YAML reader, both format readers, the model and t
 - [ ] `contract.md`, `architecture.md`, `CLAUDE.md`, `README.md`, `tests/README.md` describe only the
       new structure
 - [ ] Superseded DD entries retired to the archive; new entries complete
-- [ ] Final leftover sweep and back-door review (section 7)
+- [ ] Final leftover sweep and back-door review (section 7), including the switches that exist only
+      for tests: `master-panel --state-env`, `--allow-host` in both backends, the `PANEL_ACTIVE_WINDOW`
+      and `PANEL_SAMPLE_SECONDS` environment variables, the hidden `--state` of `obhut` and `--kaynak` of
+      `master-onar`: each one is removed or moved behind the test harness
 - [ ] The test host reset by the operator (S4); install from the branch on the clean system; Gezgin
       and qBittorrent added from their own files; every flow of the prototype done live
 - [ ] On `main`, a last 1.x release that turns the update offer into the clean-install notice (4.6)

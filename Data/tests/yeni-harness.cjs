@@ -10,8 +10,8 @@
      h.handlers{ "/api/konsol/…": (req) => ({ status, body }) | undefined } answers before data
                (req: { method, path, query (URLSearchParams), body (parsed JSON or null) }); a reply with
                `contentType` is sent as it is (a PNG, a text file) instead of as JSON;
-     h.dynamic [[/regex/, (req, match) => reply | undefined], …] answers paths with variable parts (a
-               package's /api/uygulama/<id>/… routes) after the exact handlers;
+     h.dynamic [[/regex/, (req, match) => reply | undefined], …] answers paths with variable parts
+               (WireGuard's /api/konsol/wireguard/nets/<iface>/… routes) after the exact handlers;
                a handler may also return a promise of its reply (an upload the suite holds back); the page
                may give up on such a request meanwhile (it is cancelled), which is not an error;
      h.raw     (path) => true for POST paths whose body is the raw upload, not JSON (the files backend's

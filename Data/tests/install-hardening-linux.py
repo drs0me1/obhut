@@ -2,13 +2,13 @@
 """Real flock and ownership tests; only private temporary files are changed.
 
 Run as root on Linux: python3 Data/tests/install-hardening-linux.py
-No services, accounts, installed state or host firewall are changed. Missing
-Linux/root/util-linux prerequisites are errors, never skipped passing tests.
+No services, accounts, installed state or host firewall are changed: master-wg runs against a
+private state file with a stand-in systemctl. Missing Linux/root/util-linux prerequisites are
+errors, never skipped passing tests.
 """
 import fcntl
 import os
 from pathlib import Path
-import re
 import select
 import shlex
 import shutil
@@ -40,29 +40,29 @@ class OwnershipTests(unittest.TestCase):
         good = self.file(self.root / "good", 0o664)
         os.chown(good, uid, gid)
         before = metadata(good)
-        self.assertEqual(permissions.repair(self.root, uid, gid, ()), 4)
+        self.assertEqual(permissions.repair(self.root, uid, gid), 4)
         for path in (owner_only, mode_only, both, folder, good):
             st = path.stat()
             self.assertEqual((st.st_uid, st.st_gid), (uid, gid))
             self.assertEqual(stat.S_IMODE(st.st_mode), 0o775 if path.is_dir() else 0o664)
         self.assertEqual(metadata(good), before)
-        self.assertEqual(permissions.repair(self.root, uid, gid, ()), 0)
+        self.assertEqual(permissions.repair(self.root, uid, gid), 0)
 
-    def test_root_never_chowns_links_devices_or_private_workspaces(self):
+    def test_root_never_chowns_links_or_devices(self):
         os.link(self.target, self.root / "hardlink")
         (self.root / "symlink").symlink_to(self.target)
         os.mkfifo(self.root / "fifo", 0o600)
         # A real device entry must be neither opened nor repaired.
         os.mknod(self.root / "device", stat.S_IFCHR | 0o600, os.makedev(1, 3))
-        (self.root / ".arsiv").mkdir(mode=0o700)
-        self.file(self.root / ".arsiv" / "private")
-        watched = list(self.root.iterdir()) + [self.target, self.root / ".arsiv/private"]
+        watched = list(self.root.iterdir()) + [self.target]
         before = [metadata(p) for p in watched]
-        self.assertEqual(permissions.repair(self.root, 65534, 65534, (".arsiv",)), 1)
+        self.assertEqual(permissions.repair(self.root, 65534, 65534), 1)
         self.assertEqual([metadata(p) for p in watched], before)
 
 
 class LockTests(unittest.TestCase):
+    """master-wg's whole-WireGuard switches (DD-229, DD-271) and the installer share install.lock."""
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory(prefix="installer-locks-")
         self.addCleanup(temp.cleanup)
@@ -70,30 +70,36 @@ class LockTests(unittest.TestCase):
         self.runtime = self.root / "run"
         self.runtime.mkdir()
         self.install = self.runtime / "install.lock"
-        self.module = self.runtime / "modul.lock"
+        self.wg = self.root / "wireguard"
+        self.wg.mkdir(mode=0o700)
+        self.stopped = self.wg / ".durduruldu"
+        (self.wg / "networks").write_text(
+            "wg0\t61001\tinet\t10.8.0.1\t10.8.0.0/24\tfd00::1\tfd00::/112\t1.1.1.1\tTest\n")
+        self.pending = self.root / "pending.json"
+        values = dict(V2_VERSION="2026.08.06-v2-test", RUNTIME_DIR=self.runtime, WAN_IPV4="203.0.113.7",
+                      WG_CONF_DIR=self.wg, WG_CLIENTS_DIR=self.wg / "clients", WG_ADDR_BASE4="10.8",
+                      WG_ADDR_BASE6="fd00", WG_CLIENT_ALLOWED_IPS="0.0.0.0/0, ::/0",
+                      WG_NETWORKS_FILE=self.wg / "networks", WG_STOPPED_FILE=self.stopped,
+                      SETTINGS_PENDING_FILE=self.pending)
         self.state = self.root / "state.env"
-        values = dict(RUNTIME_DIR=self.runtime, MODULES_FILE=self.root / "registry",
-                      MODULES_DIR=self.root / "modules", DOWNLOADS_PATH=self.root / "downloads",
-                      SETTINGS_PENDING_FILE=self.root / "pending.json")
         self.state.write_text("".join(k + "=" + shlex.quote(str(v)) + "\n" for k, v in values.items()))
-        # DD-197: the catalogue is the set of rendered package folders; the engine validates the
-        # id before it takes the locks, so the fixture needs the real torrent manifest and hooks.
-        (self.root / "modules" / "torrent").mkdir(parents=True)
-        for name in ("paket.env", "kanca"):
-            shutil.copy(DATA / "magaza" / "torrent" / name, self.root / "modules" / "torrent" / name)
-        self.env = dict(os.environ, STATE_FILE=str(self.state))
-        self.env.pop("V2_LOCK_FD", None)
-        self.module_cmd = ["bash", str(DATA / "scripts/master-modul"), "uygula", "torrent"]
-        source = (DATA / "scripts/master-modul").read_text()
-        take_lock = re.search(r"^take_lock\(\) \{\n.*?^\}", source, re.M | re.S)
-        self.assertIsNotNone(take_lock)
-        self.lock_script = ('set -Eeuo pipefail\nsource "$STATE_FILE"\n'
-                            'die() { printf "%s\\n" "$*" >&2; exit 1; }\n'
-                            + take_lock[0] + '\ntake_lock\nprintf "ready\\n"\nread -r release\n')
+        # The stand-in systemctl logs its calls; with the gate file present, restarting the firewall
+        # waits until the test removes it (so master-wg is caught while it holds the lock).
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        self.gate = self.root / "gate"
+        self.calls = self.root / "calls"
+        systemctl = self.bin / "systemctl"
+        systemctl.write_text('#!/bin/bash\nprintf "%%s\\n" "$*" >>%s\n'
+                             'if [ "$1" = restart ]; then while [ -e %s ]; do sleep 0.05; done; fi\n'
+                             'case "$1" in is-enabled|list-unit-files|list-units) exit 0 ;; esac\nexit 0\n'
+                             % (shlex.quote(str(self.calls)), shlex.quote(str(self.gate))))
+        systemctl.chmod(0o755)
+        self.env = dict(os.environ, STATE_FILE=str(self.state), PATH=str(self.bin) + ":" + os.environ["PATH"])
 
-    def run_cmd(self, args=None, **kwargs):
-        return subprocess.run(args or self.module_cmd, env=kwargs.pop("env", self.env),
-                              capture_output=True, text=True, timeout=12, **kwargs)
+    def master_wg(self, *args, **kwargs):
+        return subprocess.run(["bash", str(DATA / "scripts/master-wg"), *args], env=self.env,
+                              capture_output=True, text=True, timeout=30, **kwargs)
 
     def hold(self, path):
         stream = path.open("a+")
@@ -109,10 +115,10 @@ class LockTests(unittest.TestCase):
                 return True
             return False
 
-    def spawn(self, script, *args):
-        process = subprocess.Popen(["bash", "-c", script, "lock-fixture", *map(str, args)], env=self.env,
-                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   text=True, start_new_session=True)
+    def spawn(self, *args):
+        process = subprocess.Popen(list(map(str, args)), env=self.env, stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   start_new_session=True)
 
         def cleanup():
             if process.poll() is None:
@@ -123,105 +129,62 @@ class LockTests(unittest.TestCase):
         self.addCleanup(cleanup)
         return process
 
-    def ready(self, process):
-        self.assertTrue(select.select([process.stdout], [], [], 8)[0], "lock holder did not become ready")
-        line = process.stdout.readline().strip()
-        self.assertEqual(line, "ready", process.stderr.read() if process.poll() is not None else line)
-
-    def release(self, process):
-        stdout, stderr = process.communicate("release\n", timeout=8)
-        self.assertEqual(process.returncode, 0, stdout + stderr)
-
-    def test_competing_installer_blocks_real_module_and_releases_cleanly(self):
+    def test_a_running_installer_blocks_both_switches_and_nothing_changes(self):
         holder = self.hold(self.install)
-        result = self.run_cmd()
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("başka bir kurulum/ayar işlemi", result.stderr)
-        self.assertFalse(self.module.exists(), "module lock opened before acquiring install.lock")
+        for verb in ("durdur", "baslat"):
+            result = self.master_wg(verb)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("kurulum ya da başka bir peer işlemi sürüyor", result.stderr)
+        self.assertFalse(self.stopped.exists())
+        self.assertFalse(self.calls.exists())
         fcntl.flock(holder, fcntl.LOCK_UN)
-        result = self.run_cmd()
+        result = self.master_wg("durdur")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "torrent\tyok\n")
+        self.assertEqual(result.stdout, "durduruldu\t1\n")
+        self.assertTrue(self.stopped.exists())
         self.assertFalse(self.locked(self.install))
-        self.assertFalse(self.locked(self.module))
 
-    def test_module_waits_for_module_lock_and_blocks_competing_installer(self):
-        holder = self.hold(self.module)
-        process = self.spawn(self.lock_script)
-        deadline = time.monotonic() + 3
-        while not self.locked(self.install):
-            self.assertLess(time.monotonic(), deadline, "module never acquired install.lock")
-            self.assertIsNone(process.poll())
-            time.sleep(.01)
-        result = self.run_cmd(["bash", "-c", 'set -Eeuo pipefail; source "$1"; acquire_lock "$2" 0',
-                               "installer", str(DATA / "common.sh"), str(self.install)])
+    def test_the_installer_cannot_start_while_master_wg_applies_the_firewall(self):
+        self.gate.touch()
+        process = self.spawn("bash", DATA / "scripts/master-wg", "durdur")
+        deadline = time.monotonic() + 8
+        while not (self.calls.exists() and "restart master-firewall.service" in self.calls.read_text()):
+            self.assertLess(time.monotonic(), deadline, "master-wg never reached the firewall")
+            self.assertIsNone(process.poll(), process.stderr.read() if process.poll() is not None else "")
+            time.sleep(.02)
+        self.assertTrue(self.locked(self.install), "master-wg applies the firewall without the install lock")
+        result = subprocess.run(["bash", "-c", 'set -Eeuo pipefail; source "$1"; acquire_lock "$2" 0',
+                                 "installer", str(DATA / "common.sh"), str(self.install)],
+                                env=self.env, capture_output=True, text=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("kilit alınamadı", result.stderr)
-        fcntl.flock(holder, fcntl.LOCK_UN)
-        self.ready(process)
-        self.assertTrue(self.locked(self.install))
-        self.assertTrue(self.locked(self.module))
-        result = self.run_cmd()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("başka bir kurulum/ayar işlemi", result.stderr)
-        self.release(process)
-        self.assertFalse(self.locked(self.install))
-        self.assertFalse(self.locked(self.module))
-
-    def test_module_lock_timeout_releases_the_install_lock(self):
-        self.hold(self.module)
-        result = self.run_cmd()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("başka bir modül işlemi", result.stderr)
+        self.gate.unlink()
+        stdout, stderr = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertEqual(stdout, "durduruldu\t1\n")
         self.assertFalse(self.locked(self.install))
 
-    def test_inherited_common_lock_survives_nested_modules_without_deadlock(self):
-        script = '''set -Eeuo pipefail
-source "$1"
-acquire_lock "$2" 1
-# The real child requires common.sh to export V2_LOCK_FD; both invocations
-# reuse the open description without releasing the parent's lock.
-bash "$3" uygula torrent >/dev/null
-bash "$3" uygula torrent >/dev/null
-printf 'ready\n'
-read -r release
-'''
-        process = self.spawn(script, DATA / "common.sh", self.install, DATA / "scripts/master-modul")
-        self.ready(process)
-        self.assertTrue(self.locked(self.install), "nested module unlocked the installer")
-        self.assertFalse(self.locked(self.module), "child leaked its module lock")
-        result = self.run_cmd()
+    def test_a_held_installer_lock_from_common_sh_blocks_master_wg(self):
+        process = self.spawn("bash", "-c", 'set -Eeuo pipefail; source "$1"; acquire_lock "$2" 1; '
+                             'printf "ready\\n"; read -r release', "installer", DATA / "common.sh", self.install)
+        self.assertTrue(select.select([process.stdout], [], [], 8)[0], "installer did not become ready")
+        self.assertEqual(process.stdout.readline().strip(), "ready")
+        result = self.master_wg("baslat")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("başka bir kurulum/ayar işlemi", result.stderr)
-        self.release(process)
+        self.assertIn("kurulum ya da başka bir peer işlemi sürüyor", result.stderr)
+        process.communicate("release\n", timeout=8)
+        self.assertEqual(process.returncode, 0)
         self.assertFalse(self.locked(self.install))
 
-    def test_forged_or_wrong_inode_descriptor_never_bypasses_install_lock(self):
-        self.hold(self.install)
-        wrong = self.hold(self.root / "unrelated.lock")
-        for value, fds in ((str(wrong.fileno()), (wrong.fileno(),)), ("12345", ()), ("not-a-fd", ())):
-            with self.subTest(fd=value):
-                result = self.run_cmd(env=dict(self.env, V2_LOCK_FD=value), pass_fds=fds)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("başka bir kurulum/ayar işlemi", result.stderr)
-                self.assertFalse(self.module.exists())
-
-    def test_matching_inode_with_independent_open_description_must_lock(self):
-        self.hold(self.install)
-        with self.install.open("a+") as independent:
-            result = self.run_cmd(env=dict(self.env, V2_LOCK_FD=str(independent.fileno())),
-                                  pass_fds=(independent.fileno(),))
+    def test_pending_settings_are_refused_and_the_lock_is_released(self):
+        self.pending.write_text("{}")
+        for verb in ("durdur", "baslat"):
+            result = self.master_wg(verb)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("üst kurulum kilidi doğrulanamadı", result.stderr)
-            self.assertFalse(self.module.exists())
-
-    def test_pending_settings_are_rejected_and_both_locks_are_released(self):
-        (self.root / "pending.json").write_text("{}")
-        result = self.run_cmd()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("onay bekleyen ayar", result.stderr)
-        self.assertFalse(self.locked(self.install))
-        self.assertFalse(self.locked(self.module))
+            self.assertIn("bekleyen ayar", result.stderr)
+            self.assertFalse(self.locked(self.install))
+        self.assertFalse(self.stopped.exists())
+        self.assertFalse(self.calls.exists())
 
 
 if __name__ == "__main__":

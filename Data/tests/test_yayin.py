@@ -22,30 +22,23 @@ ENV = {"LOCAL_DOMAIN": "ev", "WAN_IPV4": "203.0.113.10", "YAYIN_PORT_ILK": "6210
 ROWS = [
     {"service": "panel", "name": "Panel", "local": "panel.ev", "tail": True, "enabled": False, "domain": "", "installed": True,
      "running": True, "account": False, "status": "disabled", "message": "İnternet yayını kapalı.", "expires": None},
-    {"service": "torrent", "name": "qBittorrent", "local": "torrent.ev", "tail": True, "enabled": True,
-     "domain": "torrent.example.org", "installed": True, "running": True, "status": "ready", "message": "Sertifika doğrulandı.",
-     "expires": 1790000000},
-    {"service": "gezgin", "name": "Gezgin", "local": "gezgin.ev", "tail": True, "enabled": False, "domain": "",
-     "installed": True, "running": False, "status": "disabled", "message": "İnternet yayını kapalı.", "expires": None},
     {"service": "elle-notlar", "name": "Notlar", "local": "notlar.ev", "manual": True, "upstream": "127.0.0.1:8090",
      "tail": True, "enabled": False, "domain": "", "installed": True, "running": True, "answers": True,
      "status": "disabled", "message": "İnternet yayını kapalı.", "expires": None},
     {"service": "elle-yazici", "name": "Yazıcı", "local": "yazici.ev", "manual": True, "upstream": "127.0.0.1:631",
      "tail": True, "enabled": False, "domain": "", "installed": True, "running": True, "answers": False,
      "status": "disabled", "message": "Hedef yanıt vermiyor.", "expires": None},
-    {"service": "paylasim", "name": "WebDAV", "local": "paylas.ev", "tail": True, "enabled": False, "domain": "",
-     "installed": True, "running": True, "status": "disabled", "message": "İnternet yayını kapalı.", "expires": None},
+    {"service": "paylasim", "name": "WebDAV", "local": "paylas.ev", "tail": True, "enabled": True,
+     "domain": "dav.example.org", "installed": True, "running": True, "status": "ready", "message": "Sertifika doğrulandı.",
+     "expires": 1790000000},
 ]
-PACKAGES = {"torrent": {"name": "qBittorrent", "local": "torrent", "upstream": "127.0.0.1:62947", "check": "yayin.py", "order": 20},
-            "gezgin": {"name": "Gezgin", "local": "gezgin", "upstream": "127.0.0.1:62983", "check": "yayin.py", "order": 30}}
 CONTAINERS = {"runtime": {"ok": True}, "containers": [
-    {"name": "qbittorrent", "module_id": "torrent", "source": "appstore", "state": "running", "ports": []},
-    {"name": "notlar", "module_id": None, "source": "konsol", "state": "running",
+    {"name": "notlar", "source": "konsol", "state": "running",
      "ports": [{"scope": "local", "host_ip": "127.0.0.1", "host_port": 8090, "container_port": 80, "protocol": "tcp"}]},
-    {"name": "medya", "module_id": None, "source": "konsol", "state": "running",
+    {"name": "medya", "source": "konsol", "state": "running",
      "ports": [{"scope": "tailscale", "host_ip": "100.64.0.2", "host_port": 8096, "container_port": 8096, "protocol": "tcp"},
                {"scope": "tailscale", "host_ip": "100.64.0.2", "host_port": 7359, "container_port": 7359, "protocol": "udp"}]},
-    {"name": "dis", "module_id": None, "source": "external", "state": "running", "ports": []},
+    {"name": "dis", "source": "external", "state": "running", "ports": []},
 ]}
 DETAIL = {"config": {"name": "medya", "image": "docker.io/library/nginx:1.27", "network": "bridge", "user": "downloads",
                      "ports": [{"scope": "tailscale", "host_port": 8096, "container_port": 8096, "protocol": "tcp", "public_ack": False}],
@@ -54,7 +47,7 @@ DETAIL = {"config": {"name": "medya", "image": "docker.io/library/nginx:1.27", "
 
 
 def cands(rows=ROWS, containers=CONTAINERS, wan=True):
-    return master_yayin.candidates(ENV, copy.deepcopy(rows), PACKAGES, copy.deepcopy(containers), wan)
+    return master_yayin.candidates(ENV, copy.deepcopy(rows), copy.deepcopy(containers), wan)
 
 
 def by_id(items, cid):
@@ -66,17 +59,19 @@ class CandidateTests(unittest.TestCase):
         items = cands()
         for c in items:
             master_api.check(master_api.ref("YayinAdayi"), c)
-        self.assertEqual([c["id"] for c in items], ["panel", "paket:torrent", "paket:gezgin", "konteyner:notlar",
-                                                    "konteyner:medya", "konteyner:dis", "elle:yazici", "paylasim"])
+        self.assertEqual([c["id"] for c in items], ["panel", "konteyner:notlar", "konteyner:medya", "konteyner:dis",
+                                                    "elle:yazici", "paylasim"])
         panel_row = by_id(items, "panel")
         self.assertEqual((panel_row["onay_kelimesi"], panel_row["giris"]), (True, master_yayin.GUARD_KONSOL))
         self.assertIn("Konsol hesabı", panel_row["internet_engel"], "no account: the public name cannot open")
-        torrent = by_id(items, "paket:torrent")
-        self.assertEqual((torrent["servis"], torrent["internet"], torrent["alan_adi"], torrent["durum"], torrent["hedef"]),
-                         ("torrent", True, "torrent.example.org", "ready", "127.0.0.1:62947"))
-        self.assertIn("denetler", torrent["giris"], "a package with a login check")
-        self.assertIn("durdurulmuş", by_id(items, "paket:gezgin")["internet_engel"])
-        self.assertEqual(by_id(items, "paylasim")["giris"], master_yayin.GUARD_SHARES)
+        dav = by_id(items, "paylasim")
+        self.assertEqual((dav["servis"], dav["internet"], dav["alan_adi"], dav["durum"], dav["giris"]),
+                         ("paylasim", True, "dav.example.org", "ready", master_yayin.GUARD_SHARES))
+        printer = by_id(items, "elle:yazici")
+        self.assertEqual((printer["tur"], printer["servis"], printer["hedef"], printer["giris"]),
+                         ("elle", "elle-yazici", "127.0.0.1:631", master_yayin.GUARD_APP))
+        self.assertEqual({c["giris"] for c in items if c["tur"] == "konteyner"}, {master_yayin.GUARD_APP},
+                         "only the application's own login guards a container")
 
     def test_containers_join_their_manual_address_or_offer_a_loopback_port(self):
         items = cands()
@@ -123,12 +118,12 @@ class PlanTests(unittest.TestCase):
         return dict(dict(hedef=hedef, revizyon="v1", tailscale=True, internet=True, alan_adi="Medya.Example.org"), **kw)
 
     def test_a_publication_row_is_one_settings_step(self):
-        result = self.plan(self.request("paket:torrent", alan_adi="torrent2.example.org"))
+        result = self.plan(self.request("paylasim", alan_adi="Dav2.example.org"))
         self.assertEqual([s["tur"] for s in result["adimlar"]], ["ayar"])
         self.assertEqual(result["adimlar"][0]["istek"], {"revision": "v1", "web": {
-            "service": "torrent", "tail": True, "enabled": True, "domain": "torrent2.example.org"}})
-        self.assertEqual(result["dns"], {"ad": "torrent2.example.org", "tur": "A", "deger": "203.0.113.10"})
-        self.assertEqual(result["engel"], "")
+            "service": "paylasim", "tail": True, "enabled": True, "domain": "dav2.example.org"}})
+        self.assertEqual(result["dns"], {"ad": "dav2.example.org", "tur": "A", "deger": "203.0.113.10"})
+        self.assertEqual((result["engel"], result["uyarilar"]), ("", []), "the folder accounts guard WebDAV")
         # The console needs the typed word; it travels only for the console.
         result = self.plan(self.request("panel", onay="onayla"))
         self.assertEqual(result["adimlar"][-1]["istek"]["web"]["confirm"], "onayla")
@@ -152,7 +147,7 @@ class PlanTests(unittest.TestCase):
         self.assertTrue(any("İki adım" in w["metin"] for w in result["uyarilar"]))
         self.assertFalse(any("çalışmıyor" in w["metin"] for w in result["uyarilar"]))
         stopped = copy.deepcopy(CONTAINERS)
-        stopped["containers"][2]["state"] = "exited"
+        stopped["containers"][1]["state"] = "exited"
         self.items = cands(containers=stopped)
         self.assertTrue(any("çalışmıyor" in w["metin"] for w in self.plan(self.request("konteyner:medya"))["uyarilar"]),
                         "a stopped container keeps its state; the name answers once it runs")
@@ -174,7 +169,7 @@ class PlanTests(unittest.TestCase):
                 with self.assertRaisesRegex(master_settings.SettingsError, text):
                     self.plan(request)
         no_hint = copy.deepcopy(CONTAINERS)
-        no_hint["containers"][2]["ports"] = []
+        no_hint["containers"][1]["ports"] = []
         self.items = cands(containers=no_hint)
         with self.assertRaisesRegex(master_settings.SettingsError, "konteyner içinde dinlediği port"):
             self.plan(self.request("konteyner:medya"))
@@ -186,10 +181,10 @@ class PlanTests(unittest.TestCase):
             self.plan(self.request("konteyner:medya", konteyner_portu=3000), detail=lambda name: none)
 
         def refuse(data):
-            raise master_settings.SettingsError("torrent.example.org adı 203.0.113.10 adresine çözülmüyor.")
+            raise master_settings.SettingsError("dav.example.org adı 203.0.113.10 adresine çözülmüyor.")
         self.items = cands()
-        result = self.plan(self.request("paket:torrent"), settings_plan=refuse)
-        self.assertEqual((result["plan"], result["engel"]), (None, "torrent.example.org adı 203.0.113.10 adresine çözülmüyor."))
+        result = self.plan(self.request("paylasim", alan_adi="dav.example.org"), settings_plan=refuse)
+        self.assertEqual((result["plan"], result["engel"]), (None, "dav.example.org adı 203.0.113.10 adresine çözülmüyor."))
 
     def test_free_port_skips_used_and_held_ports(self):
         self.assertEqual(master_yayin.free_port(ENV, {62100}, bind=lambda port: port != 62101), 62102)
@@ -263,10 +258,11 @@ class RouteTests(Fixture):
 
     def test_firewall_and_names_views(self):
         view = {"firewall": {
-            "ok": False, "check": "HATA: Konteyner yönlendirme koruması eksik veya güncel değil.", "vpn_name": "WireGuard",
-            "networks": [{"app": "WireGuard", "iface": "wg0", "label": "home", "active": True, "server4": "10.8.0.1", "server6": ""}],
+            "ok": False, "check": "HATA: Konteyner yönlendirme koruması eksik veya güncel değil.",
+            "networks": [{"iface": "wg0", "label": "home", "active": True, "server4": "10.8.0.1", "server6": ""}],
             "ports": [{"name": "SSH", "family": 4, "proto": "tcp", "port": 22, "scope": "wan", "baseline": True},
-                      {"name": "qBittorrent", "family": 4, "proto": "tcp", "port": 63851, "scope": "wan", "baseline": True, "fixed": True},
+                      {"name": "WireGuard wg0 · home", "family": 4, "proto": "udp", "port": 61001, "scope": "wan", "baseline": True,
+                       "fixed": True},
                       {"name": "Diğer", "family": 6, "proto": "udp", "port": 5353, "scope": "lo", "baseline": True}],
             "listeners": [{"proto": "tcp", "family": 4, "port": 22, "address": "0.0.0.0", "scope": "any"}],
             "rules": {"rows": [{"family": 4, "table": "filter", "chain": "MASTER-INPUT", "position": 1, "packets": 5, "bytes": 300,
@@ -276,47 +272,48 @@ class RouteTests(Fixture):
         patch.object(self.p, "settings", return_value=view).start()
         status, fw = self.call("/api/konsol/guvenlik-duvari")
         self.assertEqual(status, 200)
-        self.assertEqual((fw["revizyon"], fw["denetim"]["ok"], fw["vpn"]), ("rev-1", False, "WireGuard"))
-        self.assertEqual([(k["ad"], k["kapsam"], k["sabit"]) for k in fw["katalog"]],
-                         [("SSH", "wan", False), ("qBittorrent", "wan", True), ("Diğer", "lo", False)])
+        self.assertEqual((fw["revizyon"], fw["denetim"]["ok"]), ("rev-1", False))
+        self.assertEqual([(k["ad"], k["kapsam"], k["sabit"]) for k in fw["portlar"]],
+                         [("SSH", "wan", False), ("WireGuard wg0 · home", "wan", True), ("Diğer", "lo", False)])
+        self.assertEqual(fw["aglar"], [{"arayuz": "wg0", "ad": "home", "etkin": True}])
         self.assertEqual(fw["teknik"][0]["sira"], "1")
         self.assertEqual(fw["kurallar"][0]["name"], "Oyun")
         self.assertEqual(fw["hatalar"], ["IPv6 kuralları okunamadı"])
         names = [{"name": "panel.test", "iface": "tailscale0", "family": None, "target": "tailscale", "source": "base"},
-                 {"name": "torrent.test", "iface": "tailscale0", "family": 4, "target": "tailscale", "source": "torrent"}]
+                 {"name": "notlar.test", "iface": "tailscale0", "family": 4, "target": "tailscale", "source": "elle"}]
         patch.object(master_settings.Manager, "dns_names", return_value=names).start()
         patch.object(master_settings.Manager, "current", return_value={"firewall": [], "dns": {
-            "disabled": ["torrent.test"], "records": [{"name": "nas.test", "target": "192.0.2.5", "enabled": True}],
+            "disabled": ["notlar.test"], "records": [{"name": "nas.test", "target": "192.0.2.5", "enabled": True}],
             "forward": True, "servers": ["9.9.9.9"]}}).start()
         patch.object(master_settings.Manager, "revision", return_value="rev-2").start()
         status, adlar = self.call("/api/konsol/adlar")
         self.assertEqual(status, 200)
         self.assertEqual([(a["ad"], a["kapali"], a["kilitli"]) for a in adlar["adlar"]],
-                         [("panel.test", False, True), ("torrent.test", True, False)])
+                         [("panel.test", False, True), ("notlar.test", True, False)])
         self.assertEqual((adlar["revizyon"], adlar["yonlendirme"], adlar["sunucular"]), ("rev-2", True, ["9.9.9.9"]))
 
     def test_publication_routes(self):
         patch.object(panel.master_publications, "status", return_value=copy.deepcopy(ROWS)).start()
-        patch.object(panel.master_publications, "packages", return_value=PACKAGES).start()
         patch.object(panel.master_publications, "wan_ready", return_value=True).start()
         patch.object(master_settings.Manager, "revision", return_value="rev-3").start()
         status, listing = self.call("/api/konsol/yayinlar")
         self.assertEqual(status, 200)
         self.assertEqual((listing["revizyon"], listing["alan"]), ("rev-3", "test"))
-        self.assertIn("paket:torrent", [c["id"] for c in listing["adaylar"]])
+        self.assertEqual([c["id"] for c in listing["adaylar"]], ["panel", "elle:notlar", "elle:yazici", "paylasim"],
+                         "no container state: a manual address is its own row")
         seen = []
 
         def plan(self_, data, client="", kanal=""):
             seen.append(data)
             return {"revizyon": "rev-3", "onay_sn": 0, "degisiklikler": [], "etkiler": [], "uyarilar": [], "uygulanabilir": True}
         patch.object(master_settings.Manager, "plan", plan).start()
-        status, result = self.call("/api/konsol/yayinlar/plan", {"hedef": "paket:torrent", "revizyon": "rev-3", "tailscale": True,
+        status, result = self.call("/api/konsol/yayinlar/plan", {"hedef": "elle:notlar", "revizyon": "rev-3", "tailscale": True,
                                                                  "internet": False, "alan_adi": ""})
         self.assertEqual((status, result["engel"], [s["tur"] for s in result["adimlar"]]), (200, "", ["ayar"]))
-        self.assertEqual(seen[0]["web"]["service"], "torrent")
-        self.assertEqual(self.call("/api/konsol/yayinlar/plan", {"hedef": "paket:yok", "revizyon": "rev-3", "tailscale": True,
+        self.assertEqual(seen[0]["web"]["service"], "elle-notlar")
+        self.assertEqual(self.call("/api/konsol/yayinlar/plan", {"hedef": "elle:yok", "revizyon": "rev-3", "tailscale": True,
                                                                  "internet": False, "alan_adi": ""})[0], 400)
-        self.assertEqual(self.call("/api/konsol/yayinlar/plan", {"hedef": "paket:torrent"})[0], 400, "the request's shape")
+        self.assertEqual(self.call("/api/konsol/yayinlar/plan", {"hedef": "elle:notlar"})[0], 400, "the request's shape")
 
     def test_the_podman_pages_container_requests_pass_the_table(self):
         jobs = []

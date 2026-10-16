@@ -139,7 +139,7 @@ print(json.dumps({'created':True}))
     remote("""
 import contextlib,fcntl,time
 with contextlib.ExitStack() as stack:
- for key in ('install.lock','modul.lock','paylasim.lock'):
+ for key in ('install.lock','paylasim.lock'):
   f=stack.enter_context(open(os.path.join(e['RUNTIME_DIR'],key),'a')); fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
  cfg=m.read(); row=next(i for i in cfg['items'] if i['id']==d['id'])
  assert row['path']==d['name'] and row['username']==d['name'] and row['path'].startswith('connections-test-')
@@ -153,9 +153,7 @@ print(json.dumps({'expired':True}))
     assert current["connections"]["wan"]["expired"] and not current["connections"]["wan"]["active"]
     assert current["connections"]["tailscale"]["active"]
     api({"id": item["id"], "permission": "rw", "days": 0}, expected=400)
-    # DD-267: the old pause request is gone (a connection switch replaced it in DD-192).
-    api({"id": item["id"], "paused": True}, action="durum", expected=404)
-    print("PASS: WAN expiry leaves Tailscale active; stale global-policy API rejected", flush=True)
+    print("PASS: WAN expiry leaves Tailscale active; top-level policy fields rejected", flush=True)
 finally:
     for own in api()["items"]:
         if own["path"] == name and own["username"] == name:

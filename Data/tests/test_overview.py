@@ -1,10 +1,5 @@
-"""Overview network card (DD-206): the WAN rate sampler, /api/konsol/ag with package traffic modules,
-and both packages' trafik.py; and the retired layout, favourites and old-shell routes (DD-267).
-Temporary directories only; no host changes."""
-import contextlib
-import importlib.util
-import io
-import json
+"""Overview network card (DD-206): the WAN rate sampler and /api/konsol/ag. Since DD-271 the card
+shows the WAN rates only; no application reports traffic. Temporary directories only; no host changes."""
 from pathlib import Path
 import sys
 import tempfile
@@ -14,96 +9,23 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "panel"))
-import master_auth as auth
 import test_resources
 
 panel = test_resources.panel
 
 
-def load(path, name):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 class Fixture(unittest.TestCase):
-    """A Panel on a temporary state: account folder, package folder and registry, WAN interface."""
+    """A Panel on a temporary state: account folder and WAN interface."""
 
     def setUp(self):
         temp = tempfile.TemporaryDirectory(prefix="konsol-overview-")
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name).resolve()
         (self.root / "konsol").mkdir(mode=0o700)
-        (self.root / "moduller").mkdir()
-        self.registry = self.root / "registry"
-        self.registry.write_text("")
         self.state = self.root / "state.env"
-        self.state.write_text("SERVER_ROOT=%s\nLOCAL_DOMAIN=test\nV2_VERSION=test\nMODULES_FILE=%s\nMODULES_DIR=%s\n"
-                              "KONSOL_AUTH_DIR=%s\nWAN_INTERFACE=eth0\n"
-                              % (self.root, self.registry, self.root / "moduller", self.root / "konsol"))
+        self.state.write_text("SERVER_ROOT=%s\nLOCAL_DOMAIN=test\nV2_VERSION=test\nKONSOL_AUTH_DIR=%s\nWAN_INTERFACE=eth0\n"
+                              % (self.root, self.root / "konsol"))
         self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[]))
-
-    def package(self, mid, module_source=None, manifest_extra='PAKET_TRAFIK="trafik.py"\n', state="calisiyor"):
-        folder = self.root / "moduller" / mid
-        folder.mkdir()
-        (folder / "paket.env").write_text('PAKET_AD="Deneme %s"\n%s' % (mid, manifest_extra))
-        if module_source is not None:
-            (folder / "trafik.py").write_text(module_source)
-        if state:
-            with self.registry.open("a") as fh:
-                fh.write("%s\t%s\n" % (mid, state))
-        return folder
-
-
-class RetiredRoutesTests(Fixture):
-    """DD-267: the overview layout (DD-206), Files' favourites (DD-250) and the routes only the old shell
-    used are gone; the table's routes replace the latter. The gates still answer first."""
-
-    def setUp(self):
-        super().setUp()
-
-        class Handler(panel.Handler):
-            def log_message(self, *_args):
-                pass
-        Handler.panel = self.p
-        _server, self.sock = test_resources.start_unix(self, Handler)
-
-    def call(self, path, body=None, headers=None):
-        headers = dict({"X-Konsol": "1"}, **(headers or {}))
-        if body is not None:
-            headers["Content-Type"] = "application/json"
-        return test_resources.unix_get(self.sock, path, headers, method="POST" if body is not None else "GET",
-                                       body=json.dumps(body).encode() if body is not None else None)
-
-    def test_the_removed_routes_answer_404_and_write_nothing(self):
-        self.package("torrent", manifest_extra='PAKET_HESAP="1"\n')
-        with patch.object(self.p, "modul", side_effect=AssertionError("no engine call")), \
-             patch.object(self.p, "module_spawn", side_effect=AssertionError("no engine call")):
-            for path in ("/api/konsol/duzen", "/api/konsol/favoriler", "/api/konsol/ayarlar", "/api/konsol/ayarlar?yenile=1",
-                         "/api/konsol/ayarlar/durum", "/api/konsol/moduller/torrent/gunluk", "/api/konsol/moduller/torrent/hesap",
-                         "/api/konsol/moduller/torrent/hesap?parola=1"):
-                with self.subTest(path=path):
-                    self.assertEqual(self.call(path)[0], 404)
-            for path, body in (("/api/konsol/duzen", {"duzen": {"kareler": ["dosyalar"]}}), ("/api/konsol/duzen", {"sifirla": True}),
-                               ("/api/konsol/favoriler", {"ekle": {"yol": "media", "sistem": False}}),
-                               ("/api/konsol/moduller/torrent/kur", {"form": {"username": "admin"}}),
-                               ("/api/konsol/moduller/torrent/baslat", {}), ("/api/konsol/moduller/torrent/durdur", {}),
-                               ("/api/konsol/moduller/torrent/yeniden-baslat", {}), ("/api/konsol/moduller/torrent/kaldir", {"veri": True})):
-                with self.subTest(path=path):
-                    self.assertEqual(self.call(path, body)[0], 404)
-        self.assertEqual([p.name for p in (self.root / "konsol").iterdir()], [])
-        # The table's routes that took their place, and the module list, stay.
-        self.assertIsNotNone(panel.master_api.find("GET", "/api/konsol/moduller"))
-        self.assertIsNotNone(panel.master_api.find("GET", "/api/konsol/ayarlar/klasorler"))
-        self.assertIsNotNone(panel.master_api.find("POST", "/api/konsol/uygulamalar/islem"))
-        self.assertFalse(hasattr(panel.Panel, "layout") or hasattr(panel.Panel, "favorites"))
-
-    def test_the_gates_stay_in_front(self):
-        status, _, _ = test_resources.unix_get(self.sock, "/api/konsol/duzen", {})
-        self.assertEqual(status, 403, "X-Konsol is required")
-        status, _, _ = test_resources.unix_get(self.sock, "/api/konsol/duzen", {"X-Konsol": "1", "Host": "evil.test"})
-        self.assertEqual(status, 403)
 
 
 class Clock:
@@ -161,47 +83,7 @@ class NetworkSamplerTests(Fixture):
         self.assertIsNone(self.p.net_prev)
 
 
-class TrafficEndpointTests(Fixture):
-    def network(self):
-        with patch.object(panel.Panel, "net_counters", staticmethod(lambda iface: [0, 0])):
-            return self.p.network()
-
-    def test_packages_report_through_their_own_modules(self):
-        self.package("deneme", "def trafik(env):\n    assert env['LOCAL_DOMAIN'] == 'test'\n    return {'down': 5, 'up': 7, 'since': 1700000000}\n")
-        self.package("durmus", "def trafik(env):\n    raise AssertionError('a stopped package is not asked')\n", state="durduruldu")
-        self.package("yok", "def trafik(env):\n    return {'down': 1, 'up': 1}\n", state=None)
-        self.package("sessiz", None, manifest_extra="")
-        self.package("ozel", "def trafik(env):\n    return {'down': 1, 'up': 1}\n", manifest_extra='PAKET_TRAFIK="trafik.py"\nPAKET_YERLESIK=1\n')
-        answer = self.network()
-        self.assertEqual(set(answer), {"read_at", "sampled_at", "rx", "tx", "apps"})
-        self.assertEqual(answer["apps"], [
-            {"id": "deneme", "name": "Deneme deneme", "down": 5, "up": 7},
-            {"id": "durmus", "name": "Deneme durmus", "down": None, "up": None}], "only the totals; other keys are left out")
-
-    def test_a_broken_module_empties_only_its_own_row_and_is_reported_once(self):
-        self.package("bozuk", "def trafik(env):\n    raise RuntimeError('x')\n")
-        self.package("tuhaf", "def trafik(env):\n    return {'down': -1, 'up': 'many', 'since': 1.5}\n")
-        self.package("liste", "def trafik(env):\n    return [1, 2]\n")
-        self.package("iyi", "def trafik(env):\n    return {'down': 0, 'up': 3, 'at': 1700000000}\n")
-        printed = io.StringIO()
-        with contextlib.redirect_stdout(printed):
-            first = self.network()["apps"]
-            self.p.traffic_cache = (-panel.TRAFFIC_CACHE_SECONDS, None)
-            self.network()
-        rows = {a["id"]: (a["down"], a["up"]) for a in first}
-        self.assertEqual(rows, {"bozuk": (None, None), "tuhaf": (None, None), "liste": (None, None), "iyi": (0, 3)})
-        self.assertEqual(printed.getvalue().count("Deneme bozuk trafik ölçümü okunamadı (RuntimeError)"), 1)
-        self.assertEqual(printed.getvalue().count("Deneme liste trafik ölçümü okunamadı (TypeError)"), 1)
-
-    def test_totals_are_cached_briefly(self):
-        folder = self.package("deneme", "CALLS = []\ndef trafik(env):\n    CALLS.append(1)\n    return {'down': len(CALLS), 'up': 0}\n")
-        self.assertEqual(self.network()["apps"][0]["down"], 1)
-        self.assertEqual(self.network()["apps"][0]["down"], 1, "a second viewer within the cache window shares the reading")
-        self.p.traffic_cache = (-panel.TRAFFIC_CACHE_SECONDS, self.p.traffic_cache[1])
-        self.assertEqual(self.network()["apps"][0]["down"], 2)
-        self.assertTrue((folder / "trafik.py").exists())
-        self.assertEqual([p.name for p in folder.iterdir() if p.name == "__pycache__"], [], "no bytecode next to the package")
-
+class NetworkEndpointTests(Fixture):
     def test_a_rate_older_than_the_window_is_not_shown(self):
         now = 2_000_000_000
         with patch.object(panel.time, "time", lambda: now), patch.object(panel.Panel, "net_counters", staticmethod(lambda iface: [0, 0])):
@@ -211,107 +93,8 @@ class TrafficEndpointTests(Fixture):
             self.p.net_last = {"t": now - panel.NET_WINDOW_SECONDS - 1, "rx": 1, "tx": 1}
             answer = self.p.network()
         self.assertEqual((answer["rx"], answer["tx"], answer["sampled_at"]), (None, None, None))
-
-
-# The AllStats line qBittorrent 5.1 wrote on nrm (2026-10-02): a QVariantHash in QSettings' Qt 4.0
-# stream format with AlltimeUL = 18968 and AlltimeDL = 12576.
-REAL_ALLSTATS = (r"@Variant(\0\0\0\x1c\0\0\0\x2\0\0\0\x12\0\x41\0l\0l\0t\0i\0m\0\x65\0U\0L\0\0\0\x4\0\0\0\0\0\0J\x18"
-                 r"\0\0\0\x12\0\x41\0l\0l\0t\0i\0m\0\x65\0\x44\0L\0\0\0\x4\0\0\0\0\0\0\x31 )")
-
-
-def qt_escape(data):
-    r"""QSettings' INI writer for a byte string, as far as AllStats needs it: NUL as \0, other
-    control and non-ASCII bytes as \x.., and a hex digit right after an escape escaped too."""
-    out, after_escape = [], False
-    for byte in data:
-        ch = chr(byte)
-        if byte == 0:
-            out.append("\\0"); after_escape = True
-        elif byte < 0x20 or byte >= 0x7f or (after_escape and ch in "0123456789abcdefABCDEF"):
-            out.append("\\x%x" % byte); after_escape = True
-        elif ch in '\\"':
-            out.append("\\" + ch); after_escape = False
-        else:
-            out.append(ch); after_escape = False
-    return "".join(out)
-
-
-def allstats(down, up):
-    import struct
-    def key(name):
-        raw = name.encode("utf-16-be")
-        return struct.pack(">I", len(raw)) + raw
-    body = struct.pack(">II", 28, 2) + key("AlltimeUL") + struct.pack(">Iq", 4, up) + key("AlltimeDL") + struct.pack(">Iq", 4, down)
-    return "@Variant(%s)" % qt_escape(body)
-
-
-class TorrentTrafficTests(unittest.TestCase):
-    def setUp(self):
-        temp = tempfile.TemporaryDirectory(prefix="torrent-trafik-")
-        self.addCleanup(temp.cleanup)
-        root = Path(temp.name).resolve()  # read_regular follows no link (macOS /var is one)
-        (root / "pkg").mkdir()
-        (root / "pkg/torrent.env").write_text("TORRENT_PROFILE_DIR=%s\n" % (root / "profile"))
-        (root / "profile/qBittorrent").mkdir(parents=True)
-        self.data = root / "profile/qBittorrent/qBittorrent-data.conf"
-        self.mod = load(ROOT / "magaza/torrent/trafik.py", "torrent_trafik_test")
-        self.mod.PACKAGE_DIR = root / "pkg"
-
-    def test_the_real_file_from_qbittorrent_5_1(self):
-        self.data.write_text("[Stats]\nAllStats=%s\n" % REAL_ALLSTATS)
-        self.assertEqual(self.mod.trafik({}), {"down": 12576, "up": 18968})
-
-    def test_large_totals_survive_the_escaping(self):
-        for down, up in ((0, 0), (5 * 1024 ** 4 + 0x1c0d0a, 0x7F00A1B2C3D4), (0xA0A0A0A0A0, 0x3031323334), (1, 2 ** 62)):
-            with self.subTest(down=down, up=up):
-                self.data.write_text("[Other]\nAllStats=x\n[Stats]\nAllStats=%s\n" % allstats(down, up))
-                value = self.mod.trafik({})
-                self.assertEqual((value["down"], value["up"]), (down, up))
-
-    def test_nothing_saved_yet_and_damaged_records(self):
-        self.assertEqual(self.mod.trafik({}), {"down": 0, "up": 0}, "no file before the first save")
-        self.data.write_text("[Stats]\n")
-        self.assertEqual(self.mod.trafik({})["down"], 0)
-        for bad in ("AllStats=12", "AllStats=@Variant(\\0\\0\\0\\x9\\0\\0\\0\\0)", "AllStats=@Variant(\\0\\0\\0\\x1c\\0\\0\\0\\x5)",
-                    "AllStats=@Variant(\\x)", "AllStats=@Variant(%s)" % qt_escape(b"\0\0\0\x1c\0\0\0\0")):
-            with self.subTest(bad=bad), self.assertRaises((ValueError, Exception)):
-                self.data.write_text("[Stats]\n%s\n" % bad)
-                self.mod.trafik({})
-
-    def test_it_reads_the_profile_only(self):
-        source = (ROOT / "magaza/torrent/trafik.py").read_text()
-        self.assertNotIn("subprocess", source)
-        self.assertNotIn("systemctl", source.split('"""', 2)[2])
-
-
-class WireguardTrafficTests(unittest.TestCase):
-    def setUp(self):
-        temp = tempfile.TemporaryDirectory(prefix="wg-trafik-")
-        self.addCleanup(temp.cleanup)
-        root = Path(temp.name).resolve()  # read_regular follows no link (macOS /var is one)
-        self.mod = load(ROOT / "magaza/wireguard/trafik.py", "wireguard_trafik_test")
-        (root / "pkg").mkdir()
-        (root / "pkg/wireguard.env").write_text('WG_NETWORKS_FILE="%s"\n' % (root / "networks"))
-        self.networks = root / "networks"
-        self.sys = root / "sys"
-        for iface, rx, tx in (("wg0", 100, 1000), ("wg1", 20, 300), ("eth0", 7, 7)):
-            (self.sys / iface / "statistics").mkdir(parents=True)
-            (self.sys / iface / "statistics/rx_bytes").write_text("%d\n" % rx)
-            (self.sys / iface / "statistics/tx_bytes").write_text("%d\n" % tx)
-        self.mod.PACKAGE_DIR = root / "pkg"
-        self.mod.SYS_NET = self.sys
-
-    def test_down_is_what_the_peers_received_and_up_what_they_sent(self):
-        # wg2 is down (no counters) and eth0 is not a network.
-        self.networks.write_text("wg0\t61001\tx\nwg1\t61002\tx\nwg2\t61003\tx\n# yorum\neth0\t1\n")
-        self.assertEqual(self.mod.trafik({}), {"down": 1300, "up": 120})
-        source = (ROOT / "magaza/wireguard/trafik.py").read_text()
-        self.assertNotIn("subprocess", source, "the kernel's counters only; no command")
-
-    def test_no_registry_or_no_network_up(self):
-        self.assertEqual(self.mod.trafik({}), {"down": 0, "up": 0})
-        self.networks.write_text("wg5\t61005\tx\n")
-        self.assertEqual(self.mod.trafik({}), {"down": 0, "up": 0})
+        self.assertEqual(set(answer), {"read_at", "sampled_at", "rx", "tx"}, "the WAN rates only")
+        panel.master_api.check(panel.master_api.ref("Ag"), answer)
 
 
 if __name__ == "__main__":

@@ -85,16 +85,16 @@ const posts = [], errors = [];
     assert(await page.locator("#form-login").isHidden());
     // DD-205: the tailnet never signs in — a direct load of this page goes straight back to Konsol.
     state = { durum: "giris", kullanici: "yonetici", kanal: "tailscale" };
-    await open("/giris.html#/ayarlar");
-    await page.waitForURL((url) => url.pathname === "/" && url.hash === "#/ayarlar");
+    await open("/giris.html#/erisim");
+    await page.waitForURL((url) => url.pathname === "/" && url.hash === "#/erisim");
     // An already signed-in browser goes straight back too.
     state = { durum: "acik", kullanici: "yonetici", oturum_gun: 7, kanal: "internet" };
-    await open("/giris.html#/moduller");
-    await page.waitForURL((url) => url.pathname === "/" && url.hash === "#/moduller");
-    // Real Konsol whose internet session ended: its first API answer sends the browser to sign in (Konsol
-    // first takes an old address such as #/ayarlar to its new home, #/sistem; DD-267).
+    await open("/giris.html#/uygulamalar");
+    await page.waitForURL((url) => url.pathname === "/" && url.hash === "#/uygulamalar");
+    // Real Konsol whose internet session ended: its first API answer sends the browser to sign in, which
+    // returns to the same view afterwards.
     state = { durum: "giris", kanal: "internet" }; konsolUnauthorized = true;
-    await open("/#/ayarlar");
+    await open("/#/sistem");
     await page.waitForURL((url) => url.pathname === "/giris.html" && url.hash === "#/sistem");
     await page.locator("#form-login").waitFor();
     assert.equal(posts.length, 3, "status reads and redirects never post");

@@ -4,7 +4,7 @@
 "use strict";
 (() => {
   const $ = (id) => document.getElementById(id);
-  // DD-267: Konsol is at / (an older ?geri=yeni from the interface's /yeni/ days lands there too).
+  // DD-267: Konsol is at /; signing in returns there with the page's own hash.
   const home = "/";
   const back = () => location.replace(home + (location.hash.startsWith("#/") ? location.hash : ""));
   async function call(path, body) {

@@ -9,7 +9,7 @@ import { Icon, type IconName } from "./icons";
 import { trapTab } from "./focus";
 import { ADD_FLOWS, SECTIONS, SECTION_TABS, accessRoute, addRoute } from "../sections";
 import { apps } from "../live";
-import { KIND_TEXT, appIcon } from "../apps";
+import { KIND_TEXT } from "../apps";
 import { appRoute } from "../router";
 import { THEMES, setTheme, theme, type ThemeChoice } from "../theme";
 import { closeSurface, openSurface, ui } from "../ui";
@@ -51,7 +51,7 @@ const items = computed<Item[]>(() => {
       group: "Uygulamalar",
       label: app.ad,
       hint: "Uygulama",
-      icon: appIcon(app),
+      icon: "box",
       words: `${app.id} ${KIND_TEXT[app.tur]}`,
       run: { kind: "route", to: router.resolve(appRoute(app.id)).path },
     });

@@ -1,6 +1,6 @@
-"""DD-214: explicit image updates. The base compares the installed digest with what a channel tag
-points to now (registry manifests only, cached), offers 'image-update' only to packages that name a
-channel and an adapter, and serves the status on a GET-only route behind the usual gates."""
+"""DD-214: explicit image updates. The base compares a Konsol container's installed digest with what
+the tag it was saved from points to now (registry manifests only, cached), and serves the status on a
+GET-only route behind the usual gates."""
 import json
 from pathlib import Path
 import sys
@@ -13,9 +13,10 @@ PANEL = Path(__file__).resolve().parents[1] / "panel"
 sys.path.insert(0, str(PANEL))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import master_containers as containers  # noqa: E402
+import master_container_config as config  # noqa: E402
 import master_container_manager as manager  # noqa: E402
 
-REPO = "lscr.io/linuxserver/qbittorrent"
+REPO = "ghcr.io/example/medya"
 OLD = REPO + "@sha256:" + "b5" * 32
 AMD, ARM, OTHER = "sha256:" + "11" * 32, "sha256:" + "22" * 32, "sha256:" + "33" * 32
 INDEX = {"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
@@ -83,9 +84,8 @@ class ManagerUpdateTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name).resolve()
-        (root / "modules").write_text("")
-        env = {"KONTEYNER_STATE_DIR": str(root / "containers"), "MODULES_FILE": str(root / "modules"), "MODULES_DIR": str(root / "packages")}
-        (root / "state").write_text("".join(k + "=" + v + "\n" for k, v in env.items()))
+        self.env = {"KONTEYNER_STATE_DIR": str(root / "containers"), "KONTEYNER_NETWORK": "konsol"}
+        (root / "state").write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
         self.registry = Registry(local=(OTHER,))
         self.calls = []
 
@@ -100,34 +100,34 @@ class ManagerUpdateTests(unittest.TestCase):
             if argv[:2] == ["podman", "version"]:
                 return 0, "5.4.2", ""
             return 0, "[]", ""
-        self.p = types.SimpleNamespace(args=types.SimpleNamespace(state=str(root / "state"), master_modul="/fixture/master-modul"),
-                                       run_tool=run_tool, env=lambda: {}, module_busy=lambda _: False)
+        self.p = types.SimpleNamespace(args=types.SimpleNamespace(state=str(root / "state")), run_tool=run_tool, env=lambda: {})
         self.s = manager.Service(self.p)
-        self.app = {"name": "qbittorrent", "image": OLD, "unit": "qbittorrent.service", "module_id": "torrent",
-                    "module_state": "calisiyor", "adapter": "ayar.py", "channel": REPO + ":latest", "manifest": {}}
-        self.specs = patch.object(manager, "app_specs", return_value={"qbittorrent": self.app})
-        self.specs.start()
-        self.addCleanup(self.specs.stop)
-        cfg = patch.object(manager, "app_config", return_value={"revision": "d" * 64, "config": {}, "editable": [], "protected_mounts": []})
-        cfg.start()
-        self.addCleanup(cfg.stop)
+        self.save("medya", REPO + ":latest")
+
+    def save(self, name, image_ref):
+        """A saved Konsol definition: the installed digest and the reference it was created from."""
+        config.Store(self.env).save({"schema": 1, "name": name, "revision": "a" * 32, "image": OLD, "image_ref": image_ref,
+                                     "network": "konsol", "ports": [], "mounts": [], "environment": [], "command": [],
+                                     "autostart": True, "manual_stop": False, "restart": "on-failure", "cpus": "", "memory": ""})
 
     def remote_calls(self):
         return [c for c in self.calls if c[:3] == ["podman", "manifest", "inspect"]]
 
-    def test_a_package_with_channel_and_adapter_can_update_and_reports_cached_status(self):
-        row = self.s.view().ayrinti("qbittorrent")
+    def test_a_konsol_definition_can_update_and_reports_cached_status(self):
+        row = self.s.view().ayrinti("medya")
         self.assertIn("image-update", row["actions"])
         self.assertIsNone(row["update"], "no registry call while drawing the list")
         self.assertEqual(self.remote_calls(), [])
         answer = self.s.updates()
-        self.assertEqual(answer["items"]["qbittorrent"], {"state": "var", "channel": REPO + ":latest", "error": ""})
+        self.assertEqual(answer["items"]["medya"], {"state": "var", "channel": REPO + ":latest", "error": ""})
         self.assertNotIn("candidate", json.dumps(answer), "the browser never receives a pull target")
-        self.assertEqual(self.s.view().ayrinti("qbittorrent")["update"]["state"], "var")
-        self.app.update(channel="")
-        self.assertNotIn("image-update", self.s.view().ayrinti("qbittorrent")["actions"])
-        self.app.update(channel=REPO + ":latest", adapter="")
-        self.assertNotIn("image-update", self.s.view().ayrinti("qbittorrent")["actions"])
+        self.assertEqual(self.s.view().ayrinti("medya")["update"]["state"], "var")
+        # A definition created from a digest follows no tag: it never asks the registry.
+        self.save("belgeler", OLD)
+        self.s.forget_updates()
+        answer = self.s.updates()
+        self.assertEqual(answer["items"]["belgeler"], {"state": "sabit", "channel": "", "error": ""})
+        self.assertEqual(len(self.remote_calls()), 2, "one registry read per check, for the tag-following definition")
 
     def test_cache_ttl_forced_refresh_min_interval_and_forget(self):
         self.s.updates()
@@ -142,17 +142,17 @@ class ManagerUpdateTests(unittest.TestCase):
         self.s.updates()
         self.assertEqual(len(self.remote_calls()), 3, "stale after the TTL")
         self.s.forget_updates()
-        self.assertIsNone(self.s.update_of("qbittorrent"))
+        self.assertIsNone(self.s.update_of("medya"))
         self.s.updates()
         self.assertEqual(len(self.remote_calls()), 4)
 
     def test_a_successful_image_change_invalidates_the_cache(self):
         self.s.updates()
-        self.s.jobs["a" * 32] = {"id": "a" * 32, "state": "running", "name": "qbittorrent", "action": "image-update"}
+        self.s.jobs["a" * 32] = {"id": "a" * 32, "state": "running", "name": "medya", "action": "image-update"}
         with patch.object(self.s, "operation", return_value={"id": "a" * 32, "state": "done"}), \
              patch.object(manager.subprocess, "run", return_value=types.SimpleNamespace(returncode=0, stdout='{"ok": true}')):
-            self.s._execute("a" * 32, "image-update", {"name": "qbittorrent"})
-        self.assertIsNone(self.s.update_of("qbittorrent"))
+            self.s._execute("a" * 32, "image-update", {"name": "medya"})
+        self.assertIsNone(self.s.update_of("medya"))
 
 
 class RouteTests(unittest.TestCase):
@@ -161,9 +161,8 @@ class RouteTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name).resolve()
-        (root / "modules").write_text("")
-        (root / "state").write_text(f"SERVER_ROOT={root}\nLOCAL_DOMAIN=test\nMODULES_FILE={root}/modules\nKONTEYNER_STATE_DIR={root}/containers\n")
-        p = panel.Panel(types.SimpleNamespace(state=str(root / "state"), allow_host=[], master_modul="/fixture/master-modul"))
+        (root / "state").write_text(f"SERVER_ROOT={root}\nLOCAL_DOMAIN=test\nKONTEYNER_STATE_DIR={root}/containers\n")
+        p = panel.Panel(types.SimpleNamespace(state=str(root / "state"), allow_host=[], state_env=False))
 
         class Handler(panel.Handler):
             def log_message(self, *_):

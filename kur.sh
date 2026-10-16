@@ -19,7 +19,7 @@ main() {
     local root="${KUR_ROOT:-/root/debian-server-installer}"
     local update="${KUR_GUNCELLE:-}"
     # Kurulumun çalışma dosyaları; dokümanlar ve testler sunucuya gitmez.
-    local items="install.sh common.sh config templates scripts systemd panel files-panel console magaza"
+    local items="install.sh common.sh config templates scripts systemd panel files-panel console"
 
     printf '\n=== Obhut — kurulum ===\n'
     [[ "$(id -u)" -eq 0 ]] || {

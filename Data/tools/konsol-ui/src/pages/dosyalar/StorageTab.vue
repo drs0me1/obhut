@@ -1,10 +1,9 @@
 <!-- Dosyalar → Depolama (phase 4b, DD-267): the disk the user area is on (GET /api/state: size, free, what the
-     user area itself holds without the trash, whether it is its own mount), the trash in short, Gezgin, and
-     the user area's top folders (GET /api/list) with their size, item count and who uses them: applications
-     whose containers bind the folder or a folder inside it (GET /api/konsol/depolama; a bind of the whole
-     user area counts for every folder), folder shares, and the packages' own folders with their owner
-     (DD-203). Each user links to its application's page or to Paylaşımlar; each folder opens in Sunucu
-     klasörleri. -->
+     user area itself holds without the trash, whether it is its own mount), the trash in short, and the user
+     area's top folders (GET /api/list) with their size, item count and who uses them: applications whose
+     containers bind the folder or a folder inside it (GET /api/konsol/depolama; a bind of the whole user
+     area counts for every folder) and folder shares. Each user links to its application's page or to
+     Paylaşımlar; each folder opens in Sunucu klasörleri. -->
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { RouterLink, type RouteLocationRaw } from "vue-router";
@@ -14,12 +13,10 @@ import EmptyState from "../../components/ui/EmptyState.vue";
 import UsageBar from "../../components/ui/UsageBar.vue";
 import { readListing, readState, readStorage, type FilesState, type Listing } from "../../api/dosyalar";
 import type { Depolama } from "../../api/sema";
-import { live } from "../../live";
 import { appRoute } from "../../router";
 import { filesRoute } from "../../sections";
 import { UNKNOWN, bytes, percent } from "../../format";
 import { countText, errorText, sizeText, sortEntries } from "./files";
-import GezginNote from "./GezginNote.vue";
 
 const state = ref<FilesState | null>(null);
 const listing = ref<Listing | null>(null);
@@ -59,8 +56,8 @@ interface Use {
   key: string;
   name: string;
   detail: string;
-  to: RouteLocationRaw | null;
-  kind: "paket" | "konteyner" | "paylasim" | "koruma";
+  to: RouteLocationRaw;
+  kind: "konteyner" | "paylasim";
 }
 
 const SHARE_ID = /^\/s\/([^/]+)\/$/;
@@ -86,10 +83,6 @@ const users = computed(() => {
     } else {
       out.push({ rel, use: { key: `u${i}`, name: u.ad, kind: u.tur, detail: `${where} · ${access(u.yazilabilir)}${u.hedef ? ` · konteynerde ${u.hedef}` : ""}`, to: appRoute(u.id) } });
     }
-  }
-  for (const [i, p] of (state.value?.protected ?? []).entries()) {
-    const app = live.uygulamalar?.items.find((a) => a.ad === p.owner);
-    out.push({ rel: p.path, use: { key: `k${i}`, name: p.owner, kind: "koruma", detail: `yazıyor · ${p.path} · Konsol burada değişiklik yapmaz`, to: app ? appRoute(app.id) : null } });
   }
   return out;
 });
@@ -145,14 +138,12 @@ const elsewhere = computed(() => {
           <RouterLink :to="filesRoute('cop')" class="btn btn-secondary btn-sm" data-testid="trash-link"><Icon name="trash" :size="16" />Çöp kutusunu aç</RouterLink>
         </div>
       </Card>
-
-      <GezginNote />
     </div>
 
     <section class="card files-folders" aria-labelledby="klasorler-baslik" data-testid="folders">
       <h2 id="klasorler-baslik" class="card-title">Klasörler ve kullananlar</h2>
       <p class="meter-note">
-        <span class="mono">{{ root }}</span> altındaki klasörler, boyutları ve onları kullanan uygulamalar, paylaşımlar ve paketler.
+        <span class="mono">{{ root }}</span> altındaki klasörler, boyutları ve onları kullanan uygulamalar ve paylaşımlar.
       </p>
       <p v-if="errors.list" class="form-error" role="alert" data-testid="list-error">{{ errors.list }}</p>
       <p v-if="errors.storage" class="notice notice-warning" role="alert" data-testid="storage-error">
@@ -178,8 +169,7 @@ const elsewhere = computed(() => {
               <td data-label="Kullanan" class="files-uses-cell">
                 <ul v-if="f.uses.length" class="files-uses">
                   <li v-for="u in f.uses" :key="u.key" :data-kullanan="u.kind">
-                    <RouterLink v-if="u.to" :to="u.to" class="files-use-name">{{ u.name }}</RouterLink>
-                    <strong v-else class="files-use-name">{{ u.name }}</strong>
+                    <RouterLink :to="u.to" class="files-use-name">{{ u.name }}</RouterLink>
                     <span class="cell-note">{{ u.detail }}</span>
                   </li>
                 </ul>
@@ -198,8 +188,7 @@ const elsewhere = computed(() => {
         <p class="meter-note">Listede olmayan klasörleri kullananlar:</p>
         <ul class="files-uses">
           <li v-for="u in elsewhere" :key="u.use.key" :data-kullanan="u.use.kind">
-            <RouterLink v-if="u.use.to" :to="u.use.to" class="files-use-name">{{ u.use.name }}</RouterLink>
-            <strong v-else class="files-use-name">{{ u.use.name }}</strong>
+            <RouterLink :to="u.use.to" class="files-use-name">{{ u.use.name }}</RouterLink>
             <span class="cell-note">{{ u.use.detail }}</span>
           </li>
         </ul>

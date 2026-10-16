@@ -1,31 +1,26 @@
 <!-- Sistem → Günlük: what was done from Konsol in the last seven days (GET /api/konsol/islemler; the root and
-     the file backends' audit lines), newest first, worded by audit.ts (with
-     the packages' own templates from GET /api/konsol/moduller). Filter chips for the kinds present (?tur=)
-     and a search (?ara=, Turkish case rules) over the line, the kind, the user and the address. A table on
+     the file backends' audit lines), newest first, worded by audit.ts. Filter chips for the kinds present
+     (?tur=) and a search (?ara=, Turkish case rules) over the line, the kind, the user and the address. A table on
      wide screens, cards on narrow ones. -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { Icon } from "../../components/icons";
 import EmptyState from "../../components/ui/EmptyState.vue";
-import { readAudit, readModules } from "../../api/sistem";
-import { KIND_ORDER, kindLabel, kindOf, lineOf, packagesOf, type Packages } from "./audit";
+import { readAudit } from "../../api/sistem";
+import { KIND_ORDER, kindLabel, kindOf, lineOf } from "./audit";
 import { useQueryParam } from "../../query";
 import { clock, fold } from "../../format";
-import type { KayitSatiri, Modul } from "../../api/sema";
+import type { KayitSatiri } from "../../api/sema";
 
 const rows = ref<KayitSatiri[] | null>(null);
-const modules = ref<Modul[]>([]);
 const error = ref("");
 const loading = ref(false);
 const readAt = ref(0);
 
 async function load(): Promise<void> {
   loading.value = true;
-  // The packages only name things; the log shows without them (an id and the verb).
-  const names = readModules().then((m) => (modules.value = m), () => undefined);
   try {
     const items = await readAudit();
-    await names;
     rows.value = [...items].sort((a, b) => b.at - a.at);
     error.value = "";
     readAt.value = Date.now() / 1000;
@@ -37,20 +32,18 @@ async function load(): Promise<void> {
 }
 onMounted(() => void load());
 
-const packages = computed<Packages>(() => packagesOf(modules.value));
 const entries = computed(() =>
   (rows.value ?? []).map((e, i) => {
     const kind = kindOf(e);
-    const label = kindLabel(kind, packages.value);
-    const line = lineOf(e, packages.value);
+    const label = kindLabel(kind);
+    const line = lineOf(e);
     return { key: `${e.at}:${i}`, e, kind, label, line, hay: fold(`${line} ${label} ${e.user} ${e.client} ${e.action} ${e.detail}`) };
   }),
 );
 
 const kinds = computed(() => {
   const present = new Set(entries.value.map((x) => x.kind));
-  const order = [...KIND_ORDER.filter((k) => present.has(k)), ...[...present].filter((k) => !KIND_ORDER.includes(k))];
-  return order.map((id) => ({ id, label: kindLabel(id, packages.value), count: entries.value.filter((x) => x.kind === id).length }));
+  return KIND_ORDER.filter((k) => present.has(k)).map((id) => ({ id, label: kindLabel(id), count: entries.value.filter((x) => x.kind === id).length }));
 });
 const kind = useQueryParam<string>("tur", null, "");
 const queryParam = useQueryParam<string>("ara", null, "");

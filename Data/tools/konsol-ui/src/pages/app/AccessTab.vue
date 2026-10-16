@@ -1,17 +1,15 @@
 <!-- An application's Erişim: the four cells of its row in Erişim's read model (this server, Tailscale,
      WireGuard, the internet) with their addresses and notes, the technical lines behind "Teknik ayrıntı"
      (open state in the address, ?teknik=1), and the way to change it: the Yayınla flow over this page
-     (?yayinla=<id>). WireGuard itself is changed on Erişim's WireGuard tab. A container's network and
-     ports follow (PortsCard: its published ports by scope, or on the host network the sockets it listens on). -->
+     (?yayinla=<id>; an application's id is its row's and its candidate's). A container's network and ports
+     follow (PortsCard: its published ports by scope, or on the host network the sockets it listens on). -->
 <script setup lang="ts">
 import { computed } from "vue";
-import { RouterLink, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
 import { Icon, type IconName } from "../../components/icons";
 import EmptyState from "../../components/ui/EmptyState.vue";
 import StatusPill from "../../components/ui/StatusPill.vue";
 import { CELL_TEXT, CELL_TONE } from "../../apps";
-import { candidateOfApp } from "../../access";
-import { accessRoute } from "../../sections";
 import { updateQuery, useQueryFlag } from "../../query";
 import PortsCard from "../uygulama/PortsCard.vue";
 import type { ContainerDetail } from "../../api/podman";
@@ -35,14 +33,12 @@ const cells = computed(() => {
   return CELLS.map((c) => ({ ...c, cell: row[c.key] as ErisimHucresi }));
 });
 
-const vpn = computed(() => props.app.id === "paket:wireguard");
-
 function onToggle(event: Event): void {
   technical.value = (event.target as HTMLDetailsElement).open;
 }
 
 function publish(): void {
-  updateQuery(router, { yayinla: props.row ? props.row.id : candidateOfApp(props.app.id) });
+  updateQuery(router, { yayinla: props.row ? props.row.id : props.app.id });
 }
 </script>
 
@@ -75,15 +71,7 @@ function publish(): void {
     </div>
   </section>
   <section v-else class="card" aria-label="Erişim" data-testid="access">
-    <EmptyState
-      v-if="vpn"
-      title="Bu uygulamanın yayınladığı bir adres yok"
-      text="WireGuard ağları ve cihazları Erişim'in WireGuard bölümünde."
-      icon="shield"
-    >
-      <RouterLink :to="accessRoute('wireguard')" class="btn btn-secondary">WireGuard ağları</RouterLink>
-    </EmptyState>
-    <EmptyState v-else title="Bu uygulamanın yayınladığı bir adres yok" text="Erişim'de bu uygulamaya ait bir satır görünmüyor." icon="globe">
+    <EmptyState title="Bu uygulamanın yayınladığı bir adres yok" text="Erişim'de bu uygulamaya ait bir satır görünmüyor." icon="globe">
       <button type="button" class="btn btn-secondary" data-testid="access-publish" @click="publish">Yayınla</button>
     </EmptyState>
   </section>

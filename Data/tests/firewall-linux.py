@@ -88,40 +88,23 @@ def main():
         outsiders_before = outsiders()
         with tempfile.TemporaryDirectory(prefix="firewall-test-") as temp:
             root = Path(temp)
+            # DD-271: WireGuard's keys (port default, registry, stopped marker) are the base's.
             e = m.env_read(DATA / "config/defaults.env")
-            # DD-203: the interface port is the torrent package's own setting, not a base default.
-            e["TORRENT_UI_PORT"] = m.env_read(DATA / "magaza/torrent/torrent.env")["TORRENT_UI_PORT"]
             for key in ("SETTINGS_FILE", "SETTINGS_PENDING_FILE", "SETTINGS_DNS_FILE", "DNSMASQ_CONF_FILE",
-                        "DNSMASQ_CONF_DIR", "MODULES_FILE", "MODULES_DIR", "WG_NETWORKS_FILE", "RUNTIME_DIR",
-                        "UNIT_DIR", "TORRENT_PROFILE_DIR", "SBIN_DIR", "SHARE_STATE_FILE", "SERVER_ROOT"):
+                        "DNSMASQ_CONF_DIR", "WG_NETWORKS_FILE", "WG_STOPPED_FILE", "RUNTIME_DIR",
+                        "UNIT_DIR", "SBIN_DIR", "SHARE_STATE_FILE", "SERVER_ROOT"):
                 e[key] = str(root / key.lower())
             e.update(LOCAL_DOMAIN="test", WAN_INTERFACE="eth0", TAILSCALE_IPV4="100.64.0.1",
                      WAN_IPV4="93.184.216.34", DOWNLOADS_PATH=str(Path(e["SERVER_ROOT"]) / "downloads"))
             # DD-182: wan_active reads the registry only with an assigned global
-            # address and a running built-in share module. This alias exists
-            # solely in the disposable namespace; no external packets are sent.
+            # address. This alias exists solely in the disposable namespace; no
+            # external packets are sent.
             cmd("ip", "addr", "add", e["WAN_IPV4"] + "/32", "dev", "lo")
             for key in ("SBIN_DIR", "RUNTIME_DIR", "DNSMASQ_CONF_DIR"):
                 Path(e[key]).mkdir()
-            # DD-198: the firewall asks the installed WireGuard package for its "vpn" declarations.
-            (Path(e["MODULES_DIR"]) / "wireguard").mkdir(parents=True)
-            for name in ("paket.env", "kanca"):
-                shutil.copy(DATA / "magaza/wireguard" / name, Path(e["MODULES_DIR"]) / "wireguard" / name)
-            # DD-201: the hook reads its registry path and defaults from the package's own env file.
-            wg = m.env_read(DATA / "magaza/wireguard/wireguard.env")
-            e["WG_PORT_DEFAULT"] = wg["WG_PORT_DEFAULT"]
-            (Path(e["MODULES_DIR"]) / "wireguard/wireguard.env").write_text(
-                "WG_NETWORKS_FILE=%s\nWG_PORT_DEFAULT=%s\n" % (shlex.quote(e["WG_NETWORKS_FILE"]), wg["WG_PORT_DEFAULT"]))
-            # DD-199: qBittorrent's publication row exists only through its package manifest and check module.
-            (Path(e["MODULES_DIR"]) / "torrent").mkdir()
-            (Path(e["MODULES_DIR"]) / "torrent/paket.env").write_text(
-                (DATA / "magaza/torrent/paket.env").read_text().replace("__TORRENT_UI_PORT__", e["TORRENT_UI_PORT"]))
-            shutil.copy(DATA / "magaza/torrent/yayin.py", Path(e["MODULES_DIR"]) / "torrent/yayin.py")
-            (Path(e["MODULES_DIR"]) / "torrent/torrent.env").write_text(
-                "TORRENT_UI_PORT=%s\nTORRENT_PROFILE_DIR=%s\n" % (e["TORRENT_UI_PORT"], e["TORRENT_PROFILE_DIR"]))
-            modules = Path(e["MODULES_FILE"])
+            # DD-198/271: the firewall reads WireGuard's registry and stopped marker itself (DD-229).
             networks = Path(e["WG_NETWORKS_FILE"])
-            module_record = "wireguard\tcalisiyor\ntorrent\tcalisiyor\npaylasim\tcalisiyor\n"
+            stopped = Path(e["WG_STOPPED_FILE"])
             network_record = f"wg0\t{e['WG_PORT_DEFAULT']}\tinet\t10.8.0.1\t10.8.0.0/24\tfd00:3::1\tfd00:3::/112\t1.1.1.1\tTest\n"
             state = root / "state.env"
             e["STATE_FILE"] = str(state)
@@ -173,22 +156,21 @@ def main():
                 before = snapshot()
                 apply()
                 assert before == snapshot(), "Repeated application changed the rules"
-            # A genuinely empty firewall configuration; no module/network files.
+            # A genuinely empty firewall configuration: no network registry.
             apply()
             no_wg()
             repeat()
-            # Merely retaining a network file must never reactivate a module.
+            # A stopped WireGuard keeps its registry but opens nothing, whatever the marker lists.
             networks.write_text(network_record)
-            for record in (None, "", "dosya\tcalisiyor\npaylasim\tcalisiyor\n", "wireguard\tdurduruldu\n"):
-                if record is not None:
-                    modules.write_text(record)
+            for record in ("", "wg0\n"):
+                stopped.write_text(record)
                 apply()
                 no_wg()
                 repeat()
-            modules.write_text(module_record)
+            stopped.unlink()
             share_status = json.loads(cmd("python3", str(Path(e["SBIN_DIR"]) / "master_shares.py"),
                                           "--state", str(state), "status"))
-            assert share_status["running"] and share_status["wan"]["available"], share_status
+            assert share_status["wan"]["available"], share_status
             apply()
             hold_https = threading.Event()
             def serve(sock, proto):
@@ -208,7 +190,7 @@ def main():
                         return
             allowed_tcp = {int(e[k]) for k in ("SSH_PUBLIC_PORT", "CADDY_HTTP_PORT", "SHARE_PORT", "DNS_PORT")}
             denied_tcp = {2019, 20902, 59000, 61002, 61003, 61007, 61008, int(e["FILES_PANEL_PORT"]),
-                          int(e["TORRENT_UI_PORT"]), int(e["SHARE_HTTPS_PORT"])}
+                          int(e["SHARE_HTTPS_PORT"])}
             udp_ports = {int(e[k]) for k in ("DNS_PORT", "TAILSCALE_UDP_PORT", "WG_PORT_DEFAULT")} | {20902, 59000}
             for family in (socket.AF_INET, socket.AF_INET6):
                 for proto, ports in (("tcp", allowed_tcp | denied_tcp), ("udp", udp_ports)):
@@ -346,31 +328,6 @@ finally:
             apply()
             assert_outsiders()
             print("PASS HTTPS renewal without folders, 16/IP and 64 total limits, manual deny, HTTP closure and tailnet preservation", flush=True)
-            # DD-191: the same permission supports qBittorrent without DAV;
-            # two enabled hostnames still generate a single TCP-port permit.
-            qconf = Path(e["TORRENT_PROFILE_DIR"]) / "qBittorrent/qBittorrent.conf"
-            qconf.parent.mkdir(parents=True)
-            qconf.write_text("[Preferences]\nWebUI\\Password_PBKDF2=fixture\nWebUI\\LocalHostAuth=true\n")
-            qweb = {"torrent": dict(tail=True, enabled=True, domain="torrent.example.com")}
-            for domain in ("", "dav.example.com"):
-                m.save_json(e["SETTINGS_FILE"], dict(m.DEFAULT, https={"domain": domain}, web=qweb))
-                apply()
-                repeat()
-                check(0, 4, "tcp", https_port, True)
-                check(0, 4, "tcp", share_port, False)
-                rules = cmd("iptables", "-S", e["CHAIN_INPUT"])
-                assert sum("--dport " + str(https_port) + " -j ACCEPT" in line for line in rules.splitlines()) == 1
-            m.save_json(e["SETTINGS_FILE"], dict(m.DEFAULT, https={"domain": ""}, web=qweb))
-            modules.write_text(module_record.replace("torrent\tcalisiyor", "torrent\tdurduruldu"))
-            apply()
-            check(0, 4, "tcp", https_port, False)
-            modules.write_text(module_record)
-            qconf.write_text("[Preferences]\nWebUI\\Password_PBKDF2=fixture\nWebUI\\LocalHostAuth=false\n")
-            apply()
-            check(0, 4, "tcp", https_port, False)
-            m.save_json(e["SETTINGS_FILE"], m.DEFAULT)
-            apply()
-            print("PASS qBittorrent-only/shared HTTPS permission, stopped-module and unsafe-auth closure", flush=True)
             # Real routed traffic: the WAN peer has no route back to the WG
             # subnet, so an echo reply also proves NAT (both address families).
             cmd("sysctl", "-qw", "net.ipv4.ip_forward=1", "net.ipv6.conf.all.forwarding=1")
@@ -420,9 +377,9 @@ time.sleep(600)
                 cmd(*call,"1","59005")
                 apply()
                 cmd(*call,"0","59005")
-            # Old disk rules cannot punch a hole in the mandatory WG policy.
-            old_rule = dict(id="retired",name="Legacy",family=4,scope="wg0",proto="tcp",port=61006,source="",allow=True)
-            m.save_json(e["SETTINGS_FILE"],dict(m.DEFAULT,firewall=[old_rule]))
+            # A stored rule naming a WireGuard scope cannot punch a hole in the mandatory WG policy.
+            wg_rule = dict(id="wgscope",name="WG",family=4,scope="wg0",proto="tcp",port=61006,source="",allow=True)
+            m.save_json(e["SETTINGS_FILE"],dict(m.DEFAULT,firewall=[wg_rule]))
             apply()
             check(2,4,"tcp",61006,False)
             print("PASS WG host isolation including established flows; IPv4/IPv6 WAN forwarding/NAT; private WAN and tailnet deny", flush=True)
@@ -458,9 +415,9 @@ time.sleep(600)
             for listing in snapshot():
                 assert not any(line.startswith("-A MASTER-") and line.split()[2:] == ["-j", "RETURN"]
                                for line in listing.splitlines())
-            # Uninstall while retaining networks -> no WG chains/ports, including
-            # on the next install/reload. The module record is the sole authority.
-            modules.unlink()
+            # Stop while retaining networks -> no WG chains/ports, including on the
+            # next install/reload. The stopped marker is the sole authority (DD-229).
+            stopped.write_text("wg0\n")
             apply()
             no_wg()
             repeat()
@@ -468,13 +425,13 @@ time.sleep(600)
                 check(0, family, "udp", int(e["WG_PORT_DEFAULT"]), False)
                 check(1, family, "udp", int(e["WG_PORT_DEFAULT"]), False)
             assert networks.read_text() == network_record
-            modules.write_text(module_record)
+            stopped.unlink()
             apply()
             repeat()
             check(0, 4, "udp", int(e["WG_PORT_DEFAULT"]), True)
             check(1, 4, "udp", int(e["WG_PORT_DEFAULT"]), True)
             assert_outsiders()
-            print("PASS clean/repeat installs, missing/stopped module, retained profiles, stale INPUT/FORWARD/NAT repair, untouched third-party chains", flush=True)
+            print("PASS clean/repeat installs, stopped WireGuard, retained profiles, stale INPUT/FORWARD/NAT repair, untouched third-party chains", flush=True)
 
             # Both families require a final unconditional DROP. A missing or
             # moved final rule must fail --check, even with the WAN DROP intact.

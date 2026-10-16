@@ -44,13 +44,13 @@ def run(argv, konsol, root=True):
 
 
 APPS = {"items": [
-    {"id": "paket:gezgin", "ad": "Gezgin", "modul": "gezgin", "konteyner": "gezgin", "durum": "calisiyor",
+    {"id": "konteyner:medya", "ad": "medya", "konteyner": "medya", "durum": "calisiyor",
      "eylemler": ["durdur", "yeniden-baslat", "kaldir"], "revizyon": "r1"},
-    {"id": "konteyner:notlar", "ad": "notlar", "modul": None, "konteyner": "notlar", "durum": "durduruldu",
+    {"id": "konteyner:notlar", "ad": "notlar", "konteyner": "notlar", "durum": "durduruldu",
      "eylemler": ["baslat", "kaldir"], "revizyon": None}]}
 PUBS = {"revizyon": "v1", "adaylar": [
     {"id": "panel", "ad": "Konsol", "servis": "panel", "tailscale": True, "internet": True, "alan_adi": "konsol.example.org"},
-    {"id": "paket:gezgin", "ad": "Gezgin", "servis": "gezgin", "tailscale": True, "internet": False, "alan_adi": ""},
+    {"id": "konteyner:belgeler", "ad": "belgeler", "servis": "elle-belgeler", "tailscale": True, "internet": False, "alan_adi": ""},
     {"id": "konteyner:kutu", "ad": "kutu", "servis": None, "tailscale": False, "internet": False, "alan_adi": ""}]}
 
 
@@ -67,7 +67,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(code, 0)
         for text in ("Obhut 1.2.0 (yapı v2-252) · sunucu", "Konsol: http://panel.ev (Tailscale)",
                      "Adresler: Tailscale 100.64.0.2 · internet 203.0.113.10", "Yeni sürüm var: 1.3.0 (sudo obhut guncelle)",
-                     "Sağlık: dikkat", "  ! Disk: %91 dolu", "paket:gezgin", "sudo obhut geri-al"):
+                     "Sağlık: dikkat", "  ! Disk: %91 dolu", "konteyner:medya", "sudo obhut geri-al"):
             self.assertIn(text, out)
         self.assertNotIn("Servisler:", out)
         code, out, _ = run(["durum", "--json"], konsol)
@@ -92,13 +92,14 @@ class CommandTests(unittest.TestCase):
         konsol = FakeKonsol({"/api/konsol/uygulamalar": APPS})
         code, out, _ = run(["uygulama", "liste"], konsol)
         self.assertIn("konteyner:notlar", out)
-        self.assertEqual(run(["uygulama", "durdur", "gezgin"], konsol)[0], 0)
+        # An application is named by its id or its container's name.
+        self.assertEqual(run(["uygulama", "durdur", "medya"], konsol)[0], 0)
         self.assertEqual(run(["uygulama", "baslat", "konteyner:notlar"], konsol)[0], 0)
-        self.assertEqual(konsol.posts, [("/api/konsol/uygulamalar/islem", {"id": "paket:gezgin", "eylem": "durdur", "revizyon": "r1"}),
+        self.assertEqual(konsol.posts, [("/api/konsol/uygulamalar/islem", {"id": "konteyner:medya", "eylem": "durdur", "revizyon": "r1"}),
                                         ("/api/konsol/uygulamalar/islem", {"id": "konteyner:notlar", "eylem": "baslat"})])
-        code, _, err = run(["uygulama", "baslat", "gezgin"], konsol)
+        code, _, err = run(["uygulama", "baslat", "medya"], konsol)
         self.assertEqual(code, 1)
-        self.assertIn("Gezgin şu an başlatılamaz (durum: calisiyor).", err)
+        self.assertIn("medya şu an başlatılamaz (durum: calisiyor).", err)
         self.assertEqual(run(["uygulama", "durdur", "yok"], konsol)[0], 1)
         self.assertEqual(run(["uygulama", "durdur"], konsol)[0], 2)
         self.assertEqual(len(konsol.posts), 2)
@@ -117,7 +118,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(run(["yayin", "kapat", "--hepsi"], konsol)[0], 0)
         self.assertEqual([p[1]["web"]["service"] for p in konsol.posts], ["panel"])
         konsol.posts.clear()
-        code, out, _ = run(["yayin", "kapat", "gezgin"], konsol)
+        code, out, _ = run(["yayin", "kapat", "elle-belgeler"], konsol)
         self.assertEqual((code, konsol.posts), (0, []))
         self.assertIn("İnternete açık yayın yok", out)
         self.assertEqual(run(["yayin", "kapat"], konsol)[0], 2)

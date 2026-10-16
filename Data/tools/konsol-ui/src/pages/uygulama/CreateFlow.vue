@@ -130,7 +130,7 @@ async function create(): Promise<void> {
   run.value = { state: "running", step: "İmaj çekiliyor…", error: "" };
   const current = run.value;
   void refreshApps();
-  const f = followJob("konteyner", id, null, (job) => {
+  const f = followJob("konteyner", id, (job) => {
     if (job.adim) current.step = job.adim;
   });
   following = f;

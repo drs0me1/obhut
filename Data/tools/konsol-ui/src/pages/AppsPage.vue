@@ -1,10 +1,10 @@
-<!-- Uygulamalar (DD-258, phase 2): App Store packages, Konsol's containers and the built-ins in one list
-     (GET /api/konsol/uygulamalar, DD-261). The filter (?suzgec=) and the search (?ara=) are in the address.
-     A table on wide screens, cards on narrow ones (a container query, so the sidebar's width counts).
-     "Uygulama ekle" (phase 4a) opens its flows over the list, each in the address: the catalogue
-     (?ekle=katalog, a package with &paket=), a container from an image (?ekle=imaj) and adopting one made
-     outside Konsol (?ekle=sahiplen, one with &ad=). Altyapı counts what Podman holds (GET
-     /api/konsol/konteynerler/liste) and leads to its images, volumes and networks in Gelişmiş. -->
+<!-- Uygulamalar (DD-258, phase 2): the containers in one list (GET /api/konsol/uygulamalar, DD-261); empty
+     on a clean server, where the empty state leads to "Uygulama ekle". The filter (?suzgec=) and the search
+     (?ara=) are in the address. A table on wide screens, cards on narrow ones (a container query, so the
+     sidebar's width counts). "Uygulama ekle" (phase 4a) opens its flows over the list, each in the address:
+     a container from an image (?ekle=imaj) and adopting one made outside Konsol (?ekle=sahiplen, one with
+     &ad=). Altyapı counts what Podman holds (GET /api/konsol/konteynerler/liste) and leads to its images,
+     volumes and networks in Gelişmiş. -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
@@ -14,7 +14,6 @@ import AccessChips from "../components/AccessChips.vue";
 import Card from "../components/ui/Card.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import StatusPill from "../components/ui/StatusPill.vue";
-import CatalogFlow from "./uygulama/CatalogFlow.vue";
 import CreateFlow from "./uygulama/CreateFlow.vue";
 import AdoptFlow from "./uygulama/AdoptFlow.vue";
 import { apps, live, refreshApps } from "../live";
@@ -53,10 +52,7 @@ watch(search, (value) => (searchParam.value = value));
 const list = computed(() => apps.value ?? []);
 const counts = computed(() => Object.fromEntries(FILTERS.map((f) => [f.id, list.value.filter(TESTS[f.id]).length])) as Record<Filter, number>);
 
-const description = (a: Uygulama) => {
-  const text = a.aciklama.replace(/\.\s*$/, "");
-  return a.tur === "paket" ? [text, KIND_TEXT.paket].filter(Boolean).join(" · ") : text || KIND_TEXT[a.tur];
-};
+const description = (a: Uygulama) => a.aciklama.replace(/\.\s*$/, "") || KIND_TEXT[a.tur];
 
 const rows = computed(() => {
   const tokens = fold(search.value).split(/\s+/).filter(Boolean);
@@ -67,16 +63,7 @@ const rows = computed(() => {
       const hay = fold(`${a.ad} ${a.aciklama} ${a.id}`);
       return tokens.every((t) => hay.includes(t));
     })
-    .map((app) => {
-      const open = openTarget(app);
-      return {
-        app,
-        description: description(app),
-        state: appState(app),
-        resources: resourceText(app),
-        open: open && { ...open, label: open.external ? `${app.ad} uygulamasını yeni sekmede aç` : `${app.ad} sayfasını aç` },
-      };
-    });
+    .map((app) => ({ app, description: description(app), state: appState(app), resources: resourceText(app), open: openTarget(app) }));
 });
 
 const emptyText = computed(() => {
@@ -97,7 +84,6 @@ const summary = computed(() => {
 });
 usePageHead(() => ({ description: summary.value }));
 
-const catalogue = computed(() => live.uygulamalar?.katalog ?? []);
 const infra = computed(() => {
   const a = live.uygulamalar?.altyapi;
   if (!a) return null;
@@ -232,13 +218,13 @@ onMounted(() => {
                 <a
                   v-if="r.open"
                   class="btn btn-secondary btn-sm"
-                  :href="r.open.href"
-                  :target="r.open.external ? '_blank' : undefined"
-                  :rel="r.open.external ? 'noopener noreferrer' : undefined"
-                  :aria-label="r.open.label"
+                  :href="r.open"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  :aria-label="`${r.app.ad} uygulamasını yeni sekmede aç`"
                   data-eylem="ac"
                 >
-                  Aç<Icon v-if="r.open.external" name="open" :size="15" />
+                  Aç<Icon name="open" :size="15" />
                 </a>
                 <RouterLink :to="appRoute(r.app.id)" class="icon-btn" :aria-label="`${r.app.ad} ayrıntıları`"><Icon name="chevron" :size="18" /></RouterLink>
               </span>
@@ -246,6 +232,15 @@ onMounted(() => {
           </tr>
         </tbody>
       </table>
+      <EmptyState
+        v-else-if="apps && !apps.length"
+        title="Henüz uygulama yok"
+        text="Bir imajdan konteyner çalıştırabilir ya da Podman'da var olan bir konteyneri yönetime alabilirsiniz."
+        icon="apps"
+        data-testid="apps-empty"
+      >
+        <button type="button" class="btn btn-primary" data-testid="empty-add" @click="showAdd"><Icon name="plus" :size="18" />Uygulama ekle</button>
+      </EmptyState>
       <EmptyState v-else-if="apps" :title="emptyText" :icon="search.trim() ? 'search' : 'apps'">
         <button v-if="search.trim() || filter !== 'tumu'" type="button" class="btn btn-secondary" @click="(search = ''), (filter = 'tumu')">
           Tüm uygulamaları göster
@@ -256,17 +251,6 @@ onMounted(() => {
 
     <div class="apps-more">
       <Card ref="addPanel" title="Uygulama ekle" data-testid="add-app">
-        <div class="add-option" data-secenek="katalog">
-          <strong>Katalogdan</strong>
-          <span v-if="catalogue.length">{{ catalogue.length }} uygulama kurulabilir.</span>
-          <span v-else>Katalogdaki uygulamaların hepsi kurulu.</span>
-          <ul v-if="catalogue.length" class="catalog">
-            <li v-for="k in catalogue" :key="k.id">
-              <RouterLink :to="addRoute('katalog', { paket: k.id })">{{ k.ad }}</RouterLink><span v-if="k.aciklama"> · {{ k.aciklama }}</span>
-            </li>
-          </ul>
-          <RouterLink class="btn btn-secondary btn-sm" :to="addRoute('katalog')" data-testid="open-catalog">Kataloğu aç</RouterLink>
-        </div>
         <div class="add-option" data-secenek="imaj">
           <strong>Bir imajdan</strong>
           <span>Bir kayıt defterindeki imajı Konsol tanımıyla, sabitlenmiş özetle çalıştırır.</span>
@@ -299,7 +283,6 @@ onMounted(() => {
       </Card>
     </div>
 
-    <CatalogFlow />
     <CreateFlow />
     <AdoptFlow />
   </div>

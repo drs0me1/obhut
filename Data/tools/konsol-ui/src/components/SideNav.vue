@@ -37,7 +37,7 @@ const badges = computed<Partial<Record<SectionId, Badge>>>(() => {
   const list = apps.value;
   if (list && list.length) out.uygulamalar = { text: String(list.length), level: "neutral", label: `${list.length} kurulu uygulama` };
   const warnings = live.uyarilar;
-  if (!live.erisimYok && warnings && warnings.length) {
+  if (warnings && warnings.length) {
     out.erisim = {
       text: String(warnings.length),
       level: warnings.some((u) => u.seviye === "bad") ? "danger" : "warning",
@@ -64,7 +64,7 @@ const tailscale = computed<{ level: Level | "unknown"; text: string; detail: str
   return { level: "unknown", text: `Tailscale ${UNKNOWN}`, detail: "" };
 });
 
-// DD-260: the version people see ("1.0.0"); an older backend gives only the build number ("v2-242").
+// DD-260: the version people see ("1.0.0"); the build number ("v2-242") when the server names none.
 const version = computed(
   () => live.kaynaklar?.surum || live.guncelleme?.kurulu_surum || shortVersion(live.kaynaklar?.version || live.guncelleme?.kurulu),
 );

@@ -1,6 +1,7 @@
 """DD-259: master_api's route table. Every route has its handler method, the committed OpenAPI
 description and TypeScript types are what the table generates, the schema check refuses wrong
-shapes, and the table's routes answer through the real handler with replies of their declared shape."""
+shapes, and the table's routes answer through the real handler with replies of their declared shape.
+DD-271: the backend answers nothing outside the table but the session check and the sign-in POST."""
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,15 @@ sys.path.insert(0, str(DATA / "panel"))
 import master_api  # noqa: E402
 
 panel = test_resources.panel
+SAMPLES = {"iface": "wg0", "name": "telefon"}
+
+
+def concrete(route):
+    """A request path for a route: each {param} filled with a valid sample."""
+    path = route.path
+    for name in route.params:
+        path = path.replace("{%s}" % name, SAMPLES[name])
+    return path
 
 
 class TableTests(unittest.TestCase):
@@ -28,9 +38,13 @@ class TableTests(unittest.TestCase):
         for route in master_api.ROUTES:
             self.assertTrue(callable(getattr(panel.Handler, "api_" + route.name, None)), route.name)
             self.assertTrue(route.path.startswith("/api/konsol/"), route.path)
-            self.assertIs(master_api.find(route.method, route.path), route)
+            self.assertIs(master_api.find(route.method, concrete(route)), route)
             self.assertTrue((route.reply is None) != (route.events is None), route.name)
+            self.assertLessEqual(set(route.params), set(master_api.PATH_PARAMS), route.name)
         self.assertIsNone(master_api.find("POST", "/api/konsol/erisim"))
+        # A handler method without a route would be dead code, or a way in that the table does not show.
+        handlers = {name[len("api_"):] for name in dir(panel.Handler) if name.startswith("api_")}
+        self.assertEqual(handlers, set(names))
 
     def test_the_committed_descriptions_are_generated_from_the_table(self):
         # Regenerate: python3 panel/master_api.py openapi > docs/konsol-api.json (and ts > ...sema.ts).
@@ -108,18 +122,9 @@ class RouteReplyTests(Fixture):
         with patch.object(self.p, "health_compute", return_value={"status": "warn", "read_at": 1,
                                                                     "checks": [{"id": "units", "name": "Servisler", "status": "warn", "detail": "x"}]}):
             self.assertEqual(self.get("saglik")["status"], "warn")
-        with patch.object(self.p, "busy_units", return_value=set()):
-            self.assertEqual(self.get("etkinlik"), {"items": []})
+        self.assertEqual(self.get("etkinlik"), {"items": []})
         self.assertEqual(self.get("bekleyen"), {"bekleyen": None})
-        modules = [{"id": "torrent", "installed": True, "state": "calisiyor", "live": "running", "busy": False,
-                    "progress": None, "durdurulabilir": True,
-                    "konsol": {"ad": "qBittorrent", "neler": [["box", "x"]]},
-                    "urls": {"tailscale": "http://torrent.test", "internet": None}},
-                   {"id": "wireguard", "installed": False, "state": "", "live": "-", "busy": True,
-                    "progress": {"action": "kur", "step": "1", "total": 4, "text": "Paketler"}, "durdurulabilir": False}]
-        with patch.object(self.p, "modules", return_value=modules):
-            self.assertEqual(self.get("moduller"), {"items": modules})
-        with patch.object(self.p.updates, "latest", return_value={"at": 7, "ok": True, "son": "2026.08.06-v2-300",
+        with patch.object(self.p.updates, "latest", return_value={"at": 7, "ok": True, "son": "2026.08.06-v2-300", "nesil": 2,
                                                                   "commit": "a" * 40, "hata": ""}), \
              patch.object(self.p, "unit_active", return_value=False):
             update = self.get("guncelleme")
@@ -151,13 +156,13 @@ class RouteReplyTests(Fixture):
         row = {"id": "abc", "name": "notlar", "image": "docker.io/library/nginx:alpine", "state": "running", "status": "Up",
                "unit": "konsol-notlar.service", "network": "konsol", "created": 1, "started": 2, "exit_code": 0, "restarts": 0,
                "ports": [{"host_ip": "127.0.0.1", "host_port": 8090, "container_port": 80, "protocol": "tcp", "scope": "local"}],
-               "mounts": 1, "health": "", "live": True, "source": "konsol", "management_id": "konsol:notlar", "module_id": None,
+               "mounts": 1, "health": "", "live": True, "source": "konsol", "management_id": "konsol:notlar",
                "revision": "r1", "actions": ["stop", "restart", "save", "remove", "image-update"], "restricted_reason": "",
                "cpu_percent": None, "memory_bytes": 1024, "busy": None, "listening": None,
                "update": {"state": "guncel", "channel": "alpine", "error": "", "checked_at": 5}}
         listing = {"read_at": 1, "runtime": {"version": "5.4.2", "ok": True, "error": ""}, "containers": [row],
                    "images": [{"id": "i1", "name": "docker.io/library/nginx:alpine", "size": 10, "created": 1, "used_by": ["notlar"],
-                               "managed": True, "pinned": False}],
+                               "managed": True}],
                    "volumes": [{"name": "v", "driver": "local", "size": None, "used_by": [], "managed": True}],
                    "networks": [{"name": "konsol", "id": "n1", "driver": "bridge", "subnets": ["10.89.1.0/24"], "used_by": ["notlar"],
                                  "managed": True, "internal": False}],
@@ -173,25 +178,7 @@ class RouteReplyTests(Fixture):
         status, _headers, body = test_resources.unix_get(self.sock, "/api/konsol/konteynerler/ayrinti?ad=../x", {"X-Konsol": "1"})
         self.assertEqual(status, 400, body)
 
-    def test_a_package_account_and_an_install_from_the_table(self):
-        self.package("torrent", manifest_extra='PAKET_HESAP="1"\n')
-        with patch.object(self.p, "modul", return_value=(0, "admin\tgecici\tgizli-deneme\n", "")) as modul:
-            self.assertEqual(self.get("uygulama_hesabi", "?id=paket:torrent"), {"user": "admin", "temp": True, "host": ""})
-            modul.assert_called_with("hesap", "torrent")
-            self.assertEqual(self.get("uygulama_hesabi", "?id=paket:torrent&parola=1")["pass"], "gizli-deneme")
-            modul.assert_called_with("hesap", "torrent", "--parola")
-        for bad in ("?id=torrent", "?id=konteyner:torrent", "?id=paket:yok"):
-            status, _headers, _body = test_resources.unix_get(self.sock, "/api/konsol/uygulamalar/hesap" + bad, {"X-Konsol": "1"})
-            self.assertEqual(status, 404, bad)
-        # "kur" installs a catalogue package with its form, as App Store does.
-        with patch.object(self.p, "modules", return_value=[{"id": "torrent", "installed": False}]), \
-             patch.object(self.p, "module_install", return_value=(202, "")) as install:
-            self.assertEqual(self.post("uygulama_islemi", {"id": "paket:torrent", "eylem": "kur", "form": {"kullanici": "admin"}}),
-                             (202, {"id": "paket:torrent", "eylem": "kur", "is": None}))
-            install.assert_called_once_with("torrent", {"kullanici": "admin"})
-            self.assertEqual(self.post("uygulama_islemi", {"id": "paket:yok", "eylem": "kur"})[0], 404)
-            self.assertEqual(self.post("uygulama_islemi", {"id": "konteyner:x", "eylem": "kur"})[0], 404)
-        # The account routes keep their shapes; a body of another shape is refused before the handler.
+    def test_a_body_of_another_shape_is_refused_before_the_handler(self):
         self.assertEqual(self.post("oturum_cikis", {}), (200, {"durum": "cikis"}))
         status, answer = self.post("oturum_cikis", {"x": 1})
         self.assertEqual(status, 400)
@@ -202,7 +189,7 @@ class RouteReplyTests(Fixture):
         # DD-267: Dosyalar → Paylaşımlar reads the share manager's own view; a pause request is gone.
         conn = {"enabled": True, "permission": "ro", "expires": 1900000000, "expired": False, "available": True, "active": True,
                 "reason": "", "url": "http://100.64.0.1:61010/s/abc/"}
-        view = {"enabled": True, "running": True, "host": "http://100.64.0.1:61010", "max": 32, "tail_enabled": True,
+        view = {"host": "http://100.64.0.1:61010", "max": 32, "tail_enabled": True,
                 "items": [{"id": "abc", "path": "media/filmler", "name": "filmler", "username": "film", "created": 1, "changed": 2,
                            "type": "dir", "available": True, "connections": {"tailscale": conn}, "urls": {"tailscale": conn["url"]},
                            "url": conn["url"]}],
@@ -210,17 +197,13 @@ class RouteReplyTests(Fixture):
         with patch.object(panel.master_shares, "Manager") as manager:
             manager.return_value.public.return_value = view
             self.assertEqual(self.get("paylasimlar"), view)
-        status, _headers, _body = test_resources.unix_get(self.sock, "/api/konsol/paylasim/durum", {"X-Konsol": "1", "Content-Type": "application/json"},
-                                                          method="POST", body=b'{"id": "abc"}')
-        self.assertEqual(status, 404, "pausing is a connection switch since DD-192")
         with patch.object(self.p, "settings_run", return_value=(200, view)) as run:
             self.assertEqual(self.post("paylasim_kaldir", {"id": "abc"}), (200, view))
         run.assert_called_once_with("remove", {"id": "abc"}, shares=True)
         self.assertEqual(self.post("paylasim_kaldir", {"id": "abc", "x": 1})[0], 400)
         # Depolama: an application's bind mounts under the user area and each share.
         root = str(self.root)
-        apps = {"items": [{"id": "konteyner:notlar", "ad": "notlar", "tur": "konteyner", "konteyner": "notlar"},
-                          {"id": "yerlesik:dosyalar", "ad": "Dosyalar", "tur": "yerlesik", "konteyner": None}], "hatalar": []}
+        apps = {"items": [{"id": "konteyner:notlar", "ad": "notlar", "tur": "konteyner", "konteyner": "notlar"}], "hatalar": []}
         mounts = [{"type": "bind", "source": root + "/media", "destination": "/media", "rw": False, "name": ""},
                   {"type": "bind", "source": "/etc/localtime", "destination": "/etc/localtime", "rw": False, "name": ""},
                   {"type": "volume", "source": "/var/lib/containers/v", "destination": "/data", "rw": True, "name": "v"}]
@@ -235,14 +218,63 @@ class RouteReplyTests(Fixture):
         self.assertEqual(answer["kok"], os.path.realpath(root))
         self.assertEqual(answer["kullananlar"], [
             {"yol": root + "/media", "id": "konteyner:notlar", "ad": "notlar", "tur": "konteyner", "hedef": "/media", "yazilabilir": False},
-            {"yol": root + "/media/filmler", "id": "yerlesik:paylasim", "ad": "filmler", "tur": "paylasim", "hedef": "/s/abc/", "yazilabilir": True}])
+            {"yol": root + "/media/filmler", "id": "paylasim", "ad": "filmler", "tur": "paylasim", "hedef": "/s/abc/", "yazilabilir": True}])
         self.assertEqual(answer["hatalar"], [])
 
     def test_a_real_health_reply_has_the_declared_shape(self):
         # Commands that do not exist on the test machine read as failed checks, not as a broken reply.
-        self.p.args.master_modul = "/fixture/master-modul"
         with patch.object(self.p, "health_cmd", return_value=(None, "")):
             master_api.check(master_api.ref("Saglik"), self.p.health_compute())
+
+
+class OnlyTheTableAnswers(Fixture):
+    """DD-271 (rebuild.md §2.3, §7.4): no request reaches the backend outside the route table except the
+    session check Caddy asks and the sign-in POST. With the table emptied, every other path is 404 and
+    no handler runs."""
+
+    def setUp(self):
+        super().setUp()
+
+        class Handler(panel.Handler):
+            def log_message(self, *_args):
+                pass
+        Handler.panel = self.p
+        _server, self.sock = test_resources.start_unix(self, Handler)
+
+    def request(self, method, path, body=None):
+        headers = {"X-Konsol": "1"}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        status, _headers, raw = test_resources.unix_get(self.sock, path, headers, method=method, body=body)
+        return status, raw
+
+    def test_nothing_outside_the_table_answers(self):
+        paths = sorted({concrete(r) for r in master_api.ROUTES} | {
+            "/", "/api", "/api/konsol", "/api/konsol/", "/api/x/y", "/api/state", "/giris.html",
+            "/api/konsol/oturum/giris", "/oturum-denetle/x", "/api/konsol/erisim/x", "/api/konsol/wireguard/nets/wg0"})
+        empty = (None, None)
+        with patch.object(panel.master_api, "match", return_value=empty) as match, \
+                patch.object(panel.subprocess, "run", side_effect=AssertionError("no handler may run")):
+            for path in paths:
+                for method, body in (("GET", None), ("HEAD", None), ("POST", b"{}")):
+                    if (method, path) == ("POST", "/api/konsol/oturum/giris"):
+                        continue
+                    with self.subTest(method=method, path=path):
+                        self.assertEqual(self.request(method, path, body)[0], 404)
+        self.assertTrue(match.called)
+
+    def test_the_two_exceptions_answer_without_the_table(self):
+        with patch.object(panel.master_api, "match", side_effect=AssertionError("not through the table")):
+            status, _raw = self.request("GET", "/oturum-denetle")
+            self.assertNotEqual(status, 404)
+            status, raw = self.request("POST", "/api/konsol/oturum/giris", b'{"kullanici": "x", "parola": "y"}')
+            self.assertNotEqual(status, 404, raw)
+
+    def test_other_methods_are_not_implemented(self):
+        self.assertEqual({name for name in dir(panel.Handler) if name.startswith("do_")}, {"do_GET", "do_HEAD", "do_POST"})
+        for method in ("PUT", "DELETE", "PATCH", "OPTIONS"):
+            with self.subTest(method=method):
+                self.assertEqual(self.request(method, "/api/konsol/erisim")[0], 501)
 
 
 if __name__ == "__main__":

@@ -25,7 +25,7 @@ PrivateTmp=true
 PrivateDevices=true
 PrivateIPC=true
 ProtectProc=invisible
-# DD-225: tek satır (ikinci bir atama listeyi sıfırlar). Konsol'un çöpü ve paketlerin özel durumu da
+# DD-225: tek satır (ikinci bir atama listeyi sıfırlar). Konsol'un çöpü ve sunucunun özel durumu da
 # görünmez; çöpü kurulum her seferinde kurar, o yüzden '-' yok (yoksa servis güvenli tarafta açılmaz).
 InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__ __PRIVATE_STATE_ROOT__
 IPAddressDeny=any

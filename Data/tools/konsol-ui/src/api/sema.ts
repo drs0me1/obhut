@@ -50,7 +50,7 @@ export interface Saglik {
 }
 
 export interface Islem {
-  tur: "modul" | "konteyner" | "guncelleme" | "onarim";
+  tur: "konteyner" | "guncelleme" | "onarim";
   id: string;
   ad: string;
   durum: "calisiyor" | "tamam" | "hata";
@@ -96,7 +96,7 @@ export interface ErisimHucresi {
 export interface Hizmet {
   id: string;
   ad: string;
-  tur: "konsol" | "paket" | "konteyner" | "elle" | "paylasim" | "sistem" | "vpn" | "kural";
+  tur: "konsol" | "konteyner" | "elle" | "paylasim" | "sistem" | "vpn" | "kural";
   aciklama: string;
   uygulama: string | null;
   calisiyor: boolean | null;
@@ -131,17 +131,10 @@ export interface UygulamaHucresi {
 export interface Uygulama {
   id: string;
   ad: string;
-  tur: "paket" | "konteyner" | "yerlesik";
+  tur: "konteyner";
   aciklama: string;
-  modul: string | null;
-  konteyner: string | null;
-  simge: string | null;
+  konteyner: string;
   durum: "calisiyor" | "durduruldu" | "islemde" | "hata" | "bilinmiyor";
-  islem: {
-    eylem: string;
-    adim: string;
-    metin: string;
-  } | null;
   tailscale: UygulamaHucresi;
   internet: UygulamaHucresi;
   kaynak: {
@@ -155,16 +148,6 @@ export interface Uygulama {
   };
   eylemler: ("baslat" | "durdur" | "yeniden-baslat" | "kaldir" | "guncelle")[];
   revizyon: string | null;
-  metinler: UygulamaMetinleri | null;
-  hesap: boolean;
-}
-
-export interface UygulamaMetinleri {
-  durdur: string;
-  kaldir: string[][];
-  veri_etiket: string;
-  veri_kalir: string;
-  veri_silinir: string;
 }
 
 export interface UygulamaAyrinti {
@@ -201,12 +184,8 @@ export interface UygulamaGunlugu {
 
 export interface UygulamaIslemi {
   id: string;
-  eylem: "kur" | "baslat" | "durdur" | "yeniden-baslat" | "guncelle" | "kaldir";
+  eylem: "baslat" | "durdur" | "yeniden-baslat" | "guncelle" | "kaldir";
   revizyon?: string;
-  veri?: boolean;
-  form?: {
-    [key: string]: unknown;
-  };
 }
 
 export interface UygulamaIslemiBasladi {
@@ -220,12 +199,6 @@ export interface Ag {
   sampled_at: number | null;
   rx: number | null;
   tx: number | null;
-  apps: ({
-    id: string;
-    name: string;
-    down: number | null;
-    up: number | null;
-  })[];
 }
 
 export interface OnarimAdimi {
@@ -261,12 +234,6 @@ export interface OnarimBasladi {
 export interface Uygulamalar {
   read_at: number;
   items: Uygulama[];
-  katalog: ({
-    id: string;
-    ad: string;
-    aciklama: string;
-    simge: string | null;
-  })[];
   altyapi: {
     podman: string;
     calisiyor: boolean;
@@ -276,38 +243,6 @@ export interface Uygulamalar {
     ag: number;
   };
   hatalar: string[];
-}
-
-export interface KonsolBildirimi {
-  ad?: string;
-  alt?: string;
-  simge?: string;
-  [key: string]: unknown;
-}
-
-export interface Modul {
-  id: string;
-  installed: boolean;
-  state: "calisiyor" | "durduruldu" | "";
-  live: string;
-  busy: boolean;
-  progress: {
-    action: string;
-    step: string;
-    total: number;
-    text: string;
-  } | null;
-  durdurulabilir: boolean;
-  hesap?: boolean;
-  konsol?: KonsolBildirimi;
-  urls?: {
-    tailscale: string | null;
-    internet: string | null;
-  };
-}
-
-export interface Moduller {
-  items: Modul[];
 }
 
 export interface GuncellemeIsi {
@@ -358,9 +293,9 @@ export interface Erisim {
     };
     wireguard: {
       kurulu: boolean;
+      durduruldu: boolean;
       not: string;
       aglar: {
-        uygulama: string;
         arayuz: string;
         ad: string;
         etkin: boolean;
@@ -472,7 +407,7 @@ export interface GuvenlikDuvari {
     metin: string;
   };
   kurallar: KuralTaslagi[];
-  katalog: ({
+  portlar: ({
     ad: string;
     aile: number;
     proto: string;
@@ -498,12 +433,10 @@ export interface GuvenlikDuvari {
     sahip: string;
   }[];
   aglar: {
-    uygulama: string;
     arayuz: string;
     ad: string;
     etkin: boolean;
   }[];
-  vpn: string;
   hatalar: string[];
 }
 
@@ -526,7 +459,7 @@ export interface Adlar {
 
 export interface YayinAdayi {
   id: string;
-  tur: "konsol" | "paket" | "konteyner" | "elle" | "paylasim";
+  tur: "konsol" | "konteyner" | "elle" | "paylasim";
   ad: string;
   servis: string | null;
   yerel_ad: string | null;
@@ -654,9 +587,8 @@ export interface KonteynerSatiri {
   restarts?: number;
   health?: string;
   live?: boolean;
-  source?: "appstore" | "konsol" | "external";
+  source?: "konsol" | "external";
   management_id?: string;
-  module_id?: string | null;
   revision?: string | null;
   actions?: string[];
   restricted_reason?: string;
@@ -688,7 +620,6 @@ export interface KonteynerListesi {
     created?: number | null;
     used_by?: string[];
     managed?: boolean;
-    pinned?: boolean;
     [key: string]: unknown;
   })[];
   volumes?: ({
@@ -812,13 +743,6 @@ export interface Klasorler {
   }[];
 }
 
-export interface UygulamaHesabi {
-  user: string;
-  temp: boolean;
-  host: string;
-  pass?: string;
-}
-
 export interface PaylasimBaglantisi {
   enabled: boolean;
   permission: "ro" | "rw";
@@ -852,8 +776,6 @@ export interface Paylasim {
 }
 
 export interface Paylasimlar {
-  enabled: boolean;
-  running: boolean;
   host: string;
   items: Paylasim[];
   max: number;
@@ -895,7 +817,7 @@ export interface Depolama {
     yol: string;
     id: string;
     ad: string;
-    tur: "paket" | "konteyner" | "paylasim";
+    tur: "konteyner" | "paylasim";
     hedef: string;
     yazilabilir: boolean;
   })[];
@@ -939,6 +861,125 @@ export interface Gelismis {
   };
 }
 
+export interface WireGuardCihazi {
+  name: string;
+  ipv4: string;
+  ipv6: string;
+  handshake: number;
+  rx: number;
+  tx: number;
+  profile: boolean;
+  dns: string;
+  provider: string;
+  keepalive: number;
+  mtu: number;
+  enabled: boolean;
+  online: boolean;
+  active_at: number | null;
+}
+
+export interface WireGuardAgi {
+  iface: string;
+  port: number;
+  server4: string;
+  subnet4: string;
+  server6: string;
+  subnet6: string;
+  dns: string;
+  label: string;
+  active: boolean;
+  count: number;
+  revision: string;
+  peers: WireGuardCihazi[];
+}
+
+export interface WireGuard {
+  kurulu: boolean;
+  durduruldu: boolean;
+  endpoint: string;
+  max: number;
+  reserved: number[];
+  defaults: {
+    dns: string;
+    keepalive: number;
+    mtu: number;
+    port: number;
+  };
+  now: number;
+  active_window: number;
+  networks: WireGuardAgi[];
+}
+
+export interface WireGuardCalismasi {
+  durduruldu: boolean;
+}
+
+export interface WireGuardAgIstegi {
+  port: number;
+  dns: string;
+  label?: string;
+}
+
+export interface WireGuardAgEklendi {
+  iface: string;
+  port: number;
+}
+
+export interface WireGuardAgKaldirildi {
+  iface: string;
+  peers: number;
+}
+
+export interface WireGuardAgDurumu {
+  iface: string;
+  active: boolean;
+}
+
+export interface WireGuardYenidenUretildi {
+  peers: number;
+  profiles: number;
+}
+
+export interface WireGuardAgAyari {
+  dns: string;
+  revision: string;
+  label?: string;
+}
+
+export interface WireGuardAgAyarSonucu {
+  iface: string;
+  dns: string;
+  label?: string;
+}
+
+export interface WireGuardCihazIstegi {
+  name: string;
+  dns: string;
+  keepalive: number;
+  mtu: number;
+}
+
+export interface WireGuardCihazEklendi {
+  name: string;
+  ipv4: string;
+}
+
+export interface WireGuardDns {
+  dns: string;
+}
+
+export interface WireGuardKeepalive {
+  keepalive: number;
+}
+
+export interface Onay {
+  confirm: string;
+}
+
+export interface Acik {
+  on: boolean;
+}
+
 export interface Olaylar {
   kaynaklar: Kaynaklar;
   saglik: Saglik;
@@ -954,7 +995,6 @@ export const YOLLAR = {
   saglik: "/api/konsol/saglik",
   etkinlik: "/api/konsol/etkinlik",
   bekleyen: "/api/konsol/bekleyen",
-  moduller: "/api/konsol/moduller",
   uygulamalar: "/api/konsol/uygulamalar",
   uygulama_ayrinti: "/api/konsol/uygulamalar/ayrinti",
   uygulama_gunlugu: "/api/konsol/uygulamalar/gunluk",
@@ -977,7 +1017,6 @@ export const YOLLAR = {
   konteyner_ayrintisi: "/api/konsol/konteynerler/ayrinti",
   konteyner_guncellemeleri: "/api/konsol/konteynerler/guncellemeler",
   konteyner_isi: "/api/konsol/konteynerler/islem",
-  uygulama_hesabi: "/api/konsol/uygulamalar/hesap",
   klasorler: "/api/konsol/ayarlar/klasorler",
   oturum: "/api/konsol/oturum",
   oturum_kur: "/api/konsol/oturum/kur",
@@ -992,4 +1031,19 @@ export const YOLLAR = {
   paylasim_kaldir: "/api/konsol/paylasim/kaldir",
   depolama: "/api/konsol/depolama",
   gelismis: "/api/konsol/gelismis",
+  wireguard: "/api/konsol/wireguard/state",
+  wireguard_durdur: "/api/konsol/wireguard/durdur",
+  wireguard_baslat: "/api/konsol/wireguard/baslat",
+  wireguard_ag_ekle: "/api/konsol/wireguard/nets",
+  wireguard_ag_kaldir: "/api/konsol/wireguard/nets/{iface}/remove",
+  wireguard_ag_yeniden_uret: "/api/konsol/wireguard/nets/{iface}/reset",
+  wireguard_cihaz_ekle: "/api/konsol/wireguard/nets/{iface}/peers",
+  wireguard_ag_durum: "/api/konsol/wireguard/nets/{iface}/durum",
+  wireguard_ag_ayarlar: "/api/konsol/wireguard/nets/{iface}/ayarlar",
+  wireguard_cihaz_kaldir: "/api/konsol/wireguard/nets/{iface}/peers/{name}/remove",
+  wireguard_cihaz_dns: "/api/konsol/wireguard/nets/{iface}/peers/{name}/dns",
+  wireguard_cihaz_keepalive: "/api/konsol/wireguard/nets/{iface}/peers/{name}/keepalive",
+  wireguard_cihaz_durum: "/api/konsol/wireguard/nets/{iface}/peers/{name}/durum",
+  wireguard_profil: "/api/konsol/wireguard/nets/{iface}/peers/{name}/profile",
+  wireguard_qr: "/api/konsol/wireguard/nets/{iface}/peers/{name}/qr.png",
 } as const;

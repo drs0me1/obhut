@@ -2,7 +2,7 @@
 """Konsol settings transactions (DD-156), Python stdlib only.
 
 The HTTP process only reads here. Mutations run in an independent systemd unit,
-with JSON on stdin, and share the install/module locks. A permanent systemd
+with JSON on stdin, and share the installer's lock. A permanent systemd
 timer recovers incomplete transactions, including after a reboot. No shell input.
 """
 import argparse
@@ -16,7 +16,6 @@ import json
 import os
 from pathlib import Path
 import re
-import importlib.util
 import secrets
 import shlex
 import stat
@@ -101,126 +100,6 @@ def read_regular(path, limit=1024 * 1024):
             data = fh.read(limit + 1)
             require(len(data) <= limit, "Ayar dosyası çok büyük.")
             return data, info
-
-
-# DD-197/198: a package manifest (MODULES_DIR/<id>/paket.env) is parsed line by line with the
-# engine's pattern and never executed. Malformed manifests are left out: no guessing.
-MANIFEST_LINE_RE = re.compile(r'^(PAKET_[A-Z_]+)=(?:"([^"]*)"|([A-Za-z0-9_./@*: -]*))$')
-MANIFEST_ID_RE = re.compile(r"^[a-z]{2,16}$")
-
-
-def package_env(env, mid):
-    """Package defaults plus supported durable choices outside the regenerated package directory."""
-    base = env.get("MODULES_DIR", "")
-    if not base or not MANIFEST_ID_RE.fullmatch(mid):
-        return {}
-    try:
-        values = env_read(Path(base) / mid / (mid + ".env"))
-    except (OSError, UnicodeError):
-        return {}
-    values.update(package_overrides(env, mid))
-    return values
-
-
-def package_override_path(env, mid):
-    require(bool(MANIFEST_ID_RE.fullmatch(mid)), "Paket adı geçersiz.")
-    directory = env.get("PACKAGE_OVERRIDES_DIR")
-    if not directory:
-        directory = str(Path(env["STATE_DIR"]) / "package-overrides") if env.get("STATE_DIR") else None
-    return Path(directory) / (mid + ".env") if directory else None
-
-
-def package_overrides(env, mid):
-    """Private, data-only overrides. A package explicitly declares every writable key.
-
-    Values never reach `source`/eval; the bounded KEY=value CLI is also safe to consume
-    with `IFS='=' read` and printf -v. Unknown keys fail closed, including old overrides
-    after a package changes its supported settings.
-    """
-    path = package_override_path(env, mid)
-    if path is None:
-        return {}
-    try:
-        raw, info = read_regular(path, 16384)
-    except FileNotFoundError:
-        return {}
-    require(info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) & 0o077 == 0,
-            "Paket ayar dosyası yalnız root tarafından okunabilir olmalı.")
-    allowed = set(read_manifests(env).get(mid, {}).get("PAKET_AYAR_ANAHTARLAR", "").split())
-    require(bool(allowed) and all(re.fullmatch(r"[A-Z][A-Z0-9_]*", key) for key in allowed),
-            "Paket kalıcı ayarları desteklemiyor.")
-    values = {}
-    for line in raw.decode("ascii").splitlines():
-        key, sep, value = line.partition("=")
-        require(bool(sep) and key in allowed and key not in values and
-                re.fullmatch(r"[A-Za-z0-9_./:@+-]{1,1024}", value) is not None,
-                "Paket ayar dosyasında desteklenmeyen alan/değer var.")
-        # A declared service listener remains valid even if its file was edited by hand.
-        if key.endswith("_PORT"):
-            require(value.isdecimal() and 1 <= int(value) <= 65535, "Paket portu geçersiz.")
-        values[key] = value
-    return values
-
-
-_package_modules = {}
-
-
-def load_package_module(env, mid, name, attr, label):
-    """DD-199/203: a package's own Python module (yayin.py, klasorler.py), loaded from its rendered
-    folder as data: regular file, no symlink, cached by mtime, no bytecode written next to it.
-    It must expose the callable `attr`; any failure is a SettingsError under `label`."""
-    require(bool(re.fullmatch(r"[a-z][a-z0-9_]{0,40}\.py", name or "")), "%s adı geçersiz." % label)
-    path = Path(env["MODULES_DIR"]) / mid / name
-    try:
-        st = os.stat(path, follow_symlinks=False)
-    except OSError as err:
-        raise SettingsError("%s yok; kurulumu yeniden çalıştırın." % label) from err
-    require(not os.path.islink(path) and stat.S_ISREG(st.st_mode), "%s okunamadı." % label)
-    key = (str(path), st.st_mtime_ns, st.st_size)
-    module = _package_modules.get(key)
-    if module is None:
-        spec = importlib.util.spec_from_file_location("magaza_%s_%s" % (mid, name[:-3]), path)
-        module = importlib.util.module_from_spec(spec)
-        before = sys.dont_write_bytecode
-        sys.dont_write_bytecode = True
-        try:
-            spec.loader.exec_module(module)
-        except Exception as err:  # the package's file is data for us
-            raise SettingsError("%s yüklenemedi." % label) from err
-        finally:
-            sys.dont_write_bytecode = before
-        require(callable(getattr(module, attr, None)), "%s eksik (%s)." % (label, attr))
-        for old in [k for k in _package_modules if k[0] == str(path)]:
-            del _package_modules[old]
-        _package_modules[key] = module
-    return module
-
-
-def read_manifests(env, limit=65536):
-    """{id: {PAKET_KEY: value}} for every rendered package folder with a readable manifest."""
-    result = {}
-    base = env.get("MODULES_DIR", "")
-    if not base or not os.path.isdir(base):
-        return result
-    for name in sorted(os.listdir(base)):
-        if not MANIFEST_ID_RE.fullmatch(name):
-            continue
-        try:
-            raw, _ = read_regular(os.path.join(base, name, "paket.env"), limit)
-        except (OSError, ValueError, SettingsError):
-            continue
-        values = {}
-        for line in raw.decode("utf-8", "replace").splitlines():
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            m = MANIFEST_LINE_RE.match(line)
-            if not m:
-                values = None
-                break
-            values[m.group(1)] = m.group(2) if m.group(2) is not None else (m.group(3) or "")
-        if values is not None:
-            result[name] = values
-    return result
 
 
 def atomic(path, content, mode=0o600, owner=None):
@@ -369,9 +248,8 @@ class Manager:
 
     def revision(self):
         h = hashlib.sha256(json.dumps(self.config(), sort_keys=True).encode())
-        # Detect installer and module lifecycle changes too (DD-201/202: no package file is named
-        # here; a package's own settings go through its API module and worker).
-        for path in [Path(self.state), Path(self.e["MODULES_FILE"]), self.dns_file, *self.dns_paths(), *self.domain_paths()]:
+        # Detect installer changes too.
+        for path in [Path(self.state), self.dns_file, *self.dns_paths(), *self.domain_paths()]:
             try:
                 s = path.stat()
                 h.update((str(path) + str(s.st_mtime_ns) + str(s.st_size)).encode())
@@ -382,14 +260,14 @@ class Manager:
     @contextlib.contextmanager
     def locked(self):
         with contextlib.ExitStack() as stack:
-            for name in ("install.lock", "modul.lock", "settings.lock", "state.lock"):
+            for name in ("install.lock", "settings.lock", "state.lock"):
                 path = Path(self.e["RUNTIME_DIR"]) / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 f = stack.enter_context(open(path, "a"))
                 try:
                     fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError as err:
-                    raise SettingsBusy("Kurulum/modül/ayar işlemi sürüyor; biraz sonra yeniden deneyin.") from err
+                    raise SettingsBusy("Kurulum ya da ayar işlemi sürüyor; biraz sonra yeniden deneyin.") from err
             yield
 
     def dns_paths(self):
@@ -479,12 +357,7 @@ class Manager:
             require(type(d["forward"]) is bool and isinstance(d["disabled"], list) and isinstance(d["records"], list)
                     and isinstance(d["servers"], list), "DNS alanları geçersiz.")
             require(len(d["records"]) <= 100 and len(d["disabled"]) <= 200 and len(d["servers"]) <= 4, "Çok fazla DNS kaydı.")
-            known = {n["name"] for n in self.dns_names()}
-            reserved = set(known)
-            for path in Path(self.e["MODULES_DIR"]).glob("*/dnsmasq.conf"):
-                for line in path.read_text().splitlines():
-                    if line.startswith("interface-name="):
-                        reserved.add(line.partition("=")[2].partition(",")[0])
+            reserved = {n["name"] for n in self.dns_names()}
             managed_names = set(reserved)
             for r in d["records"]:
                 require(isinstance(r, dict) and set(r) == {"name", "target", "enabled"}, "DNS kaydı biçimi geçersiz.")
@@ -492,7 +365,7 @@ class Manager:
                 require(isinstance(name, str) and len(name) <= 253 and name.endswith("." + self.e["LOCAL_DOMAIN"])
                         and all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", x) for x in name.split(".")),
                         "Kayıt yerel alan içinde, geçerli küçük harfli bir ad olmalı.")
-                require(name not in reserved, "Bu DNS adı zaten tanımlı ya da bir modüle ayrılmış.")
+                require(name not in reserved, "Bu DNS adı zaten tanımlı.")
                 reserved.add(name)
                 require(type(r["enabled"]) is bool and isinstance(r["target"], str), "DNS hedefi geçersiz.")
                 if r["target"] != "tailscale":
@@ -637,11 +510,10 @@ class Manager:
 
     def domain_paths(self):
         # Only installer-owned renderings; never touch credentials or download data.
-        modules = Path(self.e["MODULES_DIR"])
-        paths = [*modules.glob("*/dnsmasq.conf"), *modules.glob("*/*.caddy"),
-                 modules / "dosya/master-files-panel.service",
-                 Path(self.e["UNIT_DIR"]) / "master-files-panel.service",
+        paths = [Path(self.e["UNIT_DIR"]) / "master-files-panel.service",
                  Path(self.e["UNIT_DIR"]) / "master-sistem-dosya.service"]
+        if self.e.get("SHARE_CADDY_SOURCE"):
+            paths.append(Path(self.e["SHARE_CADDY_SOURCE"]))
         if self.e.get("CADDYFILE"):
             paths.append(Path(self.e["CADDYFILE"]))
         if self.e.get("CADDY_MODULES_DIR"):
@@ -827,11 +699,8 @@ class Manager:
             name, local = info["name"], info["local"]
         elif service == master_publications.PANEL_ID:
             name, local = "Konsol", "panel"
-        elif service == master_publications.BUILTIN_ID:
-            name, local = "WebDAV", "paylas"
         else:
-            pkg = master_publications.packages(self.e).get(service, {})
-            name, local = pkg.get("name", service), pkg.get("local", service)
+            name, local = "WebDAV", "paylas"
         tailnet = "%s.%s" % (local, self.e["LOCAL_DOMAIN"])
 
         def text(row):
@@ -866,8 +735,7 @@ class Manager:
             import master_publications
             # Snapshot private projections too: a first-time row has no saved
             # web key for the publisher to reconstruct after a failed apply.
-            paths += [Path(self.e["CADDY_MODULES_DIR"]) / (name + ".caddy")
-                      for name in master_publications.module_ids(self.e)]
+            paths.append(Path(self.e["CADDY_MODULES_DIR"]) / (master_publications.BUILTIN_ID + ".caddy"))
             # DD-252: a manual address also owns a tailnet DNS line; it is restored with the rest.
             manual_dns = data["web"]["service"].startswith(master_publications.MANUAL_PREFIX)
             if manual_dns:
@@ -921,12 +789,7 @@ class Manager:
                 # Without the listener the certificate wait can only time out after a
                 # minute with a DNS/CAA hint; report the actual cause instead (DD-193).
                 import master_publications
-                packages = master_publications.packages(self.e)
-                if service in packages:
-                    require(master_publications.package_active(self.e, service),
-                            "%s internet yayını açılamadı; uygulamanın çalıştığını, giriş ayarlarını ve WAN adresini kontrol edin."
-                            % packages[service]["name"])
-                elif service == "panel":
+                if service == "panel":
                     require(master_publications.panel_active(self.e),
                             "Panel internet yayını açılamadı; Konsol hesabını ve sunucunun WAN IPv4 adresini kontrol edin.")
                 elif service.startswith(master_publications.MANUAL_PREFIX):
@@ -1064,30 +927,13 @@ def guard_idle(p):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
-    parser.add_argument("action", choices=("apply", "confirm", "rollback", "discard", "guard", "rules", "tailnet-ports", "project-dns", "filter-dns", "dns-enabled", "dns-forward", "status", "saved-domain", "package-overrides", "container-revision"))
+    parser.add_argument("action", choices=("apply", "confirm", "rollback", "discard", "guard", "rules", "tailnet-ports", "project-dns", "filter-dns", "dns-enabled", "dns-forward", "status", "saved-domain"))
     parser.add_argument("value", nargs="?")
     parser.add_argument("wan", nargs="?")
     args = parser.parse_args()
     try:
         if args.action == "saved-domain":
             print(saved_domain(args.value))
-            return
-        if args.action == "package-overrides":
-            for key, value in sorted(package_overrides(env_read(args.state), args.value).items()):
-                print(key + "=" + value)
-            return
-        if args.action == "container-revision":
-            env = env_read(args.state)
-            mid = args.value
-            require(isinstance(mid, str) and bool(MANIFEST_ID_RE.fullmatch(mid)), "Paket adı geçersiz.")
-            manifest = read_manifests(env).get(mid, {})
-            adapter = load_package_module(env, mid, manifest.get("PAKET_KONTEYNER_YONETIM", ""),
-                                          "container_config", "Konteyner paket ayarı")
-            effective = dict(env, **package_env(env, mid))
-            current = adapter.container_config(effective)
-            require(isinstance(current, dict) and isinstance(current.get("revision"), str) and
-                    isinstance(args.wan, str) and bool(args.wan) and current["revision"] == args.wan,
-                    "Konteyner ayarları değişti; yenileyip yeniden deneyin.")
             return
         m = Manager(args.state)
         if args.action == "tailnet-ports":

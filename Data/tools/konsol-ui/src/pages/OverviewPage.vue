@@ -1,8 +1,8 @@
 <!-- Genel Bakış (DD-258, phase 2): health first — what needs attention, each with its one fix, or a calm
      "Her şey yolunda" — then the applications, resources, network and the server. Health and Erişim's
      warnings come live (live.ts); repair is asked of GET /api/konsol/onarim (started only on the tailnet,
-     DD-239); the network card reads GET /api/konsol/ag every 5 s, only while this page is shown and the
-     browser tab is visible. -->
+     DD-239); the network card reads the WAN rates (GET /api/konsol/ag) every 5 s, only while this page is
+     shown and the browser tab is visible. -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
@@ -129,20 +129,7 @@ watch(repairJobs, (jobs) => {
 });
 
 // ---- applications
-const cards = computed(() =>
-  (apps.value ?? []).map((app) => {
-    const open = openTarget(app);
-    return {
-      app,
-      state: appState(app),
-      line: accessLine(app),
-      open: open && {
-        ...open,
-        label: open.external ? `${app.ad} uygulamasını yeni sekmede aç` : `${app.ad} sayfasını aç`,
-      },
-    };
-  }),
-);
+const cards = computed(() => (apps.value ?? []).map((app) => ({ app, state: appState(app), line: accessLine(app), open: openTarget(app) })));
 
 // ---- resources (each value checked: an event may carry only part of the object)
 const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -284,13 +271,13 @@ watch(() => live.offset, () => (now.value = serverNow()));
             <a
               v-if="c.open"
               class="btn btn-primary btn-sm"
-              :href="c.open.href"
-              :target="c.open.external ? '_blank' : undefined"
-              :rel="c.open.external ? 'noopener noreferrer' : undefined"
-              :aria-label="c.open.label"
+              :href="c.open"
+              target="_blank"
+              rel="noopener noreferrer"
+              :aria-label="`${c.app.ad} uygulamasını yeni sekmede aç`"
               data-eylem="ac"
             >
-              Aç<Icon v-if="c.open.external" name="open" :size="16" />
+              Aç<Icon name="open" :size="16" />
             </a>
             <RouterLink :to="appRoute(c.app.id)" class="btn btn-secondary btn-sm" :aria-label="`${c.app.ad} ayrıntıları`">Ayrıntı</RouterLink>
           </div>
@@ -299,7 +286,7 @@ watch(() => live.offset, () => (now.value = serverNow()));
       <Card v-else as="div">
         <EmptyState
           :title="apps ? 'Henüz uygulama yok' : 'Uygulamalar henüz okunamadı'"
-          :text="apps ? 'App Store\'dan bir uygulama kurabilir ya da bir imajdan konteyner çalıştırabilirsiniz.' : ''"
+          :text="apps ? 'Bir imajdan konteyner çalıştırabilir ya da Podman\'da var olan bir konteyneri yönetime alabilirsiniz.' : ''"
         >
           <RouterLink v-if="apps" to="/uygulamalar" class="btn btn-secondary">Uygulama ekle</RouterLink>
         </EmptyState>
@@ -336,17 +323,7 @@ watch(() => live.offset, () => (now.value = serverNow()));
           <span class="net-rate"><span class="net-down" aria-hidden="true">↓</span><span class="sr-only">İndirme </span><span data-testid="rx">{{ rate(net?.rx) }}</span></span>
           <span class="net-rate"><span class="net-up" aria-hidden="true">↑</span><span class="sr-only">Gönderme </span><span data-testid="tx">{{ rate(net?.tx) }}</span></span>
         </div>
-        <div class="net-sep" aria-hidden="true"></div>
-        <div class="net-apps">
-          <span class="meter-note">Toplam aktarım</span>
-          <ul v-if="net && net.apps.length" class="net-list" aria-label="Uygulamaların toplam aktarımı">
-            <li v-for="a in net.apps" :key="a.id" :data-uygulama="a.id">
-              <span>{{ a.name }}</span>
-              <span>↓ {{ bytes(a.down) }} · ↑ {{ bytes(a.up) }}</span>
-            </li>
-          </ul>
-          <p v-else class="meter-note">{{ net ? "Trafiğini bildiren uygulama yok." : netFailed ? "Ağ bilgisi okunamadı." : UNKNOWN }}</p>
-        </div>
+        <p v-if="netFailed" class="meter-note" data-testid="net-error">Ağ bilgisi okunamadı.</p>
       </Card>
 
       <!-- server -->

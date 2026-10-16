@@ -1,4 +1,5 @@
-"""Network opt-in, migration and root publication rollback, without host changes."""
+"""Network opt-in, registry schema and root publication rollback, without host changes."""
+import contextlib
 import copy
 import importlib.machinery
 import importlib.util
@@ -25,32 +26,16 @@ else:
 
 
 
-def torrent_package(mods_dir, downloads_path, profile_dir, ui_port="61006"):
-    """DD-203: a rendered torrent package folder: manifest (folders it writes into), its folder module
-    and its own settings file, as the installer leaves them under MODULES_DIR."""
-    repo = Path(__file__).resolve().parents[1] / "magaza" / "torrent"
-    folder = Path(mods_dir) / "torrent"
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "paket.env").write_text((repo / "paket.env").read_text().replace("__TORRENT_UI_PORT__", ui_port)
-                                      .replace("__DOWNLOADS_PATH__", str(downloads_path)))
-    (folder / "klasorler.py").write_bytes((repo / "klasorler.py").read_bytes())
-    (folder / "torrent.env").write_text("TORRENT_UI_PORT=%s\nTORRENT_PROFILE_DIR=%s\n" % (ui_port, profile_dir))
-    return folder
-
-
 class NetworkManagerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="share-networks-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
-        for name in ("srv/alpha", "run", "sites", "profile"):
+        for name in ("srv/alpha", "run", "sites"):
             (self.root / name).mkdir(parents=True)
-        # DD-203: the folders a package writes into come from its manifest and module, not the base.
-        torrent_package(self.root/"mods", self.root/"srv/downloads", self.root/"profile")
-        self.env = dict(SHARE_STATE_FILE=str(self.root/"registry"), MODULES_FILE=str(self.root/"modules"),
-                        MODULES_DIR=str(self.root/"mods"),
+        self.env = dict(SHARE_STATE_FILE=str(self.root/"registry"),
                         RUNTIME_DIR=str(self.root/"run"), SERVER_ROOT=str(self.root/"srv"),
-                        DOWNLOADS_PATH=str(self.root/"srv/downloads"), FILES_PANEL_TRASH=".cop",
+                        FILES_PANEL_TRASH=".cop",
                         SETTINGS_PENDING_FILE=str(self.root/"settings-pending"),
                         SHARE_PORT="61010", TAILSCALE_IPV4="100.64.0.2", WAN_IPV4="8.8.8.8",
                         SHARE_WAN_BACKEND="127.0.0.2", CADDY_MODULES_DIR=str(self.root/"sites"),
@@ -61,16 +46,22 @@ class NetworkManagerTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         self.assigned_patch = patch.object(s, "assigned", return_value=True)
         self.assigned = self.assigned_patch.start()
-        (self.root/"modules").write_text("paylasim\tdurduruldu\n")
         self.m = s.Manager(self.state)
-        self.m.change("save", dict(path="alpha",username="reader",password="Test12345"))
+        with self.offline():
+            self.m.change("save", dict(path="alpha",username="reader",password="Test12345"))
         self.item = self.m.read()["items"][0]
 
-    def save(self, **fields):
-        return self.m.change("save", dict(id=self.item["id"], **fields))
+    def offline(self):
+        """The WebDAV restart and the Caddy projection, which every saved change runs, without host
+        commands; the tests below that exercise them call publish/guard/prepare themselves."""
+        stack = contextlib.ExitStack()
+        stack.enter_context(patch.object(self.m, "restart"))
+        stack.enter_context(patch.object(self.m, "publish"))
+        return stack
 
-    def running(self):
-        (self.root/"modules").write_text("paylasim\tcalisiyor\n")
+    def save(self, **fields):
+        with self.offline():
+            return self.m.change("save", dict(id=self.item["id"], **fields))
 
     def test_optin_required_and_selections_strict(self):
         before = Path(self.m.path).read_bytes()
@@ -85,7 +76,6 @@ class NetworkManagerTests(unittest.TestCase):
 
     def test_network_edit_preserves_identity_credentials_and_absolute_expiry(self):
         self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
-        self.running()
         row = self.m.public()["items"][0]
         after = self.m.read()["items"][0]
         for key in ("id","salt","hash","identity"):
@@ -95,36 +85,33 @@ class NetworkManagerTests(unittest.TestCase):
                 self.assertEqual(self.item["connections"][scope][key], after["connections"][scope][key])
         self.assertEqual(set(row["urls"]),{"tailscale","wan"})
         self.assertTrue(row["urls"]["wan"].startswith("http://8.8.8.8:61010/s/"))
-        (self.root/"modules").write_text("paylasim\tdurduruldu\n")
-        stopped = self.save(connections={"tailscale": {"enabled": False}})["items"][0]
-        self.assertEqual(stopped["urls"], {})
-        self.assertFalse(stopped["connections"]["wan"]["active"])
-        self.running()
-        row = self.m.public()["items"][0]
+        row = self.save(connections={"tailscale": {"enabled": False}})["items"][0]
+        self.assertFalse(row["connections"]["tailscale"]["active"])
+        self.assertTrue(row["connections"]["wan"]["active"])
         self.assertEqual(set(row["urls"]),{"wan"})
         self.assertEqual(row["url"],row["urls"]["wan"])
-        (self.root/"modules").write_text("paylasim\tdurduruldu\n")
         self.save(connections={"tailscale": {"enabled": True}, "wan": {"enabled": False}})
         with self.assertRaises(s.ShareError): self.save(connections={"wan": {"enabled": True}})
 
-    def test_schema4_is_stable_schema3_migrates_and_schema2_is_rejected(self):
+    def test_schema4_is_stable_and_older_schemas_are_rejected(self):
         before=Path(self.m.path).read_bytes()
         self.m.prepare()
         self.assertEqual(before,Path(self.m.path).read_bytes())
         data = self.m.read()
         self.assertEqual(data["schema"], 4)
-        old = copy.deepcopy(data); old["schema"] = 2
-        s.atomic(self.m.path,old)
-        with self.assertRaises(s.ShareError): self.m.read()
-        legacy = copy.deepcopy(data); legacy["schema"] = 3
-        policy = legacy["items"][0].pop("connections")["tailscale"]
-        legacy["items"][0].update(networks=["tailscale"], paused=False,
-                                  permission=policy["permission"], expires=policy["expires"])
-        s.atomic(self.m.path, legacy)
-        self.assertEqual(self.m.read(), data)
-        legacy["items"][0].pop("networks")
-        s.atomic(self.m.path, legacy)
-        with self.assertRaises(s.ShareError): self.m.read()
+        for schema in (2, 3):
+            old = copy.deepcopy(data); old["schema"] = schema
+            s.atomic(self.m.path,old)
+            raw = Path(self.m.path).read_bytes()
+            with self.assertRaisesRegex(s.ShareError, "Paylaşım kaydı desteklenmiyor"): self.m.read()
+            with self.assertRaisesRegex(s.ShareError, "Paylaşım kaydı desteklenmiyor"): self.m.prepare()
+            self.assertEqual(Path(self.m.path).read_bytes(), raw)
+        # A key this version does not write, at the top or in an item, fails closed too (DD-271).
+        for place, key in (("top", "enabled"), ("item", "tail_enabled"), ("item", "permission")):
+            odd = copy.deepcopy(data)
+            (odd if place == "top" else odd["items"][0])[key] = True
+            s.atomic(self.m.path, odd)
+            with self.assertRaisesRegex(s.ShareError, "Paylaşım kaydı desteklenmiyor"): self.m.read()
         data["items"][0].pop("connections")
         s.atomic(self.m.path,data)
         with self.assertRaises(s.ShareError): self.m.read()
@@ -137,7 +124,6 @@ class NetworkManagerTests(unittest.TestCase):
 
     def test_last_active_share_closes_publication(self):
         self.save(connections={"tailscale": {"enabled": False}, "wan": {"enabled": True}},ack_wan_http=True)
-        self.running()
         self.assertTrue(self.m.wan_active())
         with patch.object(s.subprocess,"run",return_value=subprocess.CompletedProcess([],0)) as run:
             self.m.publish()
@@ -160,17 +146,16 @@ class NetworkManagerTests(unittest.TestCase):
             self.assertGreater(run.call_count,calls)
 
     def test_rollback_restores_registry_and_publication_on_caddy_failure(self):
-        self.running()
         old=Path(self.m.path).read_bytes()
         with patch.object(self.m,"restart"), patch.object(s.subprocess,"run",side_effect=[subprocess.CalledProcessError(1,"caddy"),subprocess.CompletedProcess([],0),subprocess.CompletedProcess([],0),subprocess.CompletedProcess([],0)]):
-            with self.assertRaises(s.ShareError): self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
+            with self.assertRaises(s.ShareError):
+                self.m.change("save", dict(id=self.item["id"], connections={"wan": {"enabled": True}}, ack_wan_http=True))
         self.assertEqual(Path(self.m.path).read_bytes(),old)
         self.assertFalse(os.path.exists(self.m.pending))
         self.assertFalse((self.root/"sites/paylasim-wan.caddy").exists())
 
     def test_vanished_wan_address_closes_publication_with_a_reason(self):
         self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
-        self.running()
         with patch.object(s.subprocess,"run",return_value=subprocess.CompletedProcess([],0)):
             self.m.publish()
             target=self.root/"sites/paylasim-wan.caddy"
@@ -193,7 +178,6 @@ class NetworkManagerTests(unittest.TestCase):
 
     def test_reload_failure_starts_a_stopped_caddy_but_rolls_back_a_running_one(self):
         self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
-        self.running()
         target=self.root/"sites/paylasim-wan.caddy"
         marker=self.root/"run/share-network-applied.json"
         calls=[]
@@ -221,7 +205,6 @@ class NetworkManagerTests(unittest.TestCase):
     def test_interrupted_operation_is_recovered_with_credentials_first(self):
         old=self.m.read()
         self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
-        self.running()
         s.atomic(self.m.pending,old)
         with patch.object(self.m,"restart") as restart, patch.object(self.m,"publish") as publish:
             self.m.guard()
@@ -231,7 +214,6 @@ class NetworkManagerTests(unittest.TestCase):
 
     def test_pause_and_missing_root_do_not_leave_active_wan(self):
         self.save(connections={"tailscale": {"enabled": False}, "wan": {"enabled": True}},ack_wan_http=True)
-        self.running()
         data=self.m.read(); data["items"][0]["connections"]["wan"]["enabled"]=False; s.atomic(self.m.path,data)
         self.assertFalse(self.m.wan_active())
         data["items"][0]["connections"]["wan"]["enabled"]=True; s.atomic(self.m.path,data)
@@ -242,7 +224,6 @@ class NetworkManagerTests(unittest.TestCase):
     def test_installer_recovery_reloads_credentials_before_clearing_pending(self):
         old=self.m.read()
         self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
-        self.running()
         s.atomic(self.m.pending,old)
         with patch.object(self.m,"restart",side_effect=s.ShareError("injected")):
             with self.assertRaises(s.ShareError): self.m.prepare()
@@ -255,7 +236,6 @@ class NetworkManagerTests(unittest.TestCase):
 
     def test_panel_caddy_projection_names_wan_and_preserves_proxy_routes(self):
         self.save(connections={"wan": {"enabled": True}},ack_wan_http=True)
-        self.running()
         with patch.object(s.subprocess,"run",return_value=subprocess.CompletedProcess([],0)):
             self.m.publish()
         Path(self.env["CADDYFILE"]).write_text("{\n servers 8.8.8.8:61010 {\n timeouts {\n read_header 10s\n }\n }\n}\n")

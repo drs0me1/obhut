@@ -90,15 +90,14 @@ export async function discardChange(id: string): Promise<Tamam> {
 
 export async function readFirewall(fresh = false): Promise<GuvenlikDuvari> {
   const value = shaped<GuvenlikDuvari>(await getJson(YOLLAR.guvenlik_duvari + (fresh ? "?yenile=1" : "")), (v) =>
-    isText(v.revizyon) && isObject(v.denetim) && isList(v.kurallar) && isList(v.katalog));
+    isText(v.revizyon) && isObject(v.denetim) && isList(v.kurallar) && isList(v.portlar));
   return {
     ...value,
     kurallar: value.kurallar.filter(isRule),
-    katalog: value.katalog.filter((k) => isObject(k) && isText(k.ad) && isNumber(k.port) && isText(k.proto) && (k.aile === 4 || k.aile === 6) && isText(k.kapsam)),
+    portlar: value.portlar.filter((k) => isObject(k) && isText(k.ad) && isNumber(k.port) && isText(k.proto) && (k.aile === 4 || k.aile === 6) && isText(k.kapsam)),
     dinleyiciler: isList(value.dinleyiciler) ? value.dinleyiciler.filter((d) => isObject(d) && isNumber(d.port) && isText(d.proto)) : null,
     teknik: isList(value.teknik) ? value.teknik.filter((t) => isObject(t) && isText(t.kural) && isText(t.zincir)) : [],
     aglar: isList(value.aglar) ? value.aglar.filter((a) => isObject(a) && isText(a.arayuz)) : [],
-    vpn: isText(value.vpn) ? value.vpn : "",
     hatalar: isList(value.hatalar) ? value.hatalar.filter(isText) : [],
   };
 }

@@ -2,7 +2,11 @@
 tip of GUNCELLEME_DAL and the V2_VERSION in that commit's Data/install.sh), compares it with the
 installed one, and starts master-guncelle as its own systemd unit, so the run survives the Konsol
 restarts the installer makes. The unit's result file and output are under LOG_DIR; this module only
-reads them. Nothing here runs installer code itself."""
+reads them. Nothing here runs installer code itself.
+
+DD-271 (S3): only a build of this host's own generation is offered. The remote generation is the
+OBHUT_NESIL line of that install.sh (a commit without it is generation 1), the local one state.env's
+OBHUT_NESIL; another generation needs a clean install and is never an update."""
 import http.client
 import os
 import re
@@ -16,10 +20,12 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
 BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,100}$")
 INSTALL_LINE_RE = re.compile(r'^V2_VERSION="([^"\n]{1,64})"$', re.M)
-# DD-260: the version people see (semantic versioning) beside the build number above; servers still
-# compare build numbers, so a commit without this line is offered like before.
+# DD-260: the version people see (semantic versioning) beside the build number above; servers
+# compare build numbers.
 SURUM_RE = re.compile(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}")
 SURUM_LINE_RE = re.compile(r'^OBHUT_SURUM="([0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4})"$', re.M)
+NESIL_RE = re.compile(r"[1-9][0-9]{0,2}")
+NESIL_LINE_RE = re.compile(r'^OBHUT_NESIL="([1-9][0-9]{0,2})"$', re.M)
 STAGE_RE = re.compile(r"Aşama ([0-9])/([0-9]) — ([^\n]{1,80})")
 CHECK_SECONDS = 6 * 3600       # a fresh answer is reused for six hours
 FAIL_SECONDS = 15 * 60         # an unreachable GitHub is asked again after a quarter hour
@@ -85,7 +91,8 @@ class Updates:
     def latest(self, env, force=False):
         repo, branch = env.get("GUNCELLEME_REPO", ""), env.get("GUNCELLEME_DAL", "")
         if not REPO_RE.match(repo) or not BRANCH_RE.match(branch) or ".." in branch:
-            return {"at": 0, "ok": False, "son": None, "surum": None, "commit": None, "hata": "Güncelleme deposu tanımlı değil; kurulumu terminalden yeniden çalıştırın."}
+            return {"at": 0, "ok": False, "son": None, "surum": None, "nesil": None, "commit": None,
+                    "hata": "Güncelleme deposu tanımlı değil; kurulumu terminalden yeniden çalıştırın."}
         with self.lock:
             now = self.clock()
             cached = self.cache
@@ -94,7 +101,8 @@ class Updates:
                 cached = None
             if cached and cached.get("kaynak") == (repo, branch) and now - cached["at"] < (CHECK_SECONDS if cached["ok"] else FAIL_SECONDS):
                 return cached
-            result = {"at": now, "kaynak": (repo, branch), "ok": False, "son": None, "surum": None, "commit": None, "hata": ""}
+            result = {"at": now, "kaynak": (repo, branch), "ok": False, "son": None, "surum": None, "nesil": None,
+                      "commit": None, "hata": ""}
             try:
                 sha = self.fetcher(API_URL % (repo, branch), "application/vnd.github.sha").strip()
                 if not SHA_RE.match(sha):
@@ -104,7 +112,9 @@ class Updates:
                 if not found or number(found.group(1)) is None:
                     raise ValueError("sürüm")
                 surum = SURUM_LINE_RE.search(text)
-                result.update(ok=True, son=found.group(1), surum=surum.group(1) if surum else None, commit=sha)
+                nesil = NESIL_LINE_RE.search(text)
+                result.update(ok=True, son=found.group(1), surum=surum.group(1) if surum else None,
+                              nesil=int(nesil.group(1)) if nesil else 1, commit=sha)
             except (OSError, urllib.error.URLError, http.client.HTTPException, ValueError, UnicodeError):
                 result["hata"] = "GitHub'a ulaşılamadı ya da sürüm okunamadı; daha sonra yeniden denenir."
             self.cache = result
@@ -134,10 +144,18 @@ class Updates:
         installed = env.get("V2_VERSION", "")
         mine, theirs = number(installed), number(info["son"])
         surum = env.get("OBHUT_SURUM", "")
+        local = int(env["OBHUT_NESIL"]) if NESIL_RE.fullmatch(env.get("OBHUT_NESIL", "")) else None
+        same = info["ok"] and local is not None and info["nesil"] == local
+        hata = info["hata"]
+        if info["ok"] and local is None:
+            hata = "Kurulum kaydında nesil yok; kurulumu terminalden yeniden çalıştırın."
+        elif info["ok"] and not same:
+            hata = ("GitHub'daki sürüm başka bir nesilden (%d); bu sunucuya güncelleme olarak gelmez, yalnız temiz "
+                    "bir işletim sistemine kurulur." % info["nesil"])
         return {"kurulu": installed, "kurulu_surum": surum if SURUM_RE.fullmatch(surum) else "",
                 "son": info["son"], "son_surum": info.get("surum"), "commit": info["commit"],
-                "yeni": bool(info["ok"] and mine is not None and theirs is not None and theirs > mine),
-                "denetlendi": int(info["at"]) or None, "hata": info["hata"], "is": self.job(env, running)}
+                "yeni": bool(same and mine is not None and theirs is not None and theirs > mine),
+                "denetlendi": int(info["at"]) or None, "hata": hata, "is": self.job(env, running)}
 
     def check_start(self, env, data, running, blocked):
         """Validates a start request against the shown offer; returns (commit, version)."""
@@ -147,7 +165,7 @@ class Updates:
             raise UpdateError(409, blocked)
         info = self.status(env, running)
         if not info["yeni"]:
-            raise UpdateError(409, "Kurulu sürüm güncel; yeni bir sürüm yok.")
+            raise UpdateError(409, info["hata"] or "Kurulu sürüm güncel; yeni bir sürüm yok.")
         if data.get("surum") != info["son"] or data.get("commit") != info["commit"]:
             raise UpdateError(409, "GitHub'daki sürüm değişti; sayfayı yenileyip yeniden deneyin.")
         return info["commit"], info["son"]

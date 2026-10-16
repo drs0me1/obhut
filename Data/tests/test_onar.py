@@ -1,6 +1,6 @@
 """DD-239/DD-241: master-onar (check and repair) with fake systemctl/tailscale/ip/sysctl/curl/dpkg/… on PATH:
 check-only changes nothing, repair touches exactly what is broken and only with the installer's own settings,
-report-only steps never repair, a stopped package and a disabled network are left alone, the report file
+report-only steps never repair, a stopped WireGuard and a disabled network are left alone, the report file
 follows every step, --duvar touches only the firewall, and the panel's start, report and log routes.
 Temporary directories only."""
 import json
@@ -80,7 +80,6 @@ esac''',
     "podman": r'''echo 5.4.2''',
     "nft": r'''[ -f "$FAKE/nft_missing" ] && exit 1; exit 0''',
     "wg": r'''printf 'wg0\tpeerA=\t1790000000\nwg0\tpeerB=\t0\n' ''',
-    "master-modul": r'''echo "master-modul $*" >> "$FAKE/calls"; cat "$FAKE/saglik" 2>/dev/null; exit 0''',
     "refresh-tailnet-config": r'''echo "refresh $*" >> "$FAKE/calls"; sed -i "s/^TAILSCALE_IPV4=.*/TAILSCALE_IPV4=$(cat "$FAKE/ip")/" "$STATE_FILE"''',
 }
 DEFAULTS = {"ts.json": json.dumps({"BackendState": "Running", "Self": {"Online": True}}),
@@ -113,19 +112,19 @@ class Fixture(unittest.TestCase):
             (self.fake / name).write_text(value)
         for unit in ("master-sistem-dosya.service", "chrony.service"):
             (self.fake / "missing" / unit).write_text("")
-        self.modules = self.root / "moduller"
-        self.modules.write_text("torrent\tcalisiyor\nwireguard\tdurduruldu\n")
-        (self.fake / "saglik").write_text("torrent\tqbittorrent.service\tgerekli\nwireguard\twg-quick@wg0.service\tag\n")
+        # WireGuard as installed (K6): no network yet, not stopped.
+        self.networks, self.wg_stopped = self.root / "networks", self.root / "wg.stopped"
         self.state, self.report, self.caddyfile = self.root / "state.env", self.root / "onarim.json", self.root / "Caddyfile"
         self.caddyfile.write_text("{\n}\n")
         self.auth = self.root / "konsol"
         self.auth.mkdir(mode=0o700)
         self.state.write_text(
-            "TAILSCALE_IPV4=100.64.0.2\nTAILSCALE_IF=tailscale0\nLOCAL_DOMAIN=ev\nSBIN_DIR=%s\nMODULES_FILE=%s\nRUNTIME_DIR=%s\n"
+            "TAILSCALE_IPV4=100.64.0.2\nTAILSCALE_IF=tailscale0\nLOCAL_DOMAIN=ev\nSBIN_DIR=%s\nRUNTIME_DIR=%s\n"
             "ONARIM_DURUM_FILE=%s\nWAN_INTERFACE=eth0\nWAN_IPV4=192.0.2.1\nPANEL_SOCKET=/run/x.sock\nFILES_PANEL_PORT=61009\n"
             "CADDYFILE=%s\nKONTEYNER_NFT_TABLE=master_containers\nKONSOL_AUTH_DIR=%s\nNET_BUF_FLOOR_BYTES=16777216\n"
-            "SYSCTL_FORWARD_FILE=%s\nSERVER_ROOT=%s\n" % (self.bin, self.modules, self.root / "run", self.report, self.caddyfile,
-                                                         self.auth, self.caddyfile, self.root))
+            "SYSCTL_FORWARD_FILE=%s\nSERVER_ROOT=%s\nWG_NETWORKS_FILE=%s\nWG_STOPPED_FILE=%s\n"
+            % (self.bin, self.root / "run", self.report, self.caddyfile, self.auth, self.caddyfile, self.root,
+               self.networks, self.wg_stopped))
         self.state.chmod(0o600)
         env = {"PATH": "%s:%s" % (self.bin, os.environ["PATH"]), "FAKE": str(self.fake), "STATE_FILE": str(self.state)}
         for p in (patch.dict(os.environ, env), patch.object(mo, "STATE_FILE", str(self.state)),
@@ -134,6 +133,10 @@ class Fixture(unittest.TestCase):
             p.start()
         self.addCleanup(patch.stopall)
         self.lines = []
+
+    def network(self, *ifaces):
+        self.networks.write_text("".join("%s\t%d\tinet\t10.8.%d.1\t10.8.%d.0/24\t-\t-\t1.1.1.1\t-\n" % (iface, 61001 + n, n, n)
+                                         for n, iface in enumerate(ifaces)))
 
     def journaled(self, line):
         self.lines.append(line)
@@ -198,23 +201,51 @@ class RepairTests(Fixture):
         self.assertEqual(oct(self.state.stat().st_mode & 0o777), "0o644")
 
     def test_repair_restarts_exactly_the_broken_units(self):
+        self.network("wg0", "wg1")
         (self.fake / "fw_rc").write_text("1")
-        for unit in ("caddy.service", "qbittorrent.service", "tailscale-udp-gro.service"):
+        for unit in ("caddy.service", "wg-quick@wg1.service", "tailscale-udp-gro.service"):
             (self.fake / "state" / unit).write_text("failed")
-        (self.fake / "state" / "wg-quick@wg0.service").write_text("inactive")  # a stopped package
         code, steps, _ = self.run_repair()
         self.assertEqual(code, 0)
         self.assertEqual(steps["duvar"]["durum"], "onarildi")
         self.assertEqual(steps["servisler"]["durum"], "onarildi")
-        self.assertEqual(sorted(self.restarts()), ["caddy.service", "master-firewall.service", "qbittorrent.service", "tailscale-udp-gro.service"])
+        self.assertEqual(sorted(self.restarts()), ["caddy.service", "master-firewall.service", "tailscale-udp-gro.service",
+                                                   "wg-quick@wg1.service"])
 
-    def test_a_disabled_network_of_a_running_package_is_left_alone(self):
-        self.modules.write_text("wireguard\tcalisiyor\n")
+    def test_a_stopped_wireguard_is_left_alone(self):
+        # DD-229: stopping WireGuard keeps its networks file; their units are not required.
+        self.network("wg0")
+        self.wg_stopped.write_text("")
+        (self.fake / "state" / "wg-quick@wg0.service").write_text("inactive")
+        _, steps, _ = self.run_repair()
+        self.assertEqual(steps["servisler"]["durum"], "ok")
+        self.assertEqual((steps["wireguard"]["durum"], steps["wireguard"]["detay"]), ("atlandi", "WireGuard durdurulmuş"))
+        self.assertEqual(self.changes(), [])
+
+    def test_a_disabled_network_is_left_alone(self):
+        self.network("wg0")
         (self.fake / "state" / "wg-quick@wg0.service").write_text("inactive")
         (self.fake / "enabled" / "wg-quick@wg0.service").write_text("disabled")
         _, steps, _ = self.run_repair()
         self.assertEqual(steps["servisler"]["durum"], "ok")
         self.assertEqual(steps["wireguard"]["detay"], "2 eş, 1 tanesi hiç bağlanmadı")
+        self.assertEqual(self.changes(), [])
+
+    def test_wireguard_without_networks_or_with_a_bad_record_is_reported(self):
+        _, steps, _ = self.run_repair()
+        self.assertEqual((steps["wireguard"]["durum"], steps["wireguard"]["detay"]), ("atlandi", "WireGuard ağı yok"))
+        self.networks.write_text("wg0\tbroken\n")
+        (self.fake / "state" / "wg-quick@wg0.service").write_text("inactive")
+        code, steps, _ = self.run_repair()
+        self.assertEqual((steps["wireguard"]["durum"], steps["wireguard"]["detay"]), ("sorun", "WireGuard ağ kaydı okunamadı"))
+        self.assertEqual(steps["servisler"]["durum"], "ok")  # an unreadable record names no unit to restart
+        self.assertEqual(code, 0)
+        self.assertEqual(self.changes(), [])
+        text = self.state.read_text()
+        self.state.write_text("".join(l + "\n" for l in text.splitlines() if not l.startswith("WG_STOPPED_FILE=")))
+        _, steps, _ = self.run_repair()
+        self.assertEqual(steps["wireguard"]["durum"], "sorun")
+        self.assertIn("WireGuard ayarı okunamadı", steps["wireguard"]["detay"])
 
     def test_a_unit_that_will_not_start_is_an_error(self):
         (self.fake / "state" / "master-paylasim.service").write_text("failed")
@@ -406,16 +437,15 @@ class PanelTests(unittest.TestCase):
         for name, body in {
             "systemd-run": 'printf "%s\\n" "$*" >> "$(dirname "$0")/calls"',
             "systemctl": 'for u in $(cat "$(dirname "$0")/active"); do case "$u" in $(eval echo \\${$#})) echo "$u loaded active running x";; esac; done',
-            "journalctl": 'printf "%s\\n" "$*" >> "$(dirname "$0")/calls"; echo "2026-10-07T03:12:00+0000 nrm master-onar[1]: ✓ Güvenlik duvarı: Kurallar beklenen biçimde"',
-            "master-modul": "exit 0"}.items():
+            "journalctl": 'printf "%s\\n" "$*" >> "$(dirname "$0")/calls"; echo "2026-10-07T03:12:00+0000 nrm master-onar[1]: ✓ Güvenlik duvarı: Kurallar beklenen biçimde"'}.items():
             path = self.bin / name
             path.write_text("#!/bin/sh\n" + body + "\n")
             path.chmod(0o755)
         self.report = self.root / "onarim.json"
         self.state = self.root / "state.env"
-        self.state.write_text("ONARIM_UNIT=master-onar.service\nONARIM_DURUM_FILE=%s\nGUNCELLEME_UNIT=master-guncelle.service\n" % self.report)
-        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=["panel.test"], state_env=True,
-                                                   master_modul=str(self.bin / "master-modul")))
+        self.state.write_text("ONARIM_UNIT=master-onar.service\nONARIM_DURUM_FILE=%s\nGUNCELLEME_UNIT=master-guncelle.service\n"
+                              "SBIN_DIR=%s\n" % (self.report, self.bin))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=["panel.test"], state_env=True))
 
     def calls(self):
         path = self.bin / "calls"
@@ -447,8 +477,8 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(self.calls(), ["--unit=master-yeniden-baslat --collect --quiet --on-active=%d --description=Konsol: yeniden başlat systemctl reboot"
                                         % panel.REBOOT_DELAY_SECONDS])
 
-    def test_reboot_refused_beside_an_update_a_repair_or_a_package_operation(self):
-        for unit, word in (("master-guncelle.service", "Güncelleme"), ("master-onar.service", "Onarım"), ("master-modul-torrent.service", "uygulama")):
+    def test_reboot_refused_beside_an_update_or_a_repair(self):
+        for unit, word in (("master-guncelle.service", "Güncelleme"), ("master-onar.service", "Onarım")):
             self.active.write_text(unit)
             with self.assertRaises(mu.UpdateError) as err:
                 self.p.reboot_start()

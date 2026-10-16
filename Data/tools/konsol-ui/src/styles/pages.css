@@ -1,7 +1,7 @@
 /* Phase 2 pages (DD-258): Genel Bakış, Uygulamalar and an application's page, after the approved
-   prototype (Main, Uygulamalar, Uygulama-Gezgin, Mobil). Shared pieces are in ui.css. */
+   prototype (Main, Uygulamalar, an application's page, Mobil). Shared pieces are in ui.css. */
 
-/* ---- the page head's trail ("Uygulamalar › qBittorrent") */
+/* ---- the page head's trail ("Uygulamalar › notlar") */
 .trail {
   display: flex;
   flex-wrap: wrap;
@@ -302,31 +302,6 @@
 .net-up {
   margin-right: 4px;
   color: var(--warn);
-}
-
-.net-sep {
-  height: 1px;
-  background: var(--line-soft);
-}
-
-.net-apps {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13.5px;
-}
-
-.net-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.net-list li {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 4px 12px;
 }
 
 /* A phone (the Mobil prototype): applications as two compact tiles per row, each a link to its page. */
@@ -671,22 +646,6 @@
 
 .add-option .btn {
   margin-top: 6px;
-}
-
-.catalog {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 4px;
-  font-size: 13.5px;
-}
-
-.catalog a {
-  font-weight: 600;
-}
-
-.catalog span {
-  color: var(--muted);
 }
 
 /* ================= an application's page */

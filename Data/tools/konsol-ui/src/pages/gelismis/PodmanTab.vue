@@ -1,8 +1,8 @@
 <!-- Gelişmiş → Podman (DD-211): the base's container runtime and its resources (GET /api/konsol/konteynerler/
      liste), in sub-tabs in the address (?kaynak=imajlar|birimler|aglar). Images (name, id, size, age, who
-     uses it, the App Store's pinned ones) with "İmaj çek" for a fully qualified reference; volumes; bridge
-     networks (driver, subnets, internal, who uses it, Konsol's or the system's). Only what nothing uses can
-     be removed (a package's pinned image and the system's networks never), after the typed word. Every
+     uses it) with "İmaj çek" for a fully qualified reference; volumes; bridge networks (driver, subnets,
+     internal, who uses it, Konsol's or the system's). Only what nothing uses can be removed (the system's
+     networks never), after the typed word. Every
      change is a job (POST …/islem → 202); its end arrives in the activity list, and the list is read again.
      A collection that could not be read says so instead of looking empty. The containers themselves are in
      Uygulamalar. The forms open over the page (?yeni=imaj|birim|ag). -->
@@ -119,7 +119,6 @@ const shortImage = (name: string) => name.replace(/@sha256:([0-9a-f]{12})[0-9a-f
 const users = (u: string[]) => u.join(", ");
 
 function imageBlock(i: Image): string {
-  if (i.pinned) return "Paket imajı: App Store paketi sabitler; güncellemesi kurulumla gelir.";
   if (!i.managed) return "Konsol bu imajı yönetmiyor.";
   if (i.used_by.length) return `Kullanımda: ${users(i.used_by)}. Önce konteyneri kaldırın.`;
   if (!i.id) return "İmajın kimliği okunamadı.";
@@ -324,7 +323,7 @@ async function submitForm(): Promise<void> {
         <!-- images -->
         <section v-if="active === 'imajlar'" class="card resource-card" aria-label="İmajlar" data-testid="images">
           <div class="resource-head">
-            <p class="meter-note">Paket imajları App Store paketinin özetiyle sabittir; güncellemeleri kurulumla gelir.</p>
+            <p class="meter-note">Yalnız Konsol'un yönettiği ve hiçbir konteynerin kullanmadığı imajlar silinir.</p>
             <button type="button" class="btn btn-primary btn-sm" :disabled="!runtimeOk" data-testid="image-pull" @click="openForm('imaj')"><Icon name="download" :size="16" />İmaj çek</button>
           </div>
           <p v-if="collectionError('images')" class="notice notice-warning" role="alert" data-testid="images-error"><Icon name="alert" class="notice-icon" /><span>{{ collectionError("images") }}</span></p>
@@ -337,7 +336,6 @@ async function submitForm(): Promise<void> {
                 <tr v-for="(i, n) in list.images" :key="`${i.id}:${i.name}:${n}`" :data-imaj="i.name">
                   <th scope="row" class="col-main">
                     <strong class="mono wrap"><span aria-hidden="true">{{ shortImage(i.name) }}</span><span class="sr-only">{{ i.name }}</span></strong>
-                    <span v-if="i.pinned" class="badges"><StatusPill tone="accent">Paket imajı</StatusPill></span>
                     <span v-if="imageBlock(i)" :id="`imaj-engel-${n}`" class="cell-note">{{ imageBlock(i) }}</span>
                   </th>
                   <td data-label="Kimlik" class="mono">{{ shortId(i.id) || UNKNOWN }}</td>

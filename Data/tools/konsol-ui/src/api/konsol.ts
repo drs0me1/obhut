@@ -47,7 +47,7 @@ export async function startAppAction(request: UygulamaIslemi): Promise<UygulamaI
 }
 
 export async function readNetwork(): Promise<Ag> {
-  return shaped(await getJson(YOLLAR.ag), (v) => Array.isArray(v.apps));
+  return shaped(await getJson(YOLLAR.ag), (v) => "rx" in v && "tx" in v);
 }
 
 export async function readRepair(): Promise<Onarim> {

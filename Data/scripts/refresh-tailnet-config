@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tailscale adres değişince state.env güncelle; Caddy ve bağlı konteyner adreslerini yenile.
-# Modül siteleri (ör. Paylaşım'ın Infuse adresi {$TAILSCALE_IPV4}:port) Caddyfile'a içe
+# Ek siteler (ör. Paylaşım'ın Infuse adresi {$TAILSCALE_IPV4}:port) Caddyfile'a içe
 # aktarılır; Caddy yeniden başlayınca onlar da yeni adresle açılır (DD-98, DD-149).
 # DD-239/DD-240: 5 dakikalık döngü yok. Açılışta bir kez, her gece 03:00–04:00 arasında bir kez, Caddy
 # çökünce (OnFailure) ve master-onar (Konsol'un "Denetle ve onar" düğmesi ya da SSH) istediğinde çalışır.
@@ -118,8 +118,9 @@ recover_failed_wireguard() {
     # açılışta kurulamamışsa ağ failed kalır; duvar düzelince burada yeniden açılır.
     # Yalnız etkin (Konsol'dan kapatılmamış) ağlar; Tailscale'i beklemez.
     local unit units
-    # DD-196: paket kurulu değilken WireGuard birimleri aranmaz.
-    grep -qx $'wireguard\tcalisiyor' "${MODULES_FILE:-/etc/master-stack/moduller}" 2>/dev/null || return 0
+    # DD-229/271: ağ kurulmamışsa ya da WireGuard durdurulmuşsa birimler aranmaz.
+    [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]] || return 0
+    [[ -n "${WG_STOPPED_FILE:-}" && ! -e "$WG_STOPPED_FILE" ]] || return 0
     units="$(systemctl list-units --failed --plain --no-legend 'wg-quick@wg*.service' 2>/dev/null |
         awk '{print $1}')" || return 0
     [[ -n "$units" ]] || return 0

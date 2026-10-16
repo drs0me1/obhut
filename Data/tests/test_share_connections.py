@@ -1,7 +1,7 @@
 """Schema-4 connection policy regressions; temporary files, no host changes.
 
-Run with Python 3.13 unittest. Fixtures deliberately contain no legacy policy
-fields and do not depend on the schema-3 network test fixture.
+Run with Python 3.13 unittest. Only schema 4 loads; an older registry fails closed
+(no migration, rebuild ground rule 1) and is never rewritten.
 """
 import copy
 import itertools
@@ -20,7 +20,8 @@ import master_shares as shares
 NOW = 2_000_000_000
 PASSWORD = "connection-fixture-password"
 SCOPES = ("tailscale", "wan")
-LEGACY_FIELDS = {"networks", "permission", "paused", "expires"}
+OLD_FIELDS = {"networks", "permission", "paused", "expires"}
+UNSUPPORTED = "Paylaşım kaydı desteklenmiyor."
 SHARED_FIELDS = ("id", "path", "identity", "name", "username", "salt", "hash", "created")
 
 
@@ -37,14 +38,12 @@ class ShareConnectionTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(prefix="share-connections-")
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name).resolve()
-        for folder in ("srv/alpha", "srv/beta", "run", "profile"):
+        for folder in ("srv/alpha", "srv/beta", "run"):
             (self.root / folder).mkdir(parents=True)
         self.env = {
             "SHARE_STATE_FILE": str(self.root / "registry.json"),
-            "MODULES_FILE": str(self.root / "modules"),
             "RUNTIME_DIR": str(self.root / "run"),
             "SERVER_ROOT": str(self.root / "srv"),
-            "DOWNLOADS_PATH": str(self.root / "srv/downloads"),
             "FILES_PANEL_TRASH": ".cop",
             "SETTINGS_FILE": str(self.root / "settings.json"),
             "SETTINGS_PENDING_FILE": str(self.root / "settings-pending"),
@@ -54,7 +53,6 @@ class ShareConnectionTests(unittest.TestCase):
         }
         state = self.root / "state.env"
         state.write_text("".join(f"{key}={value}\n" for key, value in self.env.items()))
-        Path(self.env["MODULES_FILE"]).write_text("paylasim\tcalisiyor\n")
         self.manager = shares.Manager(state)
         self.clock = self.enterContext(patch.object(shares.time, "time", return_value=NOW))
         self.assigned = self.enterContext(patch.object(shares, "assigned", return_value=True))
@@ -77,7 +75,7 @@ class ShareConnectionTests(unittest.TestCase):
         self.data = {
             "schema": 4, "root": self.env["SERVER_ROOT"],
             "limits": dict(shares.DEFAULT_LIMITS), "items": [self.item],
-            "blocked": [".cop"], "protected": [],
+            "blocked": [".cop"],
         }
         self.write(self.data)
 
@@ -90,67 +88,65 @@ class ShareConnectionTests(unittest.TestCase):
     def save(self, **fields):
         return self.manager.change("save", {"id": self.item["id"], **fields})
 
-    def legacy(self, networks=("tailscale",), paused=False, permission="ro", expires=None):
+    def older(self, schema=3):
+        """A registry as an older Obhut wrote it: one global policy per folder, no connections."""
         data = copy.deepcopy(self.data)
-        data["schema"] = 3
+        data["schema"] = schema
         item = data["items"][0]
         item.pop("connections")
-        item.update(networks=list(networks), paused=paused, permission=permission, expires=expires)
+        item.update(networks=["tailscale"], paused=False, permission="ro", expires=None)
         return data
 
     def assert_canonical(self, data):
         self.assertEqual(data["schema"], 4)
         for item in data["items"]:
-            self.assertFalse(LEGACY_FIELDS.intersection(item))
+            self.assertFalse(OLD_FIELDS.intersection(item))
             self.assertEqual(set(item["connections"]), set(SCOPES))
             for policy in item["connections"].values():
                 self.assertEqual(set(policy), {"enabled", "permission", "expires"})
                 self.assertIs(type(policy["enabled"]), bool)
                 self.assertIn(policy["permission"], ("ro", "rw"))
 
-    def assert_rejected(self, fields, action="save", reload=False):
+    def assert_rejected(self, fields, action="save", message=None):
         before = Path(self.manager.path).read_bytes()
         with self.assertRaises(shares.ShareError) as error:
             self.manager.change(action, {"id": self.item["id"], **fields})
-        if reload:
-            self.assertRegex(str(error.exception).lower(), r"yenile|reload|refresh")
+        if message:
+            self.assertEqual(str(error.exception), message)
         self.assertEqual(Path(self.manager.path).read_bytes(), before)
         self.assertFalse(Path(self.manager.pending).exists())
         self.restart.assert_not_called()
         self.publish.assert_not_called()
 
-    def test_schema3_load_migrates_every_network_pause_permission_and_expiry_in_memory(self):
-        cases = itertools.product((("tailscale",), ("wan",), SCOPES),
-                                  (False, True), ("ro", "rw"), (None, NOW - 1, NOW + 1234))
-        for networks, paused, permission, expires in cases:
-            with self.subTest(networks=networks, paused=paused, permission=permission, expires=expires):
-                legacy = self.legacy(networks, paused, permission, expires)
-                self.write(legacy)
-                before = Path(self.manager.path).read_bytes()
-                loaded = shares.load(self.manager.path)
-                self.assert_canonical(loaded)
-                item = loaded["items"][0]
-                for key in (*SHARED_FIELDS, "changed"):
-                    self.assertEqual(item[key], legacy["items"][0][key])
-                for scope in SCOPES:
-                    self.assertEqual(item["connections"][scope],
-                                     connection(scope in networks and not paused, permission, expires))
-                self.assertIsNot(item["connections"]["tailscale"], item["connections"]["wan"])
-                self.assertEqual(Path(self.manager.path).read_bytes(), before)
+    def test_older_registry_schemas_fail_closed_without_migration_or_rewrite(self):
+        for schema in (2, 3):
+            for data in (self.older(schema), dict(copy.deepcopy(self.data), schema=schema)):
+                with self.subTest(schema=schema, shape="connections" if "connections" in data["items"][0] else "old"):
+                    self.write(data)
+                    before = Path(self.manager.path).read_bytes()
+                    mtime = Path(self.manager.path).stat().st_mtime_ns
+                    for operation in (lambda: shares.load(self.manager.path), self.manager.read,
+                                      self.manager.prepare, self.manager.public,
+                                      lambda: self.save(connections={"tailscale": {"enabled": False}})):
+                        with self.assertRaises(shares.ShareError) as error:
+                            operation()
+                        self.assertEqual(str(error.exception), UNSUPPORTED)
+                    self.assertEqual(Path(self.manager.path).read_bytes(), before)
+                    self.assertEqual(Path(self.manager.path).stat().st_mtime_ns, mtime)
+                    self.assertFalse(Path(self.manager.pending).exists())
+        self.restart.assert_not_called()
+        self.publish.assert_not_called()
 
-    def test_prepare_persists_upgrade_once_without_rotating_account(self):
-        self.write(self.legacy(("wan",), permission="rw", expires=NOW + 90))
-        expected = shares.load(self.manager.path)
-        self.manager.prepare()
-        self.assert_canonical(self.disk())
-        self.assertEqual(self.disk(), expected)
-        self.assertEqual(Path(self.manager.path).stat().st_mode & 0o777, 0o600)
-        self.assertTrue(shares.password_ok(self.disk()["items"][0], PASSWORD))
+    def test_prepare_keeps_a_canonical_registry_untouched(self):
         before = Path(self.manager.path).stat().st_mtime_ns
         with patch.object(shares, "atomic", wraps=shares.atomic) as atomic:
             self.manager.prepare()
             atomic.assert_not_called()
         self.assertEqual(Path(self.manager.path).stat().st_mtime_ns, before)
+        self.assert_canonical(self.disk())
+        self.assertEqual(Path(self.manager.path).stat().st_mode & 0o777, 0o600)
+        self.assertTrue(shares.password_ok(self.disk()["items"][0], PASSWORD))
+        self.restart.assert_not_called()
 
     def test_prepare_creates_empty_schema4_registry(self):
         Path(self.manager.path).unlink()
@@ -160,7 +156,7 @@ class ShareConnectionTests(unittest.TestCase):
 
     def test_invalid_schema_or_connection_shape_fails_closed_without_rewriting(self):
         variants = []
-        for schema in (None, 2, 5, "4", True):
+        for schema in (None, 2, 3, 5, "4", True):
             variants.append(dict(copy.deepcopy(self.data), schema=schema))
         for policies in (None, [], {}, {"tailscale": connection()},
                          {**self.item["connections"], "vpn": connection()}):
@@ -177,20 +173,8 @@ class ShareConnectionTests(unittest.TestCase):
             data = copy.deepcopy(self.data)
             del data["items"][0]["connections"]["tailscale"][field]
             variants.append(data)
-        for field, value in (("permission", "ro"), ("paused", False),
-                             ("networks", ["tailscale"]), ("expires", None)):
-            data = copy.deepcopy(self.data)
-            data["items"][0][field] = value
-            variants.append(data)
-        mixed_legacy = self.legacy()
-        mixed_legacy["items"][0]["connections"] = copy.deepcopy(self.item["connections"])
-        variants.append(mixed_legacy)
         for items in (None, {}, [None]):
             variants.append(dict(copy.deepcopy(self.data), items=items))
-        variants.append(self.legacy(networks=()))
-        missing_expiry = self.legacy()
-        del missing_expiry["items"][0]["expires"]
-        variants.append(missing_expiry)
         for index, data in enumerate(variants):
             with self.subTest(case=index):
                 self.write(data)
@@ -202,7 +186,7 @@ class ShareConnectionTests(unittest.TestCase):
                 self.assertEqual(Path(self.manager.path).read_bytes(), before)
                 self.assertFalse(Path(self.manager.pending).exists())
 
-    def test_legacy_and_mixed_api_writes_require_reload(self):
+    def test_old_top_level_policy_fields_are_invalid_fields(self):
         for field, value in (("networks", ["wan"]), ("permission", "rw"), ("paused", True),
                              ("expires", None), ("days", 7), ("ack_write", True)):
             for mixed in (False, True):
@@ -210,9 +194,9 @@ class ShareConnectionTests(unittest.TestCase):
                     request = {field: value}
                     if mixed:
                         request["connections"] = {"tailscale": {"enabled": False}}
-                    self.assert_rejected(request, reload=True)
+                    self.assert_rejected(request, message="Geçersiz paylaşım alanı.")
         # The pause request itself is gone (DD-267); an unknown action changes nothing.
-        self.assert_rejected({}, action="pause")
+        self.assert_rejected({}, action="pause", message="Geçersiz paylaşım işlemi.")
 
     def test_new_account_defaults_to_tail_ro_seven_days_and_disabled_wan(self):
         self.manager.change("save", {"path": "beta", "username": "new-reader", "password": PASSWORD})
@@ -354,7 +338,9 @@ class ShareConnectionTests(unittest.TestCase):
                                     "wan": connection(True, "ro", None)}
         self.write(self.data)
         before = Path(self.manager.path).read_bytes()
-        row = self.manager.public()["items"][0]
+        public = self.manager.public()
+        self.assertEqual(set(public), {"host", "items", "max", "wan", "tail_enabled", "limits"})
+        row = public["items"][0]
         for scope in SCOPES:
             policy = row["connections"][scope]
             for key, value in self.item["connections"][scope].items():
@@ -395,7 +381,7 @@ class ShareConnectionTests(unittest.TestCase):
             self.assertEqual(policy["url"],
                              f"http://100.64.0.2:61010/s/{self.item['id']}/" if policy["available"] else "")
 
-    def test_legacy_http_wan_activity_uses_only_wan_enable_and_expiry(self):
+    def test_plain_http_wan_activity_uses_only_wan_enable_and_expiry(self):
         for tail_expiry, wan_enabled, wan_expiry, expected in (
             (NOW - 1, True, NOW + 1, True), (None, True, NOW, False),
             (None, False, None, False), (NOW - 1, True, None, True),
@@ -405,20 +391,19 @@ class ShareConnectionTests(unittest.TestCase):
                                             "wan": connection(wan_enabled, "ro", wan_expiry)}
                 self.write(self.data)
                 self.assertEqual(self.manager.wan_active(), expected)
-        Path(self.env["MODULES_FILE"]).write_text("paylasim\tdurduruldu\n")
-        self.assertFalse(self.manager.wan_active())
 
-    def test_pending_schema3_recovery_persists4_before_restart_and_keeps_pending_on_failure(self):
-        legacy = self.legacy(("wan",), paused=True, permission="rw", expires=NOW - 10)
+    def test_pending_recovery_restores_registry_before_restart_and_keeps_pending_on_failure(self):
+        previous = copy.deepcopy(self.data)
+        previous["items"][0]["connections"] = {scope: connection(False, "rw", NOW - 10) for scope in SCOPES}
         for operation in (self.manager.prepare, self.manager.guard):
             with self.subTest(operation=operation.__name__):
                 self.write(self.data)
-                self.write(legacy, self.manager.pending)
+                self.write(previous, self.manager.pending)
                 self.restart.reset_mock()
                 self.publish.reset_mock()
 
                 def restarting():
-                    self.assert_canonical(self.disk())
+                    self.assertEqual(self.disk(), previous)
                     self.assertTrue(Path(self.manager.pending).exists())
                     raise shares.ShareError("fixture restart failure")
 
@@ -430,34 +415,41 @@ class ShareConnectionTests(unittest.TestCase):
                 self.restart.side_effect = None
                 operation()
                 self.assertFalse(Path(self.manager.pending).exists())
-                self.assertEqual(self.disk(), shares.load(self.manager.path))
+                self.assert_canonical(self.disk())
+                self.assertEqual(self.disk(), previous)
                 restored = self.disk()["items"][0]
                 for key in SHARED_FIELDS:
                     self.assertEqual(restored[key], self.item[key])
-                self.assertEqual(restored["connections"], {
-                    scope: connection(False, "rw", NOW - 10) for scope in SCOPES
-                })
 
-    def test_invalid_pending_schema_never_overwrites_valid_registry_or_clears_recovery(self):
-        pending = copy.deepcopy(self.data)
-        pending["schema"] = 2
-        self.write(pending, self.manager.pending)
-        before = Path(self.manager.path).read_bytes()
-        pending_before = Path(self.manager.pending).read_bytes()
-        for operation in (self.manager.prepare, self.manager.guard):
-            with self.subTest(operation=operation.__name__), self.assertRaises(shares.ShareError):
-                operation()
-            self.assertEqual(Path(self.manager.path).read_bytes(), before)
-            self.assertEqual(Path(self.manager.pending).read_bytes(), pending_before)
+    def test_older_pending_schema_is_never_recovered_into_the_registry(self):
+        for schema in (2, 3):
+            for pending in (self.older(schema), dict(copy.deepcopy(self.data), schema=schema)):
+                with self.subTest(schema=schema, shape="connections" if "connections" in pending["items"][0] else "old"):
+                    self.write(self.data)
+                    self.write(pending, self.manager.pending)
+                    before = Path(self.manager.path).read_bytes()
+                    pending_before = Path(self.manager.pending).read_bytes()
+                    for operation in (self.manager.prepare, self.manager.guard):
+                        with self.assertRaises(shares.ShareError) as error:
+                            operation()
+                        self.assertEqual(str(error.exception), UNSUPPORTED)
+                        self.assertEqual(Path(self.manager.path).read_bytes(), before)
+                        self.assertEqual(Path(self.manager.pending).read_bytes(), pending_before)
+                    # Without a registry, the old pending file does not become a new one either.
+                    Path(self.manager.path).unlink()
+                    with self.assertRaises(shares.ShareError):
+                        self.manager.prepare()
+                    self.assertFalse(Path(self.manager.path).exists())
+                    self.assertEqual(Path(self.manager.pending).read_bytes(), pending_before)
+                    Path(self.manager.pending).unlink()
         self.restart.assert_not_called()
         self.publish.assert_not_called()
 
-    def test_schema_migration_does_not_import_custom_runtime_limits(self):
-        for data in (copy.deepcopy(self.data), self.legacy()):
-            with self.subTest(schema=data["schema"]):
-                data["limits"] = {"wan_connections": 10000, "tail_auth_parallel": 10000}
-                self.write(data)
-                self.assertEqual(shares.load(self.manager.path)["limits"], shares.DEFAULT_LIMITS)
+    def test_load_does_not_import_custom_runtime_limits(self):
+        data = copy.deepcopy(self.data)
+        data["limits"] = {"wan_connections": 10000, "tail_auth_parallel": 10000}
+        self.write(data)
+        self.assertEqual(shares.load(self.manager.path)["limits"], shares.DEFAULT_LIMITS)
 
     def test_failed_publication_rolls_back_both_policies_and_credentials(self):
         before = Path(self.manager.path).read_bytes()

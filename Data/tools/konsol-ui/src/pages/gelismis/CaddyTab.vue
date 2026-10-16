@@ -1,5 +1,5 @@
 <!-- Gelişmiş → Caddy: the effective sites as Caddy serves them (GET /api/konsol/gelismis, the settings view's
-     reading of the Caddyfile and the packages' sites): each address with what it is, where its paths lead,
+     reading of the Caddyfile and the generated sites): each address with what it is, where its paths lead,
      whose it is and how it is reached; then the raw files (?ham=1). Changes are made in Erişim. -->
 <script setup lang="ts">
 import { computed } from "vue";
@@ -8,7 +8,6 @@ import StatusPill from "../../components/ui/StatusPill.vue";
 import EmptyState from "../../components/ui/EmptyState.vue";
 import RawFiles from "./RawFiles.vue";
 import { accessRoute } from "../../sections";
-import { live } from "../../live";
 import type { Advanced, CaddyRoute } from "../../api/gelismis";
 
 const props = defineProps<{ data: Advanced }>();
@@ -17,26 +16,21 @@ const entries = computed(() => props.data.caddy.entries);
 const isIpPort = (a: string) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(a);
 const names = computed(() => entries.value.filter((e) => !isIpPort(e.address)).length);
 
-/** A package's name from the application list ("torrent" → "qBittorrent"); otherwise the source itself. */
-function packageName(id: string): string {
-  return live.uygulamalar?.items.find((a) => a.modul === id)?.ad ?? id;
-}
 function owner(source: string): string {
   if (source === "base" || source === "panel-wan") return "Temel";
   if (source === "paylasim-wan") return "Paylaşımlar";
-  return packageName(source.replace(/-wan$/, ""));
+  return source.replace(/-wan$/, "");
 }
-// DD-202: a package's public site is "<id>-wan"; its name comes from the package.
+// A public site's source is "<site>-wan" (DD-191, DD-195).
 function describe(e: Advanced["caddy"]["entries"][number]): string {
   if (e.access === "wan") {
-    const what = e.source === "panel-wan" ? "Sunucu yönetim paneli · internet girişi"
+    return e.source === "panel-wan" ? "Sunucu yönetim paneli · internet girişi"
       : e.source === "paylasim-wan" ? "İnternet üzerinden seçili klasör paylaşımları"
-      : `${packageName(e.source.replace(/-wan$/, ""))} · kendi girişiyle`;
-    return what;
+      : `${e.source.replace(/-wan$/, "")} · kendi girişiyle`;
   }
   const extra = isIpPort(e.address) ? " · ad çözmeyen cihazlar için (ör. Infuse)" : "";
   if (e.source === "base") return (e.address.startsWith("panel.") ? "Sunucu yönetim paneli" : "Temel servis") + extra;
-  return packageName(e.source) + extra;
+  return e.source + extra;
 }
 function target(r: CaddyRoute): string {
   if (r.kind === "proxy") return r.to;
@@ -103,6 +97,6 @@ const fileCount = computed(() => `${props.data.caddy.raw.length} dosya`);
       </p>
       <RouterLink :to="accessRoute('adresler')" class="section-link">Adresleri Erişim'de değiştir</RouterLink>
     </section>
-    <RawFiles :files="data.caddy.raw" :summary="`Caddyfile ve paketlerin siteleri · ${fileCount}`" />
+    <RawFiles :files="data.caddy.raw" :summary="`Caddyfile ve üretilen siteler · ${fileCount}`" />
   </div>
 </template>

@@ -42,25 +42,21 @@ def main():
         root = Path(temp)
         root.chmod(0o755)
         e = settings.env_read(DATA / "config/defaults.env")
-        # DD-203: the torrent site's upstream port is the package's own setting, not a base default.
-        e["TORRENT_UI_PORT"] = settings.env_read(DATA / "magaza/torrent/torrent.env")["TORRENT_UI_PORT"]
         paths = {"SETTINGS_FILE": "etc/settings.json", "SETTINGS_PENDING_FILE": "etc/pending.json",
                  "SETTINGS_DNS_FILE": "dns/konsol.conf", "DNSMASQ_CONF_FILE": "dns/base.conf", "DNSMASQ_CONF_DIR": "dns",
-                 "TORRENT_PROFILE_DIR": "profile", "UNIT_DIR": "units", "MODULES_FILE": "etc/modules",
-                 "MODULES_DIR": "templates", "RUNTIME_DIR": "run", "SERVER_ROOT": "srv", "DOWNLOADS_PATH": "srv/downloads",
-                 "CADDYFILE": "Caddyfile", "CADDY_MODULES_DIR": "caddy-modules",
-                 "KONSOL_AUTH_DIR": "etc/konsol"}
+                 "UNIT_DIR": "units", "RUNTIME_DIR": "run", "SERVER_ROOT": "srv", "DOWNLOADS_PATH": "srv/downloads",
+                 "CADDYFILE": "Caddyfile", "CADDY_MODULES_DIR": "caddy-modules", "SHARE_CADDY_SOURCE": "share/paylasim.caddy",
+                 "KONSOL_AUTH_DIR": "etc/konsol", "WG_NETWORKS_FILE": "etc/networks", "WG_STOPPED_FILE": "etc/.durduruldu"}
         e.update({k: str(root / v) for k, v in paths.items()})
         # DD-180: both private sockets live in the disposable tree, never in the host's /run.
         e.update(PANEL_SOCKET=str(root / "run/api.sock"), CADDY_ADMIN_SOCKET=str(root / "run/caddy-admin.sock"))
         e.update(LOCAL_DOMAIN="ayc", WAN_IPV4="192.0.2.1", TAILSCALE_IPV4="100.64.0.2", CONSOLE_WEB_DIR=str(DATA / "console"),
                  DOWNLOADS_UID="1000", DOWNLOADS_GID="1000", V2_VERSION="test", FILES_PANEL_USER="test", FILES_PANEL_GROUP="test")
-        for folder in ("etc", "dns", "profile", "units", "templates/dosya", "templates/torrent", "caddy-modules", "run", "srv/downloads", "srv/media"):
+        for folder in ("etc", "dns", "share", "units", "caddy-modules", "run", "srv/downloads", "srv/media"):
             (root / folder).mkdir(parents=True, exist_ok=True)
         for p in [root / "srv", *(root / "srv").rglob("*")]:
             os.chown(p, 1000, 1000)
         (root / "etc/konsol").mkdir(mode=0o700)  # DD-194: never the host's account folder
-        (root / "etc/modules").write_text("dosya\tcalisiyor\ntorrent\tcalisiyor\n")
         (root / "etc/networks").write_text("")
         state = root / "state.env"
         state.write_text("".join(k + '="' + v + '"\n' for k, v in e.items()))
@@ -69,13 +65,12 @@ def main():
             for k, v in e.items():
                 text = text.replace("__" + k + "__", v)
             return text
+        # The built-in WebDAV's name and site, as the installer places them.
         for target, source in {
             "Caddyfile": "templates/Caddyfile", "dns/base.conf": "templates/dnsmasq.conf",
-            "dns/modul-torrent.conf": "magaza/torrent/dnsmasq.conf",
-            "templates/torrent/dnsmasq.conf": "magaza/torrent/dnsmasq.conf",
-            "caddy-modules/torrent.caddy": "magaza/torrent/torrent.caddy",
-            "templates/torrent/torrent.caddy": "magaza/torrent/torrent.caddy",
-            "templates/dosya/master-files-panel.service": "systemd/master-files-panel.service",
+            "dns/modul-paylasim.conf": "templates/paylasim-dnsmasq.conf",
+            "caddy-modules/paylasim.caddy": "templates/paylasim.caddy",
+            "share/paylasim.caddy": "templates/paylasim.caddy",
             "units/master-files-panel.service": "systemd/master-files-panel.service",
         }.items():
             (root / target).write_text(render(source))
@@ -116,7 +111,7 @@ def main():
                 ready = lambda: http("panel." + domain, "/api/state", e["FILES_PANEL_PORT"]) == "200"
             else:
                 args = ["python3", str(DATA / "panel/master-panel"), "serve", "--listen", "unix:" + e["PANEL_SOCKET"],
-                        "--state", str(state), "--master-modul", "/bin/false"]
+                        "--state", str(state)]
                 ready = lambda: http("panel." + domain, "/api/konsol/kaynaklar", e["PANEL_SOCKET"]) == "200"
             processes[name] = subprocess.Popen(args, env=child_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_for(ready)
@@ -142,6 +137,7 @@ def main():
         def proof(domain, old):
             assert dig("panel." + domain) == e["TAILSCALE_IPV4"]
             assert dig("panel." + old) != e["TAILSCALE_IPV4"]
+            assert dig("paylas." + domain) == e["TAILSCALE_IPV4"]
             assert dig("health." + domain) == ""
             # DD-194: the sign-in page is open; Konsol itself asks the root backend through
             # forward_auth, which refuses this host-local caller (DD-180) under the new name.
@@ -181,7 +177,9 @@ def main():
                             m.rollback()
                             proof("ayc", "ev")
                 assert settings.saved_domain(m.config_path) == "ev"
-                assert "--domain=ev " in (root / "templates/dosya/master-files-panel.service").read_text()
+                assert "--domain=ev " in (root / "units/master-files-panel.service").read_text()
+                # WebDAV's site source follows too: the next publication renders it under the new name.
+                assert "http://paylas.ev," in (root / "share/paylasim.caddy").read_text()
                 assert not m.pending()
             print("PASS real Caddy reload, dnsmasq names, both API Host/header gates, disabled health, domain rollback/confirm, saved-domain")
         finally:

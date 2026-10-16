@@ -12,9 +12,9 @@ const NOW = 1791845000;
 const DAY = 86400;
 const HEX = (c) => c.repeat(32);
 const ucell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
-const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: ucell("yok"), internet: ucell("yok"),
+const app = (o) => ({ tur: "konteyner", durum: "calisiyor", tailscale: ucell("yok"), internet: ucell("yok"),
   kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
-  metinler: null, hesap: false, aciklama: "", ...o });
+  aciklama: "", ...o });
 
 const CHECKS = [
   { id: "firewall", name: "Güvenlik duvarı", status: "ok", detail: "Kurallar beklendiği gibi" },
@@ -35,23 +35,20 @@ const update = (o = {}) => ({ kurulu: "2026.08.06-v2-248", kurulu_surum: "1.1.0"
 const LOG72 = Array.from({ length: 80 }, (_, i) => `2026-10-13T0${Math.floor(i / 20)}:${String(i % 60).padStart(2, "0")}:00+03:00 master-onar[9${i}]: adım ${i + 1} tamam`).join("\n") + "\n";
 const LOG7 = "2026-10-07T03:10:00+03:00 refresh-tailnet-config[401]: adres değişmedi\n2026-10-08T03:12:00+03:00 master-onar[402]: güvenlik duvarı denetlendi\n";
 
+// WireGuard's lines carry master_wireguard's details ("wg0/telefon", "wg0/telefon 25", "wg0 açıldı", …).
 const AUDIT = [
   { at: NOW - 60, source: "panel", user: "konsol", client: "100.64.0.5", action: "onarim", detail: "onar", ok: true },
-  { at: NOW - 600, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard:ekle", detail: "wg-telefon", ok: true },
-  { at: NOW - 900, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard:peer-durum", detail: "telefon kapalı", ok: true },
-  { at: NOW - 1200, source: "panel", user: "konsol", client: "100.64.0.5", action: "modul-kur", detail: "torrent", ok: true },
+  { at: NOW - 300, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-durdur", detail: "WireGuard", ok: true },
+  { at: NOW - 600, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-ekle", detail: "wg0/telefon", ok: true },
+  { at: NOW - 750, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-keepalive", detail: "wg0/telefon 25", ok: true },
+  { at: NOW - 900, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-peer-durum", detail: "wg0/telefon kapatıldı", ok: true },
+  { at: NOW - 1050, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-ag-durum", detail: "wg0 açıldı", ok: true },
   { at: NOW - 1500, source: "panel", user: "konsol", client: "100.64.0.5", action: "konteyner-image-pull", detail: "docker.io/library/redis:7.4", ok: true },
   { at: NOW - 1800, source: "dosya", user: "dosyalar", client: "100.64.0.6", action: "klasor", detail: "Filmler", ok: true },
   { at: NOW - 2100, source: "panel", user: "konsol", client: "203.0.113.50", action: "parola-degis", detail: "-", ok: false },
   { at: NOW - 2400, source: "panel", user: "konsol", client: "100.64.0.5", action: "ayar-apply", detail: "ayarlar", ok: true },
   { at: NOW - 2700, source: "panel", user: "konsol", client: "100.64.0.5", action: "yeniden-baslat", detail: "5 sn", ok: true },
-  { at: NOW - 2 * DAY, source: "panel", user: "konsol", client: "100.64.0.5", action: "torrent:ayar", detail: "kullanıcı adı", ok: true },
-];
-const MODULES = [
-  { id: "wireguard", installed: true, state: "calisiyor", live: "", busy: false, progress: null, durdurulabilir: true,
-    konsol: { ad: "WireGuard", gunluk: { ekle: "{detail} eklendi", "peer-durum": "{0} {1}" } } },
-  { id: "torrent", installed: true, state: "calisiyor", live: "", busy: false, progress: null, durdurulabilir: true,
-    konsol: { ad: "qBittorrent", gunluk: { ayar: "qBittorrent ayarları kaydedildi ({detail})" } } },
+  { at: NOW - 2 * DAY, source: "panel", user: "konsol", client: "100.64.0.5", action: "paylasim-save", detail: "Filmler", ok: true },
 ];
 
 const CADDYFILE = "{\n\tadmin off\n}\nhttp://panel.ev {\n\treverse_proxy 127.0.0.1:62000\n}\n";
@@ -61,30 +58,33 @@ const ADVANCED = {
     entries: [
       { address: "panel.ev", routes: [{ path: "/api/*", kind: "proxy", to: "unix//run/master-panel/api.sock" }, { path: "", kind: "files", to: "" }], source: "base", access: "tailscale", scheme: "http" },
       { address: "100.64.0.2:61010", routes: [{ path: "", kind: "proxy", to: "127.0.0.1:61011" }], source: "base", access: "tailscale", scheme: "http" },
-      { address: "torrent.ev", routes: [{ path: "", kind: "proxy", to: "127.0.0.1:62947" }], source: "torrent", access: "tailscale", scheme: "http" },
-      { address: "torrent.example.org", routes: [{ path: "", kind: "proxy", to: "127.0.0.1:62947" }], source: "torrent-wan", access: "wan", scheme: "https" },
+      { address: "paylas.ev", routes: [{ path: "", kind: "proxy", to: "127.0.0.1:61010" }], source: "paylasim", access: "tailscale", scheme: "http" },
+      { address: "notlar.ev", routes: [{ path: "", kind: "proxy", to: "127.0.0.1:62100" }], source: "elle-notlar", access: "tailscale", scheme: "http" },
+      { address: "notlar.example.org", routes: [{ path: "", kind: "proxy", to: "127.0.0.1:62100" }], source: "elle-notlar-wan", access: "wan", scheme: "https" },
+      { address: "konsol.example.org", routes: [{ path: "/api/*", kind: "proxy", to: "unix//run/master-panel/api.sock" }, { path: "", kind: "files", to: "" }], source: "panel-wan", access: "wan", scheme: "https" },
       { address: "203.0.113.10:61010", routes: [{ path: "", kind: "respond", to: "yalnız WebDAV" }], source: "paylasim-wan", access: "wan", scheme: "http" },
     ],
-    raw: [{ file: "/etc/caddy/Caddyfile", text: CADDYFILE }, { file: "/etc/caddy/moduller/torrent.caddy", text: "http://torrent.ev {\n\treverse_proxy 127.0.0.1:62947\n}\n" }],
+    raw: [{ file: "/etc/caddy/Caddyfile", text: CADDYFILE }, { file: "/etc/caddy/moduller/elle-notlar.caddy", text: "http://notlar.ev {\n\treverse_proxy 127.0.0.1:62100\n}\n" }],
   },
   dnsmasq: {
     listen: ["tailscale0", "lo"], domains: ["ev"], dhcp: false,
     names: [{ name: "panel.ev", iface: "tailscale0", family: 4, address: "100.64.0.2", source: "base" },
-      { name: "torrent.ev", iface: "tailscale0", family: null, address: "100.64.0.2, fd7a:115c:a1e0::2", source: "torrent" },
+      { name: "notlar.ev", iface: "tailscale0", family: null, address: "100.64.0.2, fd7a:115c:a1e0::2", source: "elle" },
       { name: "yazici.ev", iface: "", family: 4, address: "192.0.2.40", source: "base" }],
-    raw: [{ file: "/etc/dnsmasq.d/master-stack.conf", text: "interface=tailscale0\nlocal=/ev/\ninterface-name=panel.ev,tailscale0/4\n" }],
+    raw: [{ file: "/etc/dnsmasq.d/master-stack.conf", text: "interface=tailscale0\nlocal=/ev/\ninterface-name=panel.ev,tailscale0/4\n" },
+      { file: "/etc/dnsmasq.d/modul-elle.conf", text: "interface-name=notlar.ev,tailscale0\n" }],
   },
 };
 const ID = (c) => c.repeat(64);
 const resources = (o = {}) => ({
   read_at: NOW, runtime: { version: "5.4.2", ok: true, error: "" }, containers: [],
   images: [
-    { id: ID("a"), name: "lscr.io/linuxserver/qbittorrent@sha256:" + ID("1"), size: 214958080, created: NOW - 30 * DAY, used_by: ["torrent"], managed: false, pinned: true },
-    { id: ID("b"), name: "docker.io/library/nginx:1.27", size: 196083712, created: NOW - 10 * DAY, used_by: ["notlar"], managed: true, pinned: false },
-    { id: ID("c"), name: "docker.io/library/redis:7.4", size: 41943040, created: NOW - 2 * DAY, used_by: [], managed: true, pinned: false },
+    { id: ID("a"), name: "quay.io/example/yedekci@sha256:" + ID("1"), size: 214958080, created: NOW - 30 * DAY, used_by: [], managed: false },
+    { id: ID("b"), name: "docker.io/library/nginx:1.27", size: 196083712, created: NOW - 10 * DAY, used_by: ["notlar"], managed: true },
+    { id: ID("c"), name: "docker.io/library/redis:7.4", size: 41943040, created: NOW - 2 * DAY, used_by: [], managed: true },
   ],
   volumes: [
-    { name: "torrent-config", driver: "local", size: null, used_by: ["torrent"], managed: false },
+    { name: "notlar-veri", driver: "local", size: null, used_by: ["notlar"], managed: false },
     { name: "ornek-veri", driver: "local", size: null, used_by: [], managed: true },
     { name: "eski", driver: "local", size: null, used_by: [], managed: false },
   ],
@@ -106,14 +106,12 @@ const data = {
   etkinlik: { items: [] },
   erisim: { read_at: NOW, alan: "ev", hizmetler: [], uyarilar: [], hatalar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "", surum: "", adresler: [], cikis_dugumu: null },
-      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, not: "", aglar: [] }, sertifikalar: [] } },
-  uygulamalar: { read_at: NOW, hatalar: [], katalog: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 3, kullanilmayan_imaj: 1, birim: 3, ag: 3 }, items: [
-    app({ id: "paket:torrent", ad: "qBittorrent", tur: "paket", modul: "torrent", konteyner: "torrent", simge: "download" }),
-    app({ id: "paket:wireguard", ad: "WireGuard", tur: "paket", modul: "wireguard", simge: "shield" })] },
+      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
+  uygulamalar: { read_at: NOW, hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 3, kullanilmayan_imaj: 1, birim: 3, ag: 3 }, items: [
+    app({ id: "konteyner:notlar", ad: "Notlar", konteyner: "notlar" })] },
   onarim: repairState(),
-  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048, apps: [] },
+  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048 },
   islemler: { items: AUDIT },
-  moduller: { items: MODULES },
   gelismis: ADVANCED,
   "konteynerler/liste": resources(),
 };
@@ -503,25 +501,31 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     await page.getByRole("radio", { name: "Sistem" }).click();
     assert.equal(await page.evaluate(() => document.documentElement.hasAttribute("data-theme")), false);
 
-    // ================= Günlük: newest first, in words (the packages' templates too), kinds and search
+    // ================= Günlük: newest first, in words (WireGuard's lines from their own table), kinds and search
     await page.goto(url("#/sistem?sekme=gunluk"));
     const audit = page.getByTestId("audit");
     await audit.locator("tbody tr").first().waitFor();
     assert.deepEqual(await audit.getByTestId("audit-line").allInnerTexts(), [
-      "Denetim ve onarım başlatıldı", "wg-telefon eklendi", "telefon kapalı", "qBittorrent kurulumu başlatıldı",
-      "İmaj indirme istendi: docker.io/library/redis:7.4", "Yeni klasör: Filmler", "Konsol parolası değiştirildi — başarısız", "Ayarlar uygulandı",
-      "Sunucunun yeniden başlatılması istendi (5 sn)", "qBittorrent ayarları kaydedildi (kullanıcı adı)"]);
+      "Denetim ve onarım başlatıldı", "WireGuard durduruldu", "wg0/telefon eklendi", "wg0/telefon için keepalive 25 sn", "wg0/telefon kapatıldı",
+      "wg0 ağı açıldı", "İmaj indirme istendi: docker.io/library/redis:7.4", "Yeni klasör: Filmler", "Konsol parolası değiştirildi — başarısız",
+      "Ayarlar uygulandı", "Sunucunun yeniden başlatılması istendi (5 sn)", "Klasör paylaşımı kaydedildi"]);
     assert.deepEqual(await audit.locator('td[data-label="Tür"]').allInnerTexts(),
-      ["Konsol", "WireGuard", "WireGuard", "Uygulamalar", "Uygulamalar", "Dosyalar", "Konsol", "Ayarlar", "Konsol", "qBittorrent"]);
+      ["Konsol", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "Uygulamalar", "Dosyalar", "Konsol", "Ayarlar", "Konsol", "Paylaşımlar"]);
+    assert.deepEqual(await audit.locator('tr[data-tur="wireguard"]').evaluateAll((rows) => rows.map((r) => r.dataset.eylem)),
+      ["wireguard-durdur", "wireguard-ekle", "wireguard-keepalive", "wireguard-peer-durum", "wireguard-ag-durum"]);
     const failed = audit.locator('tr[data-eylem="parola-degis"]');
     assert.match(await failed.getAttribute("class"), /audit-failed/);
     assert.equal(await failed.locator('td[data-label="Kim"]').innerText(), "konsol\n203.0.113.50");
     assert.equal(await audit.locator("tbody tr").first().locator("time").getAttribute("datetime"), new Date((NOW - 60) * 1000).toISOString());
     const chips = audit.getByRole("group", { name: "Türe göre süz" }).locator(".filter-chip");
-    assert.deepEqual((await chips.allInnerTexts()).map((t) => t.replace(/\s+/g, " ")), ["Tümü 10", "Konsol 3", "Ayarlar 1", "Dosyalar 1", "Uygulamalar 2", "WireGuard 2", "qBittorrent 1"]);
+    // The fixed kinds in their own order, whatever order the lines come in.
+    assert.deepEqual((await chips.allInnerTexts()).map((t) => t.replace(/\s+/g, " ")),
+      ["Tümü 12", "Konsol 3", "Ayarlar 1", "Paylaşımlar 1", "WireGuard 5", "Dosyalar 1", "Uygulamalar 1"]);
     await chips.filter({ hasText: "WireGuard" }).click();
     await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("tur") === "wireguard");
-    assert.deepEqual(await audit.getByTestId("audit-line").allInnerTexts(), ["wg-telefon eklendi", "telefon kapalı"]);
+    assert.equal(await chips.filter({ hasText: "WireGuard" }).getAttribute("aria-pressed"), "true");
+    assert.deepEqual(await audit.getByTestId("audit-line").allInnerTexts(),
+      ["WireGuard durduruldu", "wg0/telefon eklendi", "wg0/telefon için keepalive 25 sn", "wg0/telefon kapatıldı", "wg0 ağı açıldı"]);
     await chips.filter({ hasText: "Tümü" }).click();
     const search = audit.getByTestId("audit-search");
     await search.fill("İMAJ");
@@ -538,17 +542,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.equal(await chips.filter({ hasText: "Dosyalar" }).getAttribute("aria-pressed"), "true");
     await audit.getByRole("button", { name: "Süzgeci temizle" }).click();
     await page.waitForURL((u) => u.hash === "#/sistem?sekme=gunluk");
-    assert.equal(await audit.getByTestId("audit-line").count(), 10);
-    await page.context().close();
-    // Without the packages' texts the lines still read (the id and the verb).
-    expectedFailures = ["/api/konsol/moduller"];
-    h.status["/api/konsol/moduller"] = 503;
-    page = await newPage();
-    await page.goto(url("#/sistem?sekme=gunluk"));
-    await page.locator('tr[data-eylem="wireguard:ekle"] [data-testid="audit-line"]').filter({ hasText: "wireguard: ekle wg-telefon" }).waitFor();
-    assert.equal(await page.locator('tr[data-eylem="wireguard:ekle"] td[data-label="Tür"]').innerText(), "wireguard");
-    delete h.status["/api/konsol/moduller"];
-    expectedFailures = [];
+    assert.equal(await audit.getByTestId("audit-line").count(), 12);
     await page.context().close();
 
     // ================= the internet channel: locks, the account with the current password, sign-out
@@ -628,15 +622,21 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.deepEqual(await page.getByRole("tablist", { name: "Gelişmiş bölümleri" }).getByRole("tab").allInnerTexts(), ["Caddy", "DNS", "Güvenlik duvarı", "Podman"]);
     const caddy = page.getByTestId("caddy");
     await caddy.locator("tbody tr").first().waitFor();
-    assert.equal(await page.getByTestId("caddy-count").innerText(), "Caddy · 3 ad, 2 IP adresi");
+    assert.equal(await page.getByTestId("caddy-count").innerText(), "Caddy · 5 ad, 2 IP adresi");
     const site = (address) => caddy.locator(`tr[data-adres="${address}"]`);
     assert.equal(await site("panel.ev").locator(".cell-sub").innerText(), "Sunucu yönetim paneli");
     assert.deepEqual(await site("panel.ev").locator(".route-list li").allInnerTexts().then((l) => l.map((x) => x.replace(/\s+/g, " "))), ["/api/* → unix//run/master-panel/api.sock", "diğer → sayfa dosyaları"]);
     assert.equal(await site("100.64.0.2:61010").locator(".cell-sub").innerText(), "Temel servis · ad çözmeyen cihazlar için (ör. Infuse)");
-    assert.equal(await site("torrent.ev").locator('td[data-label="Kaynak"]').innerText(), "qBittorrent", "a package's name from the application list");
-    assert.equal(await site("torrent.example.org").locator(".cell-sub").innerText(), "qBittorrent · kendi girişiyle");
-    assert.equal(await site("torrent.example.org").locator('td[data-label="Erişim"]').innerText(), "İnternet");
-    assert.equal(await site("torrent.example.org").locator('td[data-label="Şema"]').innerText(), "HTTPS");
+    // Owners: the base's sites (the panel's public one too) are Temel, the shares' public site Paylaşımlar,
+    // every other site its source as it is (no "-wan"), even when an application has a similar name.
+    assert.deepEqual(await caddy.locator('tbody td[data-label="Kaynak"]').allInnerTexts(),
+      ["Temel", "Temel", "paylasim", "elle-notlar", "elle-notlar", "Temel", "Paylaşımlar"]);
+    assert.equal(await site("paylas.ev").locator(".cell-sub").innerText(), "paylasim");
+    assert.equal(await site("notlar.ev").locator(".cell-sub").innerText(), "elle-notlar");
+    assert.equal(await site("notlar.example.org").locator(".cell-sub").innerText(), "elle-notlar · kendi girişiyle");
+    assert.equal(await site("notlar.example.org").locator('td[data-label="Erişim"]').innerText(), "İnternet");
+    assert.equal(await site("notlar.example.org").locator('td[data-label="Şema"]').innerText(), "HTTPS");
+    assert.equal(await site("konsol.example.org").locator(".cell-sub").innerText(), "Sunucu yönetim paneli · internet girişi");
     assert.equal(await site("203.0.113.10:61010").locator('td[data-label="Şema"]').innerText(), "HTTP · şifresiz");
     assert.equal(await site("203.0.113.10:61010").locator('td[data-label="Nereye gider"]').innerText(), "sabit yanıt “yalnız WebDAV”");
     assert.equal(await site("203.0.113.10:61010").locator(".cell-sub").innerText(), "İnternet üzerinden seçili klasör paylaşımları");
@@ -644,9 +644,10 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     // The raw files: closed until asked (in the address), each with its own copy button.
     const raw = caddy.getByTestId("raw");
     assert.equal(await raw.evaluate((d) => d.open), false);
+    assert.equal(await raw.locator(".raw-count").innerText(), "· Caddyfile ve üretilen siteler · 2 dosya");
     await raw.locator("summary").click();
     await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("ham") === "1");
-    assert.deepEqual(await raw.locator(".raw-path").allInnerTexts(), ["/etc/caddy/Caddyfile", "/etc/caddy/moduller/torrent.caddy"]);
+    assert.deepEqual(await raw.locator(".raw-path").allInnerTexts(), ["/etc/caddy/Caddyfile", "/etc/caddy/moduller/elle-notlar.caddy"]);
     assert.equal(await raw.locator('[data-dosya="Caddyfile"] pre').innerText(), CADDYFILE.trim());
     await raw.getByRole("button", { name: "Caddyfile kopyala" }).click();
     await raw.getByRole("status").filter({ hasText: "Caddyfile kopyalandı." }).waitFor();
@@ -659,7 +660,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     h.status["/api/konsol/gelismis"] = 503;
     await page.getByTestId("advanced-refresh").click();
     await page.getByTestId("advanced-error").filter({ hasText: "fixture" }).waitFor();
-    assert(await caddy.locator("tbody tr").count() === 5, "the last view stays");
+    assert(await caddy.locator("tbody tr").count() === 7, "the last view stays");
     delete h.status["/api/konsol/gelismis"];
     expectedFailures = [];
     // DNS shares the same read.
@@ -669,11 +670,12 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     await dns.waitFor();
     assert.equal(gets("gelismis").length, advancedReads, "one read for Caddy and DNS");
     assert.deepEqual(await page.getByTestId("dns-facts").locator("dd").allInnerTexts(), ["tailscale0, lo", "ev", "Kapalı"]);
-    assert.deepEqual(await dns.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.ad)), ["panel.ev", "torrent.ev", "yazici.ev"]);
-    assert.deepEqual(await dns.locator('tr[data-ad="torrent.ev"] td').allInnerTexts(), ["100.64.0.2, fd7a:115c:a1e0::2", "IPv4 + IPv6", "qBittorrent"]);
+    assert.deepEqual(await dns.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.ad)), ["panel.ev", "notlar.ev", "yazici.ev"]);
+    assert.deepEqual(await dns.locator('tbody td[data-label="Kaynak"]').allInnerTexts(), ["Temel", "elle", "Temel"], "base is Temel, any other source as it is");
+    assert.deepEqual(await dns.locator('tr[data-ad="notlar.ev"] td').allInnerTexts(), ["100.64.0.2, fd7a:115c:a1e0::2", "IPv4 + IPv6", "elle"]);
     assert.equal(await dns.getByRole("link", { name: "Yerel adları Erişim'de değiştir" }).getAttribute("href"), "#/erisim?sekme=adresler");
     assert.equal(await dns.getByTestId("raw").evaluate((d) => d.open), true, "?ham=1 stays in the address");
-    assert.equal(await dns.locator(".raw-path").innerText(), "/etc/dnsmasq.d/master-stack.conf");
+    assert.deepEqual(await dns.locator(".raw-path").allInnerTexts(), ["/etc/dnsmasq.d/master-stack.conf", "/etc/dnsmasq.d/modul-elle.conf"]);
     // The firewall's technical rules are Erişim's: a way there, no copy.
     await page.getByRole("tab", { name: "Güvenlik duvarı" }).click();
     const fw = page.getByTestId("advanced-firewall");
@@ -692,10 +694,10 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.deepEqual(await resTabs.allInnerTexts(), ["İmajlar\n3", "Birimler\n3", "Ağlar\n3"]);
     const images = podman.getByTestId("images");
     const image = (name) => images.locator(`tr[data-imaj="${name}"]`);
-    const pinned = image("lscr.io/linuxserver/qbittorrent@sha256:" + ID("1"));
-    assert.equal(await pinned.locator(".pill").innerText(), "Paket imajı");
-    assert(await pinned.getByRole("button", { name: /imajını sil$/ }).isDisabled(), "a package's image stays");
-    assert.equal(await pinned.locator(".col-main .cell-note").innerText(), "Paket imajı: App Store paketi sabitler; güncellemesi kurulumla gelir.");
+    assert.equal(await images.locator(".resource-head .meter-note").innerText(), "Yalnız Konsol'un yönettiği ve hiçbir konteynerin kullanmadığı imajlar silinir.");
+    const external = image("quay.io/example/yedekci@sha256:" + ID("1"));
+    assert(await external.getByRole("button", { name: /imajını sil$/ }).isDisabled(), "an image Konsol does not manage stays");
+    assert.equal(await external.locator(".col-main .cell-note").innerText(), "Konsol bu imajı yönetmiyor.");
     assert(await image("docker.io/library/nginx:1.27").getByRole("button").isDisabled(), "an image in use stays");
     assert.equal(await image("docker.io/library/nginx:1.27").locator(".col-main .cell-note").innerText(), "Kullanımda: notlar. Önce konteyneri kaldırın.");
     const redis = image("docker.io/library/redis:7.4");
@@ -727,7 +729,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     await shot(page, "1440-light-imaj-cekiliyor.png");
     const listReads = gets("konteynerler/liste").length;
     data["konteynerler/liste"] = resources();
-    data["konteynerler/liste"].images.push({ id: ID("9"), name: "docker.io/library/redis:7.4-alpine", size: 31457280, created: NOW, used_by: [], managed: true, pinned: false });
+    data["konteynerler/liste"].images.push({ id: ID("9"), name: "docker.io/library/redis:7.4-alpine", size: 31457280, created: NOW, used_by: [], managed: true });
     push("islemler", { items: [job({ id: pullId, durum: "tamam", bitis: NOW + 10 })] });
     await sheet.waitFor({ state: "detached" });
     await page.getByTestId("podman-done").filter({ hasText: "docker.io/library/redis:7.4-alpine: imaj çekildi." }).waitFor();
@@ -765,7 +767,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     const volumes = podman.getByTestId("volumes");
     const volume = (name) => volumes.locator(`tr[data-birim="${name}"]`);
     assert.deepEqual(await volumes.locator("tbody th .pill").allInnerTexts(), ["Dışarıda", "Konsol", "Dışarıda"]);
-    assert(await volume("torrent-config").getByRole("button").isDisabled(), "a volume in use stays");
+    assert(await volume("notlar-veri").getByRole("button").isDisabled(), "a volume in use stays");
     await podman.getByTestId("volume-create").click();
     sheet = page.getByRole("dialog", { name: "Yeni birim" });
     await sheet.getByLabel("Birim adı").fill("Ornek!");
@@ -910,10 +912,11 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
       "stage through islemler, an earlier run ignored, the reload after success, a failed run without reload, a failed check), Hesap (create " +
       "on the tailnet with master_auth's rules, a refusal, the tailnet password without the current one, the internet password with it, a " +
       "wrong current password shown on the form, an ended session's 401 to sign-in, the leave guard), Sunucu (facts, the reboot's typed word, " +
-      "a refusal, the wait, the server going away and coming back, the reload), Görünüm, Günlük (newest first, the packages' templates, " +
-      "kinds, Turkish search, the address, a failed package read), the internet channel's locks and sign-out (sidebar and phone menu), " +
-      "Gelişmiş (Caddy's sites with routes, owners, access and scheme, raw files in the address with copy, Yenile, a failed read; DNS from " +
-      "the same read; the firewall's way to Erişim; Podman's images, volumes and networks: the blocks, İmaj çek with the reference check, a " +
+      "a refusal, the wait, the server going away and coming back, the reload), Görünüm, Günlük (newest first, WireGuard's lines in " +
+      "their own words, the fixed kinds in their order, Turkish search, the address), the internet channel's locks and sign-out (sidebar " +
+      "and phone menu), Gelişmiş (Caddy's sites with routes, owners as their sources, access and scheme, raw files in the address with " +
+      "copy, Yenile, a failed read; DNS from the same read with raw sources; the firewall's way to Erişim; Podman's images, volumes and " +
+      "networks: the blocks, İmaj çek with the reference check, a " +
       "refusal, the job's steps and end, a failed job, removal with the typed word, creating volumes and networks, a closed sheet's job, an " +
       "unreadable collection, a runtime that does not answer), Tüm denetimler, the palette, keyboard and focus, 1440/390/320 in light and " +
       "dark. Screenshots: " + h.shots);

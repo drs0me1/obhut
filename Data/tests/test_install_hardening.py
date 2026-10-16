@@ -46,9 +46,8 @@ class PermissionRepairTests(unittest.TestCase):
         path.chmod(mode)
         return path
 
-    def repair(self, **kwargs):
-        return permissions.repair(self.root, self.uid, self.gid,
-                                  kwargs.get("excluded", (".arsiv",)))
+    def repair(self):
+        return permissions.repair(self.root, self.uid, self.gid)
 
     def test_regular_files_directories_and_counts_are_selective(self):
         folder = self.root / "folder"
@@ -116,32 +115,6 @@ class PermissionRepairTests(unittest.TestCase):
             finally:
                 sock.close()
 
-    def test_top_level_workspaces_are_excluded_but_similar_and_nested_names_are_data(self):
-        protected = []
-        for name in (".arsiv",):
-            folder = self.root / name
-            (folder / "work").mkdir(parents=True, mode=0o700)
-            folder.chmod(0o700)
-            protected.extend((folder, folder / "work", self.file(folder / "work/private")))
-        # DD-269: .pay is no longer reserved; it is ordinary data like any other folder.
-        for name in (".arsiv-copy", ".pay", ".cop", "media"):
-            (self.root / name).mkdir(mode=0o700)
-        nested = self.root / "media/.arsiv"
-        nested.mkdir(mode=0o700)
-        self.file(nested / "ordinary")
-        before = [metadata(p) for p in protected]
-        self.assertEqual(self.repair(), 6)
-        self.assertEqual([metadata(p) for p in protected], before)
-        self.assertEqual(stat.S_IMODE(nested.stat().st_mode), 0o775)
-        self.assertEqual(self.repair(), 0)
-
-    def test_configured_workspace_names_are_honored(self):
-        for name in ("private-archives", "retired-shares", ".arsiv", ".pay"):
-            (self.root / name).mkdir(mode=0o700)
-        self.assertEqual(self.repair(excluded=("private-archives", "retired-shares")), 2)
-        for name in ("private-archives", "retired-shares"):
-            self.assertEqual(stat.S_IMODE((self.root / name).stat().st_mode), 0o700)
-
     def test_root_and_parent_symlinks_fail_before_any_repair(self):
         direct = self.base / "root-link"
         direct.symlink_to(self.root, target_is_directory=True)
@@ -150,7 +123,7 @@ class PermissionRepairTests(unittest.TestCase):
         before = metadata(self.target), metadata(self.root)
         for path in (direct, parent / "data", self.root / "../outside", Path("relative")):
             with self.subTest(path=path), self.assertRaises((OSError, ValueError)):
-                permissions.repair(path, self.uid, self.gid, ())
+                permissions.repair(path, self.uid, self.gid)
         self.assertEqual((metadata(self.target), metadata(self.root)), before)
 
     def test_cli_reports_unsafe_root_without_success_count(self):

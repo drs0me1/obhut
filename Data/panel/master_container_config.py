@@ -75,17 +75,8 @@ def stop_signal_of(value):
     return value
 
 
-def package_names(env):
-    result = {}
-    for mid, manifest in settings.read_manifests(env).items():
-        quadlet = manifest.get('PAKET_KONTEYNER', '')
-        if quadlet.endswith('.container'):
-            result[quadlet[:-10]] = mid
-    return result
-
-
-def reserved(name, env):
-    return name.startswith(('konsol-', 'master-', 'libpod-')) or name in package_names(env)
+def reserved(name):
+    return name.startswith(('konsol-', 'master-', 'libpod-'))
 
 
 def text(value, limit, message):
@@ -184,18 +175,7 @@ class Store:
 
 
 def protected_paths(env):
-    root = Path(env['SERVER_ROOT'])
-    paths = [root / env.get('FILES_PANEL_TRASH', '.cop')]
-    for mid, manifest in settings.read_manifests(env).items():
-        paths.extend(Path(p) for p in manifest.get('PAKET_KLASORLER', '').split())
-        report = manifest.get('PAKET_KLASOR_MODUL')
-        if report:
-            module = settings.load_package_module(env, mid, report, 'yazilan', 'Konteyner korunan klasör bildirimi')
-            declared = module.yazilan(dict(env))
-            require(isinstance(declared, list) and all(isinstance(p, str) and p.startswith('/') for p in declared),
-                    'Uygulamanın korunan klasörleri okunamadı.', 503)
-            paths.extend(Path(p) for p in declared)
-    return paths
+    return [Path(env['SERVER_ROOT']) / env['FILES_PANEL_TRASH']]
 
 
 def bind_path(value, env):
@@ -208,14 +188,14 @@ def bind_path(value, env):
             'Yalnız kullanıcı alanının gizli olmayan alt klasörleri bağlanabilir.')
     for blocked in protected_paths(env):
         require(path != blocked and path not in blocked.parents and blocked not in path.parents,
-                'Uygulama, paylaşım veya çöp klasörü konteynere bağlanamaz.')
+                'Çöp klasörü konteynere bağlanamaz.')
     return str(path)
 
 
 def validate(value, env, previous=None):
     require(isinstance(value, dict) and not (set(value) - FIELDS), 'Konteyner ayar alanları geçersiz.')
     name = name_of(value.get('name', previous.get('name') if previous else None))
-    require(not reserved(name, env), 'Bu ad bir uygulamaya veya sistem hizmetine ait.', 409)
+    require(not reserved(name), 'Bu ad bir sistem hizmetine ait.', 409)
     require(not previous or name == previous['name'], 'Konteyner adı değiştirilemez.')
     image = image_of(value.get('image', previous.get('image') if previous else None))
     original = value.get('image_ref', image)
@@ -376,10 +356,8 @@ def render_quadlet(definition, env, bindings=None):
     return '\n'.join(lines) + '\n'
 
 
-def ownership(inspect, env):
+def ownership(inspect):
     name = str(inspect.get('Name', '')).lstrip('/')
-    if name in package_names(env):
-        return 'appstore'
     labels = (inspect.get('Config') or {}).get('Labels') or inspect.get('Labels') or {}
     if inspect.get('Pod') or inspect.get('PodName') or any(k.startswith(('com.docker.compose.', 'io.podman.compose.', 'io.kubernetes.')) for k in labels):
         return 'controlled'

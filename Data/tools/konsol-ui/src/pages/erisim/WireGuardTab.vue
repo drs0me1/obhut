@@ -1,12 +1,16 @@
-<!-- Erişim → WireGuard (DD-258's approved layout; every function of magaza/wireguard/sayfa.js): the networks
-     as tabs (?ag=wg0) with "Ağ ekle"; a network card with its on/off switch (turning it off asks first), its
-     summary and its devices (on/off, state, DNS and keepalive, addresses, last seen, traffic, QR, profile,
-     edit, delete); one side panel for adding a device, a device's DNS and keepalive, the network's name and
-     default DNS, regenerating its key, removing it and adding a network (typed "onayla" where it cannot be
-     undone). GET /state is read every 10 s while this tab is shown and the browser tab visible. QR codes and
-     profiles carry a private key: fetched only on a click, never cached, their object URL revoked after use. -->
+<!-- Erişim → WireGuard (DD-258's approved layout; a built-in of the base, DD-271): off after install (K6), so
+     with no network the tab says "WireGuard kapalı" and "Aç" opens the first network's creation, which turns
+     it on. Running, it offers "Durdur" (typed "onayla"; every network goes down, DD-229); stopped, it says so
+     and offers "Başlat", which brings back the networks that were on. The networks as tabs (?ag=wg0) with
+     "Ağ ekle"; a network card with its on/off switch (turning it off asks first), its summary and its devices
+     (on/off, state, DNS and keepalive, addresses, last seen, traffic, QR, profile, edit, delete); one side
+     panel for adding a device, a device's DNS and keepalive, the network's name and default DNS, regenerating
+     its key, removing it and adding a network (typed "onayla" where it cannot be undone). When master-wg does
+     not answer (`kurulu` false) the tab points to Sistem → Sağlık. GET /state is read every 10 s while this
+     tab is shown and the browser tab visible. QR codes and profiles carry a private key: fetched only on a
+     click, never cached, their object URL revoked after use. -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import { Icon } from "../../components/icons";
 import ConfirmWord from "../../components/ui/ConfirmWord.vue";
@@ -24,27 +28,23 @@ import {
 } from "./wg";
 import {
   addDevice, addNetwork, fetchProfile, fetchQr, readWgState, regenerateNetwork, removeDevice, removeNetwork, saveNetworkSettings, setDevice,
-  setDeviceDns, setDeviceKeepalive, setNetwork, type WgNetwork, type WgPeer, type WgState,
+  setDeviceDns, setDeviceKeepalive, setNetwork, startWireGuard, stopWireGuard,
 } from "../../api/wireguard";
-import { ApiError } from "../../api/http";
-import { live, refreshApps } from "../../live";
+import type { WireGuard as WgState, WireGuardAgi as WgNetwork, WireGuardCihazi as WgPeer } from "../../api/sema";
+import { refreshAccess } from "../../live";
 import { updateQuery, useQueryParam } from "../../query";
-import { appRoute } from "../../router";
+import { systemRoute } from "../../sections";
 import { UNKNOWN, bytes, since } from "../../format";
 
 const POLL_MS = 10000;
 const router = useRouter();
 
-// ---- the package and its state
-const pkg = computed(() => live.uygulamalar?.items.find((a) => a.id === "paket:wireguard") ?? null);
-/** null while the application list is not read yet. */
-const installed = computed(() => (live.uygulamalar ? Boolean(pkg.value) : null));
-const stopped = computed(() => pkg.value?.durum === "durduruldu");
-const writable = computed(() => !stopped.value && !working.value);
-
+// ---- the state: master-wg answers (kurulu), WireGuard as a whole stopped or not (durduruldu)
 const state = ref<WgState | null>(null);
+const broken = computed(() => state.value?.kurulu === false);
+const stopped = computed(() => state.value?.durduruldu === true);
+const writable = computed(() => !stopped.value && !working.value);
 const loadError = ref("");
-const missing = ref(false);
 const now = ref(Date.now() / 1000);
 let offset = 0;
 let loading = false;
@@ -59,10 +59,8 @@ async function load(): Promise<void> {
     now.value = value.now;
     state.value = value;
     loadError.value = "";
-    missing.value = false;
   } catch (err) {
-    if (err instanceof ApiError && err.status === 404) missing.value = true;
-    else loadError.value = err instanceof Error ? err.message : String(err);
+    loadError.value = err instanceof Error ? err.message : String(err);
   } finally {
     loading = false;
   }
@@ -70,16 +68,13 @@ async function load(): Promise<void> {
 
 function tick(): void {
   now.value = Date.now() / 1000 + offset;
-  if (!document.hidden && installed.value !== false) void load();
+  if (!document.hidden) void load();
 }
 function onVisibility(): void {
-  if (!document.hidden && installed.value !== false) void load();
+  if (!document.hidden) void load();
 }
-// The package's API is asked only once the application list says it is installed (or, should that list
-// stay unread, at the next tick).
 onMounted(() => {
-  void refreshApps();
-  if (installed.value) void load();
+  void load();
   timer = window.setInterval(tick, POLL_MS);
   document.addEventListener("visibilitychange", onVisibility);
 });
@@ -87,9 +82,6 @@ onBeforeUnmount(() => {
   clearInterval(timer);
   document.removeEventListener("visibilitychange", onVisibility);
   forgetQr();
-});
-watch(installed, (on, before) => {
-  if (on && !before) void load();
 });
 
 // ---- networks
@@ -148,6 +140,29 @@ async function act(run: () => Promise<unknown>, done: () => string): Promise<boo
   } finally {
     working.value = false;
   }
+}
+
+// ---- WireGuard as a whole (DD-229): stopping cuts every network and asks for the typed word first.
+const askStop = ref(false);
+const stopConfirmed = ref(false);
+const online = computed(() => networks.value.reduce((sum, n) => sum + (n.active ? onlineCount(n, now.value) : 0), 0));
+function openStop(): void {
+  error.value = "";
+  stopConfirmed.value = false;
+  askStop.value = true;
+}
+function closeStop(): void {
+  if (!working.value) askStop.value = false;
+}
+async function confirmStop(): Promise<void> {
+  if (!stopConfirmed.value) return;
+  if (await act(() => stopWireGuard(), () => "WireGuard durduruldu: ağlar kapandı, cihazlar bağlanamaz.")) {
+    askStop.value = false;
+    void refreshAccess();
+  }
+}
+async function start(): Promise<void> {
+  if (await act(() => startWireGuard(), () => "WireGuard başlatıldı: önceden açık olan ağlar geri geldi.")) void refreshAccess();
 }
 
 // Turning a network on is safe; turning it off cuts every device and asks first.
@@ -321,7 +336,9 @@ const portError = computed(() => (state.value ? portProblem(state.value, fPort.v
 
 const canSave = computed(() => {
   const p = panel.value;
-  if (!p || !writable.value) return false;
+  // The first network turns WireGuard on, even one stopped before its last network went.
+  const first = p?.kind === "ag-ekle" && !networks.value.length && !working.value;
+  if (!p || !(writable.value || first)) return false;
   switch (p.kind) {
     case "cihaz-ekle":
       return Boolean(fName.value.trim()) && !nameError.value && Boolean(fDns.value) && !kaError.value;
@@ -429,7 +446,7 @@ const panelText = computed(() => {
     case "kaldir":
       return { title: `${p.iface} · ${n ? labelOf(n) : ""} kaldırılsın mı?`, description: where + " · Yalnız internet", go: "Ağı kaldır" };
     case "ag-ekle":
-      return { title: networks.value.length ? "Ağ ekle" : "WireGuard'ı yapılandır", description: "Sıradaki boş ağ seçildi", go: "Ağı oluştur" };
+      return { title: networks.value.length ? "Ağ ekle" : "WireGuard'ı aç", description: networks.value.length ? "Sıradaki boş ağ seçildi" : "İlk ağ WireGuard'ı açar", go: "Ağı oluştur" };
   }
   return { title: "", description: "", go: "" };
 });
@@ -456,20 +473,20 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
 
 <template>
   <div class="access-tab wireguard" data-testid="wireguard">
-    <section v-if="installed === false || missing" class="card" aria-label="WireGuard" data-testid="wg-missing">
-      <EmptyState title="WireGuard kurulu değil" text="Cihazlarınızın bu sunucu üzerinden internete çıkması için WireGuard'ı Uygulamalar'daki katalogdan kurun." icon="shield">
-        <RouterLink to="/uygulamalar" class="btn btn-secondary">Uygulamalar → Uygulama ekle</RouterLink>
+    <section v-if="broken" class="card" aria-label="WireGuard" data-testid="wg-broken">
+      <EmptyState title="WireGuard aracı yanıt vermiyor" text="Sunucudaki master-wg çalışmıyor; ağlar ve cihazlar okunamıyor. Sistem → Sağlık'tan denetleyip onarın." icon="alert">
+        <RouterLink :to="systemRoute('saglik')" class="btn btn-secondary" data-testid="wg-health">Sistem → Sağlık</RouterLink>
       </EmptyState>
     </section>
 
     <template v-else>
-      <div v-if="stopped" class="notice notice-warning" role="note" data-testid="wg-stopped">
+      <div v-if="stopped && networks.length" class="notice notice-warning" role="note" data-testid="wg-stopped">
         <Icon name="stop" class="notice-icon" />
-        <div>
+        <div class="wg-stopped-text">
           <p class="notice-title">WireGuard durduruldu</p>
-          <p class="notice-list">Cihazlar bağlanamaz; ağlar ve cihazlar değiştirilemez. Anahtarlar, cihazlar ve profiller duruyor.
-            <RouterLink :to="appRoute('paket:wireguard')">Uygulamanın sayfasından başlatın.</RouterLink></p>
+          <p class="notice-list">Cihazlar bağlanamaz; ağlar ve cihazlar değiştirilemez. Anahtarlar, cihazlar ve profiller duruyor. Başlatınca önceden açık olan ağlar geri gelir.</p>
         </div>
+        <button type="button" class="btn btn-primary btn-sm" :disabled="working" data-testid="wg-start" @click="start"><Icon name="play" :size="16" />Başlat</button>
       </div>
       <p v-if="loadError" class="form-error" role="alert" data-testid="wg-load-error">{{ loadError }}</p>
       <p class="sr-only" role="status">{{ note }}</p>
@@ -480,14 +497,14 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
       <p v-if="error" class="form-error" role="alert" data-testid="wg-error">{{ error }}</p>
 
       <template v-if="state">
-        <section v-if="!networks.length" class="card" aria-label="WireGuard ağı yok" data-testid="wg-empty">
-          <EmptyState title="WireGuard yapılandırılmadı" text="Kurulum WireGuard ağı oluşturmaz. İlk ağı burada kurarsınız: anahtar sunucuda üretilir, UDP portu açılır ve cihaz eklemeye hazır olur." icon="shield">
+        <section v-if="!networks.length" class="card" aria-label="WireGuard kapalı" data-testid="wg-empty">
+          <EmptyState title="WireGuard kapalı" text="Kurulum WireGuard'ı kapalı bırakır; ilk ağı oluşturunca açılır. Anahtar sunucuda üretilir, UDP portu açılır ve cihaz eklemeye hazır olur." icon="shield">
             <ul class="modal-list wg-empty-list">
               <li><Icon name="shield" :size="18" /><span>wg0 · 10.8.0.0/24 · sunucu 10.8.0.1</span></li>
               <li><Icon name="lock" :size="18" /><span>Cihazlar yalnız internete çıkar; sunucu servislerine ve diğer ağlara erişemez.</span></li>
               <li><Icon name="plus" :size="18" /><span>Kurduktan sonra cihaz eklersiniz; QR hemen hazır olur.</span></li>
             </ul>
-            <button type="button" class="btn btn-primary" :disabled="!writable" data-testid="wg-setup" @click="open({ kind: 'ag-ekle' })"><Icon name="plus" :size="18" />Yapılandır</button>
+            <button type="button" class="btn btn-primary" :disabled="working" data-testid="wg-setup" @click="open({ kind: 'ag-ekle' })"><Icon name="power" :size="18" />Aç</button>
           </EmptyState>
         </section>
 
@@ -504,6 +521,9 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
               <Icon name="plus" :size="16" />Ağ ekle
             </button>
             <span v-if="next === null" id="wg-sinir" class="meter-note">En çok {{ state.max }} ağ</span>
+            <button v-if="!stopped" type="button" class="btn btn-secondary btn-sm" :disabled="working" data-testid="wg-stop" @click="openStop">
+              <Icon name="stop" :size="16" />Durdur
+            </button>
           </template>
           <template #default>
             <section v-if="current" class="card wg-net" :class="{ 'wg-net-off': !current.active }" :aria-labelledby="'wg-baslik-' + current.iface" :data-ag="current.iface">
@@ -650,7 +670,7 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
             <li><Icon name="shield" :size="18" /><span>{{ peerNames.length ? `${peerNames.length} cihazın bağlantısı kesilir; profilleri ve QR kodları silinir (${peerNames.join(", ")}).` : "Bu ağda cihaz yok." }}</span></li>
             <li><Icon name="lock" :size="18" /><span>UDP {{ panelNet.port }} kapanır; bu ağın güvenlik duvarı kuralları kaldırılır.</span></li>
             <li><Icon name="trash" :size="18" /><span>Sunucu anahtarı silinir. Geri alınamaz; aynı ağ yeniden eklenirse cihazlara yeni profil gerekir.</span></li>
-            <li v-if="lastNetwork" data-testid="wg-last"><Icon name="alert" :size="18" /><span>Bu son ağ: kaldırınca WireGuard yapılandırılmamış duruma döner; yeni ağı Yapılandır ile kurarsınız.</span></li>
+            <li v-if="lastNetwork" data-testid="wg-last"><Icon name="alert" :size="18" /><span>Bu son ağ: kaldırınca WireGuard kapalı duruma döner; yeniden Aç ile ilk ağı kurarsınız.</span></li>
           </ul>
           <ConfirmWord v-model:confirmed="confirmed" />
         </template>
@@ -679,6 +699,23 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
         <button type="button" class="btn btn-secondary" :disabled="working" @click="closePanel">Vazgeç</button>
         <button type="submit" form="wg-form" class="btn" :class="danger ? 'btn-danger' : 'btn-primary'" :disabled="!canSave || working" data-testid="panel-go">
           {{ working ? "Gönderiliyor…" : panelText.go }}
+        </button>
+      </template>
+    </Modal>
+
+    <!-- stopping WireGuard as a whole -->
+    <Modal :open="askStop" title="WireGuard durdurulsun mu?" :description="`${networks.length} ağ · ${online} cihaz bağlı`" @close="closeStop">
+      <ul class="modal-list">
+        <li><Icon name="stop" :size="18" /><span>Bütün ağlar kapanır, UDP portları ve yönlendirme kalkar; cihazlar bağlanamaz.</span></li>
+        <li><Icon name="refresh" :size="18" /><span>Başlatınca önceden açık olan ağlar geri gelir.</span></li>
+        <li><Icon name="lock" :size="18" /><span>Anahtarlar, cihazlar ve profiller silinmez. Sunucu yeniden başlasa da durdurulmuş kalır.</span></li>
+      </ul>
+      <ConfirmWord v-model:confirmed="stopConfirmed" />
+      <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+      <template #actions>
+        <button type="button" class="btn btn-secondary" :disabled="working" @click="closeStop">Vazgeç</button>
+        <button type="button" class="btn btn-danger" :disabled="!stopConfirmed || working" data-onay="durdur" @click="confirmStop">
+          {{ working ? "Gönderiliyor…" : "Durdur" }}
         </button>
       </template>
     </Modal>

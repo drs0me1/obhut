@@ -110,7 +110,7 @@ async function askPreview(): Promise<void> {
   previewError.value = "";
   try {
     const { id } = await startContainerAction({ action: "adopt", name: target, preview: true });
-    const f = followJob("konteyner", id, null);
+    const f = followJob("konteyner", id);
     following = f;
     const job = await f.done;
     following = null;
@@ -176,7 +176,7 @@ async function adopt(): Promise<void> {
   current.state = "running";
   current.step = "Konteyner Konsol tanımıyla yeniden oluşturuluyor…";
   void refreshApps();
-  const f = followJob("konteyner", id, null, (job) => {
+  const f = followJob("konteyner", id, (job) => {
     if (job.adim) current.step = job.adim;
   });
   following = f;

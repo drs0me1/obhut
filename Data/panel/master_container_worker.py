@@ -2,7 +2,7 @@
 """Explicit rootful container operations, run outside the panel sandbox.
 
 CLI: --state PATH --operation UUID ACTION; JSON stdin, JSON stdout. Only this worker owns
-ordinary definitions. App Store mutations belong to the module engine/package adapters.
+ordinary definitions.
 """
 import argparse
 import contextlib
@@ -27,8 +27,8 @@ import master_container_config as cfg
 ACTIONS = ('create', 'save', 'start', 'stop', 'restart', 'remove', 'adopt', 'image-pull', 'image-remove',
            'image-update', 'volume-create', 'volume-remove', 'network-create', 'network-remove')
 LIMIT = 1024 * 1024
-# DD-266: the share guard (every 30 s) and the settings worker hold install/modul.lock for a moment;
-# a container job waits for them as master-modul does (flock -w 5) instead of failing at once.
+# DD-266: the share guard (every 30 s) and the settings worker hold install.lock for a moment;
+# a container job waits for them (5 s) instead of failing at once.
 LOCK_WAIT = 5.0
 
 
@@ -72,8 +72,7 @@ class Manager:
 
     @contextlib.contextmanager
     def locked(self):
-        paths = [Path(self.env['RUNTIME_DIR']) / 'install.lock', Path(self.env['RUNTIME_DIR']) / 'modul.lock',
-                 Path(self.env['KONTEYNER_LOCK'])]
+        paths = [Path(self.env['RUNTIME_DIR']) / 'install.lock', Path(self.env['KONTEYNER_LOCK'])]
         with contextlib.ExitStack() as stack:
             for path in paths:
                 with settings.parent_fd(path, create=True) as (directory, name):
@@ -214,7 +213,7 @@ class Manager:
 
     def managed(self, request):
         name = cfg.name_of(request.get('name'))
-        cfg.require(not cfg.reserved(name, self.env), 'Bu konteyneri kendi uygulama yönetiminden değiştirin.', 409)
+        cfg.require(not cfg.reserved(name), 'Bu ad bir sistem hizmetine ait; işlem yapılmadı.', 409)
         old = self.store.load(name)
         if old:
             cfg.require(request.get('revision') == old['revision'], 'Ayarlar değişmiş; yenileyip yeniden gözden geçirin.', 409)
@@ -222,7 +221,7 @@ class Manager:
 
     def ensure_managed_owner(self, name):
         found = self.inspect(name)
-        cfg.require(found is None or cfg.ownership(found, self.env) == 'konsol',
+        cfg.require(found is None or cfg.ownership(found) == 'konsol',
                     'Bu ad başka bir yöneticinin konteynerine ait; işlem yapılmadı.', 409)
         return found
 
@@ -303,7 +302,7 @@ class Manager:
             state = (info or {}).get('State') or {}
             health = state.get('Health') or {}
             if self.running(name) and state.get('Running') is True and health.get('Status') not in ('starting', 'unhealthy'):
-                cfg.require(cfg.ownership(info, self.env) == 'konsol', 'Başlayan konteynerin sahibi doğrulanamadı.', 502)
+                cfg.require(cfg.ownership(info) == 'konsol', 'Başlayan konteynerin sahibi doğrulanamadı.', 502)
                 if (definition or {}).get('user') == 'downloads':
                     # DD-227: prove the account and the empty capability sets. Podman prints an empty set as
                     # null (5.4.2) or []; a missing field fails closed.
@@ -470,7 +469,7 @@ class Manager:
         cfg.require(action in ('start', 'stop', 'restart', 'remove', 'adopt'), 'Konteyneri değiştirmek için önce Konsol yönetimine alın.', 409)
         info = self.inspect(name)
         cfg.require(info is not None, 'Konteyner bulunamadı.', 404)
-        cfg.require(cfg.ownership(info, self.env) == 'standalone', 'Konteyner başka bir uygulama, servis veya yığın tarafından yönetiliyor.', 409)
+        cfg.require(cfg.ownership(info) == 'standalone', 'Konteyner başka bir uygulama, servis veya yığın tarafından yönetiliyor.', 409)
         if action == 'adopt':
             return self.adopt(request, info)
         self.step('Konteyner işlemi uygulanıyor')
@@ -556,15 +555,6 @@ class Manager:
             cfg.require(isinstance(data, list) and len(data) == 1, 'İmaj bulunamadı.', 404)
             info = data[0]
             aliases = {target, info.get('Id', ''), *(info.get('RepoDigests') or [])}
-            for manifest in settings.read_manifests(self.env).values():
-                pinned = manifest.get('PAKET_IMAJ')
-                if pinned:
-                    p = self.call(['podman', 'image', 'inspect', pinned], check=False)
-                    try:
-                        image_id = json.loads(p.stdout)[0]['Id'] if p.returncode == 0 else ''
-                    except (ValueError, KeyError, IndexError, TypeError):
-                        raise cfg.ContainerConfigError(502, 'Uygulamanın imajı doğrulanamadı.')
-                    cfg.require(pinned not in aliases and not (image_id and image_id in aliases), 'Bu imaj bir App Store uygulamasına ait.', 409)
             for d in self.store.list():
                 cfg.require(not aliases.intersection((d['image'], d['image_ref'])), 'İmaj kayıtlı bir konteynerde kullanılıyor.', 409)
             cfg.require(not self.resource_users('image', target), 'İmaj bir konteynerde kullanılıyor.', 409)

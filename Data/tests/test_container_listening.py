@@ -153,13 +153,11 @@ class ManagerListeningTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
-        env = {"MODULES_FILE": str(root / "modules"), "MODULES_DIR": str(root / "packages"), "RUNTIME_DIR": str(root / "run"),
+        env = {"RUNTIME_DIR": str(root / "run"),
                "WAN_IPV4": "192.0.2.1", "WAN_IPV6": "2001:db8::1", "TAILSCALE_IPV4": "100.64.0.2", "TAILSCALE_IPV6": ""}
-        (root / "modules").write_text("")
         (root / "state").write_text("".join("%s=%s\n" % kv for kv in env.items()))
         self.containers = {}
-        p = types.SimpleNamespace(args=types.SimpleNamespace(state=str(root / "state"), master_modul="/fixture/master-modul"),
-                                  run_tool=self.fake_run, env=lambda: {}, module_busy=lambda _: False)
+        p = types.SimpleNamespace(args=types.SimpleNamespace(state=str(root / "state")), run_tool=self.fake_run, env=lambda: {})
         self.service = manager.Service(p)
 
     def add(self, name, state, network, pid):
@@ -186,10 +184,7 @@ class ManagerListeningTests(unittest.TestCase):
         self.add("parked", "exited", "host", 0)
         calls = []
         fake = lambda pid, wan=(), tailscale=(): calls.append((pid, set(wan), set(tailscale))) or [{"address": "127.0.0.1", "port": 61006, "protocol": "tcp", "scope": "local"}]
-        apps = {n: {"name": n, "image": "example.org/app@sha256:" + "c" * 64, "unit": n + ".service", "module_id": n,
-                    "module_state": "calisiyor", "adapter": ""} for n in ("hostapp", "bridged", "parked")}
-        with patch.object(manager, "listening", fake), patch.object(manager, "app_specs", return_value=apps), \
-             patch.object(manager, "app_config", return_value={"revision": "d" * 64, "config": {}, "editable": [], "protected_mounts": []}):
+        with patch.object(manager, "listening", fake):
             rows = {r["name"]: r for r in self.service.view().liste()["containers"]}
             detail = self.service.view().ayrinti("hostapp")
         self.assertEqual(calls[0], (4242, {"192.0.2.1", "2001:db8::1"}, {"100.64.0.2"}))
@@ -214,9 +209,9 @@ class PublishedScopeTests(unittest.TestCase):
     def test_detail_names_the_bridge_networks(self):
         inspect = [{"Id": "f" * 64, "Name": "app", "State": {"Status": "running"}, "Config": {"Labels": {}},
                     "HostConfig": {"NetworkMode": "bridge", "PortBindings": {}},
-                    "NetworkSettings": {"Ports": {}, "Networks": {"torrent": {}}}}]
+                    "NetworkSettings": {"Ports": {}, "Networks": {"medya": {}}}}]
         reader = containers.Containers(lambda argv, timeout: (0, json.dumps(inspect), ""))
-        self.assertEqual(reader.ayrinti("app")["network"], "torrent")
+        self.assertEqual(reader.ayrinti("app")["network"], "medya")
 
 
 if __name__ == "__main__":

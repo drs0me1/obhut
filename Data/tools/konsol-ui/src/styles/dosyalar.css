@@ -153,10 +153,6 @@
   height: 18px;
 }
 
-.files-gezgin-line {
-  padding-top: 2px;
-}
-
 /* ---- the file table */
 .files-table-wrap {
   container-type: inline-size;

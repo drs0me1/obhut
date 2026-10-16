@@ -328,6 +328,11 @@
 }
 
 /* ---- WireGuard */
+.wg-stopped-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .wg-net {
   gap: 14px;
 }

@@ -1,6 +1,6 @@
-// The WireGuard tab's vocabulary, as the package's own page (magaza/wireguard/sayfa.js) has it: the DNS
-// providers, a device's state, a network's name and the checks a form makes before asking the server.
-import type { WgNetwork, WgPeer, WgState } from "../../api/wireguard";
+// The WireGuard tab's vocabulary: the DNS providers, a device's state, a network's name and the checks a
+// form makes before asking the server.
+import type { WireGuard as WgState, WireGuardAgi as WgNetwork, WireGuardCihazi as WgPeer } from "../../api/sema";
 
 export const DNS_PRESETS = [
   { name: "Cloudflare", tag: "Hızlı; kurulumun varsayılanı", ips: "1.1.1.1, 1.0.0.1, 2606:4700:4700::1001" },
@@ -46,7 +46,7 @@ export function nextNetwork(state: WgState): number | null {
   return null;
 }
 
-/** Who holds a UDP port already: a network's interface, "sunucu" for the base and the packages, or null. */
+/** Who holds a UDP port already: a network's interface, "sunucu" for the base's own ports, or null. */
 export function portOwner(state: WgState, port: number): string | null {
   const n = state.networks.find((x) => x.port === port);
   if (n) return n.iface;

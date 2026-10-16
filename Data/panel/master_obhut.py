@@ -208,7 +208,7 @@ def cmd_uygulama(konsol, args):
         lines = ["%-28s %-12s %s" % (i.get("id"), i.get("durum"), i.get("ad")) for i in items]
         show(apps, args.json, lines or ["Kurulu uygulama yok."])
         return 0
-    item = next((i for i in items if i.get("id") == args.id or i.get("modul") == args.id or i.get("konteyner") == args.id), None)
+    item = next((i for i in items if i.get("id") == args.id or i.get("konteyner") == args.id), None)
     if item is None:
         raise ObhutError("Uygulama bulunamadı: %s (sudo obhut uygulama liste)" % args.id)
     if args.eylem not in (item.get("eylemler") or []):

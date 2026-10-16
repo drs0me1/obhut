@@ -84,45 +84,15 @@ class NetworkTests(unittest.TestCase):
             with self.subTest(host=host), self.assertRaises(network.NetworkError):
                 self.validate([port(host=host)])
 
-    def test_package_ports_reserved(self):
-        base = Path(self.tmp.name) / "packages" / "example"
-        base.mkdir(parents=True)
-        (base / "example.env").write_text("EXAMPLE_UI_PORT=19999\n")
-        self.env["MODULES_DIR"] = str(base.parent)
-        with self.assertRaises(network.NetworkError):
-            self.validate([port(host=19999)])
-
-    def test_stopped_package_effective_port_is_reserved(self):
-        base = Path(self.tmp.name) / "packages" / "torrent"
-        base.mkdir(parents=True)
-        (base / "torrent.env").write_text("TORRENT_UI_PORT=61015\n")
-        (base / "paket.env").write_text('PAKET_AD="torrent"\nPAKET_AYAR_ANAHTARLAR="TORRENT_UI_PORT"\n')
-        self.env["MODULES_DIR"] = str(base.parent)
-        overrides = Path(self.tmp.name) / "package-overrides"
-        overrides.mkdir()
-        override = overrides / "torrent.env"
-        override.write_text("TORRENT_UI_PORT=61016\n")
-        override.chmod(0o600)
-        self.env["PACKAGE_OVERRIDES_DIR"] = str(overrides)
-        # No running container or listener exists: the durable choice alone reserves it.
-        for host in (61015, 61016):
-            with self.subTest(host=host), self.assertRaises(network.NetworkError):
+    def test_every_state_port_key_is_reserved(self):
+        # The base's own ports are every *_PORT key of state.env, listening or not.
+        self.env.update(SHARE_PORT="61010", FILES_PANEL_PORT="61009", KONTEYNER_SAYI="19997")
+        self.assertEqual(network.reserved_ports(self.env), {22, 53, 61009, 61010})
+        for host in (61009, 61010):
+            with self.subTest(host=host), self.assertRaises(network.NetworkError) as err:
                 self.validate([port(host=host)])
-
-    def test_invalid_package_override_fails_closed(self):
-        base = Path(self.tmp.name) / "packages" / "torrent"
-        base.mkdir(parents=True)
-        (base / "torrent.env").write_text("TORRENT_UI_PORT=61015\n")
-        (base / "paket.env").write_text('PAKET_AD="torrent"\nPAKET_AYAR_ANAHTARLAR="TORRENT_UI_PORT"\n')
-        self.env["MODULES_DIR"] = str(base.parent)
-        overrides = Path(self.tmp.name) / "package-overrides"
-        overrides.mkdir()
-        override = overrides / "torrent.env"
-        override.write_text("TORRENT_UI_PORT=not-a-port\n")
-        override.chmod(0o600)
-        self.env["PACKAGE_OVERRIDES_DIR"] = str(overrides)
-        with self.assertRaises(network.NetworkError):
-            self.validate([port(host=19998)])
+            self.assertEqual(err.exception.status, 409)
+        self.assertEqual(len(self.validate([port(host=19997)])), 1)
 
     def test_duplicate_overlap_and_independent_protocols(self):
         for rows in ([port(), port()], [port(), port("public", public_ack=True)]):
@@ -238,51 +208,6 @@ class NetworkTests(unittest.TestCase):
         self.assertNotIn('18080', text, "local publications get no forward permit")
         self.assertEqual(self.egress_rules(policy)[-1][-1], {"drop": None})
 
-    def package(self, quadlet, state="calisiyor", network_name="torrent"):
-        """DD-217: a registered package on its own bridge with a placed Quadlet (None: stopped, no unit)."""
-        root = Path(self.tmp.name)
-        (root / "mods/torrent").mkdir(parents=True, exist_ok=True)
-        (root / "units").mkdir(exist_ok=True)
-        (root / "modules").write_text("torrent\t%s\n" % state)
-        (root / "mods/torrent/paket.env").write_text('PAKET_KONTEYNER="qbittorrent.container"\nPAKET_KONTEYNER_AG="%s"\n' % network_name)
-        if quadlet is not None:
-            (root / "units/qbittorrent.container").write_text(quadlet)
-        self.env.update(MODULES_FILE=str(root / "modules"), MODULES_DIR=str(root / "mods"), KONTEYNER_BIRIM_DIR=str(root / "units"))
-
-    def rules_for(self, policy, bridge):
-        return [x["rule"]["expr"] for x in policy if "rule" in x and {"match": {"op": "==", "left": {"meta": {"key": "oifname"}}, "right": bridge}} in x["rule"]["expr"]]
-
-    def test_package_bridge_lets_through_only_its_wan_publication(self):
-        self.package("[Container]\nNetwork=torrent\nPublishPort=127.0.0.1:61006:61006/tcp\n"
-                     "PublishPort=192.0.2.1:61008:61008/tcp\nPublishPort=192.0.2.1:61008:61008/udp\n"
-                     "PublishPort=198.51.100.9:7000:7000/tcp\nPublishPort=8080\n")
-        policy = network.policy(self.env, [], run=self.runner)
-        bridge = network.bridge_name(self.env, "torrent")
-        rules = self.rules_for(policy, bridge)
-        text = json.dumps(rules)
-        # Intra-bridge, then exactly the two WAN publications (TCP and UDP) from eth0 to 192.0.2.1:61008.
-        self.assertEqual(len(rules), 3)
-        self.assertEqual(text.count('"eth0"'), 2)
-        self.assertIn('"udp"', text)
-        self.assertNotIn("61006", text, "the loopback interface needs no forward path")
-        self.assertNotIn("198.51.100.9", text, "an address that is not the server's WAN or Tailscale one is not let through")
-        self.assertNotIn("tailscale0", text)
-        self.assertEqual(self.egress_rules(policy)[-1][-1], {"drop": None})
-
-    def test_stopped_unregistered_or_mismatched_package_publishes_nothing(self):
-        self.package(None)
-        bridge = network.bridge_name(self.env, "torrent")
-        self.assertEqual(self.rules_for(network.policy(self.env, [], run=self.runner), bridge), [])
-        self.package("[Container]\nNetwork=torrent\nPublishPort=192.0.2.1:61008:61008/tcp\n", state="calisiyor")
-        Path(self.env["MODULES_FILE"]).write_text("")
-        self.assertEqual(self.rules_for(network.policy(self.env, [], run=self.runner), bridge), [])
-        # An installer run renders the new manifest before it places the new Quadlet: the old one on
-        # another network is let through nothing, and the firewall still applies (found live on nrm).
-        self.package("[Container]\nNetwork=host\nPublishPort=192.0.2.1:61008:61008/tcp\n")
-        policy = network.policy(self.env, [], run=self.runner)
-        self.assertEqual(self.rules_for(policy, bridge), [])
-        self.assertEqual(self.egress_rules(policy)[-1][-1], {"drop": None})
-
     def test_policy_identity_and_corrupt_definitions_fail_closed(self):
         with self.assertRaises(network.NetworkError):
             network.policy(dict(self.env, KONTEYNER_BRIDGE_PREFIX="*"), [], run=self.runner)
@@ -299,8 +224,8 @@ class NetworkTests(unittest.TestCase):
     def test_containers_open_nothing_on_the_host_but_gateway_dns(self):
         # DD-229: the input chain at -10 ends in a drop for anything a bridge opens to the host itself;
         # only replies to host-opened connections and DNS to the address of the incoming bridge pass.
-        self.package("[Container]\nNetwork=torrent\nPublishPort=192.0.2.1:61008:61008/tcp\n")
-        rows = [{"name": "example", "network": "bridge", "ports": [port("public", 18082, public_ack=True)]}]
+        rows = [{"name": "example", "network": "bridge", "ports": [port("public", 18082, public_ack=True),
+                                                                  port("tailscale", 18081)]}]
         policy = network.policy(self.env, rows, run=self.runner)
         chains = [o["chain"] for o in policy if "chain" in o]
         self.assertEqual([(c["name"], c["hook"], c["prio"], c["policy"]) for c in chains],
@@ -321,7 +246,7 @@ class NetworkTests(unittest.TestCase):
             [{"drop": None}]])
         # Publications never open the host side: no port but DNS appears in the input chain.
         text = json.dumps(self.input_rules(policy))
-        for value in ("18082", "61008", "192.0.2.1", "100.64.0.1", "accept"):
+        for value in ("18081", "18082", "192.0.2.1", "100.64.0.1", "accept"):
             self.assertNotIn(value, text)
 
     def test_container_egress_rules_come_after_the_hot_path_and_replies(self):
@@ -373,27 +298,6 @@ class NetworkTests(unittest.TestCase):
         swapped[rules[5]], swapped[rules[6]] = swapped[rules[6]], swapped[rules[5]]
         self.assertFalse(network.same_policy(expected, {"nftables": swapped}))
         self.assertTrue(network.same_policy(expected, {"nftables": copy.deepcopy(expected)}))
-
-    def test_a_loopback_port_change_leaves_the_guard_unchanged(self):
-        # DD-223: the package worker restarts qBittorrent after an interface-port change without
-        # applying the guard; the start check passes because loopback rows are not in the policy.
-        root = Path(self.tmp.name)
-        (root / "mods/torrent").mkdir(parents=True)
-        (root / "units").mkdir()
-        (root / "mods/torrent/paket.env").write_text('PAKET_KONTEYNER="qbittorrent.container"\nPAKET_KONTEYNER_AG="torrent"\n')
-        (root / "kayit").write_text("torrent\tcalisiyor\n")
-        env = dict(self.env, MODULES_FILE=str(root / "kayit"), MODULES_DIR=str(root / "mods"),
-                   KONTEYNER_BIRIM_DIR=str(root / "units"))
-        quadlet = "[Container]\nNetwork=torrent\nPublishPort=127.0.0.1:{0}:{0}/tcp\nPublishPort=192.0.2.1:{1}:{1}/tcp\n"
-        placed = root / "units/qbittorrent.container"
-        placed.write_text(quadlet.format(62947, 63851))
-        before = network.policy(env, [], run=self.runner)
-        self.assertTrue(any("63851" in json.dumps(o) for o in before), "the WAN publication is let through")
-        placed.write_text(quadlet.format(61997, 63851))
-        self.assertEqual(network.policy(env, [], run=self.runner), before)
-        # A peer-port change does change it; the worker applies the guard before that start.
-        placed.write_text(quadlet.format(61997, 63999))
-        self.assertNotEqual(network.policy(env, [], run=self.runner), before)
 
     def test_check_names_a_missing_guard_table(self):
         # DD-223: a container unit's start precondition says why the container waits.

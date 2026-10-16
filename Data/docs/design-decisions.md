@@ -17,6 +17,63 @@ Konsol's old interface was removed in DD-267 (v2-250). Live entries written
 before it still name its places (Ayarlar → Caddy, Ayarlar → Sistem, App Store,
 the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 
+### DD-272: The rebuild's phase 1: a clean base without the App Store (v2-255)
+
+- **Scope (`rebuild.md` phase 1):** the base installs with its built-ins only (Konsol, Tailscale, Caddy,
+  dnsmasq, firewall, Files, folder WebDAV, WireGuard). No store engine, no package, no `PAKET_*`, no code
+  kept for hosts installed by 1.x. Konsol's single-container definitions stay until phase 3.
+- **Generation gate (DD-271 S3):** `install.sh` declares `OBHUT_NESIL="2"` and records it in `state.env`.
+  `check_generation` runs in stage 0 right after the OS check, before the lock and before any write: it
+  stops when `STATE_DIR` exists without `NESIL_FILE` holding exactly `2`, or when a path in
+  `ESKI_NESIL_IZLERI` exists (the 1.x store engine and registries). The marker is written by
+  `write_generation` just before `write_config`, after the operator's confirmation, so the "nothing was
+  changed" promise of a cancelled install still holds. Konsol's update check offers a build only from the
+  same generation; otherwise it says why (`master_update.py`).
+- **Built-ins installed directly:** the Files and WebDAV units are rendered into `UNIT_DIR`; WebDAV's site
+  source is installed at `SHARE_CADDY_SOURCE` and filtered by `master_publications.py filter-caddy paylasim`
+  into the Caddy import folder; its name goes through `master_settings.py filter-dns`; stage 7 runs
+  `verify_builtins`. The live file names (`paylasim.caddy`, `modul-paylasim.conf`) are kept.
+- **WireGuard built in (K6):** its keys live in `config/defaults.env` and `state.env`; `master-wg` is a base
+  script with two new subcommands, `durdur` (writes the open networks to `WG_STOPPED_FILE`, disables their
+  units, re-applies the firewall) and `baslat` (firewall first, then the listed networks); both take the
+  install lock and refuse while a Konsol setting is pending. Stage 1 installs `wireguard-tools` and
+  `qrencode`, stage 4 the tool, the drop-in, the kernel module and `WG_CONF_DIR`; no network is created.
+  The firewall reads the networks file and the stopped marker itself and is stricter than the package
+  hook was (interface `wg[0-9]`, scope `inet`, no symlinked registry, a malformed line stops the run).
+  Konsol talks to `panel/master_wireguard.py` through typed routes under `/api/konsol/wireguard` with
+  path parameters (`{iface}`, `{name}`, checked after decoding; a bad one answers 404); numbers must be
+  numbers; `/state` gains `kurulu`, `durduruldu` and the reserved ports `master-wg` refuses. Audit kinds are
+  `wireguard-<verb>`, worded in the interface's table. Writes stay immediate until phase 4.
+- **Only the route table answers:** the backend answers nothing outside `master_api.ROUTES` except
+  `/oturum-denetle` and the sign-in POST, and only GET, HEAD and POST (`test_api` enforces it with the
+  table emptied). The package loader and `/api/uygulama/*`, `/moduller`, `/uygulamalar/hesap` and `kur` are
+  gone.
+- **Removed:** `master-modul`, `magaza/`, the registry, `MODULES_*`, `PACKAGE_OVERRIDES_DIR`, every `paket_*`
+  helper and package hook, package traffic (the overview keeps WAN rates), package health, package
+  publications, package-protected folders, the package parts of the container modules, the `modul` job kind,
+  the catalogue and every package screen, the Gezgin note, App Store wording, built-ins in Uygulamalar, the
+  1.x cleanups and gates (`.pay`, RAR repository, archive workspace, `RETIRED_*`), `--archive-dir`, `--share`,
+  `--protected`, the `/yeni` redirect, old Konsol address redirects, the folder shares' schema-3 migration,
+  `master_permissions`' excluded names. A share record with a key this version does not write fails closed.
+- **Kept on purpose:** `PRIVATE_STATE_ROOT` (it hides `/var/lib` from Files and WebDAV); the
+  `CADDY_MODULES_DIR` and `modul-*.conf` names (Caddy's import folder and dnsmasq file names); the firewall
+  view's `sabit` field (phase 4's locked raw ports); external containers in Uygulamalar (adoption until
+  phase 3).
+- **Moved to later phases (`rebuild.md`):** WireGuard writes through the settings plan and the old
+  WebDAV `https` settings writer (phase 4); the switches that exist only for tests (phase 6).
+- **Tests:** `bats` 177/177; Python 657 with only the eight known macOS failures; the nine browser suites
+  with the layout audit pass. Package tests are deleted; new ones cover the gate, the built-ins, WireGuard in
+  the base, `master-wg durdur/baslat`, the WireGuard routes, the update check's generation and the
+  route-table rule.
+- **Live check (test host, 2026-10-17):** the 1.x install removed by hand (S4), the branch installed from
+  the working tree on Debian 13: every built-in active, the marker `2`, no 1.x trace, WireGuard installed and
+  off. Through Konsol's routes: first network created (UDP 61001 opened), a test device added (QR served),
+  stopped (rule and interface gone, marker lists `wg0`) and started again; after a reboot onto the new
+  kernel every unit, `wg0` and its rule came back. A re-run changed nothing and restarted nothing. With a
+  fake 1.x trace, and with the marker moved away, stage 0 stopped before writing. The live Konsol at 390 and
+  1440 px: 23 states, no console error, no layout finding; old addresses land on Genel Bakış; the update
+  check reports GitHub's 1.x as another generation. The test device and network were removed afterwards.
+
 ### DD-271: The rebuild: one container model, Obhut knows no application (accepted 2026-10-17)
 
 - **Request (user, 2026-10-16/17):** Obhut's built-ins stay fixed; external software runs only as Podman

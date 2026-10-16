@@ -26,7 +26,7 @@ def main():
         state.write_text("".join(k + '="' + v + '"\n' for k, v in e.items()))
         m = s.Manager(state)
         s.save_json(m.pending_path, dict(id="timer-test", phase="awaiting", boot=s.boot_id(), until=time.monotonic() + 1,
-                    candidate=s.DEFAULT, files={}, q_active=False, changes=dict(firewall=False, dns=False, torrent=False)))
+                    candidate=s.DEFAULT, files={}, q_active=False, changes=dict(firewall=False, dns=False, domain=False)))
         unit = "konsol-test-" + root.name
         try:
             subprocess.run(["systemd-run", "--quiet", "--collect", "--unit=" + unit, "--on-active=2s",

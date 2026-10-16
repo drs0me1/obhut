@@ -5,10 +5,9 @@
      first, in Turkish order, with their item count and size (DD-247) and the time they changed. Ticked items
      are downloaded (files), moved, put in the trash (srv) or deleted for good (sistem, the typed word). Each
      row has its own actions; a text file opens in the editor (EditorSheet). Uploads come from the picker or
-     a drop on the browser, one at a time (uploads.ts). A package's folder (DD-203) is marked with its owner
-     and nothing in it is changed or selected here; neither is a folder that holds one. A shared folder
-     carries its mark and "Paylaşımı yönet", another eligible folder "Paylaş" (both lead to Paylaşımlar). A
-     folder that cannot be opened leaves the browser where it was, with the reason. -->
+     a drop on the browser, one at a time (uploads.ts). A shared folder carries its mark and "Paylaşımı
+     yönet", another eligible folder "Paylaş" (both lead to Paylaşımlar). A folder that cannot be opened
+     leaves the browser where it was, with the reason. -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter, type LocationQueryRaw } from "vue-router";
@@ -27,8 +26,6 @@ import {
   countText,
   errorText,
   fullPath,
-  guardOf,
-  guardText,
   isTextName,
   isoTime,
   joinPath,
@@ -38,7 +35,6 @@ import {
   sortEntries,
   splitPath,
   when,
-  type Guard,
 } from "./files";
 import { onUploaded, queueFiles, uploads } from "./uploads";
 import EditorSheet from "./EditorSheet.vue";
@@ -46,14 +42,13 @@ import MoveDialog from "./MoveDialog.vue";
 import NameDialog from "./NameDialog.vue";
 import RemoveDialog from "./RemoveDialog.vue";
 import UploadQueue from "./UploadQueue.vue";
-import GezginNote from "./GezginNote.vue";
 
 const props = defineProps<{ tree: Tree }>();
 const route = useRoute();
 const router = useRouter();
 const system = computed(() => props.tree === "sistem");
 
-// ---- the tree: its root, disk, text limit and the packages' folders
+// ---- the tree: its root, disk and text limit
 const state = ref<FilesState | null>(null);
 const stateError = ref<{ status: number; text: string } | null>(null);
 
@@ -73,7 +68,6 @@ const refusedText = computed(() => {
   return `${reason ? reason + ". " : ""}Bu görünüm sunucunun bütün dosyalarını root olarak açar; yalnız başka bir Tailscale cihazından, Konsol'un tailnet adresiyle kullanılır.`;
 });
 const root = computed(() => state.value?.root ?? (system.value ? "/" : "/srv"));
-const guarded = computed(() => state.value?.protected ?? []);
 
 // ---- the folder shares (srv): the marks and the links to Paylaşımlar; unknown when they cannot be read
 const shares = ref<Paylasim[] | null>(null);
@@ -91,10 +85,6 @@ const shareByPath = computed(() => new Map((shares.value ?? []).map((s) => [s.pa
 const pathParam = useQueryParam<string>("yol", null, "");
 const here = computed(() => (splitPath(pathParam.value) ?? []).join("/"));
 const crumbs = computed(() => (here.value ? here.value.split("/") : []));
-const hereGuard = computed<Guard | null>(() => {
-  const g = system.value ? null : guardOf(guarded.value, here.value);
-  return g && g.kind === "yazar" ? g : null;
-});
 
 const listing = ref<Listing | null>(null);
 const loading = ref(false);
@@ -186,10 +176,7 @@ watch(filter, (value) => (filterParam.value = value));
 interface Row {
   e: Entry;
   rel: string;
-  guard: Guard | null;
   share: Paylasim | null;
-  /** A package's folder, inside one or holding one: nothing changes it here. */
-  locked: boolean;
   canShare: boolean;
   /** A click on the name opens the editor. */
   text: boolean;
@@ -202,15 +189,12 @@ const allRows = computed<Row[]>(() => {
   if (!l) return [];
   return sortEntries(l.entries).map((e) => {
     const rel = joinPath(l.path, e.name);
-    const guard = system.value ? null : guardOf(guarded.value, rel);
     const share = !system.value && e.type === "dir" ? shareByPath.value.get(rel) ?? null : null;
     return {
       e,
       rel,
-      guard,
       share,
-      locked: guard !== null,
-      canShare: !system.value && e.type === "dir" && shares.value !== null && !share && shareable(rel, guarded.value),
+      canShare: !system.value && e.type === "dir" && shares.value !== null && !share && shareable(rel),
       text: e.type === "file" && isTextName(e.name),
       edit: canEdit(e, textLimit.value),
     };
@@ -224,14 +208,13 @@ const switching = computed(() => loading.value && listing.value !== null && list
 const total = computed(() => (listing.value?.entries ?? []).reduce((sum, e) => sum + (e.size ?? 0), 0));
 const title = computed(() => crumbs.value.at(-1) ?? root.value);
 
-// ---- selection: only what is shown and may be changed
+// ---- selection: only what is shown
 const selected = reactive(new Set<string>());
-const selectable = computed(() => rows.value.filter((r) => !r.locked));
 const chosen = computed(() => rows.value.filter((r) => selected.has(r.e.name)));
 const chosenSize = computed(() => chosen.value.reduce((sum, r) => sum + (r.e.size ?? 0), 0));
-const allChosen = computed(() => selectable.value.length > 0 && selectable.value.every((r) => selected.has(r.e.name)));
+const allChosen = computed(() => rows.value.length > 0 && rows.value.every((r) => selected.has(r.e.name)));
 const someChosen = computed(() => chosen.value.length > 0 && !allChosen.value);
-watch(selectable, (list) => {
+watch(rows, (list) => {
   const names = new Set(list.map((r) => r.e.name));
   for (const name of [...selected]) if (!names.has(name)) selected.delete(name);
 });
@@ -242,7 +225,7 @@ function toggle(name: string): void {
 }
 function toggleAll(): void {
   if (allChosen.value) selected.clear();
-  else for (const r of selectable.value) selected.add(r.e.name);
+  else for (const r of rows.value) selected.add(r.e.name);
 }
 
 // ---- results
@@ -261,7 +244,6 @@ const naming = reactive({ open: false, item: null as Entry | null });
 const moving = reactive({ open: false, items: [] as Entry[] });
 const removing = reactive({ open: false, items: [] as Entry[] });
 const writeBlock = computed(() => {
-  if (hereGuard.value) return `${hereGuard.value.owner} bu klasöre yazıyor; burada değişiklik yapılmaz.`;
   if (!here.value && state.value && !state.value.writable) return "Bu klasöre yazma izni yok.";
   return "";
 });
@@ -429,11 +411,6 @@ onBeforeUnmount(() => {
       <button type="button" class="btn btn-secondary btn-sm" :disabled="loading" data-testid="refresh" @click="reload"><Icon name="refresh" :size="16" />Yenile</button>
     </div>
 
-    <p v-if="hereGuard" class="notice notice-warning" data-testid="guard-here">
-      <Icon name="lock" class="notice-icon" />
-      <span><strong>{{ hereGuard.owner }} bu klasöre yazıyor.</strong> Buradaki dosyaları taşımak ya da silmek onun işini bozar; Konsol burada değişiklik yapmaz.</span>
-    </p>
-
     <div class="toolbar files-tools">
       <div class="search-box">
         <label :for="`suz-${tree}`" class="sr-only">Bu klasörde süz</label>
@@ -478,7 +455,7 @@ onBeforeUnmount(() => {
 
     <div class="files-list" :class="{ 'files-switching': switching }" :inert="switching || undefined" :aria-busy="loading || undefined" data-testid="list">
       <template v-if="listing">
-        <label v-if="selectable.length" class="check-row files-all">
+        <label v-if="rows.length" class="check-row files-all">
           <input type="checkbox" :checked="allChosen" :indeterminate="someChosen" data-testid="select-all" @change="toggleAll" />
           <span>Tümünü seç</span>
         </label>
@@ -496,7 +473,7 @@ onBeforeUnmount(() => {
             <tbody>
               <tr v-for="r in rows" :key="r.e.name" :data-oge="r.e.name" :data-tur="r.e.type" :class="{ 'files-row-on': selected.has(r.e.name) }">
                 <td class="files-check">
-                  <label v-if="!r.locked" class="files-pick">
+                  <label class="files-pick">
                     <input type="checkbox" :checked="selected.has(r.e.name)" :aria-label="`Seç: ${r.e.name}`" @change="toggle(r.e.name)" />
                   </label>
                 </td>
@@ -511,7 +488,6 @@ onBeforeUnmount(() => {
                       <span class="files-marks">
                         <span v-if="r.e.type === 'dir'" class="cell-note">{{ countText(r.e.count) }}</span>
                         <span v-else-if="r.e.type !== 'file'" class="cell-note">{{ TYPE_TEXT[r.e.type] }}</span>
-                        <span v-if="r.guard" class="files-mark files-mark-lock" data-isaret="koruma"><Icon name="lock" :size="14" />{{ guardText(r.guard) }}</span>
                         <span v-if="r.share" class="files-mark" :class="{ 'files-mark-on': shareMark(r.share).on }" data-isaret="paylasim">
                           <Icon name="share" :size="14" />{{ shareMark(r.share).text }}
                         </span>
@@ -533,14 +509,12 @@ onBeforeUnmount(() => {
                     <button v-if="r.edit" type="button" class="icon-btn" :aria-label="`Düzenle: ${r.e.name}`" title="Düzenle" data-eylem="duzenle" @click="openEditor(r.e.name)">
                       <Icon name="pencil" :size="18" />
                     </button>
-                    <template v-if="!r.locked">
-                      <button type="button" class="icon-btn" :aria-label="`Yeniden adlandır: ${r.e.name}`" title="Yeniden adlandır" data-eylem="adlandir" @click="rename(r.e)">
-                        <Icon name="rename" :size="18" />
-                      </button>
-                      <button type="button" class="icon-btn" :aria-label="`Taşı: ${r.e.name}`" title="Taşı" data-eylem="tasi" @click="move([r.e])"><Icon name="move" :size="18" /></button>
-                      <button type="button" class="icon-btn icon-btn-danger" :aria-label="`${system ? 'Kalıcı sil' : 'Çöpe at'}: ${r.e.name}`" :title="system ? 'Kalıcı sil' : 'Çöpe at'"
-                        :data-eylem="system ? 'sil' : 'cop'" @click="remove([r.e])"><Icon name="trash" :size="18" /></button>
-                    </template>
+                    <button type="button" class="icon-btn" :aria-label="`Yeniden adlandır: ${r.e.name}`" title="Yeniden adlandır" data-eylem="adlandir" @click="rename(r.e)">
+                      <Icon name="rename" :size="18" />
+                    </button>
+                    <button type="button" class="icon-btn" :aria-label="`Taşı: ${r.e.name}`" title="Taşı" data-eylem="tasi" @click="move([r.e])"><Icon name="move" :size="18" /></button>
+                    <button type="button" class="icon-btn icon-btn-danger" :aria-label="`${system ? 'Kalıcı sil' : 'Çöpe at'}: ${r.e.name}`" :title="system ? 'Kalıcı sil' : 'Çöpe at'"
+                      :data-eylem="system ? 'sil' : 'cop'" @click="remove([r.e])"><Icon name="trash" :size="18" /></button>
                   </span>
                 </td>
               </tr>
@@ -564,10 +538,8 @@ onBeforeUnmount(() => {
       <span>{{ writeBlock || `Bırakın — ${fullPath(root, here)} içine yüklenir` }}</span>
     </div>
 
-    <GezginNote v-if="!system" compact />
-
     <NameDialog :open="naming.open" :tree="tree" :root="root" :folder="here" :item="naming.item" @close="naming.open = false" @done="done" />
-    <MoveDialog :open="moving.open" :tree="tree" :root="root" :folder="here" :items="moving.items" :guarded="guarded" @close="moving.open = false" @done="done" />
+    <MoveDialog :open="moving.open" :tree="tree" :root="root" :folder="here" :items="moving.items" @close="moving.open = false" @done="done" />
     <RemoveDialog :open="removing.open" :tree="tree" :root="root" :folder="here" :items="removing.items" @close="removing.open = false" @done="done" />
     <EditorSheet :tree="tree" :root="root" :folder="here" :name="fileParam || null" @close="fileParam = ''" @saved="onSaved" />
   </section>

@@ -49,7 +49,6 @@ const unmeasured = computed(() => props.app.kaynak.cpu === null && props.app.kay
 
 // ---- the container's own detail
 const SOURCE: Record<ContainerDetail["source"], { text: string; tone: Tone; note: string }> = {
-  appstore: { text: "App Store", tone: "accent", note: "Yaşam döngüsü App Store uygulamasıyla ortak." },
   konsol: { text: "Konsol", tone: "ok", note: "Konsol'da tanımlı; ayarları Ayarlar'da düzenlenir." },
   external: { text: "Dışarıda", tone: "neutral", note: "Konsol dışında oluşturuldu." },
 };
@@ -86,7 +85,6 @@ const autostart = computed(() => {
   const cfg = config.value;
   const on = b.effective_autostart ?? (cfg ? cfg.autostart !== false && !cfg.manual_stop : null);
   if (b.source === "external") return { text: "Konsol söz veremez", note: "Bu konteyneri başka bir araç yönetir; açılışta ne olacağını o belirler." };
-  if (b.source === "appstore") return { text: on ? "Açılışta başlar" : "Kapalı · uygulama durduruldu", note: "App Store uygulamasının durumu izlenir: durdurulursa açılışta da kapalı kalır." };
   if (cfg?.manual_stop) return { text: "Kapalı · siz durdurdunuz", note: "Başlat bu durumu kaldırır; açılış tercihi yeniden geçerli olur." };
   return { text: on ? "Açılışta başlar" : "Açılışta başlamaz", note: cfg?.autostart === false ? "Açılış tercihi kapalı." : "" };
 });
@@ -209,7 +207,7 @@ const autostart = computed(() => {
             <dd>{{ config.memory || "Yok" }}</dd>
           </template>
         </dl>
-        <p v-if="!config" class="meter-note">{{ box.source === "appstore" ? "Başlatma ve sınırları uygulamanın paketi belirler." : "Bu konteynerin tanımı Konsol'da değil." }}</p>
+        <p v-if="!config" class="meter-note">Bu konteynerin tanımı Konsol'da değil.</p>
       </Card>
 
       <Card v-if="box" title="Ortam" data-testid="summary-env">
@@ -233,7 +231,7 @@ const autostart = computed(() => {
           </table>
         </div>
         <p v-else-if="environment" class="meter-note">Ortam değişkeni yok.</p>
-        <p v-else class="meter-note">{{ box.source === "appstore" ? "Uygulamanın ortamını paket yönetir; burada gösterilmez." : "Bu konteynerin ortamı Konsol'da tanımlı değil; değerleri gösterilmez." }}</p>
+        <p v-else class="meter-note">Bu konteynerin ortamı Konsol'da tanımlı değil; değerleri gösterilmez.</p>
         <p class="meter-note">Gizli değerler sunucudan tarayıcıya hiç gönderilmez.</p>
       </Card>
     </div>

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Ownership-aware inventory and asynchronous, bounded container operations.
 
-Reads stay in the panel sandbox. Every write runs this CLI in a separate root transient unit;
-application lifecycle uses its package engine, other operations use the dedicated worker.
+Reads stay in the panel sandbox. Every write runs this CLI in a separate root transient unit, which
+hands it to the dedicated worker (master_container_worker).
 """
 import argparse
 import copy
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,7 +23,6 @@ from master_containers import Containers, ContainerError, epoch, listening, name
 ACTIONS = frozenset(('create', 'save', 'start', 'stop', 'restart', 'remove', 'adopt', 'image-pull',
                      'image-remove', 'image-update', 'volume-create', 'volume-remove', 'network-create', 'network-remove'))
 JOB_RE = re.compile(r'[0-9a-f]{32}\Z')
-APP_ACTIONS = {'start': 'baslat', 'stop': 'durdur', 'restart': 'yeniden-baslat', 'remove': 'kaldir'}
 # DD-214: image update checks read registry manifests only and are cached; the page asks on open,
 # the operator can ask again. No timer and no automatic update: an update is an explicit operation.
 UPDATE_TTL = 6 * 3600
@@ -37,47 +35,6 @@ CGROUP_ROOT = '/sys/fs/cgroup'
 CGROUP_PART_RE = re.compile(r'[A-Za-z0-9_.:@\\-]{1,255}\Z')
 CPU_MIN_INTERVAL = 2.0
 CPU_SAMPLES = 256
-
-
-def app_specs(env):
-    """Package names come from installed manifests, never browser-provided executable paths."""
-    try:
-        raw = settings.read_regular(env['MODULES_FILE'], 65536)[0].decode()
-    except FileNotFoundError:
-        return {}
-    except (OSError, KeyError, ValueError, UnicodeError) as err:
-        raise ContainerError(503, 'Uygulama kaydı okunamadı.') from err
-    states = {}
-    for line in raw.splitlines():
-        bits = line.split()
-        if len(bits) == 2 and bits[1] in ('calisiyor', 'durduruldu'):
-            states[bits[0]] = bits[1]
-    result = {}
-    for mid, manifest in settings.read_manifests(env).items():
-        slot = manifest.get('PAKET_KONTEYNER', '')
-        if mid not in states or not re.fullmatch(r'[a-z][a-z0-9-]{1,30}\.container', slot):
-            continue
-        name = slot[:-10]
-        result[name] = {'name': name, 'module_id': mid, 'manifest': manifest, 'module_state': states[mid],
-                        'unit': name + '.service', 'image': manifest.get('PAKET_IMAJ', ''),
-                        'adapter': manifest.get('PAKET_KONTEYNER_YONETIM', ''),
-                        'channel': manifest.get('PAKET_IMAJ_KANAL', '')}
-    return result
-
-
-def app_config(env, app):
-    if not app['adapter']:
-        return {'config': None, 'editable': [], 'protected_mounts': [],
-                'revision': hashlib.sha256((app['module_id'] + app['module_state']).encode()).hexdigest()}
-    try:
-        module = settings.load_package_module(env, app['module_id'], app['adapter'], 'container_config', 'Konteyner ayar aracı')
-        effective = dict(env, **settings.package_env(env, app['module_id']))
-        result = module.container_config(effective)
-        if not isinstance(result, dict) or not isinstance(result.get('revision'), str):
-            raise ValueError('adapter response')
-        return result
-    except (OSError, KeyError, ValueError, settings.SettingsError) as err:
-        raise ContainerError(503, 'Uygulamanın konteyner ayarları okunamadı.') from err
 
 
 def port_scope(ip, env):
@@ -132,7 +89,6 @@ class Inventory(Containers):
         super().__init__(lambda argv, timeout: service.panel.run_tool(argv, timeout=timeout))
         self.service = service
         self.env = settings.env_read(service.panel.args.state)
-        self.apps = app_specs(self.env)
         try:
             self.definitions = {d['name']: d for d in config.Store(self.env).list()} if self.env.get('KONTEYNER_STATE_DIR') else {}
         except config.ContainerConfigError as err:
@@ -174,9 +130,9 @@ class Inventory(Containers):
 
     def decorate(self, row, details=False):
         name = row['name']
-        app, d = self.apps.get(name), self.definitions.get(name)
+        d = self.definitions.get(name)
         row.update(live=bool(row.get('id')), source='external', management_id='external:' + name,
-                   module_id=None, revision=None, actions=[], restricted_reason='',
+                   revision=None, actions=[], restricted_reason='',
                    cpu_percent=None, memory_bytes=None, busy=self.service.busy(name), health=row.get('health', ''), listening=None)
         raw = self.inspect(name) if row['live'] else None
         if raw:
@@ -190,26 +146,7 @@ class Inventory(Containers):
         if row['live'] and running:
             row['cpu_percent'], row['memory_bytes'] = self.usage(name, raw)
         lifecycle = ['stop', 'restart'] if running else ['start']
-        if app:
-            row.update(source='appstore', management_id='appstore:' + app['module_id'], module_id=app['module_id'], unit=app['unit'])
-            if not row['live']:
-                row['state'] = 'stopped' if app['module_state'] == 'durduruldu' else 'unknown'
-                if details: row['mounts'] = []
-            row['actions'] = (['stop', 'restart'] if running else ['start']) + ['remove']
-            # DD-214: a package that names an update channel and an adapter can move its pinned image.
-            if app.get('channel') and app.get('adapter'):
-                row['actions'].append('image-update')
-            try:
-                value = app_config(self.env, app)
-                row['revision'] = value['revision']
-                if value.get('editable'):
-                    row['actions'].append('save')
-                if details:
-                    row.update(value)
-                    row['effective_autostart'] = app['module_state'] == 'calisiyor'
-            except ContainerError as err:
-                row['restricted_reason'] = str(err)
-        elif d:
+        if d:
             row.update(source='konsol', management_id='konsol:' + name, revision=d['revision'],
                        unit='konsol-' + name + '.service', actions=lifecycle + ['save', 'remove', 'image-update'],
                        effective_autostart=bool(d.get('autostart') and not d.get('manual_stop')))
@@ -222,7 +159,7 @@ class Inventory(Containers):
                                       'rw':not m['read_only'], 'name':m['source'] if m['type']=='volume' else ''} for m in d.get('mounts', [])]
         else:
             if raw:
-                own = config.ownership(raw, self.env)
+                own = config.ownership(raw)
                 # Worker repeats discovery under its mutation lock; the view is not authority.
                 standalone = own == 'standalone' or (isinstance(own, dict) and own.get('kind') == 'standalone')
                 if standalone:
@@ -231,16 +168,14 @@ class Inventory(Containers):
                     row['restricted_reason'] = 'Konteyner başka bir yöneticiye ait veya desteklenmeyen seçenekler kullanıyor.'
             else:
                 row['restricted_reason'] = 'Konteynerin yönetim kaynağı doğrulanamadı; listeyi yenileyin.'
-        if row['live'] and (app or d):
-            labels = ((raw or {}).get('Config') or {}).get('Labels') or {}
-            expected = labels.get('PODMAN_SYSTEMD_UNIT') == row['unit'] if app else raw and config.ownership(raw,self.env)=='konsol'
-            if not expected:
+        if row['live'] and d:
+            if not (raw and config.ownership(raw) == 'konsol'):
                 row['actions'] = []
                 row['restricted_reason'] = 'Bu adın çalışan konteyneri kayıtlı yöneticiyle eşleşmiyor; işlem yapılmadı.'
         if row['live'] and row['state'] not in ('running','stopped','exited','created','configured'):
             row['actions'] = []
             row['restricted_reason'] = 'Konteyner duraklatılmış veya geçiş durumunda; önce asıl yöneticisinden durumunu düzeltin.'
-        row['update'] = self.service.update_of(name) if (app or d) else None
+        row['update'] = self.service.update_of(name) if d else None
         for port in row.get('ports') or []:
             if isinstance(port, dict):
                 port['scope'] = port_scope(port.get('host_ip', ''), self.env)
@@ -251,8 +186,6 @@ class Inventory(Containers):
         rows = {r['name']: r for r in answer['containers']}
         for name, d in self.definitions.items():
             rows.setdefault(name, definition_row(d))
-        for name, app in self.apps.items():
-            rows.setdefault(name, dict(definition_row({'name':name,'image':app['image'],'network':'host'}),unit=app['unit']))
         answer['containers'] = [self.decorate(row) for row in rows.values()]
         answer['storage']['containers'] = len(rows)
         answer['resource_errors'] = {}
@@ -283,7 +216,6 @@ class Inventory(Containers):
         ok, images, error = self.podman('images','--format','json')
         if ok and isinstance(images,list):
             answer['images'] = []
-            pinned = {a['image'] for a in self.apps.values()}
             for i in images:
                 refs = i.get('Names') or i.get('names') or i.get('RepoTags') or ['<adsız>']
                 ident = i.get('Id') or i.get('ID') or i.get('id') or ''
@@ -296,10 +228,9 @@ class Inventory(Containers):
                         digests.add(repo+'@'+digest)
                 users = set(uses['image'].get(ident,[]))
                 for ref in set(refs)|digests: users.update(uses['image'].get(ref,[]))
-                is_pinned = bool((set(refs)|digests) & pinned) or any(a['name'] in users for a in self.apps.values())
                 for ref in refs:
                     answer['images'].append({'id':ident,'name':ref,'size':i.get('Size',i.get('size')),'created':epoch(i.get('Created',i.get('created'))),
-                                              'used_by':sorted(users),'managed':not is_pinned,'pinned':is_pinned})
+                                              'used_by':sorted(users),'managed':True})
         else: answer['resource_errors']['images'] = 'İmajlar okunamadı: ' + error
         for kind, command in (('volumes','volume'),('networks','network')):
             ok, resources, error = self.podman(command,'ls','--format','json')
@@ -325,7 +256,7 @@ class Inventory(Containers):
     def reach(self):
         """DD-259: Erişim's view of the containers: who manages each, whether it runs and the scope of
         each published port (the container guard admits exactly these, DD-217). One `podman ps`; no
-        stats, images, inspect or package adapters."""
+        stats, images or inspect."""
         runtime = self.runtime()
         found = []
         if runtime['ok']:
@@ -334,16 +265,13 @@ class Inventory(Containers):
                 runtime = {'version': runtime['version'], 'ok': False, 'error': 'Konteynerler okunamadı: %s' % message}
         rows = {r['name']: r for r in found}
         items = []
-        for name in sorted(set(rows) | set(self.definitions) | set(self.apps)):
-            row, app, d = rows.get(name), self.apps.get(name), self.definitions.get(name)
+        for name in sorted(set(rows) | set(self.definitions)):
+            row, d = rows.get(name), self.definitions.get(name)
             if row:
                 state, ports = row['state'], row['ports']
-            elif app:
-                state, ports = 'stopped' if app['module_state'] == 'durduruldu' else 'unknown', []
             else:
                 state, ports = 'stopped', definition_ports(d, self.env)
-            items.append({'name': name, 'source': 'appstore' if app else 'konsol' if d else 'external',
-                          'module_id': app['module_id'] if app else None, 'state': state, 'live': bool(row),
+            items.append({'name': name, 'source': 'konsol' if d else 'external', 'state': state, 'live': bool(row),
                           'ports': [dict(p, scope=port_scope(p.get('host_ip', ''), self.env)) for p in ports]})
         return {'runtime': runtime, 'containers': items}
 
@@ -354,17 +282,15 @@ class Inventory(Containers):
         except ContainerError as err:
             if err.status!=404: raise
             if name in self.definitions: row=definition_row(self.definitions[name])
-            elif name in self.apps: row=definition_row({'name':name,'image':self.apps[name]['image'],'network':'host'})
             else: raise
         return self.decorate(row,True)
 
-    # DD-251: a Konsol or App Store container is a systemd unit whose output goes to the journal, so its
-    # log is that unit's journal: every start, restart and re-creation, as it was written. Any other
-    # container has only its own `podman logs`.
+    # DD-251: a Konsol container is a systemd unit whose output goes to the journal, so its log is that
+    # unit's journal: every start, restart and re-creation, as it was written. Any other container has
+    # only its own `podman logs`.
     def gunluk(self,name,tail):
         name_of(name)
-        if name in self.apps: unit=self.apps[name]['unit']
-        elif name in self.definitions: unit='konsol-'+name+'.service'
+        if name in self.definitions: unit='konsol-'+name+'.service'
         else: return super().gunluk(name,tail)
         tail=int(tail) if str(tail).isdigit() and int(tail) in TAILS else 200
         rc,text,_=self.run(['journalctl','-u',unit,'-n',str(tail),'--no-pager','-o','short-iso'],30)
@@ -415,10 +341,6 @@ class Service:
             rc,arch,_=run(['podman','info','--format','{{.Host.Arch}}'],20)
             arch=arch.strip()
             items={}
-            for name,app in view.apps.items():
-                if app.get('channel'):
-                    items[name]=update_status(run,app['image'],app['channel'],arch) if rc==0 and arch else \
-                        {'state':'denetlenemedi','channel':app['channel'],'candidate':'','error':'Podman yanıt vermedi.'}
             for name,d in view.definitions.items():
                 ref=d.get('image_ref') or ''
                 items[name]=update_status(run,d['image'],ref if '@' not in ref else '',arch) if rc==0 and arch else \
@@ -485,8 +407,6 @@ class Service:
             if action not in row['actions']: raise ContainerError(409,row.get('restricted_reason') or 'Bu işlem konteyner için desteklenmiyor.')
             if row.get('revision') and request.get('revision')!=row['revision']:
                 raise ContainerError(409,'Ayarlar değişmiş; sayfayı yenileyip değişiklikleri yeniden inceleyin.')
-            if row.get('module_id') and self.panel.module_busy(row['module_id']):
-                raise ContainerError(409,'Uygulamada bir işlem sürüyor.')
         ident=uuid.uuid4().hex
         with self.lock:
             if any(j['state']=='running' and j.get('name')==name for j in self.jobs.values()):
@@ -536,59 +456,14 @@ def main():
         if len(raw)>65536: raise ContainerError(400,'İstek çok büyük.')
         request=json.loads(raw)
         if not isinstance(request,dict): raise ContainerError(400,'İstek nesne olmalı.')
-        env=settings.env_read(args.state)
-        app=app_specs(env).get(request.get('name')) if args.action in (*APP_ACTIONS,'save','image-update') else None
-        if app:
-            result=application_job(args,env,app,request)
-        else:
-            from master_container_worker import Manager
-            result=Manager(args.state).execute(args.action,request,args.operation)
+        from master_container_worker import Manager
+        result=Manager(args.state).execute(args.action,request,args.operation)
         print(json.dumps(result,ensure_ascii=False))
     except Exception as err:
         expected=isinstance(err,(ContainerError,config.ContainerConfigError,settings.SettingsError)) or hasattr(err,'status')
         print(json.dumps({'error':str(err) if expected else 'Konteyner işlemi tamamlanamadı.',
                           'status':getattr(err,'status',500)},ensure_ascii=False))
         sys.exit(1)
-
-
-def application_job(args,env,app,data):
-    directory=Path(env['KONTEYNER_STATE_DIR'])/'operations'
-    config.private_dir(directory)
-    path=directory/(args.operation+'.json')
-    # Exclusive reservation prevents a repeated operation ID repeating a destructive action.
-    with settings.parent_fd(path) as (fd,name):
-        out=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=fd)
-        os.close(out)
-    job={'id':args.operation,'action':args.action,'name':app['name'],'state':'running','step':'Uygulama işlemi', 'updated_at':int(time.time())}
-    def write(): settings.atomic(path,json.dumps(job,ensure_ascii=False)+'\n',0o600)
-    write()
-    try:
-        current=app_config(env,app)
-        if data.get('revision')!=current['revision']:
-            raise ContainerError(409,'Uygulama ayarları değişmiş; yeniden inceleyin.')
-        if args.action in ('save','image-update'):
-            script=Path(env['MODULES_DIR'])/app['module_id']/app['adapter']
-            verb,body,limit=(('konteyner-ayar',{'revision':data['revision'],'config':data.get('config',{})},600) if args.action=='save' else
-                             ('konteyner-guncelle',{'revision':data['revision']},870))
-            command=['/usr/bin/python3',str(script),'--lib',str(Path(__file__).resolve().parent),'--state',args.state,verb]
-            job.update(step='İmaj denetleniyor ve indiriliyor' if args.action=='image-update' else 'Uygulama ayarı'); write()
-            proc=subprocess.run(command,input=json.dumps(body),text=True,capture_output=True,timeout=limit)
-            result=json.loads(proc.stdout)
-            if proc.returncode: raise ContainerError(result.get('status',400),result.get('error','Uygulama ayarı uygulanamadı.'))
-        else:
-            command=[str(Path(__file__).resolve().parent/'master-modul'),APP_ACTIONS[args.action],app['module_id']]
-            if args.action=='remove' and data.get('with_data') is True: command.append('--veri')
-            proc=subprocess.run(command,capture_output=True,text=True,timeout=600,
-                                env=dict(os.environ,STATE_FILE=args.state,KONSOL_KONTEYNER_REVISION=data['revision']))
-            if proc.returncode==75: raise ContainerError(409,'Uygulama ayarları değişmiş; yeniden inceleyin.')
-            if proc.returncode: raise ContainerError(502,'Uygulama işlemi başarısız; uygulama günlüğünü kontrol edin.')
-            result={'ok':True,'module_id':app['module_id']}
-        job.update(state='done',step='Tamamlandı',result=result,updated_at=int(time.time()));write()
-        return result
-    except Exception as err:
-        job.update(state='failed',step='İşlem durdu',error=str(err) if isinstance(err,ContainerError) else 'Uygulama işlemi tamamlanamadı.',
-                   status=getattr(err,'status',500),updated_at=int(time.time()));write()
-        raise
 
 
 if __name__=='__main__': main()

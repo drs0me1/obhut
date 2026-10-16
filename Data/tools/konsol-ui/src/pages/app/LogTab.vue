@@ -1,9 +1,8 @@
 <!-- An application's Günlük: its last lines (GET /api/konsol/uygulamalar/gunluk: a container's unit journal
-     or podman log, a package's engine log), as many as chosen (?satir=100|200|500|1000, 200 when absent),
+     or podman log), as many as chosen (?satir=100|200|500|1000, 200 when absent),
      "Yenile", and "Canlı" (?canli=1), which reads them again every 5 s while it is on and the tab is
      visible. The search (?ara=) keeps the matching lines, matched with Turkish case rules, and marks each
-     match. The view stays at the newest line unless the reader scrolled up. Built-ins keep their log in
-     Ayarlar → Günlük. The log is shown as written: an application's own secrets in it are visible too. -->
+     match. The view stays at the newest line unless the reader scrolled up. The log is shown as written: an application's own secrets in it are visible too. -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Icon } from "../../components/icons";
@@ -11,7 +10,6 @@ import EmptyState from "../../components/ui/EmptyState.vue";
 import Switch from "../../components/ui/Switch.vue";
 import { readAppLog } from "../../api/konsol";
 import { useQueryFlag, useQueryParam } from "../../query";
-import { systemRoute } from "../../sections";
 import { clock, fold } from "../../format";
 import type { Uygulama, UygulamaGunlugu } from "../../api/sema";
 
@@ -95,8 +93,6 @@ onBeforeUnmount(() => {
   seq += 1;
 });
 
-const builtin = computed(() => props.app.tur === "yerlesik");
-
 // ---- the search: matching lines, each match marked
 interface Part {
   text: string;
@@ -164,7 +160,6 @@ const matchText = computed(() => (needle.value && log.value ? `${shown.value.len
     </div>
     <p class="sr-only" role="status">{{ matchText }}</p>
     <p v-if="error" class="form-error" role="alert" data-testid="log-error">{{ error }}</p>
-    <p v-if="error && builtin" class="meter-note"><RouterLink :to="systemRoute('gunluk')">Sistem → Günlük</RouterLink></p>
     <template v-if="log">
       <ol v-if="shown.length" ref="box" class="log" tabindex="0" aria-label="Günlük satırları" data-testid="log-lines">
         <li v-for="(line, i) in shown" :key="i"><template v-for="(p, j) in line" :key="j"><mark v-if="p.hit" class="log-hit">{{ p.text }}</mark><template v-else>{{ p.text }}</template></template></li>

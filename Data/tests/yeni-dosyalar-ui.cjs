@@ -1,10 +1,10 @@
-/* Konsol's new interface, phase 4b (DD-258, DD-267): Dosyalar — Depolama (the disk, the trash in short, Gezgin,
-   the user area's folders with who uses them), Sunucu klasörleri (the folder browser over the files backend:
+/* Konsol's new interface, phase 4b (DD-258, DD-267): Dosyalar — Depolama (the disk, the trash in short, the
+   user area's folders with who uses them), Sunucu klasörleri (the folder browser over the files backend:
    breadcrumbs, Turkish order, sizes and times, the filter, ticks, uploads from the picker and a drop with the
-   queue, progress and cancel, downloads, new folder, rename, move, trash, the packages' folders, the share
-   marks and the links to Paylaşımlar, the text editor with CodeMirror under the CSP), Çöp kutusu (restore,
-   permanent delete, empty) and Sistem dosyaları (the same browser as root over /api/sistem/*, the typed
-   name, the root-save warning, the tailnet-only refusal) in the committed build under Data/console/yeni,
+   queue, progress and cancel, downloads, new folder, rename, move, trash, the share marks and the links to
+   Paylaşımlar, the text editor with CodeMirror under the CSP), Çöp kutusu (restore, permanent delete, empty)
+   and Sistem dosyaları (the same browser as root over /api/sistem/*, the typed name, the root-save warning,
+   the tailnet-only refusal) in the committed build under Data/console/yeni,
    with the production CSP and an in-memory files backend answering every request (yeni-harness.cjs). The
    real editor bundle (Data/console/duzenleyici.js) is served at /duzenleyici.js. Fails on any console
    error, CSP violation or page error. Never contacts a server.
@@ -18,28 +18,22 @@ const KB = 1024, MB = 1024 * KB, GB = 1024 * MB;
 const TZ = "Europe/Istanbul";
 const SHA = (c) => c.repeat(64);
 const ucell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
-const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: ucell("yok"), internet: ucell("yok"),
-  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
-  metinler: null, hesap: false, aciklama: "", ...o });
-const GEZGIN = app({ id: "paket:gezgin", ad: "Gezgin", tur: "paket", modul: "gezgin", konteyner: "gezgin", simge: "folder", aciklama: "Sunucudaki dosyalarınızı tarayıcıdan yönetin.",
-  tailscale: ucell("acik", ["gezgin.ev"]), adres: { tailscale: "http://gezgin.ev", internet: null } });
-const APPS = [
-  GEZGIN,
-  app({ id: "paket:torrent", ad: "qBittorrent", tur: "paket", modul: "torrent", konteyner: "torrent", simge: "download" }),
-  app({ id: "konteyner:notlar", ad: "notlar", tur: "konteyner", konteyner: "notlar" }),
-  app({ id: "yerlesik:dosya", ad: "Dosyalar", tur: "yerlesik" }),
-];
+/** A container application as GET /api/konsol/uygulamalar lists it (the only kind there is). */
+const app = (name, o = {}) => ({ id: "konteyner:" + name, ad: name, tur: "konteyner", konteyner: name, aciklama: "", durum: "calisiyor",
+  tailscale: ucell("yok"), internet: ucell("yok"), kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null },
+  eylemler: [], revizyon: null, ...o });
+const APPS = [app("galeri"), app("indirici"), app("notlar")];
 const conn = (active, o = {}) => ({ enabled: active, permission: "ro", expires: null, expired: false, available: true, active, reason: "", url: "", ...o });
-const SHARES = { enabled: true, running: true, host: "paylas.ev", max: 32, tail_enabled: true, limits: {},
+const SHARES = { host: "paylas.ev", max: 32, tail_enabled: true, limits: {},
   wan: { available: false, address: "", reason: "kapalı", mode: "off", domain: "", port: 443 },
   items: [{ id: "f1lm", path: "Filmler", name: "Filmler", username: "aile", created: NOW - 9 * DAY, changed: NOW - DAY, type: "dir", available: true,
     connections: { tailscale: conn(true), wan: conn(false) }, urls: { tailscale: "" }, url: "" }] };
 const STORAGE = { read_at: NOW, kok: "/srv", hatalar: ["notlar2: konteyner okunamadı (podman inspect 125)"], kullananlar: [
-  { yol: "/srv", id: "paket:gezgin", ad: "Gezgin", tur: "paket", hedef: "/srv", yazilabilir: true },
+  { yol: "/srv", id: "konteyner:galeri", ad: "galeri", tur: "konteyner", hedef: "/srv", yazilabilir: true },
   { yol: "/srv/Belgeler/arsiv", id: "konteyner:notlar", ad: "notlar", tur: "konteyner", hedef: "/data", yazilabilir: false },
-  { yol: "/srv/Filmler", id: "yerlesik:paylasim", ad: "Filmler", tur: "paylasim", hedef: "/s/f1lm/", yazilabilir: false },
+  { yol: "/srv/Filmler", id: "paylasim", ad: "Filmler", tur: "paylasim", hedef: "/s/f1lm/", yazilabilir: false },
   { yol: "/srv/eski", id: "konteyner:eski", ad: "eski", tur: "konteyner", hedef: "/old", yazilabilir: true },
-  { yol: "/srv/indirilenler", id: "paket:torrent", ad: "qBittorrent", tur: "paket", hedef: "/downloads", yazilabilir: true },
+  { yol: "/srv/indirilenler", id: "konteyner:indirici", ad: "indirici", tur: "konteyner", hedef: "/downloads", yazilabilir: true },
 ] };
 
 const data = {
@@ -53,8 +47,8 @@ const data = {
   etkinlik: { items: [] },
   erisim: { read_at: NOW, alan: "ev", hizmetler: [], uyarilar: [], hatalar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null }, internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
-      wireguard: { kurulu: false, not: "", aglar: [] }, sertifikalar: [] } },
-  uygulamalar: { read_at: NOW, hatalar: [], katalog: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 2, kullanilmayan_imaj: 0, birim: 1, ag: 2 }, items: APPS },
+      wireguard: { kurulu: false, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
+  uygulamalar: { read_at: NOW, hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 2, kullanilmayan_imaj: 0, birim: 1, ag: 2 }, items: APPS },
   paylasim: SHARES,
   depolama: STORAGE,
 };
@@ -155,7 +149,6 @@ function backend(prefix, tree) {
   route("/state", () => ({ body: system
     ? { host: "sunucu", version: "v2-250", root: "/", sistem: true, writable: true, disk: { total: 60 * GB, free: 41 * GB, used: null, mount: true }, textLimit: MB }
     : { host: "sunucu", version: "v2-250", root: "/srv", downloads: "indirilenler", domain: "ev", writable: true,
-      protected: [{ path: "indirilenler/.gecici", owner: "qBittorrent" }],
       disk: { total: 500 * GB, free: 320 * GB, used: sizeOf(tree()), mount: true },
       trash: { count: trash.length, size: trash.reduce((s, t) => s + (t.size ?? 0), 0) }, textLimit: MB } }));
   route("/list", ({ query }) => {
@@ -342,7 +335,7 @@ async function drop(page, files, type = "drop") {
   h.checkBuild();
   await h.start();
   try {
-    // ================= Depolama: the disk, the trash, Gezgin and who uses which folder
+    // ================= Depolama: the disk, the trash and who uses which folder
     let page = await open();
     await page.goto(url("#/dosyalar"));
     assert.equal(await page.locator("main h1").innerText(), "Dosyalar");
@@ -357,24 +350,20 @@ async function drop(page, files, type = "drop") {
     assert.equal(await disk.getByTestId("mount").innerText(), "Kendi diskinde (ayrı bir bağlama noktası)");
     assert.equal(await page.getByTestId("trash-count").innerText(), `3 öge · ${bytes(120 + 3 * MB)}`);
     assert.equal(await page.getByTestId("trash-link").getAttribute("href"), "#/dosyalar?sekme=cop");
-    const gezginOpen = page.getByTestId("gezgin").getByTestId("gezgin-open");
-    assert.deepEqual([await gezginOpen.getAttribute("href"), await gezginOpen.getAttribute("target"), await gezginOpen.getAttribute("rel")],
-      ["http://gezgin.ev", "_blank", "noopener noreferrer"]);
-    assert.equal(await page.getByTestId("gezgin").getByTestId("gezgin-page").getAttribute("href"), "#/uygulamalar/paket:gezgin");
     const folders = page.getByTestId("folders");
     await folders.locator("tbody tr").first().waitFor();
+    assert.equal(await folders.locator(".meter-note").first().innerText(), "/srv altındaki klasörler, boyutları ve onları kullanan uygulamalar ve paylaşımlar.");
     assert.deepEqual(await folders.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.klasor)), [".gizli", "Belgeler", "Cep", "Çizgi", "Filmler", "ılık", "indirilenler"],
       "folders first in Turkish order: Ç after C, ı before i");
-    assert.equal(await page.getByTestId("whole").innerText(), "Bütün kullanıcı alanını kullanan: Gezgin (okuma-yazma · konteynerde /srv).");
+    assert.equal(await page.getByTestId("whole").innerText(), "Bütün kullanıcı alanını kullanan: galeri (okuma-yazma · konteynerde /srv).");
     const uses = async (name) => folders.locator(`tr[data-klasor="${name}"] .files-uses li`).evaluateAll((lis) => lis.map((li) => ({
       kind: li.dataset.kullanan, text: li.innerText.replace(/\s+/g, " ").trim(), href: li.querySelector("a")?.getAttribute("href") ?? null })));
     assert.deepEqual(await uses("Filmler"), [
       { kind: "paylasim", text: "Filmler klasör paylaşımı · Filmler · salt okunur", href: "#/dosyalar?sekme=paylasimlar&paylasim=f1lm" },
-      { kind: "paket", text: "Gezgin tüm kullanıcı alanı", href: "#/uygulamalar/paket:gezgin" }]);
+      { kind: "konteyner", text: "galeri tüm kullanıcı alanı", href: "#/uygulamalar/konteyner:galeri" }]);
     assert.deepEqual(await uses("indirilenler"), [
-      { kind: "paket", text: "qBittorrent indirilenler · okuma-yazma · konteynerde /downloads", href: "#/uygulamalar/paket:torrent" },
-      { kind: "koruma", text: "qBittorrent yazıyor · indirilenler/.gecici · Konsol burada değişiklik yapmaz", href: "#/uygulamalar/paket:torrent" },
-      { kind: "paket", text: "Gezgin tüm kullanıcı alanı", href: "#/uygulamalar/paket:gezgin" }]);
+      { kind: "konteyner", text: "indirici indirilenler · okuma-yazma · konteynerde /downloads", href: "#/uygulamalar/konteyner:indirici" },
+      { kind: "konteyner", text: "galeri tüm kullanıcı alanı", href: "#/uygulamalar/konteyner:galeri" }]);
     assert.deepEqual((await uses("Belgeler"))[0], { kind: "konteyner", text: "notlar Belgeler/arsiv · salt okunur · konteynerde /data", href: "#/uygulamalar/konteyner:notlar" });
     const filmler = folders.locator('tr[data-klasor="Filmler"]');
     assert.deepEqual(await filmler.locator("td").allInnerTexts().then((c) => c.slice(0, 2)), [bytes(1450 * MB), "3 öge"]);
@@ -390,22 +379,16 @@ async function drop(page, files, type = "drop") {
     assert.deepEqual(await crumbs(page), ["/srv", "Filmler"]);
     await page.context().close();
 
-    // Without Gezgin a note leads to the catalogue; a failed read of who uses what says so, the folders stay.
-    data.uygulamalar = { ...data.uygulamalar, items: APPS.filter((a) => a.id !== "paket:gezgin") };
+    // A failed read of who uses what says so; the folders stay.
     h.status["/api/konsol/depolama"] = 503;
     expectedFailures = ["/api/konsol/depolama"];
     page = await open();
     await page.goto(url("#/dosyalar"));
     await page.getByTestId("storage-error").filter({ hasText: "Kullananlar okunamadı: fixture" }).waitFor();
-    assert.equal(await page.getByTestId("gezgin").getByTestId("gezgin-install").getAttribute("href"), "#/uygulamalar?ekle=katalog&paket=gezgin");
-    assert.match(await page.getByTestId("gezgin").innerText(), /Tam dosya yöneticisi Gezgin'dir/);
     assert.equal(await page.getByTestId("folders").locator('tr[data-klasor="Filmler"] td[data-label="Kullanan"]').innerText(), "okunamadı");
-    await page.goto(url("#/dosyalar?sekme=srv"));
-    assert.equal(await page.getByTestId("gezgin").getByRole("link", { name: "Gezgin'i kurun" }).getAttribute("href"), "#/uygulamalar?ekle=katalog&paket=gezgin");
     await page.context().close();
     delete h.status["/api/konsol/depolama"];
     expectedFailures = [];
-    data.uygulamalar = { ...data.uygulamalar, items: APPS };
 
     // ================= Sunucu klasörleri: order, sizes, marks, the filter, ticks and the address
     page = await open();
@@ -427,11 +410,6 @@ async function drop(page, files, type = "drop") {
     assert.equal(await row(page, "Filmler").getByRole("link", { name: "Paylaş: Filmler" }).count(), 0);
     assert.equal(await row(page, "Belgeler").getByRole("link", { name: "Paylaş: Belgeler" }).getAttribute("href"), "#/dosyalar?sekme=paylasimlar&yeni=Belgeler");
     assert.equal(await row(page, ".gizli").locator('[data-eylem="paylas"]').count(), 0, "a hidden folder is not offered");
-    // A folder that holds a package's folder: marked, not ticked, not changed, not shared.
-    const held1 = row(page, "indirilenler");
-    assert.equal(await held1.locator('[data-isaret="koruma"]').innerText(), "İçinde qBittorrent klasörü var");
-    assert.equal(await held1.locator('input[type="checkbox"]').count(), 0);
-    assert.equal(await held1.locator('[data-eylem="adlandir"], [data-eylem="tasi"], [data-eylem="cop"], [data-eylem="paylas"]').count(), 0);
     // Row actions by kind: a text file opens in the editor, any small file has Düzenle, a big binary only İndir.
     assert.deepEqual(await row(page, "ayar.yml").locator(".files-row-actions [data-eylem]").evaluateAll((els) => els.map((e) => e.dataset.eylem)),
       ["indir", "duzenle", "adlandir", "tasi", "cop"]);
@@ -450,10 +428,11 @@ async function drop(page, files, type = "drop") {
     await filter.press("Escape");
     await row(page, "ayar.yml").waitFor();
     assert.equal((await queryOf(page)).get("ara"), null);
-    // Ticks: "Tümünü seç" skips what may not be changed; the bar sums the size.
+    // Ticks: every row has its box and "Tümünü seç" ticks them all; the bar sums the size.
+    assert.equal(await page.getByTestId("list").locator('tbody tr input[type="checkbox"]').count(), 10);
     await page.getByTestId("select-all").check();
     const selection = page.getByTestId("selection");
-    assert.equal(await selection.locator(".files-selection-text").innerText(), `9 öge seçili · ${bytes(sizeOf(srv) - sizeOf(srv.children.indirilenler))}`);
+    assert.equal(await selection.locator(".files-selection-text").innerText(), `10 öge seçili · ${bytes(sizeOf(srv))}`);
     await page.getByTestId("sel-clear").click();
     assert.equal(await selection.count(), 0);
     await row(page, "ayar.yml").getByLabel("Seç: ayar.yml").check();
@@ -500,31 +479,6 @@ async function drop(page, files, type = "drop") {
     await row(page, "ayar.yml").waitFor();
     assert.deepEqual(gets("/api/list").slice(-3).map((r) => r.query), ["?path=Yok%2FBurada", "?path=Yok", "?path="]);
     expectedFailures = [];
-    await page.context().close();
-
-    // ================= a package's folder: marked with its owner, nothing changes there
-    page = await open();
-    await page.goto(url("#/dosyalar?sekme=srv&yol=indirilenler"));
-    await row(page, ".gecici").waitFor();
-    assert.equal(await row(page, ".gecici").locator('[data-isaret="koruma"]').innerText(), "Yazan: qBittorrent");
-    assert.equal(await row(page, ".gecici").locator('input[type="checkbox"]').count(), 0);
-    assert.equal(await row(page, "tamam.iso").locator('input[type="checkbox"]').count(), 1);
-    assert.equal(await page.getByTestId("guard-here").count(), 0);
-    await row(page, ".gecici").getByRole("button", { name: ".gecici", exact: true }).click();
-    await folder(page, "indirilenler/.gecici");
-    assert.equal(await page.getByTestId("guard-here").innerText(),
-      "qBittorrent bu klasöre yazıyor. Buradaki dosyaları taşımak ya da silmek onun işini bozar; Konsol burada değişiklik yapmaz.");
-    assert(await page.getByTestId("upload").isDisabled());
-    assert(await page.getByTestId("new-folder").isDisabled());
-    assert.equal(await page.getByTestId("upload").getAttribute("title"), "qBittorrent bu klasöre yazıyor; burada değişiklik yapılmaz.");
-    assert.deepEqual(await row(page, "parca.!qB").locator(".files-row-actions [data-eylem]").evaluateAll((els) => els.map((e) => e.dataset.eylem)), ["indir"]);
-    assert.equal(await page.getByTestId("select-all").count(), 0);
-    await drop(page, [{ name: "olmaz.txt", text: "x" }], "hover");
-    assert.equal(await page.getByTestId("drop").innerText(), "qBittorrent bu klasöre yazıyor; burada değişiklik yapılmaz.");
-    await drop(page, [{ name: "olmaz.txt", text: "x" }]);
-    await page.getByTestId("failure").filter({ hasText: "qBittorrent bu klasöre yazıyor; burada değişiklik yapılmaz." }).waitFor();
-    assert.equal(posts("/api/upload").length, 0, "nothing is sent into a package's folder");
-    await shot(page, "1440-light-paket-klasoru.png", true);
     await page.context().close();
 
     // ================= uploads: picker, skipped names, the queue one at a time, cancel, a refusal, a drop
@@ -629,7 +583,7 @@ async function drop(page, files, type = "drop") {
     assert.deepEqual(lastPost("/api/rename"), { path: "Belgeler", name: "notlar.txt", to: "notlar-eski.txt" });
     await row(page, "notlar-eski.txt").waitFor();
     assert.equal(await page.getByTestId("note").innerText(), "“notlar.txt” → “notlar-eski.txt”");
-    // Taşı: the dialog browses folders only (dirs=1), never into the moved folder or a package's folder.
+    // Taşı: the dialog browses folders only (dirs=1), never into the moved folder.
     await row(page, "Faturalar").getByLabel("Seç: Faturalar").check();
     await row(page, "rapor.pdf").getByLabel("Seç: rapor.pdf").check();
     await page.getByTestId("sel-move").click();
@@ -647,9 +601,7 @@ async function drop(page, files, type = "drop") {
     await dialog.locator('li[data-klasor="indirilenler"]').waitFor();
     assert.equal(await activeText(page), "/srv", "the place the dialog moved to takes the focus");
     await dialog.getByRole("button", { name: "indirilenler içine gir" }).click();
-    await dialog.getByRole("button", { name: ".gecici içine gir" }).click();
-    await dialog.getByTestId("move-block").filter({ hasText: "qBittorrent bu klasöre yazıyor; buraya taşınmaz." }).waitFor();
-    assert(await dialog.getByTestId("move-go").isDisabled());
+    await dialog.locator('li[data-klasor=".gecici"]').waitFor();
     await dialog.locator(".files-crumbs").getByRole("button", { name: "/srv" }).click();
     await dialog.getByRole("button", { name: "Filmler içine gir" }).click();
     await dialog.locator('li[data-klasor="2024"]').waitFor();
@@ -877,7 +829,6 @@ async function drop(page, files, type = "drop") {
     assert.equal(await row(page, "vmlinuz").locator(".files-name .cell-note").innerText(), "Sembolik bağlantı");
     assert.deepEqual(await row(page, "vmlinuz").locator(".files-row-actions [data-eylem]").evaluateAll((els) => els.map((e) => e.dataset.eylem)), ["adlandir", "tasi", "sil"]);
     assert.equal(await page.getByTestId("list").locator('[data-eylem="paylas"], [data-eylem="paylasim-yonet"], [data-eylem="cop"]').count(), 0, "no shares and no trash");
-    assert.equal(await page.getByTestId("gezgin").count(), 0);
     await shot(page, "1440-light-sistem.png", true);
     // Several items: "onayla"; the server refuses a mount point.
     await row(page, "boot").getByLabel("Seç: boot").check();
@@ -984,7 +935,6 @@ async function drop(page, files, type = "drop") {
       ["depolama", "#/dosyalar", "[data-testid=folders] tbody tr"],
       ["srv", "#/dosyalar?sekme=srv", "[data-testid=list] tbody tr"],
       ["srv-belgeler", "#/dosyalar?sekme=srv&yol=Belgeler", "[data-testid=list] tbody tr"],
-      ["paket-klasoru", "#/dosyalar?sekme=srv&yol=indirilenler%2F.gecici", "[data-testid=guard-here]"],
       ["cop", "#/dosyalar?sekme=cop", "[data-testid=trash] tbody tr"],
       ["sistem", "#/dosyalar?sekme=sistem&yol=etc", "[data-testid=list] tbody tr"],
       ["duzenleyici", "#/dosyalar?sekme=srv&dosya=ayar.yml", ".cm-content"],
@@ -1025,15 +975,15 @@ async function drop(page, files, type = "drop") {
 
     assert.deepEqual(h.errors, []);
     console.log("PASS: Konsol phase 4b Dosyalar under the production CSP — Depolama (the disk with what the user area holds and its mount, " +
-      "the trash in short with its link, Gezgin's address or the way to install it, the top folders in Turkish order with size, count and who " +
-      "uses them: applications' binds with their access and container path, a bind of the whole user area for every folder, folder shares, " +
-      "a package's own folder with its owner, binds outside the listed folders, a failed read), Sunucu klasörleri (order with numbers, sizes " +
-      "and times, share marks, Paylaş / Paylaşımı yönet links with yeni= and paylasim=, the filter with Turkish case rules in ara=, ticks and " +
-      "Tümünü seç, folders as history entries, a folder that cannot be opened, a package's folder and one that holds it, uploads from the " +
-      "picker with a skipped name, the queue one at a time with progress, cancel waiting and running uploads, a refusal, a drop, the leave " +
-      "guard, download, new folder, rename, move with dirs=1 and its blocks, trash), the editor (the real CodeMirror bundle, YAML, the " +
-      "position, Ctrl+S and Kaydet with the returned version, a 409 with Yeniden aç, another encoding, Kapat / Esc / Back with unsaved " +
-      "changes, read-only files, a binary refused, the bundle failing to load), Çöp kutusu (restore with a numbered name, a broken record, " +
+      "the trash in short with its link, the top folders in Turkish order with size, count and who uses them: containers' binds with their " +
+      "access and container path, a bind of the whole user area for every folder, folder shares, binds outside the listed folders, a failed " +
+      "read), Sunucu klasörleri (order with numbers, sizes and times, share marks, Paylaş / Paylaşımı yönet links with yeni= and paylasim=, " +
+      "the filter with Turkish case rules in ara=, ticks on every row and Tümünü seç, folders as history entries, a folder that cannot be " +
+      "opened, uploads from the picker with a skipped name, the queue one at a time with progress, cancel waiting and running uploads, " +
+      "a refusal, a drop, the leave guard, download, new folder, rename, move with dirs=1 and its blocks, trash), the editor (the real " +
+      "CodeMirror bundle, YAML, the position, Ctrl+S and Kaydet with the returned version, a 409 with Yeniden aç, another encoding, " +
+      "Kapat / Esc / Back with unsaved changes, read-only files, a binary refused, the bundle failing to load), Çöp kutusu (restore with " +
+      "a numbered name, a broken record, " +
       "a refusal, permanent delete and empty with the typed word), Sistem dosyaları (root warning, no trash or shares, the typed name, a " +
       "mount point refused, the root-save warning, upload and move on /api/sistem/*, the tab's own folder, the tailnet-only refusal, no tab " +
       "over HTTPS), 1440/390/320 in light and dark. Screenshots: " + h.shots);

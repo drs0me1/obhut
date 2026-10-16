@@ -1,6 +1,6 @@
-<!-- The activity drawer (DD-258): jobs the server is running (App Store operations, container work, the
-     Obhut update, repair) and the ones that just ended, as the event stream or GET /api/konsol/etkinlik
-     report them. A side panel: focus stays inside, Esc or the backdrop closes it. -->
+<!-- The activity drawer (DD-258): jobs the server is running (container work, the Obhut update, repair)
+     and the ones that just ended, as the event stream or GET /api/konsol/etkinlik report them. A side
+     panel: focus stays inside, Esc or the backdrop closes it. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { Icon } from "./icons";
@@ -19,7 +19,7 @@ watch(open, (isOpen) => {
   if (isOpen) void nextTick(() => closeButton.value?.focus());
 });
 
-const KINDS: Record<Islem["tur"], string> = { modul: "Uygulama", konteyner: "Konteyner", guncelleme: "Güncelleme", onarim: "Onarım" };
+const KINDS: Record<Islem["tur"], string> = { konteyner: "Konteyner", guncelleme: "Güncelleme", onarim: "Onarım" };
 const STATES: Record<Islem["durum"], string> = { calisiyor: "Çalışıyor", tamam: "Tamamlandı", hata: "Hata" };
 const kind = (j: Islem) => KINDS[j.tur] ?? j.tur;
 const state = (j: Islem) => STATES[j.durum] ?? j.durum;

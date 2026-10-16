@@ -27,6 +27,10 @@
 #   master-wg net-remove wgN --onay       ağı, anahtarını ve bütün peer'larını siler
 #   master-wg --if wgN net ac|kapat       ağı (ve arayüzdeki bütün peer'ları) açar/kapatır
 #   master-wg --if wgN net-settings DNS REVİZYON [ETİKET] anahtarları değiştirmeden varsayılan DNS (ve ağın adı, DD-265)
+#
+# WireGuard bütünüyle (DD-229, DD-271): Konsol'un Durdur/Başlat'ı bu iki komutu çalıştırır.
+#   master-wg durdur                      açık ağları WG_STOPPED_FILE'a yazar, hepsini kapatır, duvarı yeniden uygular
+#   master-wg baslat                      önce duvar, sonra durdurmadan önce açık olan ağlar (liste yoksa kayıttakilerin hepsi)
 set -Eeuo pipefail
 umask 077
 
@@ -38,15 +42,12 @@ die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
     die "state.env okunamıyor ($STATE_FILE): kurulum yapılmamış ya da root değilsiniz"
 # shellcheck source=/dev/null
 source "$STATE_FILE"
+# DD-271: WireGuard'ın anahtarları tabanın defaults.env'indedir; kurulum state.env'e yazar. Uç nokta
+# state'teki WAN_IPV4'tür.
 : "${V2_VERSION:?}"
-: "${MODULES_DIR:?}"
-# DD-201: paketin kendi ayarları paket klasöründedir; temel state yalnız sunucu adreslerini,
-# portları ve yolları verir. Uç nokta state'teki WAN_IPV4'tür.
-WG_ENV_FILE="$MODULES_DIR/wireguard/wireguard.env"
-[[ -r "$WG_ENV_FILE" ]] || die "WireGuard paket ayarı yok ($WG_ENV_FILE); kurulumu yeniden çalıştırın"
-# shellcheck source=/dev/null
-source "$WG_ENV_FILE"
 : "${WG_CONF_DIR:?}"
+: "${WG_NETWORKS_FILE:?}"
+: "${WG_STOPPED_FILE:?}"
 : "${WG_CLIENTS_DIR:?}"
 : "${WG_ADDR_BASE4:?}"
 : "${WG_ADDR_BASE6:?}"
@@ -61,11 +62,11 @@ NET_RE='^wg[0-9]$'
 # Yorum satırını ne `wg-quick up` ne de `wg-quick strip` görür; peer arayüzden düşer
 # ve yeniden başlatmadan sonra da kapalı kalır. Adresi başkasına verilmez.
 OFF='#kapali#'
-# wireguard.env'deki WG_* değerleri yalnız varsayılandır (adres tabanı; ilk ağın önerilen
-# portunu Konsol verir). Bir ağ seçilince WG_* o ağın kayıt satırından doldurulur.
+# state.env'deki WG_* değerleri yalnız varsayılandır (adres tabanı; ilk ağın önerilen portunu
+# Konsol verir). Bir ağ seçilince WG_* o ağın kayıt satırından doldurulur.
 BASE_CONF_DIR="$WG_CONF_DIR"
 BASE_CLIENTS_DIR="$WG_CLIENTS_DIR"
-NETWORKS_FILE="${WG_NETWORKS_FILE:-}"
+NETWORKS_FILE="$WG_NETWORKS_FILE"
 WG_INTERFACE=""
 WG_CONF_FILE=""
 WG_CLIENTS_DIR=""
@@ -74,24 +75,7 @@ valid_name() {
     [[ "$1" =~ $NAME_RE ]] || die "geçersiz peer adı '$1' (harf, rakam, . _ -; en çok 32)"
 }
 
-# DD-201/203: öbür paketlerin portları kendi bildirimlerinden (PAKET_PORTLAR "KEY:proto:kapsam:ad";
-# değer state'ten ya da paketin kendi <id>.env dosyasından). Kurulu olsun olmasın ayrılır: bir ağ
-# ileride kurulacak uygulamanın portunu almasın.
-declared_ports() {
-    local manifest id key value
-    for manifest in "$MODULES_DIR"/*/paket.env; do
-        [[ -f "$manifest" ]] || continue
-        id="${manifest%/paket.env}"; id="${id##*/}"
-        for key in $(sed -n 's/^PAKET_PORTLAR="\(.*\)"$/\1/p' "$manifest" | tr ';' '\n' | cut -d: -f1); do
-            [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || continue
-            value="${!key:-}"
-            [[ -n "$value" || ! -f "$MODULES_DIR/$id/$id.env" ]] ||
-                value="$(sed -n "s/^$key=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$MODULES_DIR/$id/$id.env" | head -n 1)"
-            [[ -n "$value" ]] || continue
-            printf '%s:%s\n' "$id" "$value"
-        done
-    done
-}
+warn() { printf 'UYARI: %s\n' "$*" >&2; }
 
 # Kurulumla aynı kilit: ikisi aynı anda wg0.conf yazamaz.
 take_lock() {
@@ -212,8 +196,8 @@ net_teardown() {
 # izleri silinir ve güvenlik duvarı eski haline döner.
 # DD-229: WireGuard bütünüyle durdurulmuşken ağ açılmaz ve eklenmez; önce Başlat.
 not_stopped() {
-    [[ -z "${WG_STOPPED_FILE:-}" || ! -e "$WG_STOPPED_FILE" ]] ||
-        die "WireGuard durduruldu; önce Konsol → Uygulamalar → WireGuard sayfasından başlatın"
+    [[ ! -e "$WG_STOPPED_FILE" ]] ||
+        die "WireGuard durduruldu; önce Konsol → Erişim → WireGuard'dan başlatın"
 }
 
 cmd_net_add() {
@@ -222,12 +206,13 @@ cmd_net_add() {
         die "UDP portu 1024-65535 arasında olmalı"
     dns="$(normalize_dns "$2")"
     check_label "$label"
-    [[ -n "$NETWORKS_FILE" ]] || die "wireguard.env'de WG_NETWORKS_FILE yok; önce güncel kurulumu çalıştırın"
 
     take_lock
     not_stopped
+    # Tabanın portları (protokolü ne olursa olsun) ve kayıttaki ağların portları ayrılmıştır.
     for p in "ssh:${SSH_PUBLIC_PORT:-}" "tailscale:${TAILSCALE_UDP_PORT:-}" \
-        "dns:${DNS_PORT:-53}" "http:${CADDY_HTTP_PORT:-80}" $(declared_ports) \
+        "dns:${DNS_PORT:-53}" "http:${CADDY_HTTP_PORT:-80}" \
+        "Dosyalar:${FILES_PANEL_PORT:-}" "Paylaşım:${SHARE_PORT:-}" \
         $([[ ! -f "$NETWORKS_FILE" ]] || awk -F'\t' '{print $1 ":" $2}' "$NETWORKS_FILE"); do
         [[ "${p#*:}" != "$port" ]] || die "UDP $port kullanılıyor (${p%%:*}); başka bir port seçin"
     done
@@ -570,6 +555,90 @@ cmd_net() {
     printf '%s\t%s\n' "$WG_INTERFACE" "$(unit_active "$unit")"
 }
 
+# Onay bekleyen bir Konsol ayarı varken WireGuard bütünüyle durdurulmaz ve başlatılmaz.
+no_pending_settings() {
+    [[ -z "${SETTINGS_PENDING_FILE:-}" || ! -e "$SETTINGS_PENDING_FILE" ]] ||
+        die "Önce Konsol'daki bekleyen ayar işlemini onaylayın veya geri alın"
+}
+
+# Kayıttaki ağların ve sistemde kalmış wg-quick@wgN birimlerinin hepsi kapatılır (devre dışı:
+# açılışta da kapalı kalırlar). Kapatılamayan uyarıdır.
+wg_networks_down() {
+    local unit
+    # systemctl exits 1 when a listing matches nothing; with set -e and pipefail that ended the
+    # process substitution before the registry was read, so no network was closed (found on a
+    # real host in v2-170). Each source is read on its own and may be empty.
+    while IFS= read -r unit; do
+        [[ "$unit" =~ ^wg-quick@wg[0-9]\.service$ ]] || continue
+        systemctl disable --now --quiet "$unit" >/dev/null 2>&1 || warn "$unit kapatılamadı"
+    done < <(
+        { systemctl list-unit-files --no-legend --plain 'wg-quick@wg*.service' 2>/dev/null || true; } | awk '{print $1}'
+        { systemctl list-units --all --no-legend --plain 'wg-quick@wg*.service' 2>/dev/null || true; } | awk '{print $1}'
+        net_names | awk '{print "wg-quick@" $1 ".service"}'
+        true
+    )
+}
+
+# DD-229: bütün WireGuard'ı durdurur. O an açık (enabled) ağlar WG_STOPPED_FILE'a yazılır ki baslat
+# yalnız onları açsın (Konsol'dan tek tek kapatılmış ağ kapalı kalır). Liste önce yazılır: bu sırada
+# ağ açılamaz ve güvenlik duvarı WireGuard'ın portlarını, yönlendirmesini ve NAT'ını kaldırır. Zaten
+# durdurulmuşsa eski liste korunur. Çıktı: "durduruldu<TAB><listedeki ağ sayısı>".
+cmd_durdur() {
+    local iface tmp
+    take_lock
+    no_pending_settings
+    install -d -m 0700 "$BASE_CONF_DIR"
+    if [[ ! -e "$WG_STOPPED_FILE" ]]; then
+        tmp="$(mktemp "${WG_STOPPED_FILE%/*}/.durdur.XXXXXX")"
+        while IFS= read -r iface; do
+            ! systemctl is-enabled --quiet "wg-quick@$iface.service" 2>/dev/null || printf '%s\n' "$iface"
+        done < <(net_names) >"$tmp"
+        chmod 0600 "$tmp"
+        mv -f -- "$tmp" "$WG_STOPPED_FILE"
+    fi
+    wg_networks_down
+    systemctl restart master-firewall.service ||
+        die "WireGuard durduruldu ama güvenlik duvarı yeniden uygulanamadı; 'systemctl status master-firewall' ile denetleyin"
+    printf 'durduruldu\t%s\n' "$(grep -c . "$WG_STOPPED_FILE" || true)"
+}
+
+# Başlat: önce güvenlik duvarı (portlar ve yönlendirme), sonra durdurmadan önce açık olan ağlar;
+# durdurulmamışsa kayıttaki bütün ağlar. Durmuşken silinen ağ atlanır. Duvar uygulanamazsa liste geri
+# yazılır, WireGuard durdurulmuş kalır. Çıktı: "calisiyor<TAB><açılan ağ sayısı>".
+cmd_baslat() {
+    local list stopped=0 iface n=0 tmp
+    take_lock
+    no_pending_settings
+    install -d -m 0700 "$BASE_CONF_DIR"
+    if [[ -e "$WG_STOPPED_FILE" ]]; then
+        stopped=1
+        list="$(cat -- "$WG_STOPPED_FILE")"
+        rm -f -- "$WG_STOPPED_FILE"
+    else
+        list="$(net_names)"
+    fi
+    if ! systemctl restart master-firewall.service; then
+        if [[ "$stopped" -eq 1 ]]; then
+            tmp="$(mktemp "${WG_STOPPED_FILE%/*}/.durdur.XXXXXX")"
+            [[ -z "$list" ]] || printf '%s\n' "$list" >"$tmp"
+            chmod 0600 "$tmp"
+            mv -f -- "$tmp" "$WG_STOPPED_FILE"
+            systemctl restart master-firewall.service || true
+        fi
+        die "güvenlik duvarı uygulanamadı; WireGuard açılmadı"
+    fi
+    while IFS= read -r iface; do
+        [[ "$iface" =~ $NET_RE ]] || continue
+        net_line "$iface" >/dev/null || continue
+        if systemctl enable --now --quiet "wg-quick@$iface.service" >/dev/null 2>&1; then
+            n=$((n + 1))
+        else
+            warn "$iface açılamadı"
+        fi
+    done <<<"$list"
+    printf 'calisiyor\t%s\n' "$n"
+}
+
 # wg0.conf'u temiz üretir: [Interface] satırları (Address, ListenPort, MTU) kalır,
 # yeni sunucu anahtarı yazılır, bütün [Peer] blokları ve istemci profilleri
 # silinir. Uygulama başarısızsa önceki wg0.conf geri konur, profiller silinmez.
@@ -627,15 +696,10 @@ if [[ "${1:-}" == "--if" ]]; then
     [[ "$#" -ge 3 ]] || die "kullanım: master-wg --if wgN KOMUT …"
     select_net "$2"
     shift 2
-elif [[ "${1:-}" != version && "${1:-}" != nets && "${1:-}" != net-add && "${1:-}" != net-remove ]]; then
+elif [[ "${1:-}" != version && "${1:-}" != nets && "${1:-}" != net-add && "${1:-}" != net-remove &&
+    "${1:-}" != durdur && "${1:-}" != baslat ]]; then
     # Ağ gerektiren komutlar: tek ağ varsa o kullanılır.
     select_only_net
-fi
-
-# DD-150: WireGuard bir Konsol modülüdür; kurulu değilken araç yalnız sürümünü söyler.
-if [[ "${1:-}" != version && -n "${MODULES_FILE:-}" && -f "$MODULES_FILE" ]] &&
-    ! awk -F'\t' '$1 == "wireguard" {f = 1} END {exit !f}' "$MODULES_FILE"; then
-    die "WireGuard modülü kurulu değil; Konsol → Modüller → WireGuard ile kurun"
 fi
 
 # DD-207: Konsol'un root arka ucu bu aracı kendi korumalı alanında çalıştırır; orada BASE_CONF_DIR,
@@ -645,7 +709,7 @@ yazilabilir() {
         die "$BASE_CONF_DIR bu işlem için salt okunur görünüyor. Konsol arka ucunu yeniden başlatın (sudo systemctl restart master-panel) ya da kurulumu yeniden çalıştırın"
 }
 case "${1:-}" in
-    net-add|net-remove|add|remove|dns|keepalive|peer|net|net-settings|reset) yazilabilir ;;
+    net-add|net-remove|add|remove|dns|keepalive|peer|net|net-settings|reset|durdur|baslat) yazilabilir ;;
 esac
 
 case "${1:-}" in
@@ -669,5 +733,7 @@ case "${1:-}" in
     net-settings) [[ "$#" -eq 3 || "$#" -eq 4 ]] || die "kullanım: master-wg --if wgN net-settings DNS REVİZYON [ETİKET]"
         cmd_net_settings "${@:2}" ;;
     reset) [[ "$#" -le 2 ]] || die "kullanım: master-wg reset --onay"; cmd_reset "${2:-}" ;;
-    *) die "kullanım: master-wg [--if wgN] version|list|info|add|remove|profile|qr|png|dns|keepalive|peer|reset|nets|net|net-add|net-remove|net-settings" ;;
+    durdur) [[ "$#" -eq 1 && -z "$WG_INTERFACE" ]] || die "kullanım: master-wg durdur"; cmd_durdur ;;
+    baslat) [[ "$#" -eq 1 && -z "$WG_INTERFACE" ]] || die "kullanım: master-wg baslat"; cmd_baslat ;;
+    *) die "kullanım: master-wg [--if wgN] version|list|info|add|remove|profile|qr|png|dns|keepalive|peer|reset|nets|net|net-add|net-remove|net-settings|durdur|baslat" ;;
 esac

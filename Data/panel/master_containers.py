@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read-only Podman mapper (DD-208), reused by the DD-211 container manager.
 
-Podman is part of the base (the App Store's container runtime). The root backend calls this module
+Podman is part of the base (Konsol's container runtime). The root backend calls this module
 for GET /api/konsol/konteynerler/{liste,ayrinti,gunluk}; everything comes from `podman` itself
 (ps, inspect, images, system df, logs) run inside the backend's sandbox, which is enough for
 reading, and, for a container on the host network, from /proc (the sockets it listens on, DD-215).

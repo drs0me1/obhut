@@ -87,8 +87,6 @@ acquire_lock() {
     exec {V2_LOCK_FD}>"$lock_file"
     flock -w "$wait_seconds" "$V2_LOCK_FD" ||
         die "kilit alınamadı (${wait_seconds}s): $lock_file"
-    # Child module operations reuse this exact open file description, not a bypass flag.
-    export V2_LOCK_FD
 }
 
 # retry LABEL ATTEMPTS TIMEOUT -- cmd args...

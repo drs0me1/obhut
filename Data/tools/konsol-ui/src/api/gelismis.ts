@@ -78,7 +78,6 @@ export interface Image {
   created: number | null;
   used_by: string[];
   managed: boolean;
-  pinned: boolean;
 }
 
 export interface Volume {
@@ -126,7 +125,7 @@ export async function readResources(): Promise<Resources> {
     images: isList(value.images)
       ? value.images.filter((i) => isObject(i) && isText(i.name)).map((i) => ({
           id: isText(i.id) ? i.id : "", name: i.name as string, size: isNumber(i.size) ? i.size : null, created: isNumber(i.created) ? i.created : null,
-          used_by: used(i.used_by), managed: i.managed === true, pinned: i.pinned === true,
+          used_by: used(i.used_by), managed: i.managed === true,
         }))
       : null,
     volumes: isList(value.volumes)

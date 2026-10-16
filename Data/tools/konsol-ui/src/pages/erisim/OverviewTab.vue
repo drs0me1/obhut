@@ -36,7 +36,7 @@ const noteOf = (key: string, c: ErisimHucresi) => (key === "wireguard" && c.not 
 const cellTone = (c: ErisimHucresi): Tone => (c.uyari ? "warning" : CELL_TONE[c.durum] ?? "neutral");
 const cellText = (c: ErisimHucresi) => CELL_TEXT[c.durum] ?? UNKNOWN;
 const KIND: Record<Hizmet["tur"], string> = {
-  konsol: "Konsol", paket: "Uygulama", konteyner: "Konteyner", elle: "Elle adres", paylasim: "Paylaşım", sistem: "Sistem", vpn: "VPN ağı", kural: "Kural",
+  konsol: "Konsol", konteyner: "Konteyner", elle: "Elle adres", paylasim: "Paylaşım", sistem: "Sistem", vpn: "VPN ağı", kural: "Kural",
 };
 
 const warnings = computed(() =>
@@ -122,7 +122,7 @@ const certLeft = (bitis: number | null) => (bitis ? daysUntil(bitis, serverNow()
               <span :class="a.etkin ? 'ok-text' : 'muted'">{{ a.etkin ? "açık" : "kapalı" }}</span>
             </li>
           </ul>
-          <p v-else class="meter-note">{{ wg?.kurulu ? "Ağ yok." : "WireGuard ağı yok." }}</p>
+          <p v-else class="meter-note" data-testid="sum-wireguard-none">{{ wg?.durduruldu ? "WireGuard durduruldu; ağlar kapalı." : "WireGuard ağı yok." }}</p>
           <p v-if="wg?.not" class="meter-note">{{ wg.not }}</p>
           <RouterLink :to="accessRoute('wireguard')" class="section-link">WireGuard ağları</RouterLink>
         </Card>
@@ -188,11 +188,7 @@ const certLeft = (bitis: number | null) => (bitis ? daysUntil(bitis, serverNow()
       </section>
     </template>
     <section v-else class="card" aria-label="Erişim">
-      <EmptyState
-        :title="live.erisimYok ? 'Bu sunucu Erişim görünümünü vermiyor' : 'Erişim henüz okunamadı'"
-        :text="live.erisimYok ? 'Sunucuyu güncelleyince burada görünür.' : 'Sunucu yanıt verince burada görünür.'"
-        icon="globe"
-      />
+      <EmptyState title="Erişim henüz okunamadı" text="Sunucu yanıt verince burada görünür." icon="globe" />
     </section>
   </div>
 </template>

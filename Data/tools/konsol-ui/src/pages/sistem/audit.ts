@@ -1,30 +1,7 @@
-// The audit log's words (GET /api/konsol/islemler, DD-196/200): the root backend's own actions, the file
-// backend's ("dosya") and a package API's, which arrive as "<id>:<verb>" and take their words from the
-// package's konsol.json `gunluk` templates ({detail} is the whole detail, {0}, {1} … its words).
-import type { KayitSatiri, Modul } from "../../api/sema";
-
-export interface Packages {
-  name(id: string): string;
-  template(id: string, verb: string): string | null;
-}
-
-export function packagesOf(modules: readonly Modul[]): Packages {
-  const konsol = (id: string) => {
-    const k = modules.find((m) => m.id === id)?.konsol;
-    return k && typeof k === "object" ? k : null;
-  };
-  return {
-    name(id) {
-      const ad = konsol(id)?.ad;
-      return typeof ad === "string" && ad ? ad : id;
-    },
-    template(id, verb) {
-      const list = konsol(id)?.gunluk;
-      const text = list && typeof list === "object" && !Array.isArray(list) ? (list as Record<string, unknown>)[verb] : null;
-      return typeof text === "string" ? text : null;
-    },
-  };
-}
+// The audit log's words (GET /api/konsol/islemler, DD-196): the root backend's own actions, WireGuard's
+// ("wireguard-<verb>", DD-271) and the file backend's ("dosya"). WireGuard's lines are templates over the
+// detail ({detail} is the whole detail, {0}, {1} … its words).
+import type { KayitSatiri } from "../../api/sema";
 
 /** The root backend's container operations (JOB_CONTAINER_ACTIONS in master-panel). */
 const CONTAINER: Record<string, string> = {
@@ -34,8 +11,25 @@ const CONTAINER: Record<string, string> = {
   "network-create": "Ağ oluşturma", "network-remove": "Ağ silme",
 };
 
-type Text = (e: KayitSatiri, p: Packages) => string;
-const pkg = (detail: string, p: Packages) => p.name(String(detail || "").split(" ")[0] ?? "");
+/** WireGuard's lines (master_wireguard's audit verbs), as its page has always worded them. */
+const WIREGUARD: Record<string, string> = {
+  ekle: "{detail} eklendi",
+  cikar: "{detail} silindi",
+  dns: "{detail} için DNS değişti",
+  keepalive: "{0} için keepalive {1} sn",
+  "ag-ayarlar": "{detail} varsayılan DNS ayarı güncellendi",
+  "peer-durum": "{0} {1}",
+  "ag-durum": "{0} ağı {1}",
+  "ag-ekle": "{detail} ağı oluşturuldu",
+  "ag-kaldir": "{detail} ağı kaldırıldı",
+  "yeniden-uret": "{detail} yeniden üretildi",
+  qr: "{detail} QR kodu görüntülendi",
+  profil: "{detail} profili indirildi",
+  durdur: "WireGuard durduruldu",
+  baslat: "WireGuard başlatıldı",
+};
+
+type Text = (e: KayitSatiri) => string;
 
 const ACTION_TEXT: Record<string, Text> = {
   klasor: (e) => `Yeni klasör: ${e.detail}`,
@@ -47,68 +41,52 @@ const ACTION_TEXT: Record<string, Text> = {
   "cop-bosalt": (e) => `Çöp boşaltıldı (${e.detail} öge)`,
   indir: (e) => `İndirildi: ${e.detail}`,
   duzenle: (e) => `Düzenlendi: ${e.detail}`,
-  favori: (e) => `${e.detail.startsWith("+") ? "Favorilere eklendi" : "Favorilerden çıkarıldı"}: ${e.detail.slice(2)}`,
-  "modul-kur": (e, p) => `${pkg(e.detail, p)} kurulumu başlatıldı`,
-  "modul-baslat": (e, p) => `${pkg(e.detail, p)} başlatıldı`,
-  "modul-durdur": (e, p) => `${pkg(e.detail, p)} durduruldu`,
-  "modul-yeniden-baslat": (e, p) => `${pkg(e.detail, p)} yeniden başlatıldı`,
-  "modul-kaldir": (e, p) => `${pkg(e.detail, p)} kaldırıldı${e.detail.endsWith("+veri") ? " · verisiyle" : ""}`,
-  "modul-hesap": (e, p) => `${pkg(e.detail, p)} parolası görüntülendi`,
-  "arsiv-olustur": (e) => `ZIP oluşturma başladı: ${e.detail}`,
-  "arsiv-ac": (e) => `Arşiv açma başladı: ${e.detail}`,
-  "arsiv-iptal": (e) => `Arşiv işlemi için iptal istendi: ${e.detail}`,
-  "arsiv-sonuc": (e) => `Arşiv işlemi bitti: ${e.detail}`,
   "hesap-kur": () => "Konsol hesabı oluşturuldu",
   giris: () => "Konsol girişi",
   cikis: () => "Konsol çıkışı",
   "parola-degis": () => "Konsol parolası değiştirildi",
-  duzen: (e) => (e.detail === "sifirla" ? "Ana Menü varsayılan düzene döndü" : "Ana Menü düzeni kaydedildi"),
   "ayar-apply": () => "Ayarlar uygulandı",
   "ayar-confirm": () => "Ayar değişikliği onaylandı",
   "ayar-rollback": () => "Ayarlar geri alındı",
   "ayar-discard": () => "Takılan ayar işlemi bırakıldı",
   "paylasim-save": () => "Klasör paylaşımı kaydedildi",
-  "paylasim-pause": () => "Klasör paylaşımının durumu değişti",
   "paylasim-remove": () => "Klasör paylaşımı kaldırıldı",
   guncelleme: (e) => `Sunucu güncellemesi başlatıldı: ${e.detail}`,
   onarim: (e) => (e.detail === "denetle" ? "Denetim başlatıldı" : "Denetim ve onarım başlatıldı"),
   "yeniden-baslat": (e) => `Sunucunun yeniden başlatılması istendi (${e.detail})`,
 };
 
-export type Kind = "konsol" | "ayar" | "paylasim" | "dosya" | "uygulama" | string;
+export type Kind = "konsol" | "ayar" | "paylasim" | "wireguard" | "dosya" | "uygulama";
 
-const LABELS: Record<string, string> = { konsol: "Konsol", ayar: "Ayarlar", paylasim: "Paylaşımlar", dosya: "Dosyalar", uygulama: "Uygulamalar" };
-/** The fixed kinds in the order of the filter chips; packages follow in the order they appear. */
-export const KIND_ORDER = ["konsol", "ayar", "paylasim", "dosya", "uygulama"];
+const LABELS: Record<Kind, string> = {
+  konsol: "Konsol", ayar: "Ayarlar", paylasim: "Paylaşımlar", wireguard: "WireGuard", dosya: "Dosyalar", uygulama: "Uygulamalar",
+};
+/** The kinds in the order of the filter chips. */
+export const KIND_ORDER: readonly Kind[] = ["konsol", "ayar", "paylasim", "wireguard", "dosya", "uygulama"];
 
 export function kindOf(e: KayitSatiri): Kind {
-  if (e.action.startsWith("modul-") || e.action.startsWith("konteyner-")) return "uygulama";
+  if (e.action.startsWith("konteyner-")) return "uygulama";
   if (e.source !== "panel") return "dosya";
-  if (e.action.includes(":")) return e.action.split(":")[0] ?? "konsol";
   if (e.action.startsWith("ayar-")) return "ayar";
   if (e.action.startsWith("paylasim-")) return "paylasim";
+  if (e.action.startsWith("wireguard-")) return "wireguard";
   return "konsol";
 }
 
-export function kindLabel(kind: Kind, p: Packages): string {
-  return LABELS[kind] ?? p.name(kind);
-}
+export const kindLabel = (kind: Kind): string => LABELS[kind];
 
 /** The line in words; a failed action ends in "— başarısız". */
-export function lineOf(e: KayitSatiri, p: Packages): string {
+export function lineOf(e: KayitSatiri): string {
   let text: string;
   const known = ACTION_TEXT[e.action];
-  if (known) text = known(e, p);
-  else if (e.action.startsWith("konteyner-")) {
+  const wireguard = e.action.startsWith("wireguard-") ? WIREGUARD[e.action.slice("wireguard-".length)] : undefined;
+  if (known) text = known(e);
+  else if (wireguard !== undefined) {
+    const words = e.detail.split(" ");
+    text = wireguard.replace(/\{(detail|\d)\}/g, (_, key: string) => (key === "detail" ? e.detail : words[Number(key)] ?? ""));
+  } else if (e.action.startsWith("konteyner-")) {
     const action = e.action.slice("konteyner-".length);
     text = `${CONTAINER[action] ?? action} istendi: ${e.detail}`;
-  } else if (e.action.includes(":")) {
-    const [id = "", verb = ""] = e.action.split(":");
-    const template = p.template(id, verb);
-    const words = e.detail.split(" ");
-    text = template !== null
-      ? template.replace(/\{(detail|\d)\}/g, (_, key: string) => (key === "detail" ? e.detail : words[Number(key)] ?? ""))
-      : `${p.name(id)}: ${verb} ${e.detail}`;
   } else text = `${e.action} ${e.detail}`;
   return e.ok ? text : `${text} — başarısız`;
 }

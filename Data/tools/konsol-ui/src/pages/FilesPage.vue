@@ -1,8 +1,8 @@
 <!-- Dosyalar (DD-258, phase 4b, DD-267): the user area's storage and the folders each application uses,
      a lean view of the server folders (/srv), the trash, folder shares and, on the tailnet only, the whole
-     server as root ("Sistem dosyaları"). Gezgin is the file manager for everything else. Tabs in the
-     address (?sekme=); a folder browser's own values (yol=, ara=, dosya=) belong to its tab and are left
-     behind when another tab is chosen, unless the same change set them (a link into a folder). -->
+     server as root ("Sistem dosyaları"). Tabs in the address (?sekme=); a folder browser's own values (yol=,
+     ara=, dosya=) belong to its tab and are left behind when another tab is chosen, unless the same change
+     set them (a link into a folder). -->
 <script setup lang="ts">
 import { computed } from "vue";
 import { onBeforeRouteUpdate } from "vue-router";

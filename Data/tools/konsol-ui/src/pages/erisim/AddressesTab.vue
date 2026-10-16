@@ -120,10 +120,7 @@ function applied(): void {
 
 // ---- local DNS names
 const SOURCE: Record<string, string> = { base: "Temel", elle: "Elle adres" };
-function sourceText(source: string): string {
-  if (SOURCE[source]) return SOURCE[source] as string;
-  return live.uygulamalar?.items.find((a) => a.id === "paket:" + source)?.ad ?? source;
-}
+const sourceText = (source: string): string => SOURCE[source] ?? source;
 const tailscaleV4 = computed(() => live.erisim?.ozet.tailscale.ipv4 || live.kaynaklar?.net?.tailscale || "");
 
 const nameRows = computed(() => {

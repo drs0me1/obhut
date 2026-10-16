@@ -109,7 +109,7 @@ class FirewallWANTests(unittest.TestCase):
                 self.assertIn("WebDAV WAN", result.stderr)
                 self.assertEqual(self.calls.read_text(), "")
 
-    def test_legacy_https_and_disabled_wan_allow_projections(self):
+    def test_plain_http_https_and_disabled_wan_allow_projections(self):
         for record, port in (("1 16 64 61010", "61010"), ("1 16 64 443", "443"),
                              ("0 16 64 443", None), ("0 16 64 61010", None)):
             with self.subTest(record=record):

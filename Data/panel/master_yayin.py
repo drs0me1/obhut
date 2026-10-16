@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Yayınla (DD-265): what can be published, and the plan of one publication.
 
-A publication is one row of the Caddy publication table (DD-191/195/199/252): a Tailscale name
+A publication is one row of the Caddy publication table (DD-191/195/252): a Tailscale name
 (<ad>.<alan>) and an optional internet (HTTPS) name. candidates() lists every row and every Konsol
 container that could have one; plan() turns the four decisions of the Yayınla flow (what, who, which
 name, plan) into the requests the page then sends to the existing write routes:
@@ -27,10 +27,6 @@ MANUAL_PREFIX = "elle-"
 GUARD_KONSOL = "İnternetten Konsol hesabıyla giriş istenir."
 GUARD_SHARES = "Klasör hesapları korur; her klasörün internet erişimi Paylaşımlar'dan açılır."
 GUARD_APP = "Yalnız uygulamanın kendi girişi korur; Konsol bu adreste giriş denetlemez."
-
-
-def guard_checked(name):
-    return "%s'in kendi girişi korur; Konsol açmadan önce girişin açık olduğunu denetler." % name
 
 
 def default_local(name):
@@ -62,9 +58,9 @@ def item(cid, tur, ad, row=None, **extra):
     return base
 
 
-def candidates(env, rows, packages, containers, wan_ready=True):
-    """rows: master_publications.status(); packages: master_publications.packages(); containers:
-    Inventory.reach() or None; wan_ready: the server has an assigned public IPv4."""
+def candidates(env, rows, containers, wan_ready=True):
+    """rows: master_publications.status(); containers: Inventory.reach() or None; wan_ready: the server
+    has an assigned public IPv4."""
     by_service = {r["service"]: r for r in rows if isinstance(r, dict) and r.get("service")}
     no_wan = "" if wan_ready else "Sunucunun internet IPv4 adresi kullanılamıyor; internet adı açılamaz."
     out = []
@@ -72,19 +68,9 @@ def candidates(env, rows, packages, containers, wan_ready=True):
     if panel:
         out.append(item("panel", "konsol", "Konsol", panel, giris=GUARD_KONSOL, onay_kelimesi=True, internet_engel=no_wan or (
             "" if panel.get("account") else "Önce Konsol hesabı oluşturun (Tailscale adresinden, Sistem → Hesap).")))
-    for mid, info in packages.items():
-        row = by_service.get(mid)
-        if not row or not row.get("installed"):
-            continue
-        reason = "" if row.get("running") else "%s durdurulmuş; önce başlatın." % info["name"]
-        out.append(item("paket:" + mid, "paket", info["name"], dict(row, upstream=info.get("upstream")),
-                        giris=guard_checked(info["name"]) if info.get("check") else GUARD_APP,
-                        internet_engel=no_wan or reason))
     items = [c for c in ((containers or {}).get("containers") or []) if isinstance(c, dict) and c.get("name")]
     manual = {sid: r for sid, r in by_service.items() if r.get("manual")}
     for c in items:
-        if c.get("module_id"):
-            continue
         local, others = [], []
         for p in c.get("ports") or []:
             if not isinstance(p, dict) or str(p.get("protocol") or "tcp") != "tcp":

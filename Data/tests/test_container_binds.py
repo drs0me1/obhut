@@ -139,9 +139,9 @@ class BindTests(unittest.TestCase):
         self.assertIn(("umount", str(anchor), binds.MNT_DETACH | binds.UMOUNT_NOFOLLOW), self.fake.calls)
         self.assertEqual(list(self.fake.table), [str(anchor)])
 
-    def test_the_helper_runs_no_package_code_and_takes_no_lock(self):
+    def test_the_helper_reads_no_settings_and_takes_no_lock(self):
         source = (DATA / "panel/master_container_binds.py").read_text(encoding="utf-8")
-        for word in ("master_settings", "master_container_config", "klasorler", "flock", "PAKET_", "torrent"):
+        for word in ("master_settings", "master_container_config", "flock"):
             self.assertNotIn(word, source)
 
 

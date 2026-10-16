@@ -54,8 +54,8 @@ class SystemFilesTests(unittest.TestCase):
         self.assertEqual(self.files.listing(["proc"], False)["entries"], [])
 
     def test_new_items_are_root_style(self):
-        self.files.mkdir(["etc"], "yeni")
-        self.assertEqual((self.root / "etc/yeni").stat().st_mode & 0o777, 0o755)
+        self.files.mkdir(["etc"], "klasor")
+        self.assertEqual((self.root / "etc/klasor").stat().st_mode & 0o777, 0o755)
         with patch.object(fp, "disk_room"):
             self.files.upload(["etc"], "a.conf", io.BytesIO(b"x=1\n"), 4)
         self.assertEqual((self.root / "etc/a.conf").stat().st_mode & 0o777, 0o644)
@@ -151,8 +151,7 @@ class SystemGateTests(unittest.TestCase):
         (self.root / "etc/hosts").write_text("127.0.0.1 localhost\n")
         self.sock = str(Path(tmp.name).resolve() / "s.sock")
         args = types.SimpleNamespace(root=str(self.root), sistem=True, domain="ornek.lan", version="t",
-                                     allow_host=[], trash="", share="", downloads_dir="",
-                                     protected=[])
+                                     allow_host=[], trash="", downloads_dir="")
         handler = type("H", (fp.SystemHandler,), {"panel": fp.Panel(args)})
         self.server = fp.UnixServer(self.sock, handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -191,7 +190,6 @@ class SystemGateTests(unittest.TestCase):
     def test_only_system_routes_exist(self):
         self.assertEqual(self.call("GET", "/api/list?path=")[0], 404)
         self.assertEqual(self.call("GET", "/api/sistem/trash")[0], 404)
-        self.assertEqual(self.call("GET", "/api/sistem/archives")[0], 404)
         self.assertEqual(self.call("POST", "/api/sistem/trash", {"path": "", "names": ["etc"]})[0], 404)
         code, listing = self.call("GET", "/api/sistem/list?path=etc")
         self.assertEqual((code, [e["name"] for e in listing["entries"]]), (200, ["hosts"]))

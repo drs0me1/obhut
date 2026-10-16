@@ -4,19 +4,17 @@
 Netavark owns DNAT/SNAT. We own only one nft inet table with a forward and an input
 chain at priority -10; an ACCEPT in Netavark/Tailscale's filter chains cannot bypass
 its DROP. The input chain closes the host itself to containers (DD-229). No foreign
-table is flushed. The locked writers (master-firewall, the container worker and the
-package engine) install it; container units only check it before they start, including
-at boot, and retry until it is in place (DD-223).
+table is flushed. The locked writers (master-firewall and the container worker) install it;
+container units only check it before they start, including at boot, and retry until it is in
+place (DD-223).
 
-Worker API (caller holds installer/module/container locks):
+Worker API (caller holds the installer and container locks):
   validate_ports(env, ports, name, run=runner) -> normalized schema rows
   bindings(env, ports, run=runner) -> Quadlet PublishPort values
   apply(env, run=runner); check(env, run=runner)
 runner(argv, timeout=20) returns CompletedProcess or (rc, stdout, stderr).
 Initial publications explicitly use IPv4; IPv6 remote/direct ingress to managed
 bridges is denied. The host may reach local publications through OUTPUT DNAT.
-DD-217: an App Store package may run on its own bridge (manifest PAKET_KONTEYNER_AG);
-its placed Quadlet's IPv4 PublishPort lines on the WAN/Tailscale address are let through.
 
 References: docs.podman.io/en/v5.4.2/markdown/podman-run.1.html (--publish);
 www.netfilter.org/projects/nftables/manpage.html (hook priorities and ct tuples);
@@ -170,51 +168,6 @@ def read_definitions(env):
     return out
 
 
-PUBLISH_RE = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3}):([1-9]\d{0,4}):([1-9]\d{0,4})/(tcp|udp)")
-
-
-def package_publications(env):
-    """DD-217: registered packages on their own bridge publish what their placed Quadlet says.
-
-    A stopped package's Quadlet is removed, so it publishes nothing. Only explicit IPv4
-    "address:host:container/protocol" values count; anything else is simply not let through.
-    A placed Quadlet on another network (an installer run renders the manifest before it places
-    the new Quadlet) publishes nothing either: never a reason to stop the firewall.
-    """
-    registry, base, units = env.get("MODULES_FILE"), env.get("MODULES_DIR"), env.get("KONTEYNER_BIRIM_DIR")
-    if not (registry and base and units) or not Path(registry).exists():
-        return []
-    out = []
-    for line in _read(registry).splitlines():
-        mid = line.split("\t", 1)[0]
-        manifest = Path(base) / mid / "paket.env"
-        if not re.fullmatch(r"[a-z]{2,16}", mid) or not manifest.exists():
-            continue
-        declared = env_read(manifest)
-        name, network = declared.get("PAKET_KONTEYNER", ""), declared.get("PAKET_KONTEYNER_AG", "")
-        if not network or not re.fullmatch(r"[a-z][a-z0-9-]{1,30}\.container", name):
-            continue
-        quadlet = Path(units) / name
-        if not quadlet.exists():
-            continue
-        lines = [row.strip() for row in _read(quadlet).splitlines()]
-        if "Network=" + network not in lines:
-            continue
-        ports = []
-        for row in lines:
-            match = PUBLISH_RE.fullmatch(row[len("PublishPort="):]) if row.startswith("PublishPort=") else None
-            if not match or max(int(match[2]), int(match[3])) > 65535:
-                continue
-            try:
-                address = str(ipaddress.IPv4Address(match[1]))
-            except ValueError:
-                continue
-            ports.append({"address": address, "host_port": int(match[2]), "container_port": int(match[3]),
-                          "protocol": match[4]})
-        out.append({"id": mid, "network": network, "ports": ports})
-    return out
-
-
 def normalize_ports(ports):
     if not isinstance(ports, list) or len(ports) > 64:
         raise NetworkError("En fazla 64 port eşlemesi girilebilir.")
@@ -252,25 +205,8 @@ def bindings(env, ports, run=None):
 
 
 def reserved_ports(env):
-    sources = [env]
-    base = env.get("MODULES_DIR")
-    if base and Path(base).exists():
-        # Reuse the package engine's validated private overrides. Keep both the
-        # default and effective port reserved, including while a package is stopped.
-        import master_settings as settings
-        for entry in Path(base).iterdir():
-            if not re.fullmatch(r"[a-z]{2,16}", entry.name) or entry.is_symlink():
-                continue
-            path = entry / (entry.name + ".env")
-            if path.exists():
-                sources.append(env_read(path))
-                try:
-                    sources.append(settings.package_env(env, entry.name))
-                except (OSError, UnicodeError, ValueError, settings.SettingsError) as err:
-                    raise NetworkError("Paketin kalıcı port ayarları okunamadı; port açılmadı.", 503) from err
-    reserved = {int(v) for source in sources for key, v in source.items()
-                if key.endswith("_PORT") and str(v).isdigit() and 1 <= int(v) <= 65535}
-    return reserved
+    """The base's own ports (every *_PORT key of state.env)."""
+    return {int(v) for key, v in env.items() if key.endswith("_PORT") and str(v).isdigit() and 1 <= int(v) <= 65535}
 
 
 def _socket_rows(text):
@@ -317,7 +253,7 @@ def _target_conmon_bindings(env, inventory, name, run):
         return None
     import master_container_config as config
     # Standalone ownership is needed by adoption preflight; foreign units/pods/apps stay blocked.
-    if config.ownership(info, env) not in ('konsol', 'standalone'):
+    if config.ownership(info) not in ('konsol', 'standalone'):
         return None
     bindings = set()
     try:
@@ -342,7 +278,7 @@ def validate_ports(env, ports, name, run=None):
         return rows
     reserved = reserved_ports(env)
     if any(p["host_port"] in reserved for p in rows):
-        raise NetworkError("Bu port sistem veya App Store uygulaması için ayrılmış.", 409)
+        raise NetworkError("Bu port sistemin kendi portu; konteynere verilemez.", 409)
     addresses = {"local": "127.0.0.1", "public": "0.0.0.0"}
     if any(p["scope"] == "tailscale" for p in rows):
         addresses["tailscale"] = tailscale_address(env, run)
@@ -452,10 +388,8 @@ def policy(env, definitions, run=None):
                                address if block.prefixlen == 32 else {"prefix": {"addr": address, "len": block.prefixlen}}),
              {"drop": None})
     rule(_match(meta("oifname"), prefix + "*", "!="), {"return": None})
-    packages = package_publications(env)
     # Bridge-local peers are governed by Netavark's network isolation; no blanket interbridge permit.
     bridges = {bridge_name(env, d.get("network", "bridge")) for d in definitions if d.get("network") != "none"}
-    bridges.update(bridge_name(env, p["network"]) for p in packages)
     for bridge in sorted(bridges):
         rule(_match(meta("iifname"), bridge), _match(meta("oifname"), bridge), {"return": None})
     tail = None
@@ -493,23 +427,6 @@ def policy(env, definitions, run=None):
                 ingress, originals = wan
             for address in originals:
                 publish(bridge, ingress, address, row)
-    # DD-217: a package's loopback publication needs no forward path; its WAN or Tailscale one does.
-    for package in packages:
-        bridge = bridge_name(env, package["network"])
-        for row in package["ports"]:
-            if ipaddress.IPv4Address(row["address"]).is_loopback:
-                continue
-            if wan is None:
-                wan = wan_addresses(env, run)
-            if row["address"] == "0.0.0.0" or row["address"] in wan[1]:
-                for address in (wan[1] if row["address"] == "0.0.0.0" else [row["address"]]):
-                    publish(bridge, wan[0], address, row)
-                continue
-            if ipaddress.IPv4Address(row["address"]) in ipaddress.ip_network("100.64.0.0/10"):
-                if tail is None:
-                    tail = tailscale_address(env, run)
-                if row["address"] == tail:
-                    publish(bridge, _iface(env["TAILSCALE_IF"]), tail, row)
     rule({"drop": None})
     # nft lists chains before rules, and rules chain by chain; the health check compares in that order.
     return objects + inputs

@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-17 — A new generation: a clean base without the App Store (v2-255, branch `yeni-yapi`)
+
+- This build starts Obhut's second generation (DD-271, DD-272). It installs only on a clean operating
+  system: a server that ran an older Obhut stops at the first stage with "Bu sunucuda eski nesil bir
+  Obhut var; bu sürüm yalnız temiz bir işletim sistemine kurulur", before anything is written. There is no
+  upgrade path from 1.x.
+- The App Store is gone: the catalogue, the qBittorrent and Gezgin packages, the store engine
+  (`master-modul`) and every package form, page and setting. Uygulamalar lists the containers Konsol
+  manages; adding applications from their own Compose or Kubernetes files arrives in a later phase.
+- WireGuard is part of the base: it is installed with Obhut and turned off. Erişim → WireGuard turns it on
+  by creating the first network, and stops or starts it as a whole; there is nothing to install.
+- Files and folder WebDAV are installed directly; Paylaşımlar is no longer listed as an application.
+- Genel Bakış' network card shows the internet rates only; per-application totals are gone with the
+  packages.
+- Leftovers kept for older installs are removed: old folder-share records (schema 3) are refused, and a
+  share record with a field this version does not write is refused too; old Konsol addresses no longer
+  redirect and land on Genel Bakış; `/yeni` no longer redirects.
+
 ### 2026-10-16 — Long addresses stay in their column on a phone (v2-254)
 
 - On a phone, the cards of Erişim → Güvenlik duvarı (listeners), an application's port card and Gelişmiş →

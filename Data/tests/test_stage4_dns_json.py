@@ -30,8 +30,7 @@ class DnsTests(unittest.TestCase):
         self.p = panel.Panel(types.SimpleNamespace())
 
     def test_published_templates_limit_answers_without_changing_dns_listeners(self):
-        for relative, name in (("templates/dnsmasq.conf", "panel"), ("magaza/paylasim/dnsmasq.conf", "paylas"),
-                               ("magaza/torrent/dnsmasq.conf", "torrent")):
+        for relative, name in (("templates/dnsmasq.conf", "panel"), ("templates/paylasim-dnsmasq.conf", "paylas")):
             text = (DATA / relative).read_text().replace("__LOCAL_DOMAIN__", "ayc").replace("__TAILSCALE_IF__", "tailscale0")
             record = panel.parse_dnsmasq(text, "base")["names"]
             self.assertEqual(record, [dict(name=name + ".ayc", iface="tailscale0", family=4, source="base")])
@@ -69,13 +68,13 @@ class DnsTests(unittest.TestCase):
     def test_explicit_ipv6_choices_survive_projection_and_disabled_names(self):
         base = Path(self.env["DNSMASQ_CONF_FILE"])
         base.write_text("interface=lo\ninterface=tailscale0\nlocal=/ayc/\nno-resolv\ninterface-name=panel.ayc,tailscale0/4\n")
-        module = base.parent / "modul-torrent.conf"
-        module.write_text("interface-name=torrent.ayc,tailscale0/4\n")
+        module = Path(self.env["DNSMASQ_CONF_DIR"]) / "modul-paylasim.conf"
+        module.write_text("interface-name=paylas.ayc,tailscale0/4\n")
         records = [dict(name="auto.ayc", target="tailscale", enabled=True),
                    dict(name="v6.ayc", target="2001:db8::9", enabled=True),
                    dict(name="v4.ayc", target="192.0.2.9", enabled=True),
                    dict(name="off.ayc", target="tailscale", enabled=False)]
-        dns = self.fixture.dns(records=records, disabled=["torrent.ayc"], forward=True, servers=["2606:4700:4700::1111"])
+        dns = self.fixture.dns(records=records, disabled=["paylas.ayc"], forward=True, servers=["2606:4700:4700::1111"])
         result = self.m.apply(self.fixture.payload(dns=dns))
         self.assertTrue(result["committed"])
         expected = self.m.dns_file.read_text()
@@ -83,22 +82,23 @@ class DnsTests(unittest.TestCase):
                      "host-record=v4.ayc,192.0.2.9", "server=2606:4700:4700::1111"):
             self.assertIn(line + "\n", expected)
         self.assertNotIn("off.ayc", expected)
-        self.assertEqual(module.read_text(), settings.OFF + "interface-name=torrent.ayc,tailscale0/4\n")
+        self.assertEqual(module.read_text(), settings.OFF + "interface-name=paylas.ayc,tailscale0/4\n")
         self.m.project_dns()
         self.assertEqual(self.m.dns_file.read_text(), expected)
-        self.assertEqual(self.m.filter_dns(module.read_text(), settings.DEFAULT), "interface-name=torrent.ayc,tailscale0/4\n")
+        self.assertEqual(self.m.filter_dns(module.read_text(), settings.DEFAULT), "interface-name=paylas.ayc,tailscale0/4\n")
         shown = {n["name"]: n for n in self.p.dns_view(self.env)["names"]}
         self.assertEqual(shown["auto.ayc"]["address"], self.env["TAILSCALE_IPV4"])
         self.assertEqual(shown["v6.ayc"]["address"], "2001:db8::9")
-        self.assertNotIn("torrent.ayc", shown)
+        self.assertNotIn("paylas.ayc", shown)
         self.assertEqual(self.m.current()["dns"]["records"], records)
 
     def test_domain_apply_and_rollback_keep_family_and_custom_ipv6(self):
-        self.fixture.domain_fixture()
+        Path(self.env["CADDYFILE"]).write_text('http://panel.ayc {\n respond "test"\n}\n')
         base = Path(self.env["DNSMASQ_CONF_FILE"])
         base.write_text("interface-name=panel.ayc,tailscale0/4\nlocal=/ayc/\nno-resolv\n")
-        stage = self.root / "templates/torrent/dnsmasq.conf"
-        stage.write_text("interface-name=torrent.ayc,tailscale0/4\n")
+        # The installer's WebDAV name is renamed and restored with the base names.
+        stage = Path(self.env["DNSMASQ_CONF_DIR"]) / "modul-paylasim.conf"
+        stage.write_text("interface-name=paylas.ayc,tailscale0/4\n")
         config = self.m.config()
         config["dns"]["records"] = [dict(name="ipv6.ayc", target="2001:db8::9", enabled=True)]
         settings.save_json(self.m.config_path, config)
@@ -106,7 +106,7 @@ class DnsTests(unittest.TestCase):
         before = {p: p.read_bytes() for p in (base, stage, self.m.dns_file)}
         self.m.apply(self.fixture.payload(domain="ev"))
         self.assertIn("interface-name=panel.ev,tailscale0/4", base.read_text())
-        self.assertIn("interface-name=torrent.ev,tailscale0/4", stage.read_text())
+        self.assertIn("interface-name=paylas.ev,tailscale0/4", stage.read_text())
         self.assertIn("host-record=ipv6.ev,2001:db8::9", self.m.dns_file.read_text())
         self.m.rollback()
         for path, content in before.items():
@@ -120,8 +120,7 @@ class JsonTests(unittest.TestCase):
         self.root = Path(tmp.name).resolve()
         state = self.root / "state.env"
         state.write_text("LOCAL_DOMAIN=test\n")
-        self.p = panel.Panel(types.SimpleNamespace(state=str(state), allow_host=[], state_env=False,
-                                                  master_modul="/mock/master-modul"))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(state), allow_host=[], state_env=False))
 
     def test_deep_http_json_returns_400_keeps_gates_and_does_not_run_worker(self):
         class Handler(panel.Handler):
@@ -130,8 +129,9 @@ class JsonTests(unittest.TestCase):
         _server, sock = resources.start_unix(self, Handler)
         headers = {"X-Konsol": "1", "Content-Type": "application/json"}
         self.assertLess(len(DEEP), panel.MAX_BODY)
-        with patch.object(self.p, "settings_run", side_effect=AssertionError("must not run")):
-            for endpoint in ("/api/konsol/ayarlar/uygula", "/api/konsol/paylasim/kaydet", "/api/uygulama/wireguard/nets"):
+        with patch.object(self.p, "settings_run", side_effect=AssertionError("must not run")), \
+                patch.object(self.p.wireguard, "run_tool", side_effect=AssertionError("must not run")):
+            for endpoint in ("/api/konsol/ayarlar/uygula", "/api/konsol/paylasim/kaydet", "/api/konsol/wireguard/nets"):
                 status, response_headers, body = resources.unix_get(sock, endpoint, headers, "POST", DEEP)
                 self.assertEqual(status, 400)
                 self.assertEqual(response_headers["Connection"], "close")
@@ -159,7 +159,7 @@ class JsonTests(unittest.TestCase):
 
     def test_settings_cli_deep_and_nonobject_input_returns_only_safe_json(self):
         env = {"SETTINGS_FILE": str(self.root / "settings.json"), "SETTINGS_PENDING_FILE": str(self.root / "pending.json"),
-               "SETTINGS_DNS_FILE": str(self.root / "dns.conf"), "TORRENT_PROFILE_DIR": str(self.root / "profile"),
+               "SETTINGS_DNS_FILE": str(self.root / "dns.conf"),
                "UNIT_DIR": str(self.root / "units"), "RUNTIME_DIR": str(self.root / "run")}
         state = self.root / "worker.env"
         state.write_text("".join(k + "=" + v + "\n" for k, v in env.items()))

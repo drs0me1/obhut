@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Host INPUT + VPN FORWARD/NAT politikası. Staging zincir, atomik swap.
 # Üçüncü taraf kurallar silinmez. Docker yoktur (DD-152): DOCKER-USER'a dokunulmaz.
-# DD-198: paketler güvenlik duvarına dokunmaz. Kurulu (calisiyor) bir paketin kancası sabit bir
-# sözlükte bildirir, kuralları yalnız bu betik yazar ve denetler. Sözlük: "vpn ARAYÜZ UDP_PORT
-# AĞ4 AĞ6" — WAN UDP ucu, tailnet izni, internet-only yönlendirme (DD-177) ve NAT. Bozuk ya da
-# bilinmeyen bir satır hiçbir kuralı değiştirmez; korumasız açılışta kurtarma erişimi kalır.
+# DD-198/271: WireGuard ağlarını bu betik kendisi okur (WG_NETWORKS_FILE) ve kuralları yalnız o
+# yazar ve denetler: her ağ için WAN UDP ucu, tailnet izni, internet-only yönlendirme (DD-177) ve
+# NAT. WireGuard durdurulmuşsa (WG_STOPPED_FILE, DD-229) hiçbiri yoktur. Bozuk bir kayıt satırı
+# hiçbir kuralı değiştirmez; korumasız açılışta kurtarma erişimi kalır.
 set -Eeuo pipefail
 
 STATE_FILE="${STATE_FILE:-/etc/master-stack/state.env}"
@@ -41,6 +41,8 @@ source "$STATE_FILE"
 : "${CHAIN_NAT:?}"
 : "${VPN_BLOCK_DEST4:?}"
 : "${VPN_BLOCK_DEST6:?}"
+: "${WG_NETWORKS_FILE:?}"
+: "${WG_STOPPED_FILE:?}"
 
 # nat tablosu aynı yardımcılarla yönetilir: "$bin" tek kelime olduğu için tablo
 # seçimi bu sarmalayıcılardadır.
@@ -53,8 +55,8 @@ ICMP6_TYPES=(destination-unreachable packet-too-big time-exceeded parameter-prob
     echo-request echo-reply router-solicitation router-advertisement
     neighbour-solicitation neighbour-advertisement)
 
-# Kurulu paketlerin bildirimlerinden türeyen VPN ağları: arayüz, UDP portu, alt ağ IPv4/IPv6.
-# Önce bildirimler doğrulanır. Bozuk bildirim mevcut korumayı tutar.
+# WireGuard'ın kayıttaki ağları: arayüz, UDP portu, alt ağ IPv4/IPv6. Önce kayıt doğrulanır;
+# bozuk kayıt mevcut korumayı tutar.
 VPN_IFACES=() VPN_PORTS=() VPN_NET4=() VPN_NET6=()
 SHARE_WAN_ACTIVE=0 SHARE_SOCKET_IP=0 SHARE_SOCKET_TOTAL=0 SHARE_WAN_PORT=0
 load_share_wan() {
@@ -62,7 +64,7 @@ load_share_wan() {
     [[ -n "${SHARE_WAN_BACKEND:-}" ]] || return 0
     values="$(python3 "$SBIN_DIR/master_shares.py" --state "$STATE_FILE" wan-firewall)" ||
         die "WebDAV WAN kaydı okunamadı; kurallar değiştirilmedi"
-    # Exactly one four-field record; a missing port must never reopen legacy HTTP.
+    # Exactly one four-field record; a missing port must never reopen plain HTTP.
     pattern='^[01][[:blank:]]+[1-9][0-9]{0,9}[[:blank:]]+[1-9][0-9]{0,9}[[:blank:]]+[1-9][0-9]{0,4}$'
     [[ "$values" =~ $pattern ]] || die "WebDAV WAN sınırları veya portu geçersiz"
     read -r SHARE_WAN_ACTIVE SHARE_SOCKET_IP SHARE_SOCKET_TOTAL SHARE_WAN_PORT <<<"$values"
@@ -72,45 +74,28 @@ load_share_wan() {
     [[ "$SHARE_SOCKET_IP" -le "$SHARE_SOCKET_TOTAL" && "$SHARE_SOCKET_TOTAL" -le 4294967295 ]] ||
         die "WebDAV WAN sınırları geçersiz"
 }
-# DD-150/198: yalnız kayıtta "calisiyor" olan paketlerin kancası okunur; kaldırılmış bir paketin
-# korunan kaydı (anahtarlarla birlikte) yok sayılır: hiçbir portu ya da kuralı açılmaz.
-# Her satır "<id> <sözcük> <alanlar…>" biçiminde toplanır; kanca yalnız işlev tanımlar.
-package_declarations() {
-    local id state kanca
-    [[ -n "${MODULES_FILE:-}" && -f "$MODULES_FILE" && -n "${MODULES_DIR:-}" ]] || return 0
-    while IFS=$'\t' read -r id state; do
-        [[ "$id" =~ ^[a-z]{2,16}$ && "$state" == calisiyor ]] || continue
-        kanca="$MODULES_DIR/$id/kanca"
-        [[ -f "$kanca" && ! -L "$kanca" ]] || continue
-        # shellcheck source=/dev/null
-        ( source "$kanca" && if declare -F paket_firewall >/dev/null; then paket_firewall; fi ) 2>/dev/null |
-            sed "s/^/$id /" ||
-            die "paket güvenlik duvarı bildirimi okunamadı ($id); hiçbir kural değiştirilmedi"
-    done <"$MODULES_FILE"
-}
-load_package_rules() {
-    local id word iface port n4 n6 rest i j decl
+# DD-136/143: kayıt satırı (sekmeyle) arayüz, UDP portu, sabit inet alanı (DD-177), sunucu IPv4, alt
+# ağ IPv4, sunucu IPv6, alt ağ IPv6, varsayılan DNS ve etikettir. DD-229: durdurulmuş WireGuard'ın
+# kaydı korunur ama hiçbir portu ya da kuralı açılmaz. Kayıt dışı bir kapsam ya da eksik alan betiği
+# durdurur: hiçbir kural değişmez.
+load_wireguard_rules() {
+    local iface port scope n4 n6 i j
     VPN_IFACES=() VPN_PORTS=() VPN_NET4=() VPN_NET6=()
-    # Okunamayan bildirim betiği burada durdurur: süreç ikamesindeki die yalnız alt kabuğu kapatır,
-    # kurallar eksik listeyle yazılırdı (VPN ağlarının NAT'ı ve DD-177 engelleri silinirdi).
-    decl="$(package_declarations)" || exit 1
-    while read -r id word iface port n4 n6 rest; do
-        [[ -n "$id" ]] || continue
-        case "$word" in
-            vpn)
-                [[ "$iface" =~ ^[a-z][a-z0-9]{1,14}$ && "$port" =~ ^[0-9]{1,5}$ && "$port" -ge 1 && "$port" -le 65535 &&
-                    "$n4" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ && "$n6" =~ ^[0-9a-f:]+/[0-9]{1,3}$ && -z "$rest" ]] ||
-                    die "güvenlik duvarı bildirimi bozuk ($id: '$word $iface $port'); hiçbir kural değiştirilmedi"
-                VPN_IFACES+=("$iface") VPN_PORTS+=("$port")
-                VPN_NET4+=("$n4") VPN_NET6+=("$n6")
-                ;;
-            *) die "güvenlik duvarı bildiriminde bilinmeyen sözcük ($id: '$word'); hiçbir kural değiştirilmedi" ;;
-        esac
-    done <<<"$decl"
+    [[ ! -e "$WG_STOPPED_FILE" && -f "$WG_NETWORKS_FILE" ]] || return 0
+    [[ ! -L "$WG_NETWORKS_FILE" ]] || die "WireGuard ağ kaydı bir sembolik bağ; hiçbir kural değiştirilmedi"
+    while IFS=$'\t' read -r iface port scope _ n4 _ n6 _ || [[ -n "$iface" ]]; do
+        [[ -n "$iface" ]] || continue
+        [[ "$iface" =~ ^wg[0-9]$ && "$scope" == inet &&
+            "$port" =~ ^[0-9]{1,5}$ && "$port" -ge 1 && "$port" -le 65535 &&
+            "$n4" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ && "$n6" =~ ^[0-9a-f:]+/[0-9]{1,3}$ ]] ||
+            die "WireGuard ağ kaydı bozuk ('$iface $port ${scope:-kapsam-yok}'); hiçbir kural değiştirilmedi"
+        VPN_IFACES+=("$iface") VPN_PORTS+=("$port")
+        VPN_NET4+=("$n4") VPN_NET6+=("$n6")
+    done <"$WG_NETWORKS_FILE"
     for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
         for ((j = i + 1; j < ${#VPN_IFACES[@]}; j++)); do
             [[ "${VPN_IFACES[i]}" != "${VPN_IFACES[j]}" && "${VPN_PORTS[i]}" != "${VPN_PORTS[j]}" ]] ||
-                die "güvenlik duvarı bildiriminde tekrar eden arayüz ya da port (${VPN_IFACES[j]}); hiçbir kural değiştirilmedi"
+                die "WireGuard ağ kaydında tekrar eden arayüz ya da port (${VPN_IFACES[j]}); hiçbir kural değiştirilmedi"
         done
     done
 }
@@ -342,7 +327,7 @@ apply_input6() {
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
 
-# DD-177/198: declared VPN networks are internet-only. Deny private destinations even when routed via WAN.
+# DD-177/198: WireGuard networks are internet-only. Deny private destinations even when routed via WAN.
 # All ingress guards precede return-path permits (including between WG networks).
 apply_forward() {
     local bin="$1" prefix="$2" staging i dest blocked="$VPN_BLOCK_DEST4"
@@ -495,7 +480,6 @@ wan_allow_pairs() {
     [[ "$SHARE_WAN_ACTIVE" != 1 ]] || printf 'tcp %s\n' "$SHARE_WAN_PORT"
     # Ağ yoksa dizi boştur; bash 3.2'de "boş dizi + set -u" hata verir (DD-143).
     [[ "${#VPN_PORTS[@]}" -eq 0 ]] || printf 'udp %s\n' "${VPN_PORTS[@]}"
-    # DD-151/198: paketler yalnız bildirdikleri portları alır; başka gelen port açılmaz.
     return 0
 }
 
@@ -640,7 +624,7 @@ load_settings_rules() {
         line="-i $TAILSCALE_IF -p $proto --dport $port -m comment --comment konsol-base:tail-$proto-$port -j RETURN"
         if [[ "$family" == 4 ]]; then core4+="$line"$'\n'; else core6+="$line"$'\n'; fi
     done <<<"$ports"
-    # Declared VPN endpoints are requirements, including access over tailnet.
+    # Registered WireGuard endpoints are requirements, including access over tailnet.
     # Do not infer obsolescence from peer counts or traffic counters.
     for port in ${VPN_PORTS[@]+"${VPN_PORTS[@]}"}; do
         line="-i $TAILSCALE_IF -p udp --dport $port -m comment --comment konsol-base:wg-$port -j RETURN"
@@ -776,7 +760,7 @@ if [[ -n "${RUNTIME_DIR:-}" ]]; then
 fi
 trap startup_failure EXIT
 container_dns_iface >/dev/null
-load_package_rules
+load_wireguard_rules
 load_share_wan
 resolve_wan_interface
 load_settings_rules

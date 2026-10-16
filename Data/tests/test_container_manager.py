@@ -25,16 +25,14 @@ class ManagerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
-        self.env = {'KONTEYNER_STATE_DIR': str(self.root / 'containers'), 'MODULES_FILE': str(self.root / 'modules'),
-                    'MODULES_DIR': str(self.root / 'packages'), 'RUNTIME_DIR': str(self.root / 'run'),
+        self.env = {'KONTEYNER_STATE_DIR': str(self.root / 'containers'), 'RUNTIME_DIR': str(self.root / 'run'),
                     'KONTEYNER_NETWORK': 'konsol', 'TAILSCALE_IPV4': '100.64.0.2'}
-        (self.root / 'modules').write_text('')
         (self.root / 'state').write_text(''.join(k+'='+v+'\n' for k,v in self.env.items()))
         self.rows = []
         self.fail_commands = set()
         self.calls = []
-        self.p = types.SimpleNamespace(args=types.SimpleNamespace(state=str(self.root / 'state'), master_modul='/fixture/master-modul'),
-                                       run_tool=self.fake_run, env=lambda:{}, module_busy=lambda _:False)
+        self.p = types.SimpleNamespace(args=types.SimpleNamespace(state=str(self.root / 'state')),
+                                       run_tool=self.fake_run, env=lambda:{})
         self.s = manager.Service(self.p)
 
     def fake_run(self, argv, timeout=30, binary=False):
@@ -97,19 +95,16 @@ class ManagerTests(unittest.TestCase):
     def test_reach_lists_owners_states_and_port_scopes_with_one_podman_call(self):
         # DD-259: Erişim's view; a stopped definition shows the ports it would publish.
         value = self.save()
-        value.update(name='gezgin', ports=[{'scope':'local','host_port':8093,'container_port':8080,'protocol':'tcp','public_ack':False},
+        value.update(name='notlar', ports=[{'scope':'local','host_port':8093,'container_port':8080,'protocol':'tcp','public_ack':False},
                                            {'scope':'public','host_port':8443,'container_port':443,'protocol':'tcp','public_ack':True}])
         config.Store(self.env).save(value)
         self.rows = [{'Id':'abc','Names':['other'],'Image':'image','State':'running',
                       'Ports':[{'host_ip':'100.64.0.2','host_port':9000,'container_port':80,'protocol':'tcp'}]}]
-        app={'name':'qbittorrent','image':'docker.io/x/y@sha256:'+'e'*64,'unit':'qbittorrent.service',
-             'module_id':'torrent','module_state':'durduruldu','adapter':'','channel':''}
-        with patch.object(manager,'app_specs',return_value={'qbittorrent':app}):
-            answer = self.s.view().reach()
+        answer = self.s.view().reach()
         self.assertEqual(answer['runtime']['ok'], True)
-        self.assertEqual([(c['name'],c['source'],c['module_id'],c['state'],c['live']) for c in answer['containers']],
-                         [('gezgin','konsol',None,'stopped',False),('other','external',None,'running',True),
-                          ('qbittorrent','appstore','torrent','stopped',False),('web','konsol',None,'stopped',False)])
+        self.assertEqual([(c['name'],c['source'],c['state'],c['live']) for c in answer['containers']],
+                         [('notlar','konsol','stopped',False),('other','external','running',True),('web','konsol','stopped',False)])
+        self.assertEqual([sorted(c) for c in answer['containers']], [['live','name','ports','source','state']] * 3)
         self.assertEqual([(p['host_ip'],p['host_port'],p['scope']) for p in answer['containers'][0]['ports']],
                          [('127.0.0.1',8093,'local'),('0.0.0.0',8443,'public')])
         self.assertEqual(answer['containers'][1]['ports'][0]['scope'], 'tailscale')
@@ -117,7 +112,7 @@ class ManagerTests(unittest.TestCase):
         self.fail_commands.add(('podman','ps'))
         answer = self.s.view().reach()
         self.assertFalse(answer['runtime']['ok'])
-        self.assertEqual([c['name'] for c in answer['containers']], ['gezgin','web'], 'saved definitions stay listed')
+        self.assertEqual([c['name'] for c in answer['containers']], ['notlar','web'], 'saved definitions stay listed')
 
     def test_managed_container_log_is_its_unit_journal_unfiltered(self):
         # DD-251: a Konsol container's log is its unit's journal (every start and re-creation), live or not,
@@ -170,16 +165,7 @@ class ManagerTests(unittest.TestCase):
         row=self.s.view().liste()['images'][0]
         self.assertEqual((row['id'],row['name'],row['size']),('c'*64,'docker.io/library/nginx:alpine',12345))
         self.assertEqual(row['used_by'],[definition['name']])
-
-    def test_absent_package_runtime_detail_has_mount_array(self):
-        app={'name':'example','image':'docker.io/library/nginx:alpine','unit':'example.service',
-             'module_id':'example','module_state':'durduruldu','adapter':'adapter.py'}
-        with patch.object(manager,'app_specs',return_value={'example':app}), \
-             patch.object(manager,'app_config',return_value={'revision':'d'*64,'config':{'listener_port':8080},
-                          'editable':['listener_port'],'protected_mounts':[]}):
-            row=self.s.view().ayrinti('example')
-        self.assertEqual(row['mounts'],[])
-        self.assertEqual(row['state'],'stopped')
+        self.assertTrue(row['managed'])
 
     def test_image_delete_normalizes_real_podman_id_for_worker(self):
         with patch.object(self.s,'_launch') as launch:
@@ -196,13 +182,11 @@ class ResourceTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name).resolve()
-        (self.root/'modules').write_text('')
-        (self.root/'state').write_text('MODULES_FILE=%s\n' % (self.root/'modules'))
+        (self.root/'state').write_text('LOCAL_DOMAIN=test\n')
         self.cgroups = self.root/'cgroup'
         self.state = {'Status':'running','Pid':4242,'StartedAt':'2026-10-13T10:21:32.392702319+02:00','CgroupPath':self.SCOPE}
         self.calls, self.clock = [], [1000.0]
-        p = types.SimpleNamespace(args=types.SimpleNamespace(state=str(self.root/'state'), master_modul='/fixture/master-modul'),
-                                  run_tool=self.fake_run, env=lambda:{}, module_busy=lambda _:False)
+        p = types.SimpleNamespace(args=types.SimpleNamespace(state=str(self.root/'state')), run_tool=self.fake_run, env=lambda:{})
         self.s = manager.Service(p)
         for target, attr, value in ((manager,'CGROUP_ROOT',str(self.cgroups)), (manager.time,'monotonic',lambda:self.clock[0])):
             patcher = patch.object(target, attr, value); patcher.start(); self.addCleanup(patcher.stop)
@@ -305,9 +289,9 @@ class RouteTests(unittest.TestCase):
     def test_real_handler_requires_gates_and_returns_operation_identity(self):
         from test_resources import panel, start_unix, unix_get
         tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup)
-        root=Path(tmp.name).resolve();(root/'modules').write_text('')
-        (root/'state').write_text(f'SERVER_ROOT={root}\nLOCAL_DOMAIN=test\nMODULES_FILE={root}/modules\nKONTEYNER_STATE_DIR={root}/containers\n')
-        p=panel.Panel(types.SimpleNamespace(state=str(root/'state'),allow_host=[],master_modul='/fixture/master-modul'))
+        root=Path(tmp.name).resolve()
+        (root/'state').write_text(f'SERVER_ROOT={root}\nLOCAL_DOMAIN=test\nKONTEYNER_STATE_DIR={root}/containers\n')
+        p=panel.Panel(types.SimpleNamespace(state=str(root/'state'),allow_host=[],state_env=False))
         class Handler(panel.Handler):
             def log_message(self,*_):pass
         Handler.panel=p
@@ -322,18 +306,5 @@ class RouteTests(unittest.TestCase):
             job=json.loads(raw)
             code,_,raw=unix_get(sock,'/api/konsol/konteynerler/islem?id='+job['id'],headers)
             self.assertEqual((code,json.loads(raw)['state']),(200,'running'))
-
-class PublicationIntegrationTests(unittest.TestCase):
-    def test_declared_port_key_updates_both_catalogue_and_private_proxy(self):
-        import master_publications as pubs
-        manifest={'PAKET_YAYIN':'1','PAKET_YAYIN_AD':'Example','PAKET_YAYIN_YEREL':'example',
-                  'PAKET_YAYIN_UPSTREAM':'127.0.0.1:61006','PAKET_YAYIN_PORT_ANAHTARI':'EXAMPLE_PORT'}
-        with patch.object(pubs,'read_manifests',return_value={'example':manifest}), \
-             patch.object(pubs,'package_env',return_value={'EXAMPLE_PORT':'61016'},create=True), \
-             patch.object(pubs,'config',return_value={'example':{'tail':True}}):
-            self.assertEqual(pubs.packages({})['example']['upstream'],'127.0.0.1:61016')
-            source='http://example.test {\n reverse_proxy 127.0.0.1:61006 {\n }\n}\n'
-            self.assertIn('reverse_proxy 127.0.0.1:61016',pubs.private_site({},'example',source))
-            self.assertNotIn(':61006',pubs.private_site({},'example',source))
 
 if __name__ == '__main__':unittest.main()

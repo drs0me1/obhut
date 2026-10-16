@@ -4,29 +4,17 @@
 import { accessRoute } from "./sections";
 import type { Uyari, YayinAdayi } from "./api/sema";
 
-/** An Erişim row's id as an application's id: the rows of packages and containers are the same ids;
-    WebDAV's row is the built-in "Paylaşımlar". */
-export function appIdOfRow(id: string): string {
-  return id === "paylasim" ? "yerlesik:paylasim" : id;
-}
-
-/** A Yayınla candidate's id for an application (the reverse of appIdOfRow). */
-export function candidateOfApp(id: string): string {
-  return id === "yerlesik:paylasim" ? "paylasim" : id;
-}
-
-/** Where a warning is fixed: its publication in the Yayınla flow (Adresler), the application's page or
-    the Tailscale tab; without a target, Erişim itself. */
+/** Where a warning is fixed: its publication in the Yayınla flow (Adresler), the application's page (an
+    Erişim row's id is its application's id) or the Tailscale tab; without a target, Erişim itself. */
 export function fixRoute(fix: Uyari["duzelt"]): string {
   if (!fix) return accessRoute();
-  if (fix.bolum === "uygulama" && fix.hedef) return "/uygulamalar/" + appIdOfRow(fix.hedef);
+  if (fix.bolum === "uygulama" && fix.hedef) return "/uygulamalar/" + fix.hedef;
   if (fix.bolum === "tailscale") return accessRoute("tailscale");
   return accessRoute("adresler", fix.hedef || "sec");
 }
 
 export const CANDIDATE_KIND: Record<YayinAdayi["tur"], string> = {
   konsol: "Konsol",
-  paket: "App Store paketi",
   konteyner: "Konteyner",
   elle: "Elle adres",
   paylasim: "WebDAV",

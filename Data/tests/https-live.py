@@ -58,8 +58,11 @@ def api(path, data=None):
 
 
 if args.configure:
-    revision = api("/api/konsol/yayinlar")["revizyon"]
-    result = api("/api/konsol/ayarlar/uygula", {"revision": revision, "https": {"domain": args.domain}})
+    view = api("/api/konsol/yayinlar")
+    dav = next(r for r in view["adaylar"] if r["id"] == "paylasim")
+    # WebDAV's publication row (Erişim → Adresler): its Tailscale name as it is, its internet name on.
+    web = {"service": "paylasim", "tail": dav["tailscale"], "enabled": True, "domain": args.domain}
+    result = api("/api/konsol/ayarlar/uygula", {"revision": view["revizyon"], "web": web})
     assert result.get("committed") is True and result.get("pending") is None
     print("PASS: real Settings API saved and verified HTTPS", flush=True)
 # The shares' WAN mode and domain (Dosyalar → Paylaşımlar) and the certificate state (Erişim's WebDAV row).

@@ -1,16 +1,16 @@
 <!-- Moving items to another folder (phase 4b): the dialog browses the tree's folders (GET …/list?dirs=1),
      starting where the items are, and "Buraya taşı" sends POST …/move {path, names, to}. It cannot move into
-     the same folder, into one of the moved folders, or into a package's folder (DD-203). On the same disk a
-     move is a rename and nothing is copied; the server refuses a name the target already holds. -->
+     the same folder or into one of the moved folders. On the same disk a move is a rename and nothing is
+     copied; the server refuses a name the target already holds. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { Icon } from "../../components/icons";
 import Modal from "../../components/ui/Modal.vue";
-import { moveItems, readListing, type Entry, type ProtectedFolder, type Tree } from "../../api/dosyalar";
+import { moveItems, readListing, type Entry, type Tree } from "../../api/dosyalar";
 import { bytes } from "../../format";
-import { compareNames, errorText, fullPath, guardOf, joinPath } from "./files";
+import { compareNames, errorText, fullPath, joinPath } from "./files";
 
-const props = defineProps<{ open: boolean; tree: Tree; root: string; folder: string; items: Entry[]; guarded: ProtectedFolder[] }>();
+const props = defineProps<{ open: boolean; tree: Tree; root: string; folder: string; items: Entry[] }>();
 const emit = defineEmits<{ close: []; done: [message: string] }>();
 
 /** The destination's parts while browsing. */
@@ -26,15 +26,10 @@ const destPath = computed(() => dest.value.join("/"));
 const moving = computed(() => new Set(props.items.map((i) => joinPath(props.folder, i.name))));
 const label = computed(() => (props.items.length === 1 ? `“${props.items[0]?.name}”` : `${props.items.length} öge`));
 const size = computed(() => props.items.reduce((sum, i) => sum + (i.size ?? 0), 0));
-const destGuard = computed(() => {
-  const g = guardOf(props.guarded, destPath.value);
-  return g && g.kind === "yazar" ? g : null;
-});
 const same = computed(() => destPath.value === props.folder);
 const block = computed(() => {
   if (same.value) return "Seçilenler zaten bu klasörde; hedef klasörün içine girin.";
   if ([...moving.value].some((m) => destPath.value === m || destPath.value.startsWith(m + "/"))) return "Bir klasör kendi içine taşınamaz.";
-  if (destGuard.value) return `${destGuard.value.owner} bu klasöre yazıyor; buraya taşınmaz.`;
   return "";
 });
 
@@ -67,13 +62,8 @@ watch(
   },
 );
 
-/** A folder the moved items cannot go into, or "" (it may still be entered when it is a package's). */
-function rowNote(name: string): string {
-  const rel = joinPath(destPath.value, name);
-  if (moving.value.has(rel)) return "taşınan klasör";
-  const g = guardOf(props.guarded, rel);
-  return g && g.kind === "yazar" ? `${g.owner} yazıyor` : "";
-}
+/** A folder the moved items cannot go into (one of them), or "". */
+const rowNote = (name: string): string => (moving.value.has(joinPath(destPath.value, name)) ? "taşınan klasör" : "");
 
 async function submit(): Promise<void> {
   if (sending.value || block.value) return;

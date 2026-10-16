@@ -1,8 +1,7 @@
 <!-- A container's network and ports (DD-215, DD-217; the Podman page's "Ağ ve portlar"): on a bridge, each
      published port with its scope (an internet port marked, with what that means), the server and the
      container port and the protocol; on the host network there is no mapping, so the sockets its processes
-     listen on now, each with the kind of address. An App Store package's own listener (and peer port) is
-     its setting. A table on wide screens, cards on narrow ones. -->
+     listen on now, each with the kind of address. A table on wide screens, cards on narrow ones. -->
 <script setup lang="ts">
 import { computed } from "vue";
 import Card from "../../components/ui/Card.vue";
@@ -15,7 +14,6 @@ const props = defineProps<{ box: ContainerDetail }>();
 const LISTEN: Record<string, string> = { all: "Tüm adresler", wan: "WAN", tailscale: "Tailscale", other: "Belirli adres", local: "Yalnız bu sunucu" };
 const host = computed(() => props.box.network === "host");
 const running = computed(() => props.box.state === "running");
-const adapter = computed(() => props.box.adapter);
 
 interface PortRow {
   scope: string;
@@ -41,14 +39,6 @@ const address = (a: string, port: number) => `${a.includes(":") ? `[${a}]` : a}:
     <dl class="facts">
       <dt>Ağ</dt>
       <dd :class="{ mono: !box.generic }" data-testid="network">{{ host ? "Sunucu ağı (host)" : network }}</dd>
-      <template v-if="adapter">
-        <dt>Uygulama dinleyicisi</dt>
-        <dd><span class="mono">127.0.0.1:{{ adapter.listener_port }}</span><span class="cell-note">Uygulama ayarı; hizmet, Caddy ve denetimler aynı değeri kullanır.</span></dd>
-        <template v-if="adapter.peer_port !== undefined">
-          <dt>Eş portu</dt>
-          <dd><span class="mono">{{ adapter.peer_port }}</span><span class="cell-note">TCP ve UDP; yalnız sunucunun WAN IPv4 adresinde.</span></dd>
-        </template>
-      </template>
     </dl>
 
     <template v-if="host">
@@ -102,7 +92,7 @@ const address = (a: string, port: number) => `${a.includes(":") ? `[${a}]` : a}:
           </tbody>
         </table>
       </div>
-      <p v-else class="meter-note">{{ adapter && !running ? "Uygulama çalışmadığı için şu an port yayımlanmıyor." : "Port yayımlanmıyor; konteynere yalnız aynı ağdaki konteynerler ulaşır." }}</p>
+      <p v-else class="meter-note">Port yayımlanmıyor; konteynere yalnız aynı ağdaki konteynerler ulaşır.</p>
       <p v-if="anyPublic" class="warn-text" data-testid="public-warning">{{ PUBLIC_RISK }}</p>
     </template>
   </Card>

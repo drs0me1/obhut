@@ -11,8 +11,8 @@ let a root container mount another host directory. Each generated unit therefore
 `bagla` walks every source from / without following links, binds the directory behind that
 descriptor onto a root-owned anchor (KONTEYNER_BAGLAMA_DIR/NAME/<hash>) and verifies the
 anchor's identity; the Quadlet mounts the anchor, never the path. Only base invariants are
-checked here (absolute, no '..', a non-hidden subfolder of SERVER_ROOT). Package-declared
-folders stay a save-time check: no store, package code or lock is involved at start.
+checked here (absolute, no '..', a non-hidden subfolder of SERVER_ROOT). The protected folders
+stay a save-time check: no store or lock is involved at start.
 """
 import argparse
 import ctypes

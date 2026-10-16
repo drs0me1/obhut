@@ -1,8 +1,7 @@
-<!-- Erişim → Güvenlik duvarı (as the current Settings page, console/ayarlar.js): the check, the incoming
-     networks as tabs (?kapsam=: İnternet, Tailscale, WireGuard when a VPN is installed, Sunucu içi) and the
-     address family (?aile=6). Rows are the baseline port catalogue merged with the operator's rules: port,
-     protocol, name, whether something listens, the saved or draft state and the allow/deny switch (locked
-     for the server's own ports and container publications). "+ Port kuralı" adds a rule. Edits are a draft →
+<!-- Erişim → Güvenlik duvarı: the check, the incoming networks as tabs (?kapsam=: İnternet, Tailscale,
+     WireGuard, Sunucu içi) and the address family (?aile=6). Rows are the base's ports (`portlar`) merged
+     with the operator's rules: port, protocol, name, whether something listens, the saved or draft state and
+     the allow/deny switch (locked for the server's own ports and container publications). "+ Port kuralı" adds a rule. Edits are a draft →
      "İncele" → the plan → "Uygula" → the pending banner's 60 s confirmation. "Teknik kurallar" (?kurallar=1)
      shows the live iptables rows with their counters and owners, and the listeners. -->
 <script setup lang="ts">
@@ -48,13 +47,12 @@ watch(() => live.ayarSurumu, async () => {
   if (JSON.stringify(fw.value?.kurallar ?? null) !== before) draft.value = null;
 });
 
-const vpn = computed(() => fw.value?.vpn || "");
-const TABS = computed(() => [
+const TABS = [
   { id: "internet", label: "İnternet" },
   { id: "tailscale", label: "Tailscale" },
-  ...(vpn.value ? [{ id: "wireguard", label: vpn.value }] : []),
+  { id: "wireguard", label: "WireGuard" },
   { id: "sunucu", label: "Sunucu içi" },
-]);
+] as const;
 const FAMILIES = ["4", "6"] as const;
 const family = useQueryParam<"4" | "6">("aile", FAMILIES, "4");
 const technical = useQueryFlag("kurallar");
@@ -84,7 +82,7 @@ const changes = computed(() => {
   return n;
 });
 
-// ---- rows: the catalogue merged with the rules (a rule without a source takes over its catalogue row)
+// ---- rows: the base's ports merged with the rules (a rule without a source takes over its port's row)
 interface Row {
   key: string;
   name: string;
@@ -97,7 +95,7 @@ interface Row {
 }
 
 const allRows = computed<Row[]>(() => {
-  const out: Row[] = (fw.value?.katalog ?? []).map((k, i) => ({
+  const out: Row[] = (fw.value?.portlar ?? []).map((k, i) => ({
     key: `k${i}`, name: k.ad, family: k.aile, scope: k.kapsam, proto: k.proto, port: k.port, rule: null, fixed: k.sabit,
   }));
   for (const r of rules.value) {
@@ -168,9 +166,9 @@ const DESCRIPTIONS: Record<Scope, string> = {
   wireguard: "",
   sunucu: "Sunucunun kendi iç bağlantıları (loopback). Servislerin arka uçları burada çalışır; bu izinler korunur ve değiştirilemez.",
 };
-const vpnText = computed(() =>
-  `${vpn.value} cihazları yalnız internete çıkar. Sunucu servisleri, özel ağlar ve diğer cihazlar engellenir; bu politika değiştirilemez. ` +
-  `${vpn.value}'in UDP bağlantı portu İnternet sekmesindedir; yönlendirme ve NAT kuralları Teknik kurallar'dadır.`);
+const VPN_TEXT =
+  "WireGuard cihazları yalnız internete çıkar. Sunucu servisleri, özel ağlar ve diğer cihazlar engellenir; bu politika değiştirilemez. " +
+  "WireGuard'ın UDP bağlantı portu İnternet sekmesindedir; yönlendirme ve NAT kuralları Teknik kurallar'dadır.";
 
 // ---- the rule form
 const formOpen = ref(false);
@@ -276,11 +274,11 @@ function onTechnical(event: Event): void {
         <template #default="{ active }">
           <div class="fw-panel" :data-kapsam="active">
             <template v-if="active === 'wireguard'">
-              <p class="card-text">{{ vpnText }}</p>
-              <ul v-if="fw.aglar.length" class="fact-list" aria-label="VPN ağları">
+              <p class="card-text">{{ VPN_TEXT }}</p>
+              <ul v-if="fw.aglar.length" class="fact-list" aria-label="WireGuard ağları">
                 <li v-for="a in fw.aglar" :key="a.arayuz"><strong>{{ a.arayuz }}</strong><template v-if="a.ad"> · {{ a.ad }}</template> · {{ a.etkin ? "açık" : "durduruldu" }}</li>
               </ul>
-              <p v-else class="meter-note">Henüz yönetilebilir bir {{ vpn }} ağı yok.</p>
+              <p v-else class="meter-note">Henüz WireGuard ağı yok; ağlar Erişim → WireGuard'da kurulur.</p>
             </template>
             <template v-else>
               <div class="fw-head">

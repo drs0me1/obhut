@@ -5,10 +5,13 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-254"
+V2_VERSION="2026.08.06-v2-255"
 # DD-260: insanların gördüğü sürüm (anlamlı sürümleme; yalnız bir yayında değişir, vX.Y.Z etiketlenir).
 # V2_VERSION yapı numarasıdır: Konsol güncelleme önerirken sunucular onu karşılaştırır.
 OBHUT_SURUM="1.1.0"
+# DD-271: kurulumun nesli. Bu nesil yalnız temiz bir işletim sistemine kurulur (aşama 0'ın kapısı);
+# Konsol yalnız aynı nesildeki yapıları güncelleme olarak önerir.
+OBHUT_NESIL="2"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh
@@ -16,7 +19,8 @@ source "$V2_ROOT/common.sh"
 # shellcheck source=config/defaults.env
 source "$V2_ROOT/config/defaults.env"
 
-mkdir -p "$LOG_DIR" "$STATE_DIR" "$RUNTIME_DIR"
+# STATE_DIR burada açılmaz: aşama 0'ın nesil kapısı onun varlığına bakar (DD-271).
+mkdir -p "$LOG_DIR" "$RUNTIME_DIR"
 V2_LOG_FILE="${V2_LOG_FILE:-$LOG_DIR/install.log}"
 # retry fonksiyonları ayrı bash'te çalıştırır; apt çıktısı loga oradan da yazılsın.
 export V2_LOG_FILE
@@ -52,6 +56,7 @@ write_state() {
     atomic_write "$STATE_FILE" 0600 <<EOF
 V2_VERSION=$V2_VERSION
 OBHUT_SURUM=$OBHUT_SURUM
+OBHUT_NESIL=$OBHUT_NESIL
 WAN_INTERFACE=$WAN_INTERFACE
 WAN_IPV4=$WAN_IPV4
 WAN_IPV6=$WAN_IPV6
@@ -78,13 +83,12 @@ CHAIN_STAGING_PREFIX=$CHAIN_STAGING_PREFIX
 PANEL_SOCKET=$PANEL_SOCKET
 KONSOL_AUTH_DIR=$KONSOL_AUTH_DIR
 CADDY_ADMIN_SOCKET=$CADDY_ADMIN_SOCKET
-MODULES_FILE=$MODULES_FILE
-MODULES_DIR=$MODULES_DIR
 FILES_PANEL_PORT=$FILES_PANEL_PORT
 SHARE_PORT=$SHARE_PORT
 SHARE_HTTPS_PORT=$SHARE_HTTPS_PORT
 SHARE_WAN_BACKEND=$SHARE_WAN_BACKEND
 SHARE_STATE_FILE=$SHARE_STATE_FILE
+SHARE_CADDY_SOURCE=$SHARE_CADDY_SOURCE
 STATE_DIR=$STATE_DIR
 SBIN_DIR=$SBIN_DIR
 UNIT_DIR=$UNIT_DIR
@@ -97,7 +101,6 @@ KONTEYNER_BRIDGE_PREFIX=$KONTEYNER_BRIDGE_PREFIX
 KONTEYNER_NFT_TABLE=$KONTEYNER_NFT_TABLE
 YAYIN_PORT_ILK=$YAYIN_PORT_ILK
 YAYIN_PORT_SON=$YAYIN_PORT_SON
-PACKAGE_OVERRIDES_DIR=$PACKAGE_OVERRIDES_DIR
 DOWNLOADS_UID=$DOWNLOADS_UID
 DOWNLOADS_GID=$DOWNLOADS_GID
 FILES_PANEL_TRASH=$FILES_PANEL_TRASH
@@ -105,6 +108,19 @@ CADDYFILE=$CADDYFILE
 CADDY_MODULES_DIR=$CADDY_MODULES_DIR
 VPN_BLOCK_DEST4="$VPN_BLOCK_DEST4"
 VPN_BLOCK_DEST6="$VPN_BLOCK_DEST6"
+WG_PORT_DEFAULT=$WG_PORT_DEFAULT
+WG_ADDR_BASE4=$WG_ADDR_BASE4
+WG_ADDR_BASE6=$WG_ADDR_BASE6
+WG_MTU=$WG_MTU
+WG_CLIENT_DNS_DEFAULT="$WG_CLIENT_DNS_DEFAULT"
+WG_CLIENT_KEEPALIVE_DEFAULT=$WG_CLIENT_KEEPALIVE_DEFAULT
+WG_CLIENT_ALLOWED_IPS="$WG_CLIENT_ALLOWED_IPS"
+WG_CONF_DIR=$WG_CONF_DIR
+WG_CLIENTS_DIR=$WG_CLIENTS_DIR
+WG_NETWORKS_FILE=$WG_NETWORKS_FILE
+WG_STOPPED_FILE=$WG_STOPPED_FILE
+WG_NETWORKS_MAX=$WG_NETWORKS_MAX
+WG_MODULES_LOAD_FILE=$WG_MODULES_LOAD_FILE
 DNSMASQ_CONF_DIR=$DNSMASQ_CONF_DIR
 RUNTIME_DIR=$RUNTIME_DIR
 LOG_DIR=$LOG_DIR
@@ -331,7 +347,7 @@ check_nft_iptables() {
     log INFO "iptables henüz kurulu değil (Debian minimal); nft arka uç denetimi aşama 1'e ertelendi"
 }
 
-# DD-208: Podman tabanın parçasıdır (App Store'un konteyner çalışma ortamı). Daemon yok: Debian'ın
+# DD-208: Podman tabanın parçasıdır (Konsol konteynerlerinin çalışma ortamı). Daemon yok: Debian'ın
 # podman.socket, podman.service ve podman-auto-update.timer birimleri kapalı gelir, kurulum açmaz.
 # Aşama 1 kurar ve burada zorunlu denetler; aşama 7 yeniden denetler.
 check_podman() {
@@ -342,10 +358,34 @@ check_podman() {
     PODMAN_VERSION="${out%% *}"
 }
 
+# DD-271 (S3): bu nesil yalnız temiz bir işletim sistemine kurulur; göç kodu yoktur. STATE_DIR varsa
+# bu neslin işaretini taşımalı; eski nesil bir Obhut'un bıraktığı izlerden (ESKI_NESIL_IZLERI) hiçbiri
+# olmamalı. Kapı hiçbir şey yazmadan önce denetler; işaret ilk yazımla (write_generation) konur.
+check_generation() {
+    local nesil="" iz
+    if [[ -e "$STATE_DIR" || -L "$STATE_DIR" ]]; then
+        [[ ! -f "$NESIL_FILE" || -L "$NESIL_FILE" ]] || nesil="$(<"$NESIL_FILE")"
+        [[ "$nesil" == "$OBHUT_NESIL" ]] ||
+            die "Bu sunucuda eski nesil bir Obhut var ($STATE_DIR, nesil: ${nesil:-yok}); bu sürüm yalnız temiz bir işletim sistemine kurulur"
+    fi
+    for iz in $ESKI_NESIL_IZLERI; do
+        [[ ! -e "$iz" && ! -L "$iz" ]] ||
+            die "Bu sunucuda eski nesil bir Obhut var ($iz); bu sürüm yalnız temiz bir işletim sistemine kurulur"
+    done
+}
+
+write_generation() {
+    mkdir -p -- "$STATE_DIR"
+    atomic_write "$NESIL_FILE" 0644 <<EOF
+$OBHUT_NESIL
+EOF
+}
+
 stage_0() {
     log INFO "Aşama 0/7 — kapılar ve girdi"
     require_root
     require_supported_os
+    check_generation
     log INFO "İşletim sistemi: ${OS_ID} ${OS_VERSION_ID} (${OS_CODENAME}) ${OS_ARCH}, çekirdek $(uname -r)"
     case "$OS_ARCH" in
         amd64) ;;
@@ -412,14 +452,7 @@ stage_0() {
     [[ "$DOWNLOADS_SUBDIR" =~ ^[A-Za-z0-9._-]+$ && "$MEDIA_SUBDIR" =~ ^[A-Za-z0-9._-]+$ ]] ||
         die "DOWNLOADS_SUBDIR ve MEDIA_SUBDIR tek bir klasör adı olmalı"
     assert_downloads_path_allowed "$SERVER_ROOT"
-    # DD-269: v2-145 öncesinin paylaşım ağacı (.pay) eski hesap bilgisi taşıyabilir ve artık hiçbir yerde
-    # gizlenmez; o klasör varken kurulum yapılmaz.
-    [[ ! -e "$SERVER_ROOT/.pay" && ! -L "$SERVER_ROOT/.pay" ]] ||
-        die "$SERVER_ROOT/.pay eski bir sürümün paylaşım klasörü; içeriğini inceleyip kaldırın, sonra kurulumu yeniden çalıştırın"
     DOWNLOADS_PATH="$SERVER_ROOT/$DOWNLOADS_SUBDIR"
-
-    # DD-143/201/203: hiçbir paket ayarı girdi ya da state değildir; her paket kendi ayarlarını
-    # taşır (magaza/<id>/<id>.env) ve uç nokta olarak state'teki WAN_IPV4'ü kullanır.
 
     detect_wan
 
@@ -438,8 +471,7 @@ stage_0() {
 Kurulum girdileri:
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
-  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları ve Podman (konteyner ortamı)
-  App Store:    $(paket_katalog_adlar); isteğe bağlı kurulur
+  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları, WireGuard (ağları Konsol → Erişim → WireGuard kurar) ve Podman (konteyner ortamı)
   Konsol:        kullanıcı adı ve parolayla; Tailscale'den, isteğe bağlı internet HTTPS (DD-194, DD-195)
   Tailscale:     $ts_note
   full-upgrade:  evet
@@ -452,6 +484,7 @@ EOF
     fi
     [[ "$confirm_ans" =~ ^[EeYy]$ ]] || die "kurulum iptal edildi; hiçbir ayar değiştirilmedi"
 
+    write_generation
     write_config
 }
 
@@ -518,15 +551,6 @@ apt_update_caddy_tolerant() {
     return "$status"
 }
 
-# DD-267: Konsol'un ZIP/RAR işleri kalktı. Önceki kurulumların eklediği RAR deposu (DD-166; yalnız bu
-# kurulumun kendi kaynak dosyası, düz dosya) silinir; kurulu unrar ve python3-rarfile paketleri
-# kaldırılmaz. Aşama 1'in apt-get update'inden önce çalışır: listeler aynı adımda yenilenir.
-remove_retired_rar_repository() {
-    [[ -f "$RETIRED_RAR_APT_SOURCE_FILE" && ! -L "$RETIRED_RAR_APT_SOURCE_FILE" ]] || return 0
-    rm -f -- "$RETIRED_RAR_APT_SOURCE_FILE"
-    log INFO "Eski RAR deposu kaldırıldı ($RETIRED_RAR_APT_SOURCE_FILE); kurulu paketlere dokunulmadı"
-}
-
 stage_1() {
     log INFO "Aşama 1/7 — sistem ve paketler"
     export DEBIAN_FRONTEND=noninteractive
@@ -539,7 +563,6 @@ stage_1() {
     # ufw kapısının reddettiği "tek şeyin iki sahibi" sınıfının aynısı.
     # SUSPEND apt kancasınca okunur; Debian'da needrestart kurulu değil, no-op.
     export NEEDRESTART_SUSPEND=1
-    remove_retired_rar_repository
     local caddy_mark
     caddy_mark="$(mktemp)"
     retry "apt-update" 3 "$APT_LOCK_TIMEOUT" -- apt_update_caddy_tolerant "$CADDY_APT_REPO" "$caddy_mark" "${APT_OPTS[@]}"
@@ -564,6 +587,10 @@ stage_1() {
     retry "apt-podman" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
         podman netavark aardvark-dns
     check_podman
+    # DD-271: WireGuard yerleşiktir; araçları önerileri olmadan (DKMS ve derleyiciler gelmez, modül
+    # çekirdeğindir). Ağ kurulmaz; aşama 4 birim ekini ve çekirdek modülünü hazırlar.
+    retry "apt-wireguard" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
+        wireguard-tools qrencode
     timedatectl set-timezone "$TIMEZONE" || log WARN "saat dilimi ayarlanamadı"
     apply_unattended_upgrades
 }
@@ -665,9 +692,8 @@ ensure_downloads_tree() {
     local root="$1" uid="$2" gid="$3"
     [[ -d "$root" ]] || die "downloads dizini yok: $root"
     # No pathname-based chown/chmod of service-writable data. Keep one selective
-    # descriptor walk; links/special files and private work areas stay untouched.
-    # DD-267: the retired archive workspace keeps its private mode until stage 7 removes it.
-    python3 "$V2_ROOT/panel/master_permissions.py" "$root" "$uid" "$gid" "$RETIRED_ARCHIVE_DIR"
+    # descriptor walk; links and special files stay untouched.
+    python3 "$V2_ROOT/panel/master_permissions.py" "$root" "$uid" "$gid"
 }
 
 # Recursive chown/chmod only under an allowlisted data root (DD-93).
@@ -694,257 +720,62 @@ assert_downloads_path_allowed() {
     esac
 }
 
-# DD-148: modüllerin dosyaları. Kurulum her modülün şablonunu yer tutucuları doldurarak
-# MODULES_DIR/<id>/ altına yazar ve kayıt dosyasını (yoksa boş) oluşturur; hiçbir modülü
-# isteğe bağlı uygulamayı kendiliğinden kurmaz ya da kaldırmaz. Aşama 7 yerleşik
-# Dosyalar/WebDAV'ı doğrular; kurulu isteğe bağlı uygulamaların değişen dosyalarını uygular.
-MODULES_CHANGED=""
 PANEL_HELPERS_CHANGED=0
 # DD-235: master-files-panel değişince Sistem görünümünün servisi de yeniden başlar.
 FILES_PANEL_SCRIPT_CHANGED=0
-module_state() { # ID → calisiyor | durduruldu | (boş: kurulu değil)
-    awk -F'\t' -v i="$1" '$1 == i {print $2; exit}' "$MODULES_FILE" 2>/dev/null || true
-}
-# DD-222: MODULES_CHANGED yalnız bu çalıştırmanın belleğindedir. Değişiklik yazılır yazılmaz paket
-# kalıcı olarak işaretlenir; işaret yalnız paket uygulanınca (reapply_modules) kalkar. Aşama 4'ten
-# sonra düşen bir kurulumun değişikliğini böylece bir sonraki kurulum yine uygular. İşaret
-# yazılamazsa kurulum durur (çağıran bir koşulun içinde olsa da: die).
-mark_module_pending() { # ID
-    local dir="${MODULES_PENDING_DIR:?}"
-    [[ -d "$dir" ]] || install -d -m 0700 -o root -g root "$dir" || die "bekleyen paket klasörü açılamadı: $dir"
-    : >"$dir/$1" || die "bekleyen paket işareti yazılamadı: $dir/$1"
-}
-# DD-197: bir paketin repo klasörü olduğu gibi işlenir. __KEY__ içeren dosya şablondur ve
-# kurulumun aynı adlı değişkeniyle doldurulur; öbürleri kopyalanır. Çalıştırılabilir dosyalar
-# (araçlar) 0755, geri kalanı 0644. 0: bir dosya değişti, 1: hepsi aynıydı.
-# DD-203: paketin kendi ayar dosyası (magaza/<id>/<id>.env, KEY=değer; `source` edilmez).
-paket_ayar_oku() { # ID ANAHTAR → değer (yoksa boş)
-    local file="$V2_ROOT/magaza/$1/$1.env" override
-    override="$(python3 - "$V2_ROOT/panel" "$V2_ROOT/magaza" "$PACKAGE_OVERRIDES_DIR" "$1" "$2" <<'PY'
-import sys
-sys.path.insert(0, sys.argv[1])
-from master_settings import package_overrides
-print(package_overrides({'MODULES_DIR': sys.argv[2], 'PACKAGE_OVERRIDES_DIR': sys.argv[3]}, sys.argv[4]).get(sys.argv[5], ''))
-PY
-)" || return 1
-    if [[ -n "$override" ]]; then printf '%s\n' "$override"; return; fi
-    [[ -f "$file" ]] || return 0
-    sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$file" | head -n 1
+# Paylaşım'ın araçları (master_shares.py, master_webdav.py) değişince WebDAV servisi yeniden başlar.
+SHARE_HELPERS_CHANGED=0
+
+# DD-271 (K6): WireGuard tabanın parçasıdır ve kurulumdan sonra kapalıdır: kurulum hiçbir ağ
+# oluşturmaz, ilk ağı Konsol (Erişim → WireGuard) kurar. Araç SBIN_DIR'de; wg-quick@ birim eki bir ağı
+# güvenlik duvarı denetimi geçmeden açmaz (DD-180); ağların klasörü yalnız root'a açıktır ve çekirdek
+# modülü her açılışta yüklenir.
+ensure_wireguard() {
+    atomic_write "$SBIN_DIR/master-wg" 0755 <"$V2_ROOT/scripts/master-wg"
+    install -d -m 0755 -o root -g root -- "$UNIT_DIR/wg-quick@.service.d"
+    render_template "$V2_ROOT/systemd/wg-quick-master-stack.conf" "$UNIT_DIR/wg-quick@.service.d/master-stack.conf" 0644 \
+        SBIN_DIR="$SBIN_DIR"
+    modprobe wireguard >/dev/null 2>&1 || die "çekirdek WireGuard modülü yüklenemedi"
+    atomic_write "$WG_MODULES_LOAD_FILE" 0644 <<'EOF'
+wireguard
+EOF
+    install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"
 }
 
-paket_islenmis_oku() { # ID ANAHTAR → işlenmiş bildirimden (MODULES_DIR) değer
-    sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$MODULES_DIR/$1/paket.env" 2>/dev/null | head -n 1
+# DD-229: kurulumun yeniden çalışması kayıttaki ağları açar; durdurulmuş WireGuard (WG_STOPPED_FILE)
+# kapalı kalır. Kayıt yoksa (ağ kurulmamış) yapılacak bir şey yoktur.
+wireguard_networks_up() {
+    local iface
+    [[ ! -e "$WG_STOPPED_FILE" && -f "$WG_NETWORKS_FILE" ]] || return 0
+    while IFS=$'\t' read -r iface _; do
+        [[ "$iface" =~ ^wg[0-9]$ ]] || continue
+        systemctl enable --now --quiet "wg-quick@$iface.service" >/dev/null 2>&1 ||
+            log WARN "WireGuard: $iface açılamadı; Konsol → Erişim → WireGuard'dan bakın"
+    done <"$WG_NETWORKS_FILE"
 }
 
-# DD-203: paketlerin yazdığı klasörler (işlenmiş bildirimlerdeki PAKET_KLASORLER, mutlak yol), dosya
-# arka ucuna köke göre "yol=sahip;..." olarak verilir: Dosyalar seçtirmez, paylaştırmaz, sahibini söyler.
-paket_korunan_klasorler() {
-    local manifest id ad p out=""
-    for manifest in "$MODULES_DIR"/*/paket.env; do
-        [[ -f "$manifest" ]] || continue
-        id="${manifest%/paket.env}"; id="${id##*/}"
-        ad="$(paket_islenmis_oku "$id" PAKET_AD)"; [[ -n "$ad" ]] || ad="$id"
-        for p in $(paket_islenmis_oku "$id" PAKET_KLASORLER); do
-            [[ "$p" == "$SERVER_ROOT/"* ]] || continue
-            out="${out:+$out;}${p#"$SERVER_ROOT"/}=$ad"
-        done
-    done
-    printf '%s' "$out"
-}
-
-# DD-203: root arka ucun yazabileceği yollar paketlerin bildiriminden (PAKET_ARKAUC_YOLLAR, mutlak);
-# kurulu olsun olmasın '-' ile verilir (yoksa atlanır), böylece bir kurulum birimi yeniden başlatmaz.
-paket_arkauc_klasorler() { # bir satıra bir mutlak yol, katalog sırasıyla
-    local manifest id p
-    for manifest in "$MODULES_DIR"/*/paket.env; do
-        [[ -f "$manifest" ]] || continue
-        id="${manifest%/paket.env}"; id="${id##*/}"
-        for p in $(paket_islenmis_oku "$id" PAKET_ARKAUC_YOLLAR); do
-            [[ "$p" == /* ]] || continue
-            printf '%s\n' "$p"
-        done
-    done
-    return 0
-}
-
-paket_arkauc_yollar() {
-    local p out=""
-    while IFS= read -r p; do
-        out="${out:+$out }-$p"
-    done < <(paket_arkauc_klasorler)
-    printf '%s' "$out"
-}
-
-# DD-207: systemd, ReadWritePaths'te "-" ile yazılan bir klasörü arka uç başlarken yoksa atlar; klasör
-# sonradan oluşsa da (ör. WireGuard'ın ilk ağı) arka ucun gördüğü kopya salt okunur kalır. Çalışan
-# arka ucun bağlamalarında her bildirilen klasör yazılabilir (rw) bir bağlama noktası olmalı.
-panel_yollari_bagli() { # [MOUNTINFO]
-    local pid info p
-    pid="$(systemctl show -p MainPID --value master-panel.service 2>/dev/null || true)"
-    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
-    info="${1:-/proc/$pid/mountinfo}"
-    while IFS= read -r p; do
-        awk -v p="$p" '$5 == p && $6 ~ /(^|,)rw(,|$)/ {f = 1} END {exit !f}' "$info" 2>/dev/null || return 1
-    done < <(paket_arkauc_klasorler)
-}
-
-# Kataloğun adları ("A ve B"), özetler için.
-paket_katalog_adlar() {
-    local id names=() n
-    for id in $(paket_katalog); do names+=("$(paket_bildirim_oku "$id" PAKET_AD)"); done
-    n=${#names[@]}
-    case "$n" in
-        0) printf 'yok' ;;
-        1) printf '%s' "${names[0]}" ;;
-        *) printf '%s ve %s' "$(IFS=,; printf '%s' "${names[*]:0:n-1}" | sed 's/,/, /g')" "${names[n-1]}" ;;
-    esac
-}
-
-render_package_dir() { # ID
-    local id="$1" src dst name mode changed=0 key value
-    local -a args
-    install -d -m 0755 -o root -g root "$MODULES_DIR/$id"
-    for src in "$V2_ROOT/magaza/$id"/*; do
-        [[ -f "$src" ]] || continue
-        name="${src##*/}"
-        dst="$MODULES_DIR/$id/$name"
-        mode=0644
-        [[ ! -x "$src" ]] || mode=0755
-        args=()
-        while IFS= read -r key; do
-            [[ -n "$key" ]] || continue
-            # DD-203: paketin kendi ayarı (magaza/<id>/<id>.env) önce, kurulumun değişkeni sonra.
-            value="$(paket_ayar_oku "$id" "$key")"
-            if [[ -n "$value" ]]; then
-                args+=("$key=$value")
-            elif [[ -n "${!key+x}" ]]; then
-                args+=("$key=${!key}")
-            else
-                die "paket dosyasında tanımsız yer tutucu: __${key}__ ($src)"
-            fi
-        done < <(grep -oE '__[A-Z][A-Z0-9_]*__' "$src" | sort -u | sed 's/^__//; s/__$//')
-        if [[ ${#args[@]} -gt 0 ]]; then
-            render_template "$src" "$dst" "$mode" "${args[@]}"
-        else
-            atomic_write "$dst" "$mode" <"$src"
-        fi
-        # DD-222: işaret ilk değişiklikte, paketin kalan dosyalarından önce konur.
-        [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || { changed=1; mark_module_pending "$id"; }
-    done
-    # DD-203: işlenmiş klasörde yalnız paketin dosyaları durur; eski sürümlerin bıraktıkları
-    # (ör. önceki sürümlerin yazdığı __pycache__) kalkar.
-    for dst in "$MODULES_DIR/$id"/* "$MODULES_DIR/$id"/.[!.]*; do
-        [[ -e "$dst" || -L "$dst" ]] || continue
-        name="${dst##*/}"
-        [[ -f "$V2_ROOT/magaza/$id/$name" ]] || { mark_module_pending "$id"; rm -rf -- "$dst"; changed=1; }
-    done
-    [[ "$changed" -eq 1 ]]
-}
-
-paket_bildirim_oku() { # ID ANAHTAR → değer (repo bildirimi; `source` edilmez)
-    sed -n "s/^$2=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$V2_ROOT/magaza/$1/paket.env" | head -n 1
-}
-
-# Katalog sırası: yerleşik olmayan paketler, PAKET_SIRA'ya göre.
-paket_katalog() {
-    local dir id
-    for dir in "$V2_ROOT"/magaza/*/; do
-        id="${dir%/}"; id="${id##*/}"
-        [[ -f "$dir/paket.env" ]] || continue
-        [[ "$(paket_bildirim_oku "$id" PAKET_YERLESIK)" == 1 ]] && continue
-        printf '%s\t%s\n' "$(paket_bildirim_oku "$id" PAKET_SIRA)" "$id"
-    done | sort -n | cut -f2 | tr '\n' ' '
-}
-
-# DD-201: kurulu paketin kendi doğrulaması (paket_denetle). Kanca alt kabukta, kurulumun
-# değişkenleriyle çalışır; hatada açıklamayı stderr'e yazıp sıfır dışı döner.
-paket_denetle_calistir() { # ID
-    local id="$1" out
-    [[ -f "$V2_ROOT/magaza/$id/kanca" ]] || return 0
-    # shellcheck source=/dev/null
-    out="$( ( source "$V2_ROOT/magaza/$id/kanca" && { ! declare -F paket_denetle >/dev/null 2>&1 || paket_denetle; } ) 2>&1 )" ||
-        die "$(paket_bildirim_oku "$id" PAKET_AD): ${out##*$'\n'}"
-}
-
-# DD-201: kurulu olmayan paketin bildirdiği araçlar, birim ekleri ve konteyner birimi (DD-209)
-# sunucuda yoksa 0.
-paket_iz_yok() { # ID
-    local id="$1" name pair
-    for name in $(paket_bildirim_oku "$id" PAKET_ARACLAR); do
-        [[ ! -e "$SBIN_DIR/$name" ]] || return 1
-    done
-    for pair in $(paket_bildirim_oku "$id" PAKET_EKLER); do
-        [[ ! -e "$UNIT_DIR/${pair#*:}" ]] || return 1
-    done
-    name="$(paket_bildirim_oku "$id" PAKET_KONTEYNER)"
-    [[ -z "$name" || ! -e "$KONTEYNER_BIRIM_DIR/$name" ]] || return 1
-    return 0
-}
-
-ensure_module_files() {
-    local dir id
-    install -d -m 0755 -o root -g root "$MODULES_DIR"
-    # Her paket (yerleşik WebDAV dahil) MODULES_DIR/<id>/ altına işlenir; canlı kopyaları
-    # master-modul koyar, kullanıcı kayıtları yeniden üretilmez (DD-158). Değişen, uygulanmayı
-    # bekleyen (DD-222: bu ya da yarıda kalmış önceki bir kurulumdan) ya da her kurulumda uygulanan
-    # (PAKET_UYGULA_HEP=1) paket MODULES_CHANGED'e girer.
-    for dir in "$V2_ROOT"/magaza/*/; do
-        id="${dir%/}"; id="${id##*/}"
-        [[ -f "$dir/paket.env" ]] || die "paket bildirimi yok: $dir"
-        if render_package_dir "$id" || [[ -e "$MODULES_PENDING_DIR/$id" ]] ||
-            [[ "$(paket_bildirim_oku "$id" PAKET_UYGULA_HEP)" == 1 ]]; then
-            MODULES_CHANGED="$MODULES_CHANGED $id"
-        fi
-    done
-    if [[ ! -f "$MODULES_FILE" ]]; then
-        atomic_write "$MODULES_FILE" 0644 </dev/null
-    fi
-    chown root:root "$MODULES_FILE"
-    chmod 0644 "$MODULES_FILE"
-}
-
-# DD-148/DD-149: dosyası değişen kurulu modül yeniden uygulanır (adları, hesabı; çalışıyorsa
-# servisi). Durdurulmuş modül durur, kurulmamış modüle dokunulmaz, hiçbiri kaldırılmaz.
-# DD-222: bekleyen işaret yalnız uygulama başarılıysa kalkar. Yerleşikleri aşama 7'nin başında
-# master-modul yerlesik uyguladı (başarısızsa kurulum orada durur); kurulu olmayan paketi Konsol
-# kurarken işlenmiş dosyalarıyla koyar, bekleyecek bir şey kalmaz.
-reapply_modules() {
-    local id state
-    for id in $MODULES_CHANGED; do
-        if [[ "$id" == dosya || "$id" == paylasim ]]; then rm -f -- "${MODULES_PENDING_DIR:?}/$id"; continue; fi
-        state="$(module_state "$id")"
-        [[ "$state" == calisiyor || "$state" == durduruldu ]] || { rm -f -- "${MODULES_PENDING_DIR:?}/$id"; continue; }
-        if [[ "$(sed -n 's/^PAKET_UYGULA_HEP=//p' "$V2_ROOT/magaza/$id/paket.env" 2>/dev/null)" == 1 ]]; then
-            log INFO "Modül $id: yeniden uygulanıyor (her kurulumda: $(sed -n 's/^PAKET_UYGULA_NEDEN="\(.*\)"$/\1/p' "$V2_ROOT/magaza/$id/paket.env" 2>/dev/null))"
-        else
-            log INFO "Modül $id: dosyası değişti, yeniden uygulanıyor"
-        fi
-        if "$SBIN_DIR/master-modul" uygula "$id" >/dev/null; then
-            rm -f -- "${MODULES_PENDING_DIR:?}/$id"
-        else
-            log WARN "Uygulama $id yeniden uygulanamadı; bir sonraki kurulum yeniden dener. Konsol → Uygulamalar'dan bakın"
-        fi
-    done
-    # DD-196/201: kurulu olmayan bir paketin bildirdiği araç ya da birim eki sunucuda durmaz
-    # (önceki sürümlerin bıraktıkları dahil). Paket verisi kalır; kaldir --veri siler.
-    local pkg name pair dst pruned
-    for pkg in $(paket_katalog); do
-        [[ -z "$(module_state "$pkg")" ]] || continue
-        pruned=0
-        for name in $(paket_bildirim_oku "$pkg" PAKET_ARACLAR); do
-            [[ ! -e "$SBIN_DIR/$name" ]] || { rm -f -- "$SBIN_DIR/$name"; pruned=1; }
-        done
-        for pair in $(paket_bildirim_oku "$pkg" PAKET_EKLER); do
-            dst="$UNIT_DIR/${pair#*:}"
-            [[ ! -e "$dst" ]] || { rm -f -- "$dst"; rmdir -- "$(dirname -- "$dst")" 2>/dev/null || true; pruned=1; }
-        done
-        name="$(paket_bildirim_oku "$pkg" PAKET_KONTEYNER)"
-        [[ -z "$name" || ! -e "$KONTEYNER_BIRIM_DIR/$name" ]] || { rm -f -- "$KONTEYNER_BIRIM_DIR/$name"; pruned=1; }
-        [[ "$pruned" -eq 0 ]] || {
-            systemctl daemon-reload
-            log INFO "$(paket_bildirim_oku "$pkg" PAKET_AD) kurulu değil; aracı ve birim eki sunucudan kaldırıldı"
-        }
-    done
+# Aşama 7: araç çalışıyor, modül her açılışta yüklenir, birim eki yerinde. Açık olması beklenen her
+# ağ kayıttaki portu dinler ve kendi sunucu adresini taşır; Konsol'un dosya arka ucu bir VPN adresinde
+# yanıt vermez (DD-177/180). Durdurulmuş WireGuard'ın ve Konsol'dan tek başına kapatılmış (birimi
+# devre dışı) bir ağın arayüzü denetlenmez: kapalı olmaları beklenen durumdur (DD-229).
+check_wireguard() {
+    local iface port policy s4 code
+    "$SBIN_DIR/master-wg" version >/dev/null 2>&1 || die "WireGuard: master-wg çalışmıyor ($SBIN_DIR/master-wg)"
+    [[ -f "$WG_MODULES_LOAD_FILE" ]] || die "WireGuard: çekirdek modülü dosyası yok: $WG_MODULES_LOAD_FILE"
+    [[ -f "$UNIT_DIR/wg-quick@.service.d/master-stack.conf" ]] ||
+        die "WireGuard: wg-quick@ birim eki yok ($UNIT_DIR/wg-quick@.service.d/master-stack.conf)"
+    [[ -f "$WG_NETWORKS_FILE" && ! -e "$WG_STOPPED_FILE" ]] || return 0
+    while IFS=$'\t' read -r iface port policy s4 _; do
+        [[ "$iface" =~ ^wg[0-9]$ ]] || continue
+        [[ "$policy" == inet ]] || die "WireGuard: kayıtta beklenmeyen erişim sütunu: $iface ($policy)"
+        systemctl is-enabled --quiet "wg-quick@$iface.service" 2>/dev/null || continue
+        [[ "$(wg show "$iface" listen-port 2>/dev/null || true)" == "$port" ]] ||
+            die "WireGuard: $iface dinleme portu kayıttaki $port değil"
+        [[ "$(ip -4 -o addr show dev "$iface" 2>/dev/null || true)" == *" ${s4}/"* ]] ||
+            die "WireGuard: $iface üzerinde $s4 yok"
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://${s4}:${FILES_PANEL_PORT}/" || true)"
+        [[ "$code" == "000" ]] || die "WireGuard: Konsol $iface adresinde yanıt verdi (HTTP $code)"
+    done <"$WG_NETWORKS_FILE"
 }
 
 stage_3() {
@@ -955,7 +786,7 @@ stage_3() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
 
     local d
-    # DD-144/171: downloads, media and trash are siblings. No legacy share tree.
+    # DD-144/171: downloads, media and trash are siblings.
     for d in \
         "$SERVER_ROOT" \
         "$DOWNLOADS_PATH" \
@@ -976,17 +807,13 @@ stage_3() {
 
 stage_4() {
     log INFO "Aşama 4/7 — betikler ve şablonlar"
-    # DD-152: Docker yok; modüller sunucuda systemd servisi olarak çalışır.
-    atomic_write "$SBIN_DIR/master-modul" 0755 <"$V2_ROOT/scripts/master-modul"
     atomic_write "$SBIN_DIR/master_settings.py" 0755 <"$V2_ROOT/panel/master_settings.py"
     if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
         PANEL_HELPERS_CHANGED=1
         FIREWALL_NEEDS_RESTART=1
     fi
     atomic_write "$SBIN_DIR/master_shares.py" 0755 <"$V2_ROOT/panel/master_shares.py"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
-    # DD-222: WebDAV'ın araçları değişince paylasim işaretlenir; ensure_module_files onu MODULES_CHANGED'e alır.
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || mark_module_pending paylasim
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || { PANEL_HELPERS_CHANGED=1; SHARE_HELPERS_CHANGED=1; }
     atomic_write "$SBIN_DIR/master_https.py" 0755 <"$V2_ROOT/panel/master_https.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     atomic_write "$SBIN_DIR/master_publications.py" 0755 <"$V2_ROOT/panel/master_publications.py"
@@ -997,9 +824,9 @@ stage_4() {
     # DD-233: Konsol'un "Güncelle" düğmesi: sürüm denetimi (arka uç) ve işi yürüten root aracı.
     atomic_write "$SBIN_DIR/master_update.py" 0755 <"$V2_ROOT/panel/master_update.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
-    # DD-259: Konsol'un rota tablosu, Erişim okuma modeli ve canlı olaylar (arka uç yükler).
+    # DD-259: Konsol'un rota tablosu, Erişim okuma modeli ve canlı olaylar; DD-271: WireGuard (arka uç yükler).
     local panel_module
-    for panel_module in master_api master_erisim master_olaylar master_uygulamalar master_yayin; do
+    for panel_module in master_api master_erisim master_olaylar master_uygulamalar master_wireguard master_yayin; do
         atomic_write "$SBIN_DIR/$panel_module.py" 0755 <"$V2_ROOT/panel/$panel_module.py"
         [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     done
@@ -1023,17 +850,17 @@ stage_4() {
     done
     # DD-226: Konsol konteynerinin birimi her açılışta bağlanan klasörlerini bununla sabitler.
     atomic_write "$SBIN_DIR/master_container_binds.py" 0755 <"$V2_ROOT/panel/master_container_binds.py"
-    install -d -m 0700 "$KONTEYNER_STATE_DIR" "$PACKAGE_OVERRIDES_DIR"
+    install -d -m 0700 "$KONTEYNER_STATE_DIR"
     atomic_write "$SBIN_DIR/master-konsol" 0755 <"$V2_ROOT/scripts/master-konsol"
     atomic_write "$SBIN_DIR/master_webdav.py" 0755 <"$V2_ROOT/panel/master_webdav.py"
-    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || mark_module_pending paylasim
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || SHARE_HELPERS_CHANGED=1
     render_template "$V2_ROOT/systemd/master-settings-guard.service" "$UNIT_DIR/master-settings-guard.service" 0644 \
         SBIN_DIR="$SBIN_DIR" STATE_FILE="$STATE_FILE"
     atomic_write "$UNIT_DIR/master-settings-guard.timer" 0644 <"$V2_ROOT/systemd/master-settings-guard.timer"
     render_template "$V2_ROOT/systemd/master-share-network.service" "$UNIT_DIR/master-share-network.service" 0644 \
         SBIN_DIR="$SBIN_DIR" STATE_FILE="$STATE_FILE"
     atomic_write "$UNIT_DIR/master-share-network.timer" 0644 <"$V2_ROOT/systemd/master-share-network.timer"
-    ensure_module_files
+    ensure_wireguard
     atomic_write "$SBIN_DIR/master-firewall" 0755 <"$V2_ROOT/scripts/firewall.sh"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
     atomic_write "$SBIN_DIR/refresh-tailnet-config" 0755 \
@@ -1071,8 +898,8 @@ stage_5() {
     else
         log INFO "firewall yapılandırması aynı; yeniden başlatılmadı"
     fi
-    # DD-150: VPN katmanı (paketler, çekirdek modülü, ağların açılması) VPN paketindedir;
-    # kurulu değilse güvenlik duvarı hiçbir VPN portu açmaz.
+    # DD-271: güvenlik duvarı WireGuard'ın portlarını ağ kaydından açar; ağ yoksa ya da WireGuard
+    # durdurulmuşsa (WG_STOPPED_FILE) hiçbir VPN portu açılmaz. Ağlar aşama 7'de açılır.
 }
 
 # retry fonksiyonu export -f + bash -c ile ayrı süreçte çalıştırır; diziler
@@ -1166,6 +993,13 @@ EOF
     python3 "$SBIN_DIR/master_settings.py" filter-dns "$dns_tmp"
     atomic_write "$DNSMASQ_CONF_FILE" 0644 <"$dns_tmp"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && dnsmasq_changed=1
+    # DD-158/159: Paylaşım'ın adı (paylas.<alan>); Konsol'un DNS seçimi taban adlarınki gibi uygulanır.
+    render_template "$V2_ROOT/templates/paylasim-dnsmasq.conf" "$dns_tmp" 0644 \
+        TAILSCALE_IF="$TAILSCALE_IF" \
+        LOCAL_DOMAIN="$LOCAL_DOMAIN"
+    python3 "$SBIN_DIR/master_settings.py" filter-dns "$dns_tmp"
+    atomic_write "$DNSMASQ_CONF_DIR/modul-paylasim.conf" 0644 <"$dns_tmp"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && dnsmasq_changed=1
     rm -f -- "$dns_tmp"
     # DD-156: rendered defaults consume confirmed operator choices on every re-run.
     python3 "$SBIN_DIR/master_settings.py" project-dns
@@ -1212,8 +1046,21 @@ EOF
         CONSOLE_WEB_DIR="$CONSOLE_WEB_DIR" \
         CADDY_MODULES_DIR="$CADDY_MODULES_DIR"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
-    # DD-149: modüllerin site dosyaları bu dizinden içe aktarılır; boş dizin geçerlidir.
-    install -d -m 0755 -o root -g root "$CADDY_MODULES_DIR"
+    # DD-149: ek site dosyaları bu dizinden içe aktarılır.
+    install -d -m 0755 -o root -g root "$CADDY_MODULES_DIR" "${SHARE_CADDY_SOURCE%/*}"
+    # DD-158/191: Paylaşım'ın Tailscale sitesi. Doldurulmuş şablon SHARE_CADDY_SOURCE'ta durur; Caddy'nin
+    # okuduğu kopya Konsol'un yayın seçiminden geçer (Tailscale yayını kapalıysa aynı adreslerde 403).
+    local caddy_tmp
+    render_template "$V2_ROOT/templates/paylasim.caddy" "$SHARE_CADDY_SOURCE" 0644 \
+        LOCAL_DOMAIN="$LOCAL_DOMAIN" \
+        SHARE_PORT="$SHARE_PORT"
+    caddy_tmp="$(mktemp "$RUNTIME_DIR/.caddy-XXXXXX")"
+    cp -- "$SHARE_CADDY_SOURCE" "$caddy_tmp"
+    python3 "$SBIN_DIR/master_publications.py" --state "$STATE_FILE" filter-caddy paylasim "$caddy_tmp" ||
+        { rm -f -- "$caddy_tmp"; die "Paylaşım'ın Caddy yayın seçimi okunamadı"; }
+    atomic_write "$CADDY_MODULES_DIR/paylasim.caddy" 0644 <"$caddy_tmp"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && caddy_changed=1
+    rm -f -- "$caddy_tmp"
     # DD-182: WAN paylaşım sitesi son yayındaki WAN_IPV4'e bağlanır. Sağlayıcı adresi
     # değiştirdiyse Caddy onunla açılamaz; site burada kalkar, 7. aşama yeni adresle yazar.
     local wan_site
@@ -1305,22 +1152,19 @@ EOF
     ensure_panel "$OS_CHANGED"
     ensure_files_panel "$OS_CHANGED"
     ensure_system_files "$OS_CHANGED"
+    ensure_share "$OS_CHANGED"
 }
 
-# DD-133, DD-140, DD-200: Konsol'un root arka ucu. DD-180: TCP yok, PANEL_SOCKET
+# DD-133, DD-140: Konsol'un root arka ucu. DD-180: TCP yok, PANEL_SOCKET
 # Unix soketinde dinler (0660 root:CADDY_GROUP); Caddy tailnet'e ve isteğe bağlı genel HTTPS adına açar
-# (panel.LOCAL_DOMAIN altında /api/konsol/* ve /api/uygulama/*; DD-195). DD-194: Konsol
+# (panel.LOCAL_DOMAIN altında /api/konsol/*; DD-195). DD-194: Konsol
 # girişini ve Caddy'nin her panel isteği için sorduğu oturumu da bu arka uç denetler.
 # Yalnız betik ya da unit değişince servis yeniden başlar.
 ensure_panel() {
-    local changed="${1:-0}" f out
+    local changed="${1:-0}"
     [[ "$PANEL_HELPERS_CHANGED" -eq 0 ]] || changed=1
-    # DD-196/203/207: paket araçlarının yazdığı klasörler (PAKET_ARKAUC_YOLLAR) arka uç başlamadan
-    # açılır; systemd yalnız o an var olan klasörü yazılabilir bağlar (ReadWritePaths -). Paket kurulu
-    # değilse boş kalır. DD-194: hesap ve oturum kayıtları; arka ucun /etc altında yazabildiği kalıcı yer.
-    while IFS= read -r f; do
-        [[ -d "$f" ]] || install -d -m 0700 -o root -g root -- "$f"
-    done < <(paket_arkauc_klasorler)
+    # DD-194: hesap ve oturum kayıtları; arka ucun /etc altında yazabildiği kalıcı yer. Öbürü WireGuard'ın
+    # klasörü (WG_CONF_DIR, aşama 4 açar): systemd yalnız o an var olan klasörü yazılabilir bağlar.
     install -d -m 0700 -o root -g root -- "$KONSOL_AUTH_DIR"
     atomic_write "$SBIN_DIR/master-panel" 0755 <"$V2_ROOT/panel/master-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
@@ -1330,30 +1174,18 @@ ensure_panel() {
         PANEL_RUNTIME="$(basename -- "${PANEL_SOCKET%/*}")" \
         CADDY_GROUP="$CADDY_GROUP" \
         STATE_FILE="$STATE_FILE" \
-        PANEL_WRITE_PATHS="$(paket_arkauc_yollar)" \
+        WG_CONF_DIR="$WG_CONF_DIR" \
         KONSOL_AUTH_DIR="$KONSOL_AUTH_DIR"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
     systemctl daemon-reload
     systemctl enable --quiet master-panel.service
-    # DD-207: çalışan arka uç bir klasörü salt okunur görüyorsa (klasör o başladıktan sonra oluştu)
-    # yeniden başlar; böylece yeniden kurulum böyle bir sunucuyu da onarır.
-    if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet master-panel.service || ! panel_yollari_bagli; then
+    if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet master-panel.service; then
         systemctl restart master-panel.service
     else
         log INFO "Konsol arka ucu aynı; yeniden başlatılmadı"
     fi
-    # DD-267: Ana Menü düzeni (DD-206) ve Dosyalar'ın favorileri (DD-250) kalktı. Kayıtlar, onları yazan
-    # eski arka uç yenisine geçtikten sonra ve yalnız bu klasördeki düz dosyalarsa silinir.
-    for f in duzen.json favoriler.json; do
-        [[ ! -f "$KONSOL_AUTH_DIR/$f" || -L "$KONSOL_AUTH_DIR/$f" ]] || {
-            rm -f -- "$KONSOL_AUTH_DIR/$f"
-            log INFO "Konsol: kaldırılan özelliğin kaydı silindi ($KONSOL_AUTH_DIR/$f)"
-        }
-    done
 }
 
-# Built-in Files listens on loopback as DOWNLOADS_UID, writing only SERVER_ROOT.
-# Stage 7 applies changed worker/unit files through master-modul yerlesik (DD-159).
 # Caddy directly serves the console's static assets.
 ensure_console_pages() {
     local f rel
@@ -1364,8 +1196,7 @@ ensure_console_pages() {
     install -d -m 0755 -o root -g root "$CONSOLE_WEB_DIR"
     # DD-267: Konsol arayüzü (tools/konsol-ui'den derlenip console/yeni'de tutulur) kökte; yanında giriş
     # sayfası, metin düzenleyici ve simgeler. Yalnız web dosyaları konur, gizli dosyalar (ör. macOS'un ._
-    # eşleri) konmaz. Bu sürümde olmayan her dosya silinir: eski arayüz (DD-160), /yeni/ kopyası ve
-    # paketlerin eski sayfaları (uygulama/<id>/) ilk çalıştırmada gider.
+    # eşleri) konmaz. Bu sürümde olmayan her dosya silinir.
     for f in giris.html giris.js giris.css duzenleyici.js obhut.svg obhut.png; do
         atomic_write "$CONSOLE_WEB_DIR/$f" 0644 <"$V2_ROOT/console/$f"
         keep[$f]=1
@@ -1385,8 +1216,11 @@ ensure_console_pages() {
     find "$CONSOLE_WEB_DIR" -mindepth 1 -depth -type d -empty -delete
 }
 
+# DD-139/159: yerleşik Dosyalar. master-files-panel indirme hesabıyla (DOWNLOADS_UID) yalnız loopback'te
+# dinler ve yalnız SERVER_ROOT'a yazar; birimi doğrudan UNIT_DIR'e işlenir. Betik ya da birim değişince
+# servis yeniden başlar; aşama 7 açıldığını ve kimin olarak çalıştığını doğrular.
 ensure_files_panel() {
-    local changed="${1:-0}" protected user group f
+    local changed="${1:-0}" user group
     # systemd User= sayısal uid için de kullanıcı kaydı ister. Varsa mevcut ad (ör. ubuntu),
     # yoksa girişsiz, ev dizinsiz bir sistem hesabı; dosya sahipliği sayısal kaldığı için değişmez.
     # getent bulamayınca 2 döner; pipefail altında kurulumu düşürmesin.
@@ -1407,14 +1241,7 @@ ensure_files_panel() {
     fi
     atomic_write "$SBIN_DIR/master-files-panel" 0755 <"$V2_ROOT/files-panel/master-files-panel"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && { changed=1; FILES_PANEL_SCRIPT_CHANGED=1; }
-    # DD-267: ZIP/RAR işlerinin yardımcıları kalktı; önceki kurulumların koyduğu kopyalar silinir.
-    for f in master_archives.py master_rar.py; do
-        [[ ! -e "$SBIN_DIR/$f" && ! -L "$SBIN_DIR/$f" ]] || { rm -f -- "$SBIN_DIR/$f"; changed=1; }
-    done
-    # DD-144, DD-203: paketlerin yazdığı klasörler (bildirimlerden) köke göre; sayfa orada uyarır.
-    protected="$(paket_korunan_klasorler)"
-    install -d -m 0755 -o root -g root "$MODULES_DIR/dosya"
-    render_template "$V2_ROOT/systemd/master-files-panel.service" "$MODULES_DIR/dosya/master-files-panel.service" 0644 \
+    render_template "$V2_ROOT/systemd/master-files-panel.service" "$UNIT_DIR/master-files-panel.service" 0644 \
         SBIN_DIR="$SBIN_DIR" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
@@ -1423,12 +1250,46 @@ ensure_files_panel() {
         FILES_PANEL_GROUP="$group" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN" \
         V2_VERSION="$V2_VERSION" \
-        PROTECTED_DIRS="$protected" \
         DOWNLOADS_SUBDIR="$DOWNLOADS_SUBDIR" \
         PRIVATE_STATE_ROOT="$PRIVATE_STATE_ROOT"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
-    # DD-222: aşama 4'ün döngüsünden sonra: işaret bir sonraki kurulum için, liste bu kurulum için.
-    [[ "$changed" -eq 0 ]] || { mark_module_pending dosya; MODULES_CHANGED="$MODULES_CHANGED dosya"; }
+    systemctl daemon-reload
+    systemctl enable --quiet master-files-panel.service
+    if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet master-files-panel.service; then
+        systemctl reset-failed master-files-panel.service 2>/dev/null || true
+        systemctl restart master-files-panel.service
+    else
+        log INFO "Dosya arka ucu aynı; yeniden başlatılmadı"
+    fi
+}
+
+# DD-158/159: yerleşik klasör WebDAV (Paylaşım). Hesap kaydı (SHARE_STATE_FILE, 0600 root) servisten
+# önce hazırlanır; servis onu systemd kimlik bilgisi olarak okur ve indirme hesabıyla çalışır. Birim
+# doğrudan UNIT_DIR'e işlenir; birimi ya da araçları değişince servis yeniden başlar. Adları (paylas. ve
+# Infuse için Tailscale IP:port) aşama 6 Caddy ve dnsmasq ile birlikte yazar; aşama 7 doğrular.
+ensure_share() {
+    local changed="${1:-0}"
+    [[ "$SHARE_HELPERS_CHANGED" -eq 0 ]] || changed=1
+    python3 "$SBIN_DIR/master_shares.py" prepare || die "klasör paylaşım kaydı hazırlanamadı"
+    render_template "$V2_ROOT/systemd/master-paylasim.service" "$UNIT_DIR/master-paylasim.service" 0644 \
+        SBIN_DIR="$SBIN_DIR" \
+        SERVER_ROOT="$SERVER_ROOT" \
+        DOWNLOADS_UID="$DOWNLOADS_UID" \
+        DOWNLOADS_GID="$DOWNLOADS_GID" \
+        SHARE_STATE_FILE="$SHARE_STATE_FILE" \
+        SHARE_PORT="$SHARE_PORT" \
+        SHARE_WAN_BACKEND="$SHARE_WAN_BACKEND" \
+        FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
+        PRIVATE_STATE_ROOT="$PRIVATE_STATE_ROOT"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && changed=1
+    systemctl daemon-reload
+    systemctl enable --quiet master-paylasim.service
+    if [[ "$changed" -eq 1 ]] || ! systemctl is-active --quiet master-paylasim.service; then
+        systemctl reset-failed master-paylasim.service 2>/dev/null || true
+        systemctl restart master-paylasim.service
+    else
+        log INFO "Paylaşım servisi aynı; yeniden başlatılmadı"
+    fi
 }
 
 # DD-235: Dosyalar'ın "Sistem dosyaları" görünümü. master-files-panel'in --sistem kipi root olarak, kök /;
@@ -1454,37 +1315,71 @@ ensure_system_files() {
     fi
 }
 
-# DD-267: Konsol'un ZIP/RAR işlerinin özel çalışma alanı (DD-166/170/183: ara dosyalar ve iş geçmişi,
-# kullanıcı dosyası değil) yeniden çalışmada silinir. Dosyalar, Paylaşım ve Gezgin onu artık gizlemediği
-# için yeni birimleri açıldıktan sonra (yerleşikler ve paketler uygulandıktan sonra). Yalnız
-# SERVER_ROOT'un hemen altındaki gerçek bir klasör (sembolik bağ değil), sahibi indirme hesabı ve izni
-# 0700 ise: eski Dosyalar onu hep böyle tutardı, Dosyalar/Gezgin/WebDAV'ın açtığı klasör 0775 olur.
-# Başka bir dosya sistemine inilmez; silinemeyen bir parça kurulumu durdurmaz, uyarı verir.
-remove_retired_archive_dir() {
-    local dir="$SERVER_ROOT/$RETIRED_ARCHIVE_DIR" owner
-    [[ "$RETIRED_ARCHIVE_DIR" =~ ^\.[a-z]{1,16}$ ]] || die "eski arşiv klasörünün adı geçersiz: $RETIRED_ARCHIVE_DIR"
-    [[ -d "$dir" && ! -L "$dir" ]] || return 0
-    owner="$(stat -c '%u:%a' -- "$dir" 2>/dev/null || true)"
-    if [[ "$owner" != "$DOWNLOADS_UID:700" ]]; then
-        log INFO "$dir Konsol'un eski arşiv çalışma alanı değil (sahip:izin ${owner:-?}); dokunulmadı"
-        return 0
-    fi
-    if rm -rf --one-file-system -- "$dir"; then
-        log INFO "Konsol'un eski arşiv çalışma alanı silindi ($dir)"
-    else
-        log WARN "Konsol'un eski arşiv çalışma alanı tamamen silinemedi ($dir); elle bakın"
-    fi
+# Birim "active" olur olmaz işlem henüz root olabilir: systemd User='a exec'ten hemen önce geçer.
+# uid, beklenen uid'ye dönene dek birkaç kez okunur (en çok ~5 sn); son okunan yazılır.
+unit_uid() { # BİRİM
+    local _ uid=""
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value "$1" 2>/dev/null || true)" 2>/dev/null | tr -d ' ' || true)"
+        [[ "$uid" != "$DOWNLOADS_UID" ]] || break
+        sleep 0.5
+    done
+    printf '%s\n' "$uid"
+}
+
+http_code() { # URL ya da curl argümanları; yanıt yoksa 000
+    curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$@" 2>/dev/null || true
+}
+
+# Aşama 7'nin başı (DD-159): yeni başlamış olabilecek iki yerleşik servis yanıt verene dek beklenir.
+# Dosyalar loopback'te Konsol başlığıyla yanıt verir; Paylaşım indirme hesabıyla çalışır ve hesapsız
+# isteğe 401 verir; paylas.<alan>, Tailscale IP:port ve DNS adı açıktır (Konsol'da Tailscale yayını
+# kapatılmışsa ikisi de 403).
+verify_builtins() {
+    local _ ok=0 uid code="" a="" b="" ans="" expected=401 rc=0
+    for _ in $(seq 1 20); do
+        systemctl is-active --quiet master-files-panel.service && break
+        sleep 1
+    done
+    systemctl is-active --quiet master-files-panel.service || die "Dosyalar: servis başlamadı"
+    for _ in $(seq 1 10); do
+        if python3 "$SBIN_DIR/master-files-panel" check --url "http://127.0.0.1:$FILES_PANEL_PORT/api/state" \
+            --host "panel.$LOCAL_DOMAIN" >/dev/null 2>&1; then
+            ok=1
+            break
+        fi
+        sleep 1
+    done
+    [[ "$ok" == 1 ]] || die "Dosyalar: servis yerel portunda yanıt vermedi"
+    for _ in $(seq 1 20); do
+        code="$(http_code "http://127.0.0.1:$SHARE_PORT/")"
+        [[ "$code" != 401 ]] || break
+        sleep 1
+    done
+    systemctl is-active --quiet master-paylasim.service || die "Paylaşım: servis başlamadı"
+    uid="$(unit_uid master-paylasim.service)"
+    [[ "$uid" == "$DOWNLOADS_UID" && "$code" == 401 ]] ||
+        die "Paylaşım: uid/adres/giriş kapısı doğrulanamadı (uid '$uid', HTTP $code)"
+    python3 "$SBIN_DIR/master_publications.py" --state "$STATE_FILE" tail-enabled paylasim || rc=$?
+    [[ "$rc" -le 1 ]] || die "Paylaşım: Caddy ağ seçimi okunamadı"
+    [[ "$rc" == 0 ]] || expected=403
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        a="$(http_code -H "Host: paylas.$LOCAL_DOMAIN" "http://$TAILSCALE_IPV4/")"
+        b="$(http_code "http://$TAILSCALE_IPV4:$SHARE_PORT/")"
+        ans="$(dig +short +time=2 +tries=1 "paylas.$LOCAL_DOMAIN" @"$TAILSCALE_IPV4" 2>/dev/null | head -n1 || true)"
+        python3 "$SBIN_DIR/master_settings.py" dns-enabled "paylas.$LOCAL_DOMAIN" || ans="$TAILSCALE_IPV4"
+        [[ "$a" == "$expected" && "$b" == "$expected" && "$ans" == "$TAILSCALE_IPV4" ]] && return 0
+        sleep 1
+    done
+    die "Paylaşım: paylas.$LOCAL_DOMAIN ya da $TAILSCALE_IPV4:$SHARE_PORT açılmadı (ad $a, port $b, DNS '$ans')"
 }
 
 stage_7() {
     log INFO "Aşama 7/7 — doğrulama"
-    # Built-in capabilities keep the service registry IDs (DD-159/171).
-    "$SBIN_DIR/master-modul" yerlesik "$MODULES_CHANGED"
+    verify_builtins
     python3 "$SBIN_DIR/master_shares.py" publish
     systemctl enable --now master-share-network.timer
-    # DD-152: Docker yok; kurulu modüller dosyaları değiştiyse master-modul ile yeniden uygulanır.
-    reapply_modules
-    remove_retired_archive_dir
+    wireguard_networks_up
     "$SBIN_DIR/master-firewall" --check
     check_podman
     # DD-181: the timer sleeps while nothing is pending; it must stay enabled for boot and apply.
@@ -1552,17 +1447,7 @@ stage_7() {
             die "DNS: alan dışı sorgu REFUSED değil (Tailscale DNS)"
     fi
 
-    # DD-201: kurulu paketler kendi doğrulamasını yapar (paket_denetle); kurulu olmayan bir
-    # paketin aracı ya da birim eki sunucuda bulunmamalı. Temel hiçbir uygulama ayrıntısı bilmez.
-    local pkg
-    for pkg in $(paket_katalog); do
-        if [[ -n "$(module_state "$pkg")" ]]; then
-            paket_denetle_calistir "$pkg"
-        else
-            paket_iz_yok "$pkg" ||
-                die "$(paket_bildirim_oku "$pkg" PAKET_AD) kurulu değilken aracı ya da birim eki sunucuda kalmış"
-        fi
-    done
+    check_wireguard
 
     # DD-194/DD-205: Konsol girişi. Giriş sayfasının dosyaları açıktır; geri kalan her panel isteği
     # (sayfa, Dosyalar, API) Caddy'nin forward_auth'u ile root arka uca sorulur. Tailscale sitesinde
@@ -1571,7 +1456,7 @@ stage_7() {
     # başlıkları olmadan (internet sitesinde olduğu gibi) oturumsuz API 401 alır, sayfa giriş
     # sayfasına yönlenir. Ayrıca X-Konsol başlığı olmayan API isteği (başka bir sitenin tarayıcıdan
     # attığı istek) ve yabancı Host (DNS rebinding) iki arka uçta da reddedilir. Panel VPN adresinde
-    # dinlenmez. DD-154: eski adresler (wg., dosya., file.) yoktur.
+    # dinlenmez.
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
         -H "Host: panel.${LOCAL_DOMAIN}" "http://${TAILSCALE_IPV4}/giris.js" || true)"
     [[ "$code" == "200" ]] || die "Konsol giriş sayfasının dosyası tailnet'ten açılmadı (HTTP $code)"
@@ -1675,46 +1560,29 @@ stage_7() {
     files_uid="$(ps -o uid= -p "$(systemctl show -p MainPID --value master-files-panel.service)" 2>/dev/null | tr -d ' ')"
     [[ "$files_uid" == "$DOWNLOADS_UID" ]] ||
         die "Dosya paneli uid '${files_uid}' ile çalışıyor (beklenen $DOWNLOADS_UID; root olmamalı)"
-    # DD-143: ağ varsa Konsol o ağın sunucu adresinde dinlememeli (ağ yoksa denetim atlanır).
-    # WebDAV registry, unprivileged listener and addresses were verified by yerlesik.
+    # DD-143: a WireGuard network's server address must not reach Konsol (check_wireguard).
+    # WebDAV registry, unprivileged listener and addresses were verified by verify_builtins.
 
     log INFO "Temel doğrulamalar geçti"
 }
 
-# Özet: yerleşik yetenekler ve mağaza paketleri (DD-197: ad ve bilgi paketten); kurulu olanın adresi.
-summary_modules() {
-    local id name info st ids
-    ids="$(paket_katalog)"
-    for id in dosya $ids paylasim; do
-        case "$id" in
-            dosya) name="Dosya yöneticisi"; info="$SERVER_ROOT" ;;
-            paylasim) name="Paylaşım"; info="Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni" ;;
-            *)
-                name="$(paket_bildirim_oku "$id" PAKET_AD)"
-                # Paketin kancası tek satır bilgi verir; alt kabukta, hiçbir şey çalıştırmadan.
-                # shellcheck source=/dev/null
-                info="$( [[ -f "$V2_ROOT/magaza/$id/kanca" ]] && ( source "$V2_ROOT/magaza/$id/kanca" 2>/dev/null;
-                    declare -F paket_ozet >/dev/null 2>&1 && paket_ozet ) 2>/dev/null || true )"
-                ;;
-        esac
-        case "$(module_state "$id")" in
-            calisiyor) st="kurulu" ;;
-            durduruldu) st="kurulu, durduruldu" ;;
-            *) st="kurulu değil"; info="" ;;
-        esac
-        printf '  %s: %s%s\n' "$name" "$st" "${info:+ — $info}"
-    done
-}
-
-# DD-196/201: kurulu paketin özet notu (paket_not), yalnız paket kuruluyken.
-summary_notes() {
-    local id note
-    for id in $(paket_katalog); do
-        [[ -n "$(module_state "$id")" && -f "$V2_ROOT/magaza/$id/kanca" ]] || continue
-        # shellcheck source=/dev/null
-        note="$( ( source "$V2_ROOT/magaza/$id/kanca" 2>/dev/null; declare -F paket_not >/dev/null 2>&1 && paket_not ) 2>/dev/null || true )"
-        [[ -z "$note" ]] || printf '\n%s' "$note"
-    done
+# Özet: WireGuard'ın durumu tek satırda (kayıttaki ağlar ve arayüzlerdeki peer'lar).
+summary_wireguard() {
+    local iface nets=0 peers=0
+    if [[ -f "$WG_NETWORKS_FILE" ]]; then
+        while IFS=$'\t' read -r iface _; do
+            [[ "$iface" =~ ^wg[0-9]$ ]] || continue
+            nets=$((nets + 1))
+            peers=$((peers + $(wg show "$iface" peers 2>/dev/null | grep -c . || true)))
+        done <"$WG_NETWORKS_FILE"
+    fi
+    if [[ -e "$WG_STOPPED_FILE" ]]; then
+        printf 'durduruldu (%s ağ)' "$nets"
+    elif [[ "$nets" -eq 0 ]]; then
+        printf 'ağ yok; ilk ağ Konsol → Erişim → WireGuard'
+    else
+        printf '%s ağ, %s peer' "$nets" "$peers"
+    fi
 }
 
 print_summary() {
@@ -1738,8 +1606,12 @@ Konsol: http://panel.${LOCAL_DOMAIN} (Genel Bakış, Uygulamalar, Erişim, Dosya
   sonra Erişim → Adresler → Konsol (DNS A kaydı gerekir).
   Sağlık, güncelleme ve günlük Sistem'de; uygulamalar Uygulamalar'da.
 Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Gelişmiş → Podman)
-Yerleşik Dosyalar/WebDAV ve App Store uygulamaları ($(paket_katalog_adlar)):
-$(summary_modules)$(summary_notes)
+Yerleşikler:
+  Dosyalar: $SERVER_ROOT
+  Paylaşım: Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni
+  WireGuard: $(summary_wireguard)
+  WireGuard cihazları yalnız internete çıkar; sunucu servisleri ve diğer ağlara erişemez.
+  Peer ve QR: Konsol ya da Mac'te wireguard.command.
 Tailscale IP: refresh-tailnet-config → Caddy
 EOF
 }
