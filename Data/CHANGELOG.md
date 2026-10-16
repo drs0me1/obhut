@@ -15,8 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `obhut uygulama liste|baslat|durdur|yeniden-baslat <id>`, `obhut yayin kapat <id>` (closes an internet
   name, the Tailscale name stays) and `obhut geri-al` (rolls back a pending settings change). It works
   even when Konsol's backend is down: it then lists the services and `obhut onar` repairs them.
-- Folder shares stay in Dosyalar → Paylaşımlar; moving them to Gezgin waits until Gezgin can publish
-  them on the internet with Konsol's limits.
+- Folder shares stay in Konsol (Dosyalar → Paylaşımlar); Gezgin keeps sharing its own content beside
+  them.
 
 ### 2026-10-16 — Gezgin's WebDAV shares on the tailnet (v2-251)
 

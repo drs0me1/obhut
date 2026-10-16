@@ -10,8 +10,8 @@ Phase 3 is in v2-248 (**DD-265**): Erişim, the Yayınla flow and the settings p
 two parts: 4a in v2-249 (**DD-266**: Sistem, Gelişmiş, adding applications and their settings) and 4b in
 v2-250 (**DD-267**: Dosyalar with Paylaşımlar, the interface at `/` with `/yeni` redirected, the old
 interface, Konsol's archive jobs and favourites removed). Phase 5 is in v2-252 (**DD-268**): Konsol as an
-installable app and the `obhut` recovery tool; moving sharing to Gezgin waits for Gezgin's internet policy
-and limits.
+installable app and the `obhut` recovery tool. Sharing stays in Konsol; Gezgin shares its own content
+(DD-268). The redesign is complete.
 
 This document is the plan. Each phase lands with its own `DD-*` entry, tests and a live check on the
 test host, and `main` stays installable at every step.
@@ -121,9 +121,9 @@ Shared behaviour:
   address and direct tailnet ports, update checks applied only on the operator's confirmation
   (DD-214), an install form for the first administrator, and removal that asks whether to keep
   `gezgin-db`.
-- Sharing moves to Gezgin once its shares meet Konsol's share rules (read-only by default, expiry,
-  separate tailnet and internet policies). Until then Konsol's WebDAV stays. Konsol decides whether
-  Gezgin is reachable at all (Erişim).
+- Sharing does not move (DD-268): Konsol's folder shares stay, with their separate tailnet and internet
+  policies; Gezgin, as a container, shares its own content with its own links and tailnet WebDAV
+  (DD-264). Konsol decides whether Gezgin is reachable at all (Erişim).
 - Konsol keeps a lean file tool: the root "Sistem dosyaları" view (tailnet only) and a rescue view of
   `/srv` for when Podman or Gezgin is down (done in v2-250, **DD-267**: Dosyalar with Depolama, Sunucu
   klasörleri, Çöp kutusu, Paylaşımlar and Sistem dosyaları; DD-159 amended). Konsol's archive jobs and
@@ -146,7 +146,7 @@ The new interface was built beside the old one at `/yeni/` on the same origin, b
 | 3 | Erişim, the Yayınla flow and the plan endpoint (v2-248, DD-265) |
 | 4a | Sistem, Gelişmiş, Uygulamalar' add flows (catalogue with install forms, an image, adoption) and an application's settings (v2-249, DD-266) |
 | 4b | Dosyalar (storage and folders, a lean `/srv` view, the root view) with Paylaşımlar; `/yeni/` becomes `/`; the old shell and its scripts are removed (v2-250, DD-267) |
-| 5 | PWA (manifest and icons, no service worker) and the `obhut` tool (v2-252, DD-268); sharing moves to Gezgin after parity, still to come |
+| 5 | PWA (manifest and icons, no service worker) and the `obhut` tool (v2-252, DD-268); sharing stays in Konsol, Gezgin shares its own content |
 
 ## Decisions revisited
 
@@ -154,7 +154,7 @@ These rules change when their phase lands, each with its own DD entry:
 
 - DD-159: Files and WebDAV as permanent built-ins (phases 4 and 5). Amended in phase 4b (DD-267):
   Files keeps the server folders, the trash and Sistem dosyaları, archives are Gezgin's; WebDAV stays
-  until sharing moves to Gezgin, which phase 5 deferred (DD-268) until Gezgin's shares reach parity.
+  for good: phase 5 kept sharing in Konsol (DD-268).
 - DD-204: the glass skin on every page (wallpaper only on the overview). Retired in phase 4b (DD-267).
 - DD-212 and DD-216: home cards and sidebar entries (one Uygulamalar section replaces both). DD-216
   retired and DD-212 amended in phase 4b (DD-267; its cumulative-totals rule holds for Genel Bakış).

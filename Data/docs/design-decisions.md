@@ -19,10 +19,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 
 ### DD-268: The redesign's phase 5: Konsol as an installable app and the `obhut` recovery tool (v2-252)
 
-- **Request (user, 2026-10-16):** "Faz 5 e geçelim" (phase 5 of DD-258). Choices: moving folder shares to
-  Gezgin waits (Gezgin's WebDAV is tailnet only and has no per-share internet policy or Konsol's attempt
-  and connection budgets, DD-264), so Konsol's WebDAV (Dosyalar → Paylaşımlar) stays; the app is a
-  manifest with icons, no service worker; `obhut` covers state and recovery, not every action.
+- **Request (user, 2026-10-16):** "Faz 5 e geçelim" (phase 5 of DD-258). Choices: the app is a manifest
+  with icons, no service worker; `obhut` covers state and recovery, not every action; and "Paylaşım kalsın
+  kaldırmayalım gezgin kontainer olarak kendi içeriğini paylaşacak": sharing does not move to Gezgin.
 - **Installable app:** `manifest.json` (name "Obhut Konsol", short "Obhut", `start_url` `/#/genel`, scope
   `/`, standalone, the Ô icons at 192 and 512 px — the touch icon's composition, the mark inside the
   maskable safe zone — plus the SVG) and the head tags for theme colours and the iPhone home screen. The
@@ -47,9 +46,10 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   paylasim` closed WebDAV's internet name and `--hepsi` then found nothing open. The manifest came as
   `application/json` under a CSP with `manifest-src 'self'`, its icons as PNG, Chrome read it without an
   error and reported no installability error.
-- **Deferred:** sharing moves to Gezgin when its shares meet Konsol's rules — read-only by default and
-  expiry it has; separate Tailscale and internet policies, an HTTPS publication and the attempt and
-  connection budgets it does not.
+- **Sharing stays in Konsol (amends DD-258):** Konsol's folder shares (WebDAV, Dosyalar → Paylaşımlar,
+  DD-158/192) are permanent, with their separate Tailscale and internet policies, HTTPS publication and
+  attempt and connection budgets. Gezgin, as an App Store container, shares its own content with its own
+  links and tailnet WebDAV (DD-264); the two sit side by side and neither replaces the other.
 - **Rejected:** a service worker (stale state and builds for no gain on a live panel); an `obhut` that
   mirrors every interface action (the interface stays the place for planned changes; the tool is for
   getting back in).
@@ -546,7 +546,8 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   Python, split behind a declared route table, with an exposure read model, Server-Sent Events and a
   dry-run plan. Frontend moves to Vue 3 + TypeScript + Vite (Gezgin's stack), built into committed
   static files under the same CSP. Gezgin becomes an App Store container package and the file
-  application; Konsol keeps the root view and a rescue view; sharing moves to Gezgin after parity.
+  application; Konsol keeps the root view and a rescue view; sharing moves to Gezgin after parity
+  (dropped by DD-268: Konsol's shares stay, Gezgin shares its own content).
 - **Built beside the current UI** at `/yeni/` and switched over when it covers every view, so the
   running panel never loses a feature mid-way.
 - **Prototype (approved 2026-10-13, "tasarım onaylıyorum"):** a light work surface with the wallpaper
@@ -565,7 +566,7 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Amended by DD-267 (v2-250):** the switch happened in v2-250: the interface is at `/`, `/yeni/`
   redirects there and the old interface is gone (DD-267). Of the revisits listed here, DD-204 and DD-216
   are retired, DD-159 and DD-212 amended and `contract.md`'s page sections rewritten; sharing's move to
-  Gezgin is phase 5.
+  Gezgin, planned for phase 5, was dropped by DD-268.
 
 ### DD-257: Security and stability review after Gezgin (v2-241)
 
