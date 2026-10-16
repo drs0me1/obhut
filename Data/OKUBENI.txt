@@ -22,6 +22,11 @@ Repo kökünde:
   kurulum/wireguard/         yalnız istediğinizde inen cihaz profilleri (.conf) ve QR resimleri (.png) (git dışı)
 Diğer her şey Data/ altındadır; elle çalıştırılmaz.
 
+Sunucuda (SSH ile, root): sudo obhut durum | denetle | onar | guncelle | hesap sifirla |
+  uygulama liste|baslat|durdur <id> | yayin liste|kapat <id> | geri-al  (v2-252, DD-268).
+  Konsol'un sayfası açılmıyorsa önce: sudo obhut durum, sonra sudo obhut onar.
+Konsol telefonda ya da bilgisayarda ana ekrana eklenebilir; kendi penceresinde, Ô simgesiyle açılır.
+
 wireguard.command girdisi (bir kez hazırlanır):
   mkdir -p kurulum && cp Data/config/kurulum.env.example kurulum/kurulum.env
   chmod 600 kurulum/kurulum.env

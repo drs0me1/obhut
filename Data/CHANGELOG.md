@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-16 — Konsol as an app on the home screen, and `obhut` for SSH (v2-252)
+
+- Konsol can be added to a phone's or computer's home screen and opens in its own window with the Ô
+  icon. Nothing is stored for offline use, so it always shows the server as it is now (DD-268).
+- `sudo obhut` on the server shows its state and gets Konsol back when the page cannot be reached:
+  `obhut durum`, `obhut denetle`, `obhut onar`, `obhut guncelle`, `obhut hesap sifirla`,
+  `obhut uygulama liste|baslat|durdur|yeniden-baslat <id>`, `obhut yayin kapat <id>` (closes an internet
+  name, the Tailscale name stays) and `obhut geri-al` (rolls back a pending settings change). It works
+  even when Konsol's backend is down: it then lists the services and `obhut onar` repairs them.
+- Folder shares stay in Dosyalar → Paylaşımlar; moving them to Gezgin waits until Gezgin can publish
+  them on the internet with Konsol's limits.
+
 ### 2026-10-16 — Gezgin's WebDAV shares on the tailnet (v2-251)
 
 - Gezgin, installed from the App Store, can share folders over WebDAV again (Finder, Infuse): its

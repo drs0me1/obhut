@@ -1264,3 +1264,17 @@ replaces the legacy links, and a built-in opens its section in this interface (`
 ```bash
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-paylasim-ui.cjs
 ```
+
+## Phase 5: the installable app and `obhut` (DD-268)
+
+`yeni-ui.cjs` reads the app manifest through Chrome's own parser (`Page.getAppManifest`: no error under
+the production CSP with `manifest-src 'self'`), checks its name, start URL, scope, display and the 192/512
+px icons (any and maskable) answering with their types, and that no service worker controls the page.
+`test_obhut.py` drives each `obhut` command against a fake backend (the exact requests, what it prints,
+the refusals, the update only when the backend says newer, root only) and the socket client against the
+real backend on a Unix socket as its local caller. Bats checks the manifest and its icons in the build,
+the CSP, the open paths before a session, and where `obhut` is installed and how it reaches the backend.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_obhut.py'
+```

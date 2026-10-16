@@ -522,7 +522,9 @@ Contract in §5–§7 and `folder-shares.md`.
   also needs a Konsol session, while the tailnet address asks for none
   (**DD-194**, **DD-205**).
   - **The interface (DD-258, DD-267)** is served at `/`, under the CSP above plus
-    `font-src 'self'` for its local Outfit font. It is the committed build of
+    `font-src 'self'` for its local Outfit font and `manifest-src 'self'` for its app manifest
+    (**DD-268**: `manifest.json` with the Ô icons, installable to a home screen; no service worker; the
+    manifest and its icons are open before a session). It is the committed build of
     `tools/konsol-ui` (Vue 3 + TypeScript + Vite; nothing is built on the server), kept
     in `console/yeni/`. The installer places it at the root of `CONSOLE_WEB_DIR` with the
     sign-in page (`giris.html`, `giris.js`, `giris.css`), the editor bundle
@@ -1343,6 +1345,12 @@ The installer deliberately does not provide these:
     peers that never connected, a read-only root, OOM kills, a pending reboot, the node key's expiry,
     a half-finished update and a pending settings change. Its lines go to the journal as `master-onar`;
     Sistem → Sağlık's repair log shows them with `refresh-tailnet-config`'s for 72 hours or a week.
+  - **`sudo obhut` (DD-268).** The server's state and its recovery over SSH, as root: `durum`
+    (`--json`), `denetle` and `onar` (master-onar), `guncelle` (only a newer build, asked first or
+    `--evet`), `hesap durum|sifirla` (master-konsol), `uygulama liste|baslat|durdur|yeniden-baslat`,
+    `yayin liste|kapat <id>|--hepsi` (an internet name off, the Tailscale name kept) and `geri-al` (a
+    pending settings change). It speaks to Konsol's backend on its socket as the local caller; when the
+    backend does not answer, `durum` reads the core units from systemd and points to `obhut onar`.
 - **No canonical copies or automatic restore.** There is no generation
   directory, `SHA256SUMS` manifest or timer that reverts a managed file. An
   operator edit is the operator's decision; a drifted file is repaired by a

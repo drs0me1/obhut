@@ -17,6 +17,43 @@ Konsol's old interface was removed in DD-267 (v2-250). Live entries written
 before it still name its places (Ayarlar → Caddy, Ayarlar → Sistem, App Store,
 the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 
+### DD-268: The redesign's phase 5: Konsol as an installable app and the `obhut` recovery tool (v2-252)
+
+- **Request (user, 2026-10-16):** "Faz 5 e geçelim" (phase 5 of DD-258). Choices: moving folder shares to
+  Gezgin waits (Gezgin's WebDAV is tailnet only and has no per-share internet policy or Konsol's attempt
+  and connection budgets, DD-264), so Konsol's WebDAV (Dosyalar → Paylaşımlar) stays; the app is a
+  manifest with icons, no service worker; `obhut` covers state and recovery, not every action.
+- **Installable app:** `manifest.json` (name "Obhut Konsol", short "Obhut", `start_url` `/#/genel`, scope
+  `/`, standalone, the Ô icons at 192 and 512 px — the touch icon's composition, the mark inside the
+  maskable safe zone — plus the SVG) and the head tags for theme colours and the iPhone home screen. The
+  CSP gains `manifest-src 'self'`; the manifest and its icons are open before a session like the sign-in
+  page's files, as the browser fetches them without cookies. No service worker: Konsol is a live panel,
+  an offline shell would only show stale state, and a cached build could outlive an update; on the
+  tailnet's plain HTTP a worker would not run anyway.
+- **`sudo obhut`** (`panel/master_obhut.py`, wrapper `scripts/obhut`, installed to `SBIN_DIR`): `durum`
+  (version and build, addresses, health with what fails, applications, a pending change, a newer
+  release; `--json`), `denetle` and `onar` (master-onar, which works without the backend), `guncelle`
+  (only when the backend says a newer build exists; asks, or `--evet`), `hesap durum|sifirla`
+  (master-konsol), `uygulama liste|baslat|durdur|yeniden-baslat <id>` (the actions the application
+  offers, with its revision), `yayin liste|kapat <id>|--hepsi` (the internet name off through the
+  settings transaction, the Tailscale name kept) and `geri-al` (a pending settings change). It speaks to
+  the backend on its own socket as the local caller (`Host: panel.<domain>`, `X-Konsol`, DD-180), never
+  over TCP or a shell; when the backend does not answer, `durum` reads the core units from systemd and
+  points to `sudo obhut onar`. Root only.
+- **Live check (test host, v2-252):** `durum`, `uygulama liste`, `yayin liste`, `hesap durum`, `geri-al`
+  with nothing pending and `guncelle` on a build newer than GitHub's (no update offered); with
+  master-panel stopped, `durum` listed the units and `onar` brought the backend back; `uygulama
+  yeniden-baslat gezgin` re-created the container and `baslat` on a running one was refused; `yayin kapat
+  paylasim` closed WebDAV's internet name and `--hepsi` then found nothing open. The manifest came as
+  `application/json` under a CSP with `manifest-src 'self'`, its icons as PNG, Chrome read it without an
+  error and reported no installability error.
+- **Deferred:** sharing moves to Gezgin when its shares meet Konsol's rules — read-only by default and
+  expiry it has; separate Tailscale and internet policies, an HTTPS publication and the attempt and
+  connection budgets it does not.
+- **Rejected:** a service worker (stale state and builds for no gain on a live panel); an `obhut` that
+  mirrors every interface action (the interface stays the place for planned changes; the tool is for
+  getting back in).
+
 ### DD-267: The redesign's phase 4b: Dosyalar, Paylaşımlar, Konsol at `/` and the old interface removed (v2-250)
 
 - **Request (user, 2026-10-16):** "faz 4b'ye geçelim" (phase 4 of DD-258, second part; DD-266 was 4a).

@@ -133,7 +133,7 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 | `Data/common.sh` | Shared helpers |
 | `Data/config/defaults.env` | Ports, paths, chain names of the base (no package setting; `VPN_BLOCK_DEST4/6` is the firewall's own vocabulary) |
 | `Data/templates/` | Caddy, dnsmasq |
-| `Data/scripts/` | Firewall, refresh-tailnet, GRO, wait, the store engine `master-modul`, `master-konsol`, `master-onar`, `master-guncelle` |
+| `Data/scripts/` | Firewall, refresh-tailnet, GRO, wait, the store engine `master-modul`, `master-konsol`, `master-onar`, `master-guncelle`, and `obhut` (**DD-268**: `sudo obhut` — state and recovery over SSH through Konsol's socket; module `panel/master_obhut.py`) |
 | `Data/systemd/` | Unit/timer templates |
 | `Data/tests/` | Bats, Python unittest, Playwright and isolated Linux suites; see `Data/tests/README.md` |
 | `Data/docs/contract.md` | What the installer does / refuses |
