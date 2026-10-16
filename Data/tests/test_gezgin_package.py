@@ -409,15 +409,23 @@ class PackageFileTests(unittest.TestCase):
     def test_the_image_is_pinned_and_the_port_is_unique(self):
         self.assertRegex(self.own["GEZGIN_IMAGE"], r"^ghcr\.io/drs0me1/gezgin@sha256:[0-9a-f]{64}$")
         self.assertEqual(self.own["GEZGIN_IMAGE_KANAL"], "ghcr.io/drs0me1/gezgin:1.0")
-        port = int(self.own["GEZGIN_UI_PORT"])
-        self.assertFalse(32768 <= port <= 60999, "outside Linux's outgoing port range")
         others = [(REPO / "config" / "defaults.env").read_text()] + [p.read_text() for p in (REPO / "magaza").glob("*/*.env")
                                                                    if p.parent.name != "gezgin"]
-        self.assertFalse([t for t in others if re.search(r"=%d\b" % port, t)], "no other service uses the port")
+        ports = [int(self.own["GEZGIN_UI_PORT"]), int(self.own["GEZGIN_WEBDAV_PORT"])]
+        self.assertEqual(len(set(ports)), 2)
+        for port in ports:
+            self.assertFalse(32768 <= port <= 60999, "outside Linux's outgoing port range")
+            self.assertFalse([t for t in others if re.search(r"=%d\b" % port, t)], "no other service uses the port")
 
     def test_the_quadlet_keeps_gezgin_on_loopback_with_the_files_account(self):
         lines = self.quadlet.splitlines()
-        self.assertEqual([l for l in lines if l.startswith("PublishPort=")], ["PublishPort=127.0.0.1:__GEZGIN_UI_PORT__:8080/tcp"])
+        # DD-264: the interface on loopback, the WebDAV shares on the Tailscale address alone, the same
+        # port inside, which the shares' addresses name.
+        self.assertEqual([l for l in lines if l.startswith("PublishPort=")], [
+            "PublishPort=127.0.0.1:__GEZGIN_UI_PORT__:8080/tcp",
+            "PublishPort=@TAILSCALE_IPV4@:__GEZGIN_WEBDAV_PORT__:__GEZGIN_WEBDAV_PORT__/tcp"])
+        self.assertIn("Environment=GEZGIN_WEBDAV_PORT=__GEZGIN_WEBDAV_PORT__", lines)
+        self.assertEqual(self.manifest["PAKET_PORTLAR"].split(";")[1], "GEZGIN_WEBDAV_PORT:tcp:tailscale:Gezgin WebDAV paylaşımları")
         for line in ("Image=__GEZGIN_IMAGE__", "Pull=never", "Network=__GEZGIN_NETWORK__", "User=__DOWNLOADS_UID__",
                      "Group=__DOWNLOADS_GID__", "DropCapability=all", "NoNewPrivileges=true", "EnvironmentFile=__GEZGIN_DATA_DIR__/ilk.env"):
             self.assertIn(line, lines)

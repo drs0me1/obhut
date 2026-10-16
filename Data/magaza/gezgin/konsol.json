@@ -3,7 +3,7 @@
   "alt": "Sunucudaki dosyalarınızı tarayıcıdan yönetin.",
   "simge": "folder",
   "ton": "t-files",
-  "aciklama": "Dosya yöneticisi: klasörler, yükleme, çöp, sık kullanılanlar, bağlantı paylaşımları ve arşivler. Sunucudaki Podman'da konteyner olarak, Dosyalar hesabıyla çalışır; kendi kullanıcıları ve girişi vardır.",
+  "aciklama": "Dosya yöneticisi: klasörler, yükleme, çöp, sık kullanılanlar, bağlantı ve WebDAV paylaşımları ve arşivler. Sunucudaki Podman'da konteyner olarak, Dosyalar hesabıyla çalışır; kendi kullanıcıları ve girişi vardır.",
   "neler": [
     [
       "box",
@@ -12,6 +12,10 @@
     [
       "globe",
       "gezgin.__LOCAL_DOMAIN__ adı eklenir (arayüz yalnız sunucuda dinler); internet adı Erişim → Adresler'den isteğe bağlı"
+    ],
+    [
+      "share",
+      "WebDAV paylaşımları (Finder, Infuse) yalnız tailnet'te: http://gezgin.__LOCAL_DOMAIN__:__GEZGIN_WEBDAV_PORT__/"
     ],
     [
       "folder",
@@ -24,7 +28,8 @@
   ],
   "notlar": [
     "Podman konteyneri · __GEZGIN_CONTAINER__",
-    "arayüz yalnız sunucu"
+    "arayüz yalnız sunucu",
+    "WebDAV · tailnet :__GEZGIN_WEBDAV_PORT__"
   ],
   "gunluk_kaynak": "journalctl -u __GEZGIN_CONTAINER__.service",
   "kaldir": {

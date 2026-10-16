@@ -583,11 +583,23 @@ paket_konteyner_koy() {
     dst="$(konteyner_hedef)" || { FAIL="paket konteyner birimi tanımı geçersiz: $PAKET_KONTEYNER"; return 1; }
     src="$MODULES_DIR/$PAKET_ID/$PAKET_KONTEYNER"
     [[ -f "$src" ]] || { FAIL="paket dosyası yok ($src); kurulumu yeniden çalıştırın"; return 1; }
+    # DD-264: @TAILSCALE_IPV4@ birim konurken state.env'deki şimdiki adresle dolar (kurulum şablonları
+    # Tailscale'den önce işler; refresh-tailnet adresi günceller): Tailscale yayını düğümü paketin bir
+    # sonraki konuşunda izler.
+    if grep -qF '@TAILSCALE_IPV4@' "$src" && [[ ! "${TAILSCALE_IPV4:-}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        FAIL="Tailscale IPv4 adresi hazır değil; Tailscale'i bağlayıp yeniden deneyin"
+        return 1
+    fi
     paket_ag_hazirla || return 1
-    if [[ -f "$dst" ]] && cmp -s -- "$src" "$dst"; then konteyner_korumasi; return; fi
     install -d -m 0755 -- "$KONTEYNER_BIRIM_DIR"
     tmp="$(mktemp "$KONTEYNER_BIRIM_DIR/.$PAKET_KONTEYNER.XXXXXX")"
-    cp -- "$src" "$tmp" && chmod 0644 "$tmp" && mv -f -- "$tmp" "$dst"
+    if ! sed "s/@TAILSCALE_IPV4@/${TAILSCALE_IPV4:-}/g" "$src" >"$tmp"; then
+        rm -f -- "$tmp"
+        FAIL="paket konteyner birimi yazılamadı"
+        return 1
+    fi
+    if [[ -f "$dst" ]] && cmp -s -- "$tmp" "$dst"; then rm -f -- "$tmp"; konteyner_korumasi; return; fi
+    chmod 0644 "$tmp" && mv -f -- "$tmp" "$dst"
     # shellcheck disable=SC2034
     KONTEYNER_DEGISTI=1
     systemctl daemon-reload

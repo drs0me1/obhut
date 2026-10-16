@@ -12,7 +12,8 @@
 [[ -z "${MODULES_DIR:-}" || ! -f "$MODULES_DIR/gezgin/gezgin.env" ]] || source "$MODULES_DIR/gezgin/gezgin.env"
 
 paket_gerekli() {
-    [[ "${GEZGIN_UI_PORT:-}" =~ ^[1-9][0-9]{3,4}$ && "${GEZGIN_DATA_DIR:-}" == /var/lib/?* &&
+    [[ "${GEZGIN_UI_PORT:-}" =~ ^[1-9][0-9]{3,4}$ && "${GEZGIN_WEBDAV_PORT:-}" =~ ^[1-9][0-9]{3,4}$ &&
+        "$GEZGIN_WEBDAV_PORT" != "$GEZGIN_UI_PORT" && "${GEZGIN_DATA_DIR:-}" == /var/lib/?* &&
         "${GEZGIN_CONTAINER:-}" =~ ^[a-z][a-z0-9-]{1,30}$ && -n "${GEZGIN_NETWORK:-}" ]] ||
         fail_step "paket ayarı eksik (gezgin.env); kurulumu yeniden çalıştırın"
     need_keys SERVER_ROOT DOWNLOADS_UID DOWNLOADS_GID FILES_PANEL_TRASH KONTEYNER_BIRIM_DIR \
@@ -66,8 +67,9 @@ gezgin_dizinler() {
 }
 
 # Servis ayakta; Gezgin Dosyalar hesabıyla çalışıyor; konteyner tam olarak kullanıcı alanını, kendi
-# veri klasörlerini ve Konsol'un çöpünün yerinde salt okunur boş örtüyü görüyor; Podman yalnız
-# arayüzü 127.0.0.1'de yayımlıyor. --ilk: yeni kurulumda girişsiz istek 401 almalı.
+# veri klasörlerini ve Konsol'un çöpünün yerinde salt okunur boş örtüyü görüyor; Podman arayüzü
+# yalnız 127.0.0.1'de, WebDAV'ı yalnız Tailscale adresinde yayımlıyor (DD-264). --ilk: yeni kurulumda
+# girişsiz istek 401 almalı.
 gezgin_verify() { # [--ilk]
     local unit _ uid="" code="000" mounts want ports listen
     FAIL=""
@@ -98,9 +100,11 @@ gezgin_verify() { # [--ilk]
         code="$(http_code "http://127.0.0.1:$GEZGIN_UI_PORT/api/resources/")"
         [[ "$code" == 401 ]] || { FAIL="Gezgin girişsiz isteği reddetmedi ($code)"; return 1; }
     fi
-    # DD-217: Quadlet'in yayımladığı tek port; başka adres ya da port sunucuda açılmaz.
+    # DD-217/264: Quadlet'in yayımladığı iki port; başka adres ya da port sunucuda açılmaz.
     ports="$(podman port "$GEZGIN_CONTAINER" 2>/dev/null | LC_ALL=C sort || true)"
-    [[ "$ports" == "8080/tcp -> 127.0.0.1:$GEZGIN_UI_PORT" ]] ||
+    want="$(printf '%s\n' "8080/tcp -> 127.0.0.1:$GEZGIN_UI_PORT" \
+        "$GEZGIN_WEBDAV_PORT/tcp -> $TAILSCALE_IPV4:$GEZGIN_WEBDAV_PORT" | LC_ALL=C sort)"
+    [[ "$ports" == "$want" ]] ||
         { FAIL="Gezgin'in yayımlanan portları beklenenden farklı: $(tr '\n' ' ' <<<"$ports")"; return 1; }
     listen="$(ss -Hltn "sport = :$GEZGIN_UI_PORT" 2>/dev/null | awk '$4 !~ /^127\.0\.0\.1:/ {print $4}' | head -n 3 | tr '\n' ' ' || true)"
     [[ -z "$listen" ]] || { FAIL="Gezgin arayüzü loopback dışında da dinliyor ($listen)"; return 1; }

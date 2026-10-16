@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-16 — Gezgin's WebDAV shares on the tailnet (v2-251)
+
+- Gezgin, installed from the App Store, can share folders over WebDAV again (Finder, Infuse): its
+  share window offers "Bağlantı" and "WebDAV", as Gezgin was designed. The package left Gezgin's
+  WebDAV port off, so the windows showed links alone and looked like an older Gezgin.
+- The shares are at `http://gezgin.<domain>:62984/<share>/`, on the tailnet only; nothing opens on
+  the internet. Installed servers get it with the next update (the container is made anew; users,
+  settings and shares stay) (DD-264).
+
 ### 2026-10-16 — Konsol at /, Dosyalar and Paylaşımlar; the old interface removed (v2-250)
 
 - Konsol is the new interface now, at `http://panel.<domain>/`; `/yeni/` sends you there and keeps the

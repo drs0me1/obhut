@@ -3662,6 +3662,34 @@ EOF
         "$(grep -nx '    reapply_modules' <<<"$stage7" | cut -d: -f1)" ]
 }
 
+@test "package Quadlets get the Tailscale address of state.env when placed (DD-264)" {
+    eval "$(awk '/^konteyner_hedef\(\)/,/^}$/' "$V2_ROOT/scripts/master-modul")"
+    eval "$(awk '/^paket_konteyner_koy\(\)/,/^}$/' "$V2_ROOT/scripts/master-modul")"
+    paket_ag_hazirla() { :; }
+    konteyner_korumasi() { :; }
+    systemctl() { :; }
+    PAKET_ID=gezgin PAKET_KONTEYNER=gezgin.container MODULES_DIR="$TMP/mods" KONTEYNER_BIRIM_DIR="$TMP/units"
+    mkdir -p "$MODULES_DIR/gezgin"
+    printf '[Container]\nPublishPort=127.0.0.1:62983:8080/tcp\nPublishPort=@TAILSCALE_IPV4@:62984:62984/tcp\n' >"$MODULES_DIR/gezgin/gezgin.container"
+    TAILSCALE_IPV4=100.64.0.7
+    paket_konteyner_koy
+    [ "$KONTEYNER_DEGISTI" = 1 ]
+    grep -qx 'PublishPort=100.64.0.7:62984:62984/tcp' "$KONTEYNER_BIRIM_DIR/gezgin.container"
+    # The same address again changes nothing; a new one is written at the next placement.
+    paket_konteyner_koy
+    [ "$KONTEYNER_DEGISTI" = 0 ]
+    TAILSCALE_IPV4=100.64.0.9
+    paket_konteyner_koy
+    [ "$KONTEYNER_DEGISTI" = 1 ]
+    grep -qx 'PublishPort=100.64.0.9:62984:62984/tcp' "$KONTEYNER_BIRIM_DIR/gezgin.container"
+    # Without an address the unit is not placed with an empty one.
+    TAILSCALE_IPV4=""
+    run paket_konteyner_koy
+    [ "$status" -ne 0 ]
+    grep -qx 'PublishPort=100.64.0.9:62984:62984/tcp' "$KONTEYNER_BIRIM_DIR/gezgin.container"
+    [ -z "$(find "$KONTEYNER_BIRIM_DIR" -name '.gezgin.container.*')" ]
+}
+
 @test "qBittorrent on its own bridge (DD-217): per-address publications, engine-made bridge, guarded forward path" {
     local mm="$V2_ROOT/scripts/master-modul" net="$V2_ROOT/panel/master_container_network.py" kanca="$V2_ROOT/magaza/torrent/kanca" ayar="$V2_ROOT/magaza/torrent/ayar.py"
     # The engine makes the package bridge with the guard's interface naming and the package's own label,

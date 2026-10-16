@@ -1168,8 +1168,9 @@ class Panel:
             if not self.module_state(mid, env):
                 continue
             own = None
-            # DD-217: a package on its own bridge reaches the internet through its Quadlet's IPv4
-            # publication and the container guard (forward path); a MASTER-INPUT rule cannot change it.
+            # DD-217: a package on its own bridge is reached through its Quadlet's IPv4 publication and
+            # the container guard (forward path), from the internet or the tailnet (DD-264); a
+            # MASTER-INPUT rule cannot change it.
             bridge = bool(manifest.get("PAKET_KONTEYNER_AG"))
             for key, name, proto, scope in manifest_ports(manifest):
                 if key not in env and own is None:
@@ -1177,7 +1178,7 @@ class Panel:
                 port = num_or(env.get(key, (own or {}).get(key)), 0)
                 if port:
                     row = {"port": port, "proto": proto, "scope": scope, "name": name}
-                    if bridge and scope == "internet":
+                    if bridge and scope in ("internet", "tailscale"):
                         row.update(families=(4,), fixed=True)
                     rows.append(row)
         return rows

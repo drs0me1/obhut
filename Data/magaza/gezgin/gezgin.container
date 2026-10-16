@@ -2,7 +2,9 @@
 # systemd'nin Podman üreticisi __GEZGIN_CONTAINER__.service birimini yazar. İmaj yalnız özetiyle sabittir
 # ve kurulumda bir kez çekilir; açılışta ağa çıkılmaz (Pull=never).
 # DD-217: konteyner kendi köprü ağındadır (__GEZGIN_NETWORK__); arayüz yalnız 127.0.0.1'de yayımlanır
-# (Caddy ve yayın oraya gider). Tailscale'de, WAN'da ya da başka adreste port yoktur.
+# (Caddy ve yayın oraya gider). DD-264: WebDAV paylaşımlarının portu yalnız Tailscale adresinde
+# yayımlanır (konteyner koruması bu satırı geçirir); WAN'da ya da başka adreste port yoktur. Adres
+# (@TAILSCALE_IPV4@) birim her konduğunda state.env'deki şimdiki adresle dolar (master-modul).
 # DD-227: süreç Dosyalar hesabı olarak çalışır (__DOWNLOADS_UID__:__DOWNLOADS_GID__), bütün yetkileri düşürülmüştür;
 # dosyalar Konsol ve Paylaşım'la aynı sahipte doğar. Kullanıcı alanı tek parça bağlanır: Gezgin'in çöpü
 # ve süren yüklemeleri kökteki kendi klasörlerinde, aynı dosya sisteminde taşınır. Konsol'un çöpü
@@ -21,6 +23,7 @@ ContainerName=__GEZGIN_CONTAINER__
 Pull=never
 Network=__GEZGIN_NETWORK__
 PublishPort=127.0.0.1:__GEZGIN_UI_PORT__:8080/tcp
+PublishPort=@TAILSCALE_IPV4@:__GEZGIN_WEBDAV_PORT__:__GEZGIN_WEBDAV_PORT__/tcp
 LogDriver=journald
 StopTimeout=20
 User=__DOWNLOADS_UID__
@@ -29,6 +32,7 @@ DropCapability=all
 NoNewPrivileges=true
 PodmanArgs=--umask=0002
 Environment=TZ=__TIMEZONE__
+Environment=GEZGIN_WEBDAV_PORT=__GEZGIN_WEBDAV_PORT__
 EnvironmentFile=__GEZGIN_DATA_DIR__/ilk.env
 Volume=__GEZGIN_DATA_DIR__/database:/database
 Volume=__GEZGIN_DATA_DIR__/config:/config

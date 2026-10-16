@@ -237,6 +237,34 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Amended by DD-267 (v2-250):** the Podman page is gone; a container managed outside Konsol is adopted
   through Uygulamalar' add flow (DD-266) before Yayınla can choose it.
 
+### DD-264: Gezgin's WebDAV shares on the Tailscale address (v2-251)
+
+- **Request (user, 2026-10-13):** after a clean install of nrm with the Gezgin package, "paylaşım
+  ekranları tasarladığımız gibi değil", then "nrm de geçerli yapıyı kuracak şekilde ayarlama yapalım.
+  nrm güncel ve paylaşım için gerekli portları açabilsin".
+- **Found:** nrm ran the right image (Gezgin 1.0.0, `77ca4882`, digest pinned by DD-262), its page
+  the current one. The package set no `GEZGIN_WEBDAV_PORT` and published only the interface on
+  loopback, and Gezgin hides WebDAV without its port: the share window had no "Tür" choice, the share
+  settings and information windows held links alone. The same image with the port set shows them.
+- **Decision:** `GEZGIN_WEBDAV_PORT=62984` (beside the interface's 62983, DD-219), set inside the
+  container and published as `@TAILSCALE_IPV4@:62984:62984/tcp`: Gezgin writes a share's address
+  from the name it is opened by and this port (`http://gezgin.<domain>:62984/<hash>/`), so the port
+  inside and outside is one. The container guard lets a package's Tailscale publication through
+  (DD-217); the tailnet INPUT allowlist (DD-172) stays as it is, since the traffic is forwarded to
+  the bridge. The port catalogue names it (`PAKET_PORTLAR`, scope `tailscale`), the hook checks both
+  publications, the App Store text names the address.
+- **Not on the internet:** Gezgin's WebDAV is plain HTTP; a WAN or public HTTPS route for it is a
+  later decision (Gezgin's own HANDOVER keeps the public-address question).
+- **The address is the placement's, not the template's:** the installer renders package files in
+  stage 2, before it reads the Tailscale address (stage 3), so `__TAILSCALE_IPV4__` would be unset on a
+  first install. `master-modul`'s `paket_konteyner_koy` fills `@TAILSCALE_IPV4@` from `state.env`
+  (which refresh-tailnet keeps) each time it places a unit, refuses to place one without an address,
+  and leaves a unit that did not change as it is. A node that comes back with a new address gets it at
+  the package's next start, restart or the installer; nothing rewrites a running unit.
+- **Delivered after phase 4b (v2-251):** written on v2-247 and kept on the test host since 2026-10-13, it
+  reached `main` after DD-265–DD-267, so its build number is v2-251; Gezgin's quadlet no longer covers
+  Konsol's archive folder (DD-267), the rest is as written.
+
 ### DD-263: Container CPU and memory come from cgroup files, not `podman stats` (v2-246)
 
 - **Report (nrm, 2026-10-13):** Konsol's Podman inventory never showed CPU or memory; every listing
