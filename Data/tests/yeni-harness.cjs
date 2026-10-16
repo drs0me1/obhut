@@ -31,7 +31,8 @@ const csp = fs.readFileSync(path.join(__dirname, "../templates/Caddyfile"), "utf
 assert.match(csp, /font-src 'self'/, "the console CSP allows the local Outfit font");
 
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
-  ".woff2": "font/woff2", ".svg": "image/svg+xml", ".png": "image/png", ".txt": "text/plain; charset=utf-8", ".sha256": "text/plain; charset=utf-8" };
+  ".woff2": "font/woff2", ".svg": "image/svg+xml", ".png": "image/png", ".txt": "text/plain; charset=utf-8", ".sha256": "text/plain; charset=utf-8",
+  ".json": "application/json" };
 
 /** The file for a request path as the installer lays the console out (DD-267): the build in console/yeni
     at the root, the sign-in page and the editor bundle beside it; "" when it would leave those folders. */

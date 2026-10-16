@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-251"
+V2_VERSION="2026.08.06-v2-252"
 # DD-260: insanların gördüğü sürüm (anlamlı sürümleme; yalnız bir yayında değişir, vX.Y.Z etiketlenir).
 # V2_VERSION yapı numarasıdır: Konsol güncelleme önerirken sunucular onu karşılaştırır.
 OBHUT_SURUM="1.1.0"
@@ -1010,6 +1010,9 @@ stage_4() {
     # DD-239: denetle ve onar (Konsol'un Sağlık kartı ve SSH: sudo master-onar).
     atomic_write "$SBIN_DIR/master_onar.py" 0755 <"$V2_ROOT/panel/master_onar.py"
     atomic_write "$SBIN_DIR/master-onar" 0755 <"$V2_ROOT/scripts/master-onar"
+    # DD-268: sunucunun durumu ve SSH'den kurtarma (sudo obhut); Konsol'un soketini ve yukarıdaki araçları kullanır.
+    atomic_write "$SBIN_DIR/master_obhut.py" 0755 <"$V2_ROOT/panel/master_obhut.py"
+    atomic_write "$SBIN_DIR/obhut" 0755 <"$V2_ROOT/scripts/obhut"
     # Konteyner okuma/yönetim araçları. Yazma çalışanı backend sandbox'ının dışında çalışır.
     atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
@@ -1377,7 +1380,7 @@ ensure_console_pages() {
         atomic_write "$CONSOLE_WEB_DIR/$rel" 0644 <"$f"
         keep[$rel]=1
     done < <(find "$V2_ROOT/console/yeni" -type f ! -name '.*' \( -name '*.html' -o -name '*.js' -o -name '*.css' \
-        -o -name '*.woff2' -o -name '*.svg' -o -name '*.png' -o -name '*.txt' \) -print0)
+        -o -name '*.woff2' -o -name '*.svg' -o -name '*.png' -o -name '*.txt' -o -name 'manifest.json' \) -print0)
     while IFS= read -r -d '' f; do
         rel="${f#"$CONSOLE_WEB_DIR/"}"
         [[ -n "${keep[$rel]:-}" ]] || rm -f -- "$f"

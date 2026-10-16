@@ -51,7 +51,8 @@
 	# internet sitesinde oturum yoksa sayfa /giris.html'e yönlenir, API 401 alır. Sunucunun
 	# içinden gelen istek yine reddedilir (DD-180).
 	# DD-267: giriş sayfası oturumdan önce açılır; teması, yazı tipi ve simgesi de açıktır (gizli bilgi taşımaz).
-	@korumali not path /giris.js /giris.css /tema.js /fonts/Outfit-Variable.woff2 /obhut.svg /obhut.png /api/konsol/oturum /api/konsol/oturum/*
+	# DD-268: uygulama bildirimi ve simgeleri de; tarayıcı onları çerezsiz ister.
+	@korumali not path /giris.js /giris.css /tema.js /fonts/Outfit-Variable.woff2 /obhut.svg /obhut.png /manifest.json /obhut-192.png /obhut-512.png /api/konsol/oturum /api/konsol/oturum/*
 	# Her site root arka uca en çok 16 bağlantı açar: internetten gelen istek seli arka
 	# ucun iş parçacıklarını ve dosya tanıtıcılarını tüketip Tailscale'i de kapatamaz.
 	forward_auth @korumali unix/__PANEL_SOCKET__ {
@@ -97,7 +98,7 @@
 	handle {
 		root * __CONSOLE_WEB_DIR__
 		header {
-			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+			Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 			# DD-181: tarayıcı saklar ama her açılışta sorar; dosya değişmediyse 304 döner.
 			Cache-Control "no-cache"
 			X-Content-Type-Options "nosniff"

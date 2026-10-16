@@ -1,0 +1,19 @@
+{
+  "name": "Obhut Konsol",
+  "short_name": "Obhut",
+  "description": "Sunucu yönetimi: uygulamalar, erişim, dosyalar ve sistem.",
+  "lang": "tr",
+  "dir": "ltr",
+  "id": "/",
+  "start_url": "/#/genel",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f5f7",
+  "theme_color": "#1f6f8b",
+  "icons": [
+    { "src": "/obhut-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/obhut-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/obhut-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/obhut.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

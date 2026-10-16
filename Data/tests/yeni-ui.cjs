@@ -93,6 +93,23 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert.equal(await page.locator(".pending").count(), 0);
     assert.equal(await page.getByRole("button", { name: "İşlemler", exact: true }).count(), 1);
     assert.deepEqual(await page.locator("body *").evaluateAll((els) => els.filter((e) => e.hasAttribute("style")).map((e) => e.tagName)), [], "no style attributes");
+    // DD-268: installable as an app; the browser reads the manifest (manifest-src 'self') without an error,
+    // its icons answer, and nothing registers a service worker.
+    const cdp = await page.context().newCDPSession(page);
+    const manifest = await cdp.send("Page.getAppManifest");
+    assert.match(manifest.url, /\/manifest\.json$/);
+    assert.deepEqual(manifest.errors, [], "the manifest parses without an error");
+    const declared = JSON.parse(manifest.data);
+    assert.deepEqual([declared.name, declared.short_name, declared.start_url, declared.scope, declared.display],
+      ["Obhut Konsol", "Obhut", "/#/genel", "/", "standalone"]);
+    for (const icon of declared.icons) {
+      const res = await page.request.get(new URL(icon.src, base).href);
+      assert.equal(res.status(), 200, icon.src);
+      assert.equal(res.headers()["content-type"], icon.type, icon.src);
+    }
+    assert.deepEqual(declared.icons.filter((i) => i.type === "image/png").map((i) => i.sizes + " " + i.purpose),
+      ["192x192 any", "512x512 any", "512x512 maskable"]);
+    assert.equal(await page.evaluate(() => navigator.serviceWorker?.controller ?? null), null, "no service worker");
     // The font is the local Outfit, allowed by font-src 'self'.
     assert.equal((await fontResponse).status(), 200);
     assert(await page.evaluate(async () => { await document.fonts.ready; return document.fonts.check("600 30px Outfit"); }), "Outfit loaded");

@@ -2709,7 +2709,8 @@ EOF
         "$(printf 'http://panel.__LOCAL_DOMAIN__ {\n\timport konsol tailscale\n}')" ]
     site="$(awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile")"
     # DD-267: the sign-in page is self-contained; its theme script, font and icons are open beside its own files.
-    grep -qxF "$(printf '\t@korumali not path /giris.js /giris.css /tema.js /fonts/Outfit-Variable.woff2 /obhut.svg /obhut.png /api/konsol/oturum /api/konsol/oturum/*')" <<<"$site"
+    # DD-268: so are the app manifest and its icons, which the browser asks for without cookies.
+    grep -qxF "$(printf '\t@korumali not path /giris.js /giris.css /tema.js /fonts/Outfit-Variable.woff2 /obhut.svg /obhut.png /manifest.json /obhut-192.png /obhut-512.png /api/konsol/oturum /api/konsol/oturum/*')" <<<"$site"
     # DD-205: the backend answers by Caddy's channel — the tailnet needs no cookie, its /giris.html is a redirect
     # to Konsol, the internet needs a session except for the sign-in page; the account is made without a code.
     grep -qF 'if self.channel() == "tailscale":' "$backend"
@@ -5767,7 +5768,19 @@ PY
     # nothing from elsewhere.
     run ! grep -qiE '<style|style=|(^|[[:space:]])on[a-z]+=|https?://' "$yeni/index.html"
     [ "$(grep -oE '(href|src)="[^"]+"' "$yeni/index.html" | LC_ALL=C sort -u | tr '\n' ' ')" = \
-        'href="/app.css" href="/fonts/Outfit-Variable.woff2" href="/obhut.png" href="/obhut.svg" src="/app.js" src="/tema.js" ' ]
+        'href="/app.css" href="/fonts/Outfit-Variable.woff2" href="/manifest.json" href="/obhut.png" href="/obhut.svg" src="/app.js" src="/tema.js" ' ]
+    # DD-268: installable as an app — a manifest within manifest-src 'self', its icons in the build, no service worker.
+    grep -qF "manifest-src 'self'" "$caddy"
+    python3 - "$yeni/manifest.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert (m["start_url"], m["scope"], m["display"]) == ("/#/genel", "/", "standalone"), m
+assert {i["src"] for i in m["icons"]} == {"/obhut-192.png", "/obhut-512.png", "/obhut.svg"}, m["icons"]
+assert any(i["purpose"] == "maskable" for i in m["icons"])
+PY
+    [ -f "$yeni/obhut-192.png" ] && [ -f "$yeni/obhut-512.png" ]
+    run ! grep -qE 'serviceWorker|navigator\.serviceWorker' "$yeni/app.js"
+    grep -qF -- "-o -name 'manifest.json'" "$V2_ROOT/install.sh"
     run ! grep -qE 'new Function|eval\(' "$yeni/app.js"
     # The stylesheet's only address is the local font; the sources put text into the page, never HTML.
     [ "$(grep -oE 'url\([^)]*\)|@import|https?://' "$yeni/app.css" | sort -u)" = 'url(/fonts/Outfit-Variable.woff2)' ]
@@ -5780,7 +5793,7 @@ PY
     [ -f "$yeni/fonts/OFL.txt" ]
     # Every file of the build has an extension the installer places.
     for f in $(cd "$yeni" && find . -type f ! -name kaynak.sha256 | sed 's|^\./||'); do
-        case "$f" in *.html | *.js | *.css | *.woff2 | *.svg | *.png | *.txt) ;; *) echo "not installed: $f"; return 1 ;; esac
+        case "$f" in *.html | *.js | *.css | *.woff2 | *.svg | *.png | *.txt | manifest.json) ;; *) echo "not installed: $f"; return 1 ;; esac
     done
     # Sources stay in the repository: kur.sh ships console/ (with the build), never tools/.
     run ! grep -qE '^    local items="[^"]*(^| )tools( |")' "$V2_ROOT/../kur.sh"
@@ -5811,4 +5824,19 @@ PY
     grep -qF 'live.kaynaklar?.surum || live.guncelleme?.kurulu_surum || shortVersion(' "$V2_ROOT/tools/konsol-ui/src/components/SideNav.vue"
     # The changelog has this release's section.
     grep -qE "^## \[$surum\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$V2_ROOT/CHANGELOG.md"
+}
+
+@test "obhut: the root CLI is installed beside master-onar and speaks to Konsol's own socket (DD-268)" {
+    local mod="$V2_ROOT/panel/master_obhut.py"
+    grep -qF 'atomic_write "$SBIN_DIR/master_obhut.py" 0755 <"$V2_ROOT/panel/master_obhut.py"' "$V2_ROOT/install.sh"
+    grep -qF 'atomic_write "$SBIN_DIR/obhut" 0755 <"$V2_ROOT/scripts/obhut"' "$V2_ROOT/install.sh"
+    grep -qxF 'exec /usr/bin/python3 "$(dirname -- "$(readlink -f -- "$0")")/master_obhut.py" "$@"' "$V2_ROOT/scripts/obhut"
+    # The socket from state.env with Konsol's Host and the X-Konsol header; no TCP, no shell.
+    grep -qF 'env.get("PANEL_SOCKET")' "$mod"
+    grep -qF '"X-Konsol": "1"' "$mod"
+    run ! grep -qE 'shell=True|os\.system|HTTPSConnection|create_connection' "$mod"
+    # Recovery does not need the backend: checks and repairs are master-onar's, the account master-konsol's.
+    grep -qF 'run_tool("master-onar", "--denetle")' "$mod"
+    grep -qF 'run_tool("master-konsol", args.eylem)' "$mod"
+    python3 -I "$mod" --help >/dev/null
 }
