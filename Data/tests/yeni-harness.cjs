@@ -26,6 +26,8 @@ const childProcess = require("node:child_process");
 const fs = require("node:fs"), http = require("node:http"), os = require("node:os"), path = require("node:path");
 
 const root = path.join(__dirname, "../console");
+// The layout audit's widths: the smallest phone, common phones, a tablet, small and large desktops.
+const DUZEN_GENISLIKLER = [320, 360, 390, 768, 1024, 1280, 1920];
 const tools = path.join(__dirname, "../tools/konsol-ui");
 const csp = fs.readFileSync(path.join(__dirname, "../templates/Caddyfile"), "utf8").match(/Content-Security-Policy "([^"]+)"/)[1];
 assert.match(csp, /font-src 'self'/, "the console CSP allows the local Outfit font");
@@ -228,9 +230,28 @@ function create({ name, url, data, expected = () => [] }) {
       counted: Playwright's screenshot leaves one on a text field it had to hide the caret of. */
   h.styleAttributes = (page) => page.locator("body *").evaluateAll((els) =>
     els.filter((e) => (e.getAttribute("style") ?? "").trim() !== "").map((e) => `${e.tagName}.${e.className}: ${e.getAttribute("style")}`));
-  // Screenshots wait for the dialogs' enter/leave transitions to end.
+  // Screenshots wait for the dialogs' enter/leave transitions to end. Every screenshot's state is also measured
+  // by the layout audit (duzen-denetimi.cjs) at its own width; a finding fails the suite like a console error.
+  // KONSOL_DUZEN=tara also measures it at DUZEN_GENISLIKLER (the viewport is restored; a state that a resize
+  // changes, such as a countdown that hides with the tab, is left out with KONSOL_DUZEN_ATLA, a pattern of
+  // screenshot names); KONSOL_DUZEN=0 turns the audit off. KONSOL_DUZEN_CIKTI collects one JSON line per state.
   h.shot = async (page, file, fullPage = false) => {
     await page.waitForFunction(() => !document.querySelector('[class*="-enter-"], [class*="-leave-"]'));
+    // Vue drops a transition's classes when its root's transition ends; a child's own (a sheet sliding in)
+    // can run a few frames longer. Wait for every finite animation (spinners loop and are left alone).
+    await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getComputedTiming().iterations === Infinity));
+    if (process.env.KONSOL_DUZEN !== "0") {
+      const skip = process.env.KONSOL_DUZEN_ATLA && new RegExp(process.env.KONSOL_DUZEN_ATLA).test(file);
+      const widths = process.env.KONSOL_DUZEN === "tara" && !skip ? DUZEN_GENISLIKLER : [];
+      const results = await require("./duzen-denetimi.cjs").audit(page, widths);
+      for (const r of results) {
+        for (const f of r.findings) h.errors.push(`layout ${file} @${r.width}: ${f.kind} ${f.el} — ${f.detail}`);
+      }
+      if (process.env.KONSOL_DUZEN_CIKTI) {
+        const line = { suite: name, shot: file, url: page.url().replace(/^https?:\/\/[^/]+/, ""), results };
+        fs.appendFileSync(process.env.KONSOL_DUZEN_CIKTI, JSON.stringify(line) + "\n");
+      }
+    }
     await page.screenshot({ path: path.join(h.shots, file), fullPage });
   };
 

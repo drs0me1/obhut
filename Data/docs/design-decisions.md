@@ -17,6 +17,43 @@ Konsol's old interface was removed in DD-267 (v2-250). Live entries written
 before it still name its places (Ayarlar → Caddy, Ayarlar → Sistem, App Store,
 the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 
+### DD-270: Konsol's layout is measured on every screenshot of its browser suites (v2-254)
+
+- **Request (user, 2026-10-16):** "Webui arayüzü tara ve şablonların sınırlarını koruduğunu taşma silinme
+  olup olmadığını. Pencere boyutlarının birbirlerini ezmediğini yapının bozulmadığını doğrula."
+- **Audit (`tests/duzen-denetimi.cjs`):** one measurement in the page, no change to it. It reports a
+  horizontal page scroll, an element past the window's edge outside a scroll box, content spilling over its
+  box, content cut off without an ellipsis, a squeezed box (an ordinary word broken across lines), text or
+  controls drawn over each other, and an open dialog that neither fits the window nor scrolls.
+- **What it does not count, and why:**
+  - an ellipsis: shortening on purpose;
+  - a token longer than 12 characters wrapping inside its box (an address, an image digest): that is the
+    intended fallback, the alternative being an overflow;
+  - screen-reader-only, inert, SVG and hidden elements, and the content of a closed `<details>` (Chrome lays
+    it out without painting it);
+  - text overlaps measured on the boxes: inline boxes that wrap and pills beside text share boxes without
+    their glyphs touching. Overlaps are measured where the glyphs are, which also catches text running out of
+    a narrow cell into the next one.
+- **Where it runs:** every `shot()` of the `yeni-*` suites at the screenshot's width; a finding fails the
+  suite like a console error. `giris-ui.cjs` at each of its widths. A sweep (`KONSOL_DUZEN=tara`) measures
+  each state again at seven widths from 320 to 1920 px and restores the viewport; the phone menu, which a
+  wider window closes on purpose, is swept at phone widths only, and `KONSOL_DUZEN_ATLA` leaves out a state
+  a resize changes (the account card hides a revealed password when the tab hides). Before a screenshot the
+  harness also waits for every finite animation: Vue drops a transition's classes when its root's
+  transition ends, and the editor sheet's own slide ran a frame longer (it measured 1 px past the edge).
+- **Found and fixed:** on a phone a card table cell (`td[data-label]`, a flex column) could not break a long
+  address such as `100.64.0.2%tailscale0` or `100.64.0.2:62984`, which then ran over the next
+  column (Erişim → Güvenlik duvarı's listeners, an application's port card, Gelişmiş → DNS). The cells now
+  take `overflow-wrap: anywhere`. Nothing else was found.
+- **Live check (test host, 2026-10-16, v2-254):** 43 states of the live Konsol (every section and tab, the
+  add, publish, share and new-folder flows, a removal question, the palette) at eleven widths from 320 to
+  1920 px in the light theme and four in the dark, and the activity drawer at nine desktop sizes: no
+  finding; the two spilling cells now wrap in their column. The suites' 393 states, at their own width and
+  swept, have none either.
+- **Rejected:** screenshot comparison against stored images (every data or font change breaks it, and it
+  tells a changed picture, not a broken one); a sweep on every run (the resize changes some states, and
+  seven widths take a suite's time several times over).
+
 ### DD-269: After the redesign: what only the old interface used is removed (v2-253)
 
 - **Request (user, 2026-10-16):** "Tamamlanan yol haritasına göre tekrar kontrol et. Ölü kod işlevsiz alan

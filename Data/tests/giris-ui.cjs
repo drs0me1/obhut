@@ -4,6 +4,7 @@
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const assert = require("node:assert/strict");
 const fs = require("node:fs"), path = require("node:path"), os = require("node:os");
+const { measure } = require("./duzen-denetimi.cjs");
 const shots = fs.mkdtempSync(path.join(os.tmpdir(), "konsol-giris-ui-"));
 const base = process.env.KONSOL_URL || "http://127.0.0.1:8766";
 const csp = fs.readFileSync(path.join(__dirname, "../templates/Caddyfile"), "utf8").match(/Content-Security-Policy "([^"]+)"/)[1];
@@ -63,6 +64,8 @@ const posts = [], errors = [];
       for (const width of [1280, 768, 390, 320]) {
         await page.setViewportSize({ width, height: 900 });
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `login ${colorScheme}/${width}`);
+        // The layout audit: nothing spills, is cut off, squeezed or drawn over another piece (duzen-denetimi.cjs).
+        assert.deepEqual((await page.evaluate(measure)).findings, [], `login layout ${colorScheme}/${width}`);
         await page.screenshot({ path: path.join(shots, `login-${colorScheme}-${width}.png`), fullPage: true });
       }
     }

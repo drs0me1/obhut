@@ -5755,6 +5755,28 @@ PY
     grep -qx 'node_modules/' "$V2_ROOT/../.gitignore"
 }
 
+@test "the browser suites measure the layout of every screenshot and card cells wrap long values (DD-270)" {
+    local audit="$V2_ROOT/tests/duzen-denetimi.cjs" harness="$V2_ROOT/tests/yeni-harness.cjs"
+    [ -f "$audit" ]
+    # Every shot() runs the audit unless KONSOL_DUZEN=0; a finding fails the suite like a console error.
+    grep -qF 'if (process.env.KONSOL_DUZEN !== "0") {' "$harness"
+    grep -qF 'require("./duzen-denetimi.cjs").audit(page, widths)' "$harness"
+    grep -qF 'h.errors.push(`layout ${file} @${r.width}: ${f.kind} ${f.el}' "$harness"
+    grep -qF 'const DUZEN_GENISLIKLER = [320, 360, 390, 768, 1024, 1280, 1920];' "$harness"
+    # A screenshot waits for every finite animation, not only for Vue's transition classes.
+    grep -qF 'document.getAnimations().every((a) => a.playState !== "running"' "$harness"
+    grep -qF 'assert.deepEqual((await page.evaluate(measure)).findings, [], `login layout ${colorScheme}/${width}`);' "$V2_ROOT/tests/giris-ui.cjs"
+    for kind in sayfa-tasmasi pencere-disinda tasma kirpilma ezilme cakisma pencere; do
+        grep -q "\"$kind\"" "$audit"
+    done
+    # The audit only measures: it never clicks, types or changes the page.
+    run ! grep -qE '\.(click|fill|press|tap)\(|setAttribute|innerHTML|\.remove\(' "$audit"
+    # On a phone a card cell is a flex column; a long address breaks inside it instead of running over the next.
+    awk '/@container \(max-width: 760px\)/,0' "$V2_ROOT/tools/konsol-ui/src/styles/ui.css" |
+        awk '/\.data-table td\[data-label\] \{/,/\}/' | grep -q 'overflow-wrap: anywhere;'
+    awk '/\.fw-table td\[data-label\],/,/\}/' "$V2_ROOT/tools/konsol-ui/src/styles/erisim.css" | grep -q 'overflow-wrap: anywhere;'
+}
+
 @test "the release version people see sits beside the build number servers compare (DD-260)" {
     local install="$V2_ROOT/install.sh" surum
     surum="$(sed -n 's/^OBHUT_SURUM="\(.*\)"$/\1/p' "$install")"

@@ -971,11 +971,13 @@ select.input {
     display: none;
   }
 
+  /* A card's column is narrow: a long address breaks inside its cell instead of running into the next. */
   .data-table td[data-label] {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 3px;
+    overflow-wrap: anywhere;
   }
 
   .data-table td[data-label]::before {

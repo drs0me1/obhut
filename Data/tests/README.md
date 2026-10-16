@@ -40,13 +40,39 @@ that named route, not the shared Caddy listener.
 **Browser suites.** Konsol's Playwright suites are the `yeni-*.cjs` files (their shared harness is
 `yeni-harness.cjs`) and `giris-ui.cjs`. Since DD-267 the `yeni-*` suites run Konsol at `/`, served as
 the installer lays it out: the build's files from `console/yeni/` at the root, the sign-in page, the
-editor bundle and the marks from `console/` beside them; `/yeni` and `/yeni/*` answer 308 to `/`. Each
-starts its own static server on its `KONSOL_URL` (defaults from 8768 to 8776). The old interface's suites
+editor bundle and the marks from `console/` beside them (Caddy's `/yeni` redirect is checked by Bats, not
+served here). Each starts its own static server on its `KONSOL_URL` (defaults from 8768 to 8776). The old interface's suites
 were deleted with it (`app-install-ui`, `desktop-live`, `files-nav-ui`, `files-ui`, `konteynerler-ui`,
 `panel-ui`, `publications-ui`, `settings-https-ui`, `settings-ui`, `share-connections-browser`,
 `torrent-ui`, `update-ui` and `wireguard-ui`), and with the archive jobs and favourites
 `archives-live.py`, `test_archives.py`, `test_rar.py` and `test_favorites.py`. Sections below written
 for earlier builds name the suite that covers the behaviour now.
+
+**Layout audit (v2-254, DD-270).** `duzen-denetimi.cjs` measures a page state in the browser: a horizontal page
+scroll, an element past the window's edge outside a scroll box, content spilling over its box, content cut
+off without an ellipsis, an ordinary word (12 characters or fewer) broken across lines because its box is
+too narrow, text or controls drawn over each other (text measured where its glyphs are), and an open
+dialog that neither fits the window nor scrolls. Every screenshot of the `yeni-*` suites runs it at the
+screenshot's own width and a finding fails the suite like a console error; `giris-ui.cjs` runs it at each
+of its widths. A sweep also measures every screenshot's state at 320, 360, 390, 768, 1024, 1280 and 1920
+px (the viewport is restored; the phone menu, which a wider window closes, is measured at phone widths
+only):
+
+```bash
+KONSOL_DUZEN=tara KONSOL_DUZEN_ATLA='paket-ayarlar' KONSOL_DUZEN_CIKTI=/tmp/duzen.jsonl \
+  PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulama-ekle-ui.cjs
+```
+
+Before a screenshot the harness waits for every finite animation, not only Vue's transition classes (a
+sheet's own slide outlasts them). `KONSOL_DUZEN_ATLA` leaves a state out of the sweep that a resize changes (the account card hides a revealed
+password when the tab hides, which Playwright's resize triggers); `KONSOL_DUZEN=0` turns the audit off.
+Ellipses and long tokens wrapping in their box (addresses, digests) are counted, not reported. The first
+sweep (2026-10-16, v2-254) measured the suites' 393 states at their own width and again at seven widths
+(2,882 measurements), and the live Konsol on the test host: 43 states (every section and tab, the add,
+publish, share and new-folder flows, a removal question, the palette) at eleven widths in the light theme
+and four in the dark, and the activity drawer at the nine desktop sizes (on a phone it shows only while a
+job runs). The only real fault was a card table cell on a phone whose long address ran into the next
+column, fixed in v2-254.
 
 ## Redesign phase 1: route table, Erişim, live events (v2-243, DD-259)
 

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-16 — Long addresses stay in their column on a phone (v2-254)
+
+- On a phone, the cards of Erişim → Güvenlik duvarı (listeners), an application's port card and Gelişmiş →
+  DNS no longer let a long address run over the next column; it wraps inside its own cell (DD-270).
+- The browser suites measure every screen state they photograph: a horizontal scroll, content spilling over
+  or cut off at its box, squeezed text, overlapping text or controls and dialogs that do not fit fail the
+  suite. A sweep measures the same states from 320 to 1920 px.
+
 ### 2026-10-16 — Leftovers of the old interface removed (v2-253)
 
 - Konsol's backend no longer reads the firewall rule by rule for a page that is gone: opening Erişim or
