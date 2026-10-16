@@ -18,7 +18,7 @@ class ContainerDnsTests(unittest.TestCase):
         self.rules = Path(self.tmp.name) / "rules"
         self.rules.write_text("")
 
-    def shell(self, extra="", prefix=None):
+    def shell(self, extra="", prefix="ksl"):
         source = SOURCE.read_text()
         names = ("container_dns_iface", "apply_input4", "check_input_chain", "check_rule",
                  "check_rule_count", "check_before", "check_chain_shape", "check_wan_allow_count", "wan_allow_pairs")
@@ -77,12 +77,12 @@ ICMP6_TYPES=()
         self.fail("rule builder emitted no terminal decision")
 
     def test_default_and_custom_owned_bridge_dns_only(self):
-        for prefix in (None, "box"):
+        for prefix in ("ksl", "box"):
             with self.subTest(prefix=prefix):
                 self.rules.write_text("")
                 result = self.shell(prefix=prefix)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                bridge = (prefix or "ksl") + "1234567890"
+                bridge = prefix + "1234567890"
                 for protocol in ("tcp", "udp"):
                     self.assertEqual(self.verdict(bridge, protocol, 53), "ACCEPT")
                     self.assertEqual(self.verdict(bridge, protocol, 53, local_on_input=False), "DROP")
@@ -102,8 +102,9 @@ ICMP6_TYPES=()
                 result = self.shell(mutation + ' "$RULES" >"$RULES.tmp"\nmv "$RULES.tmp" "$RULES"\ncheck_input_chain iptables v4')
                 self.assertNotEqual(result.returncode, 0, "health check accepted altered DNS permissions")
 
-    def test_invalid_prefix_fails_before_any_rule_is_written(self):
-        for prefix in ("+", "ksl+", "x", "toolong", "WG", "a b"):
+    def test_invalid_or_missing_prefix_fails_before_any_rule_is_written(self):
+        # DD-269: a state file without the prefix is no longer given the default; it fails closed.
+        for prefix in (None, "+", "ksl+", "x", "toolong", "WG", "a b"):
             with self.subTest(prefix=prefix):
                 self.rules.write_text("")
                 result = self.shell(prefix=prefix)

@@ -168,7 +168,7 @@ class HttpsPanelTests(unittest.TestCase):
         (self.modules / "paylasim.caddy").write_text("http://paylas.test, http://{$TAILSCALE_IPV4}:61010 {\n"
                                                      " reverse_proxy 127.0.0.1:61010\n}\n")
         (self.modules / "paylasim-wan.caddy").write_text(master_https.site(self.env, self.wan))
-        rows = {r["address"]: r for r in self.p.web_view(self.env, [])["entries"]}
+        rows = {r["address"]: r for r in self.p.web_view(self.env)["entries"]}
         wan = rows["files.example.com:443"]
         self.assertEqual((wan["source"], wan["access"], wan["scheme"]), ("paylasim-wan", "wan", "https"))
         self.assertIn(dict(path="/s/*", kind="proxy", to="127.0.0.2:61010"), wan["routes"])
@@ -179,7 +179,7 @@ class HttpsPanelTests(unittest.TestCase):
     def test_caddy_legacy_http_and_https_source_do_not_imply_public_access(self):
         (self.modules / "paylasim-wan.caddy").write_text("http://:61010 {\n reverse_proxy 127.0.0.2:61010\n}\n")
         (self.modules / "other.caddy").write_text("https://private.example.com {\n respond 404\n}\n")
-        rows = {r["source"]: r for r in self.p.web_view(self.env, [])["entries"]}
+        rows = {r["source"]: r for r in self.p.web_view(self.env)["entries"]}
         self.assertEqual((rows["paylasim-wan"]["address"], rows["paylasim-wan"]["scheme"], rows["paylasim-wan"]["access"]),
                          ("192.0.2.1:61010", "http", "wan"))
         self.assertEqual((rows["other"]["scheme"], rows["other"]["access"]), ("https", "tailscale"))
@@ -187,7 +187,7 @@ class HttpsPanelTests(unittest.TestCase):
     def test_settings_returns_manager_https_metadata_unchanged(self):
         with patch.object(self.p, "package_networks", return_value=[]), \
                 patch.object(self.p, "module_state", return_value=""), \
-                patch.object(self.p, "firewall_view", return_value={}), \
+                patch.object(self.p, "firewall_check", return_value={}), \
                 patch.object(self.p, "web_view", return_value={}), \
                 patch.object(self.p, "dns_view", return_value={}), \
                 patch.object(self.p, "all_firewall_rules", return_value={}), \

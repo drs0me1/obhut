@@ -64,7 +64,7 @@ user = "test-" + secrets.token_hex(4)
 password, changed = secrets.token_urlsafe(18), secrets.token_urlsafe(18)
 try:
     # Tailnet: no session anywhere; the sign-in page goes back to Konsol.
-    for page in ("/", "/index.html", "/konsol.js"):
+    for page in ("/", "/index.html", "/app.js"):
         status, _, body = call("GET", page, api=False)
         assert status == 200, (page, status)
     status, headers, _ = call("GET", "/giris.html", api=False)

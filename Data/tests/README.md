@@ -85,10 +85,10 @@ sidebar counts (Uygulamalar, Sistem, Erişim), the problem chip, the Tailscale a
 stream (an `X-Konsol` fetch, multi-line data, comments and unknown events, `kapat` with an immediate
 reconnect), the activity drawer, the pending-change banner and its local countdown, the command palette
 (Ctrl+K and Meta+K, Turkish case rules, arrow keys, Enter to a page, Esc with focus return), the theme
-kept across a reload, an old address landing on its new home with no link to the old interface, the
+kept across a reload, an old address landing on its new home, the
 skip link, the phone's bottom
 bar and menu sheet at 390 and 320 px, both themes, polling when the stream answers 404 or 503
-(resources 10 s, health 60 s, jobs and the pending change 5 s; never `ayarlar/durum`) and after three
+(resources 10 s, health 60 s, jobs and the pending change 5 s) and after three
 failed attempts (retried after 3 s and 6 s, polling ends once the stream is back), unknown values
 shown as "—" and a 401 going to the sign-in page. Screenshots go to a fresh temporary directory, printed
 at the end.
@@ -423,7 +423,7 @@ to delete its scratch tree while an anchor is still mounted.
 ## Private package state (v2-203, DD-225)
 
 The Bats test "package private state is hidden" checks the new `PRIVATE_STATE_ROOT` key. The
-WebDAV unit must have exactly one `InaccessiblePaths=` line (trash, `-.pay`,
+WebDAV unit must have exactly one `InaccessiblePaths=` line (trash,
 `/var/lib`), `RequiresMountsFor` and no `SystemCallErrorNumber`. The Files unit must mask only
 `/var/lib`, and the installer must pass the key. Neither unit may name an application, and
 qBittorrent's profile directory must lie under `/var/lib`. The test also renders both templates
@@ -493,7 +493,8 @@ the project firewall already active. It creates only uniquely named test resourc
 and cleans them up; it checks real Quadlet execution and lifecycle behavior.
 Do not run live fixtures concurrently with installation or another nrm test.
 Installation/reboot persistence and the actual application/browser journey remain
-separate acceptance checks; record exact runs and untested platforms in SESSION.md.
+separate acceptance checks; record exact runs and untested platforms in the change's DD entry
+(its live check) and `CHANGELOG.md`.
 
 ## Public Konsol over HTTPS (v2-167, DD-195)
 
@@ -539,7 +540,8 @@ worker (`ayar.py`: hash format, INI preservation, the read-only view without the
 validation before any service change, stop/write/start order, failed-start recovery,
 stopped-state preservation, the narrow drop-in and its rollback, the CLI) and its API
 module through a fake context and through the real dispatcher (gates, the package-folder
-rule for worker scripts, the private stdin run, the `torrent:hesap` audit line);
+rule for worker scripts, the private stdin run, the `torrent:ayar` audit line; since DD-269 `/ayar`
+is the only write and `/hesap`, `/dizin` answer 404);
 the package's settings form on the application's Ayarlar tab is `yeni-uygulama-ekle-ui.cjs`'s (the
 package's own page went in DD-267); `test_backend_hardening.py` points the profile-reader checks at
 `ayar.read_conf`; `settings-linux.py` runs the worker's functions against real
@@ -588,9 +590,9 @@ python3 Data/tests/panel-public-live.py --host nrm --domain konsol.example.com
 
 `panel-public-live.py` is opt-in and **mutating**: it needs the operator's existing
 Konsol account and a name with a DNS-only A record to the host's WAN IPv4 (no
-AAAA). It publishes Panel on that name through the real Settings API, checks HSTS,
-the sign-in page, session protection of pages/Files/root APIs, the refused setup
-code, one wrong sign-in and a root-issued automation session over the public
+AAAA). It publishes Panel on that name through the real settings API (`ayarlar/uygula`; the
+rows come from `yayinlar`), checks HSTS, the sign-in page, session protection of pages/Files/root
+APIs, account creation refused over the internet, one wrong sign-in and a root-issued automation session over the public
 address, then restores the Panel row exactly and checks that the name no longer
 reaches Konsol. It exits 3 without changes when there is no account or Panel is
 already public.
@@ -692,7 +694,7 @@ no `/etc/containers` literal in the engine), the qBittorrent quadlet (its own br
 two same-path mounts, no `NoNewPrivileges`), and the qBittorrent lifecycle against a fake
 `podman`/`systemctl`/`ss`: pull once by digest, seed before the first start, host uid / mount /
 exact `podman port` set / loopback-listener checks with rollback, stop removes the quadlet, a changed quadlet restarts,
-`--veri` removes the image by id, an active old `qbittorrent-nox@` unit is refused.
+`--veri` removes the image by id.
 `test_torrent_api.py` covers the worker's quadlet drop-in (same-path `Volume=` only outside the
 downloads tree, unmountable names refused, the wait for the interface after a restart) and
 `settings-linux.py` runs the same worker against a real qBittorrent with a scratch
@@ -711,8 +713,8 @@ Turkish remedy while reading still works (skipped when the runner is root).
 
 `test_overview.py` checks that the retired layout, favourites and old-shell routes (DD-267:
 `/api/konsol/duzen`, `/favoriler`, `/ayarlar`, `/ayarlar/durum`, `/moduller/<id>/…`) answer 404
-behind the X-Konsol and Host gates and write nothing, and covers the WAN rate sampler
-(deltas, the 1.5 s step, counter resets, a stale baseline, interface name checks, a new
+behind the X-Konsol and Host gates and write nothing, and covers the WAN rate sampler (the
+last rate only since DD-269: deltas, the 1.5 s step, counter resets, a stale baseline, interface name checks, a new
 interface), `/api/konsol/ag` with package traffic modules in a temporary catalogue (installed,
 stopped, unregistered, undeclared and built-in packages; broken modules reported once; the
 2 s cache; no bytecode in the package folder; the 120 s window) and both packages'
@@ -767,7 +769,7 @@ in/out with it, checks the attempt limit, then resets the account and restarts t
 root backend to clear the limit. Passwords and tokens are never printed.
 
 Live tests that call Konsol through Caddy from the Mac (`share-connections-live`,
-`https-live`, `publications-live`, `backend-hardening-live`) open a short
+`https-live`, `publications-live`, `panel-public-live`, `backend-hardening-live`) open a short
 root-issued session with `master-konsol oturum-ac` via `konsol_session.py` and close
 it at the end. Host-side tests (`shares-live.py`) use the
 loopback Files backend and the root socket instead, because Caddy refuses
@@ -815,7 +817,7 @@ skips); six browser fixture suites passed with screenshots reviewed. After a
 successful portable deployment on `nrm`, the opt-in live script above and the (since removed)
 read-only browser check of the installed UI passed: live HTTPS/Tailscale policies and
 byte-identical cleanup, and the installed UI at three widths/two themes with zero errors or API
-writes. See [SESSION.md](../SESSION.md)
+writes. See [the archived session notes](../docs/archive/SESSION-to-v2-206.md)
 for exact run evidence and final host health. These results do not certify native
 Infuse/Finder clients or a fresh supported-OS installation.
 
@@ -893,19 +895,20 @@ Paylaşımlar) is `yeni-erisim-ui.cjs` and `yeni-paylasim-ui.cjs`.
 
 External acceptance is opt-in, from an authorized Tailscale client to a disposable
 host. Supply a real public domain whose DNS resolves only to that host's assigned
-WAN IPv4, with no AAAA/proxy, and permit inbound TCP 443. Settings' pinned local
+WAN IPv4, with no AAAA/proxy, and permit inbound TCP 443. Konsol's pinned local
 certificate probe does not itself prove that external path. From the repository root:
 
 ```bash
 # Requires the matching domain already saved and certificate status ready:
 python3 Data/tests/https-live.py --host nrm --domain dav.example.com
-# Alternatively, deliberately save the real domain through Settings first:
+# Alternatively, deliberately save the real domain through the settings API first:
 python3 Data/tests/https-live.py --host nrm --domain dav.example.com --configure
 ```
 
 Replace the example domain; the script uses public TCP 443. `--configure` is a
-real, persistent Settings change: **the domain remains saved after cleanup**.
-Without that flag, the script requires the matching saved domain to be ready.
+real, persistent settings change: **the domain remains saved after cleanup**.
+Without that flag, the script requires the matching saved domain to be ready (the shares' WAN
+mode and domain from `paylasim`, the certificate state from the WebDAV row of `yayinlar`).
 It verifies public TLS trust, denies `/` and administrative routes, checks old
 WAN HTTP closed, and creates three temporary shares: RO and RW on both networks,
 plus Tailscale-only. It exercises HTTPS/Tailscale reads, PROPFIND, ranges, download
@@ -918,7 +921,7 @@ edit real shares concurrently. Domain disable/re-enable, reboot, supported-OS
 fresh installs and native-client acceptance are separate tests.
 
 This runbook describes test scope, not completed results. Record actual runs in
-`CHANGELOG.md`/`SESSION.md`.
+`CHANGELOG.md` and the change's DD entry (its live check).
 
 ## Remaining audit stages (v2-160, DD-187–189)
 
@@ -1025,13 +1028,13 @@ active-download limit). No torrents are added, no installed config
 is read, no host service is controlled, and fixture passwords are never printed.
 It does not replace clean Debian/Ubuntu installation or service-sandbox tests.
 
-## Reserved `.pay` path (DD-171)
+## The old `.pay` tree (DD-171, retired by DD-269)
 
-The Bats suite checks that stage 3 never creates the reserved `SHARE_DIR`
-(`.pay`), that stage 3 and `master-modul yerlesik` leave an existing one (contents,
-modes, marker symlink) untouched, that registry preparation is idempotent and
-public lifecycle actions refuse, and that the Files backend refuses to list it
-and writes nothing into it. Folder-sharing tests are described below.
+The Bats suite checks that stage 3 never creates `.pay`, that stage 0 refuses to install beside an
+existing one (a folder or a link) before the confirmation, that nothing in the tree names
+`SHARE_DIR` any more, that registry preparation is idempotent and public lifecycle actions refuse.
+`test_backend_hardening.py` checks the name is an ordinary folder in Files. Folder-sharing tests are
+described below.
 
 ## Built-in ZIP/RAR (DD-159, DD-166, DD-170; removed in DD-267)
 
@@ -1079,15 +1082,14 @@ service, account or host firewall is modified; all fixtures are temporary.
 Tailnet catalogue cleanup (DD-173, v2-147): the view tests exclude arbitrary
 peer/backend/admin sockets, retain configured per-family ports even without
 listeners, and keep registered WG endpoints with no active peers/sockets.
-Browser fixtures preserve explicit tailnet allow/deny rules, editable drafts,
-remove/cancel behavior and fallback to default deny without invented port rows.
+The browser side (Erişim → Güvenlik duvarı: rule drafts, the port-rule sheet and the plan) is
+`yeni-erisim-ui.cjs`.
 Live checks must also verify raw diagnostics and required local services remain.
 
 WAN/tunnel catalogue cleanup (DD-174, v2-148): view tests cover configured SSH/
 Tailscale ports and IPv4-only WAN WG endpoints independent
-of sockets/peer count; retired tunnel permits stay absent. Browser fixtures exercise
-explicit allow/deny toggle/remove/cancel for WAN and Tailscale; a closed
-user rule remains visible even where no automatic row exists.
+of sockets/peer count; retired tunnel permits stay absent. The browser side is
+`yeni-erisim-ui.cjs` (above).
 
 Firewall source cleanup (DD-175, v2-149): `firewall-linux.py` additionally starts
 from absent module/network files, then verifies preserved networks cannot revive
@@ -1100,8 +1102,8 @@ These are isolated policy fixtures, not a fresh Debian/Ubuntu image installation
 DNS-only Apply (DD-163, v2-133): unit tests cover immediate persistence past
 the old deadline/reboot, pre-write panel-name protection, mixed confirmation,
 restart/commit failure rollback, pre/post-commit crashes and recovery retries.
-Browser fixtures assert a single Apply request, no dialog/countdown/confirmation,
-reload persistence, failed-apply draft retention and retry. The isolated Linux
+In the browser (`yeni-erisim-ui.cjs`) the DNS draft goes through its plan ("Hemen kaydedilir; onay
+beklenmez."), one apply sends the planned body unchanged, and a refused plan can be asked again. The isolated Linux
 DNS test checks immediate commit and failed-apply recovery with real dnsmasq.
 
 Firewall tables (DD-162, v2-132): the browser side is `yeni-erisim-ui.cjs` (above).

@@ -4,7 +4,7 @@
     ayar.py --state STATE kur-hazirla --tohum SEED   {"username", "password"}  the base, before the engine
     ayar.py --state STATE kur-uygula --tohum SEED    the engine, before the container's first start
     ayar.py --state STATE kur-geri --tohum SEED      the engine, when that install fails
-    ayar.py --state STATE konteyner-ayar             the Podman page (Gezgin has no field to edit there)
+    ayar.py --state STATE konteyner-ayar             the application's Ayarlar tab (Gezgin has no field to edit there)
     ayar.py --state STATE konteyner-guncelle         {"revision"}: DD-214, move to the channel's digest
 
 container_config(env) is the adapter's read side; the base loads it as a module. JSON on stdin and stdout,
@@ -143,7 +143,7 @@ def patch_image(text, old, new, manifest=False):
 
 def container_config(env):
     """Declared App Store adapter: effective settings and an opaque stale-edit revision. Gezgin's own
-    settings live in Gezgin; nothing here is editable from the Podman page."""
+    settings live in Gezgin; nothing here is editable from the application's Ayarlar tab."""
     env = package_env(env)
     config = {"listener_port": int(env["GEZGIN_UI_PORT"])}
     digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode())

@@ -143,10 +143,10 @@ class NetworkSettingsTests(unittest.TestCase):
                 run.return_value=(0,line+runtime+"\n","")
                 self.assertNotIn("scope",api.net_rows()[0])
                 self.assertEqual(api.net_rows()[0]["revision"],hashlib.sha256(line.encode()).hexdigest())
-            # Settings consumers get the public network fields only (no DNS, no revision, no keys).
+            # The firewall and port views get the public network fields only (no DNS, no revision, no keys).
             nets = self.p.package_networks()
             self.assertEqual([n["iface"] for n in nets], ["wg0"])
-            self.assertEqual(set(nets[0]), {"app", "iface", "port", "label", "active", "server4", "subnet4", "server6", "subnet6"})
+            self.assertEqual(set(nets[0]), {"app", "iface", "port", "label", "active", "server4", "server6"})
             self.assertEqual(self.p.vpn_apps(), ["WireGuard"])
 
     def test_audit_lines_carry_the_package_id(self):

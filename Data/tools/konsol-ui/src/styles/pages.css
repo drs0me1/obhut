@@ -669,11 +669,6 @@
   color: var(--muted);
 }
 
-.add-link:hover {
-  background: var(--hover);
-  color: var(--ink);
-}
-
 .add-option .btn {
   margin-top: 6px;
 }

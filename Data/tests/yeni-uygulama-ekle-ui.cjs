@@ -12,7 +12,7 @@ const assert = require("node:assert/strict");
 const NOW = 1791845000;
 const cell = (durum, adresler = [], uyari = "", not = "") => ({ durum, adresler, uyari, not });
 const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: cell("yok"), internet: cell("yok"),
-  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, sayfa: null, eylemler: [], revizyon: null,
+  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
   metinler: null, hesap: false, ...o });
 const SHA = (c) => c.repeat(64);
 
@@ -34,7 +34,7 @@ const WG_KONSOL = { ad: "WireGuard", alt: "Cihazlarınız için VPN bağlantıs�
   neler: [["box", "Paketler: wireguard-tools, qrencode"]], notlar: ["Debian paketleri + Konsol sayfası"] };
 const GEZGIN_KONSOL = { ad: "Gezgin", alt: "Sunucudaki dosyalarınızı tarayıcıdan yönetin.", simge: "folder",
   form: { kur_baslik: "Gezgin'i kur", alanlar: [{ ad: "username", tur: "metin", etiket: "Kullanıcı adı", varsayilan: "yonetici" }] } };
-const pkg = (id, installed, konsol, o = {}) => ({ id, runtime: "konteyner", installed, state: installed ? "calisiyor" : "", live: installed ? "running" : "", busy: false,
+const pkg = (id, installed, konsol, o = {}) => ({ id, installed, state: installed ? "calisiyor" : "", live: installed ? "running" : "", busy: false,
   progress: null, durdurulabilir: true, konsol, ...o });
 
 const APPS = {
@@ -48,7 +48,7 @@ const APPS = {
     guncelleme: "guncel", eylemler: ["baslat", "kaldir"], revizyon: "rev-notlar-1" }),
   medya: app({ id: "konteyner:medya", ad: "medya", tur: "konteyner", aciklama: "Konsol dışında yönetilen konteyner · docker.io/example/medya", konteyner: "medya",
     eylemler: ["durdur", "yeniden-baslat", "kaldir"] }),
-  paylasim: app({ id: "yerlesik:paylasim", ad: "Paylaşımlar", tur: "yerlesik", aciklama: "WebDAV · yerleşik", sayfa: "#/dosyalar/paylasim" }),
+  paylasim: app({ id: "yerlesik:paylasim", ad: "Paylaşımlar", tur: "yerlesik", aciklama: "WebDAV · yerleşik" }),
 };
 
 const crow = (o) => ({ id: "", image: "", state: "running", unit: "", network: "", ports: [], started: null, restarts: 0, health: "", live: true, source: "konsol",
@@ -108,7 +108,7 @@ const inventory = () => ({ read_at: NOW, runtime: { version: "5.4.2", ok: true, 
 
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.08.06-v2-250", surum: "1.0.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
-    cores: 4, interval: 10, read_at: NOW, sampled_at: NOW, cpu: [1.0], mem: { total: 8375186227, used: 696254464, graph: [8.0] },
+    cores: 4, read_at: NOW, sampled_at: NOW, cpu: 1.0, mem: { total: 8375186227, used: 696254464 },
     net: { wan: "203.0.113.10", wan6: "", iface: "eth0", tailscale: "100.64.0.2", tailscale6: "" }, root: "/srv", disk: { total: 269186688614, free: 255550000000 } },
   saglik: { status: "ok", read_at: NOW, checks: [{ id: "tailscale", name: "Tailscale", status: "ok", detail: "çalışıyor" }] },
   guncelleme: { kurulu: "2026.08.06-v2-250", kurulu_surum: "1.0.0", son: "2026.08.06-v2-250", son_surum: "1.0.0", commit: "0".repeat(40), yeni: false,
@@ -120,7 +120,7 @@ const data = {
       wireguard: { kurulu: false, not: "", aglar: [] }, sertifikalar: [] } },
   uygulamalar: null,
   // Genel Bakış (the palette starts there).
-  ag: { read_at: NOW, iface: "eth0", window: 600, sampled_at: NOW, rx: 1024, tx: 2048, points: [], apps: [] },
+  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048, apps: [] },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
 };
 function setApps(ids, katalog) {
@@ -152,7 +152,6 @@ h.handlers["/api/konsol/moduller"] = () => ({ body: { items: PACKAGES } });
 h.handlers["/api/konsol/ayarlar/klasorler"] = ({ query }) => ({ body: { items: FOLDERS[query.get("path") ?? ""] ?? [] } });
 h.handlers["/api/konsol/konteynerler/liste"] = () => ({ body: inventory() });
 h.handlers["/api/konsol/konteynerler/ayrinti"] = ({ query }) => (CONTAINERS[query.get("ad")] ? { body: CONTAINERS[query.get("ad")] } : { status: 404, body: { error: "Konteyner bulunamadı" } });
-h.handlers["/api/konsol/konteynerler/gunluk"] = () => ({ body: { name: "web", lines: LOG, truncated: false } });
 h.handlers["/api/konsol/konteynerler/guncellemeler"] = ({ query }) => {
   if (query.get("yenile") === "1") CONTAINERS.web.update = { state: "var", channel: "docker.io/library/nginx:1.27-alpine", error: "", checked_at: NOW + 60 };
   return { body: { checked_at: NOW + 60, items: { web: CONTAINERS.web.update, notlar: CONTAINERS.notlar.update }, cached: query.get("yenile") !== "1" } };

@@ -240,11 +240,13 @@ def cmd_yayin(konsol, args):
         print("İnternete açık yayın yok; değişen bir şey olmadı.")
         return 0
     revision = view.get("revizyon")
-    for r in targets:
+    for index, r in enumerate(targets):
+        # Each write changes the revision; the next one reads it again.
+        if index:
+            revision = konsol.get("/api/konsol/yayinlar").get("revizyon")
         # The internet name closes; the Tailscale name stays as it is (Konsol's own always stays on).
         web = {"service": r["servis"], "tail": bool(r.get("tailscale")), "enabled": False, "domain": r.get("alan_adi") or ""}
-        result = konsol.post("/api/konsol/ayarlar/uygula", {"revision": revision, "web": web})
-        revision = (result or {}).get("revision") or konsol.get("/api/konsol/yayinlar").get("revizyon")
+        konsol.post("/api/konsol/ayarlar/uygula", {"revision": revision, "web": web})
         print("%s: internet adı kapatıldı." % r.get("ad"))
     return 0
 

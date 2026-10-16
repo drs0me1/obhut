@@ -1,6 +1,6 @@
 #!/bin/bash
 # Konsol'a ulaşılamadığında sunucuyu denetler ve onarır (DD-239). Repo kökünde çift tıklanır; sunucudaki
-# master-onar'ı SSH ile çalıştırır, Konsol'un Ayarlar → Sistem → Sağlık → "Denetle ve onar" düğmesiyle aynı
+# master-onar'ı SSH ile çalıştırır, Konsol'un Sistem → Sağlık → "Denetle ve onar" düğmesiyle (ve sudo obhut onar ile) aynı
 # işi yapar ve her adımı terminale yazar. kurulum/kurulum.env'den yalnız SSH_HOST okunur; Mac'te hiçbir
 # şey saklanmaz. Finder bu dosyayı macOS /bin/bash 3.2 ile çalıştırır.
 set -Eeuo pipefail

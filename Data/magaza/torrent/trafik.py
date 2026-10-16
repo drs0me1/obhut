@@ -3,12 +3,11 @@
 qBittorrent keeps its own all-time download/upload totals and writes them to its profile
 (qBittorrent-data.conf, [Stats] AllStats, a Qt QVariantHash with AlltimeDL/AlltimeUL) every few
 minutes while it runs and when it stops. This module reads that file only — no login, no
-command — and reports the figures with the file's time as "at". systemd's IP accounting was
+command — and reports the figures. systemd's IP accounting was
 tried first and rejected: a daemon-reload drops the counters of units loaded from disk on
 Debian 13 (systemd 257) until the service restarts. The base loads this file from the rendered
 package folder (like yayin.py) and calls trafik(env) with state.env's values.
 """
-import os
 from pathlib import Path
 import re
 import string
@@ -86,9 +85,8 @@ def trafik(env):
     path = Path(package_env(env)["TORRENT_PROFILE_DIR"]) / "qBittorrent" / "qBittorrent-data.conf"
     try:
         raw, _ = read_regular(path)
-        at = int(os.stat(path, follow_symlinks=False).st_mtime)
     except FileNotFoundError:
-        return {"down": 0, "up": 0, "since": None, "at": None}  # nothing transferred and saved yet
+        return {"down": 0, "up": 0}  # nothing transferred and saved yet
     section, value = "", None
     for line in raw.decode("utf-8").splitlines():
         if line.startswith("["):
@@ -96,7 +94,7 @@ def trafik(env):
         elif section == "[Stats]" and line.startswith("AllStats="):
             value = line.split("=", 1)[1].strip()
     if value is None:
-        return {"down": 0, "up": 0, "since": None, "at": at}
+        return {"down": 0, "up": 0}
     match = re.fullmatch(r'"?@Variant\((.*)\)"?', value)
     if not match:
         raise ValueError("AllStats okunamadı")
@@ -104,4 +102,4 @@ def trafik(env):
     down, up = stats.get("AlltimeDL"), stats.get("AlltimeUL")
     if not (isinstance(down, int) and isinstance(up, int)) or down < 0 or up < 0:
         raise ValueError("AllStats beklenen biçimde değil")
-    return {"down": down, "up": up, "since": None, "at": at}
+    return {"down": down, "up": up}

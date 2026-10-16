@@ -8,7 +8,6 @@
 set -Eeuo pipefail
 
 STATE_FILE="${STATE_FILE:-/etc/master-stack/state.env}"
-DEFAULTS_FILE="${DEFAULTS_FILE:-}"
 MODE="${1:-apply}"
 
 die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
@@ -30,10 +29,6 @@ esac
 [[ -r "$STATE_FILE" ]] || die "state.env yok: $STATE_FILE"
 # shellcheck source=/dev/null
 source "$STATE_FILE"
-if [[ -n "${DEFAULTS_FILE:-}" && -r "$DEFAULTS_FILE" ]]; then
-    # shellcheck source=/dev/null
-    source "$DEFAULTS_FILE"
-fi
 
 # WAN_INTERFACE state'te yalnız ipucu; belirleyici olan canlı default-route
 # (resolve_wan_interface). Diğer değerler state'ten zorunlu (DD-66).
@@ -286,9 +281,9 @@ check_rule_count() {
 }
 
 container_dns_iface() {
-    # Older state files predate the managed bridge key. Match the network helper's
-    # default and validation, never accept a caller-supplied wildcard interface.
-    local prefix="${KONTEYNER_BRIDGE_PREFIX-ksl}"
+    # The managed bridges' prefix from state.env, validated as the network helper does; never a
+    # caller-supplied wildcard interface. A state file without it stops here (fail closed).
+    local prefix="${KONTEYNER_BRIDGE_PREFIX:-}"
     [[ "$prefix" =~ ^[a-z][a-z0-9]{1,4}$ ]] || die "konteyner köprü öneki geçersiz"
     printf '%s+\n' "$prefix"
 }

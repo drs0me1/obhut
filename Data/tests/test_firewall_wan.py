@@ -67,7 +67,7 @@ class FirewallWANTests(unittest.TestCase):
             "source " + shlex.quote(str(DATA / "config/defaults.env")) + "\n"
             "WAN_INTERFACE=eth0\nSHARE_HTTPS_PORT=443\n"
             "SETTINGS_FILE=fixture-settings\nSBIN_DIR=fixture-bin\n")
-        self.env = dict(os.environ, STATE_FILE=str(self.state), DEFAULTS_FILE="",
+        self.env = dict(os.environ, STATE_FILE=str(self.state),
                         CALLS=str(self.calls), WAN_RESULT="1 16 64 443", HELPER_RC="0",
                         MANUAL_RULE="", LISTING="", HEALTHY="0", LC_ALL="C")
 

@@ -54,23 +54,12 @@ class OwnershipTests(unittest.TestCase):
         os.mkfifo(self.root / "fifo", 0o600)
         # A real device entry must be neither opened nor repaired.
         os.mknod(self.root / "device", stat.S_IFCHR | 0o600, os.makedev(1, 3))
-        for name in (".arsiv", ".pay"):
-            (self.root / name).mkdir(mode=0o700)
-            self.file(self.root / name / "private")
-        watched = list(self.root.iterdir()) + [self.target, self.root / ".arsiv/private", self.root / ".pay/private"]
+        (self.root / ".arsiv").mkdir(mode=0o700)
+        self.file(self.root / ".arsiv" / "private")
+        watched = list(self.root.iterdir()) + [self.target, self.root / ".arsiv/private"]
         before = [metadata(p) for p in watched]
-        self.assertEqual(permissions.repair(self.root, 65534, 65534, (".arsiv", ".pay")), 1)
+        self.assertEqual(permissions.repair(self.root, 65534, 65534, (".arsiv",)), 1)
         self.assertEqual([metadata(p) for p in watched], before)
-
-    def test_private_directory_repairs_only_its_own_owner_and_mode(self):
-        private = self.root / ".arsiv"
-        private.mkdir(mode=0o755)
-        child = self.file(private / "jobs.json")
-        before = metadata(child)
-        permissions.prepare_directory(private, 65534, 65534, 0o700)
-        st = private.stat()
-        self.assertEqual((st.st_uid, st.st_gid, stat.S_IMODE(st.st_mode)), (65534, 65534, 0o700))
-        self.assertEqual(metadata(child), before)
 
 
 class LockTests(unittest.TestCase):

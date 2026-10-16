@@ -1,5 +1,4 @@
-// The container definition editor's model (DD-211, DD-227; the current Konsol's Podman editor,
-// konteynerler.js draftFrom/configOut/problems/changes): a draft of strings the fields edit, the definition
+// The container definition editor's model (DD-211, DD-227): a draft of strings the fields edit, the definition
 // it becomes, the checks the server makes too (master_container_config.validate, so a refusal is rare), the
 // field-by-field changes against the saved definition and what saving them does. Shared by "Bir imajdan"
 // (create), the application page's Ayarlar (save) and "Var olanı yönetime al" (adopt).

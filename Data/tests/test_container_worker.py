@@ -120,7 +120,7 @@ class ContainerTests(unittest.TestCase):
         self.env = {'KONTEYNER_STATE_DIR': str(self.root / 'state'), 'KONTEYNER_BIRIM_DIR': str(self.root / 'quadlet'),
                     'KONTEYNER_LOCK': str(self.root / 'run/container.lock'), 'RUNTIME_DIR': str(self.root / 'run'),
                     'SBIN_DIR': str(self.root / 'sbin'),
-                    'SERVER_ROOT': str(self.root / 'srv'), 'FILES_PANEL_TRASH': '.cop', 'SHARE_DIR': '.pay',
+                    'SERVER_ROOT': str(self.root / 'srv'), 'FILES_PANEL_TRASH': '.cop',
                     'MODULES_DIR': str(self.root / 'mods'), 'TAILSCALE_IPV4': '100.64.0.7',
                     'KONTEYNER_BAGLAMA_DIR': str(self.root / 'run/konteyner-baglama'),
                     'DOWNLOADS_UID': '1000', 'DOWNLOADS_GID': '1000'}

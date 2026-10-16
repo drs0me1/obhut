@@ -49,7 +49,7 @@ SETTINGS = {
             publication("elle-gezgin", "Gezgin", "gezgin", manual=True, upstream="127.0.0.1:8093", answers=True,
                         enabled=True, domain="gezgin.example.org", status="ready", expires=NOW + 90 * 86400,
                         message="Sertifika doğrulandı."),
-            publication("paylasim", "WebDAV", "paylas", enabled=True, status="http", mode="http", wan_active=False),
+            publication("paylasim", "WebDAV", "paylas", enabled=True, status="http"),
         ],
     },
 }

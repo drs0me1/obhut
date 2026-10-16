@@ -2,20 +2,18 @@
   "ad": "WireGuard",
   "alt": "Cihazlarınız için VPN bağlantısı.",
   "simge": "shield",
-  "ton": "t-dir",
-  "aciklama": "Çekirdek WireGuard katmanını kurar ve Konsol'a WireGuard sayfasını ekler. Ağları ve cihazları o sayfadan kurarsınız.",
+  "aciklama": "Çekirdek WireGuard katmanını kurar. Ağları ve cihazları Konsol'da Erişim → WireGuard bölümünden kurarsınız.",
   "neler": [
     ["box", "Paketler: wireguard-tools, qrencode · çekirdek modülü"],
     ["shield", "Güvenlik duvarına WireGuard bildirimi eklenir"],
-    ["shield", "WireGuard sayfası açılır (ilk ağ: Yapılandır)"]
+    ["shield", "Erişim → WireGuard bölümü açılır (ilk ağ: Yapılandır)"]
   ],
-  "notlar": ["Debian paketleri + Konsol sayfası", "port ağ kurulunca açılır"],
-  "gunluk_kaynak": "journalctl -u wg-quick@*",
+  "notlar": ["Debian paketleri + Erişim → WireGuard", "port ağ kurulunca açılır"],
   "durdur_notu": "Bütün ağlar kapanır, UDP portları ve yönlendirme kalkar; cihazlar bağlanamaz. Başlatınca önceden açık olan ağlar geri gelir.",
   "kaldir": {
     "neler": [
       ["shield", "Bütün ağlar kapanır, UDP portları ve kurallar kalkar."],
-      ["folder", "WireGuard sayfası kalkar."]
+      ["folder", "Erişim → WireGuard bölümü kalkar."]
     ],
     "veri_etiket": "Ağ anahtarlarını ve profilleri de sil",
     "veri_kalir": "ağ anahtarları ve cihaz profilleri sunucuda korunur; yeniden kurunca ağlar geri gelir.",

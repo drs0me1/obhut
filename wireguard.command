@@ -219,7 +219,7 @@ select_net() {
     if [[ -z "$out" ]]; then
         echo
         echo "Sunucuda WireGuard ağı yok."
-        echo "Konsol'u açın (http://panel.<alan adı>) → WireGuard → Yapılandır ile ilk ağı kurun."
+        echo "Konsol'u açın (http://panel.<alan adı>) → Erişim → WireGuard → Yapılandır ile ilk ağı kurun."
         return 1
     fi
     lines=""
@@ -257,7 +257,7 @@ show_qr() {
 printf '\n=== WireGuard peer yönetimi ===\n'
 echo "==> Sunucu: $HOST"
 remote_version="$(remote version 2>/dev/null)" ||
-    fail "sunucuda master-wg yok ya da çalışmıyor; önce WireGuard'ı App Store'dan kurun ve sunucuyu Konsol'dan güncelleyin."
+    fail "sunucuda master-wg yok ya da çalışmıyor; önce WireGuard'ı Konsol → Uygulamalar → Uygulama ekle ile kurun ve sunucuyu Konsol'dan güncelleyin."
 [[ "$remote_version" == "$LOCAL_VERSION" ]] ||
     fail "sunucudaki kurulum $remote_version, bu repo $LOCAL_VERSION; önce sunucuyu Konsol'dan (Güncelle) güncelleyin."
 

@@ -610,8 +610,7 @@ class Manager:
         import master_publications
         pending = self.pending_view()
         return {"revision": self.revision(), "config": self.current(), "pending": pending,
-                "names": self.dns_names(), "folders": self.folders(), "https": master_https.status(self.e),
-                "publications": master_publications.status(self.e)}
+                "https": master_https.status(self.e), "publications": master_publications.status(self.e)}
 
     def snapshot(self, path):
         require(not path.is_symlink(), "Sembolik ayar dosyası reddedildi.")
@@ -910,7 +909,7 @@ class Manager:
         except Exception:
             self.rollback()
             raise
-        return {"pending": self.status()["pending"]}
+        return {"pending": self.pending_view()}
 
     def https_apply(self, name=None, service="paylasim"):
         import master_https

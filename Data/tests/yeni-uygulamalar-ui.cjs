@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 const cell = (durum, adresler = [], uyari = "", not = "") => ({ durum, adresler, uyari, not });
 const hcell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
 const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: cell("yok"), internet: cell("yok"),
-  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, sayfa: null, eylemler: [], revizyon: null,
+  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
   metinler: null, hesap: false, ...o });
 // A package's own stop and removal words (its konsol.json), as App Store shows them.
 const TORRENT_TEXTS = { durdur: "Süren indirmeler duraklar; başlatınca kaldığı yerden devam eder.",
@@ -32,21 +32,21 @@ function apps() {
       adres: { tailscale: "http://gezgin.ev", internet: "https://gezgin.example.com" }, eylemler: ["durdur", "yeniden-baslat", "kaldir"], revizyon: "rev-gezgin-1" }),
     app({ id: "paket:torrent", ad: "qBittorrent", tur: "paket", aciklama: "Torrent indirmelerini yönetin.", modul: "torrent", konteyner: "torrent", simge: "download", hesap: true,
       tailscale: cell("acik", ["torrent.ev"]), internet: cell("kismen", ["203.0.113.10:63851/tcp+udp"], "", "Yalnız qBittorrent eş portu"),
-      kaynak: { cpu: 3.2, bellek: 220200960 }, guncelleme: "yeni", adres: { tailscale: "http://torrent.ev", internet: null }, sayfa: "#/torrent",
+      kaynak: { cpu: 3.2, bellek: 220200960 }, guncelleme: "yeni", adres: { tailscale: "http://torrent.ev", internet: null },
       eylemler: ["durdur", "yeniden-baslat", "guncelle", "kaldir"], revizyon: "rev-torrent-7", metinler: TORRENT_TEXTS }),
-    app({ id: "paket:wireguard", ad: "WireGuard", tur: "paket", aciklama: "Cihazlarınız için VPN bağlantısı.", modul: "wireguard", simge: "shield", sayfa: "#/wireguard",
+    app({ id: "paket:wireguard", ad: "WireGuard", tur: "paket", aciklama: "Cihazlarınız için VPN bağlantısı.", modul: "wireguard", simge: "shield",
       eylemler: ["durdur", "yeniden-baslat", "kaldir"] }),
     app({ id: "konteyner:notlar", ad: "notlar", tur: "konteyner", aciklama: "Konteyner · docker.io/library/nginx", konteyner: "notlar", durum: "durduruldu",
-      tailscale: cell("kapali"), internet: cell("kapali"), guncelleme: "guncel", sayfa: "#/konteynerler/notlar", eylemler: ["baslat", "kaldir"] }),
-    app({ id: "yerlesik:dosya", ad: "Dosyalar", tur: "yerlesik", aciklama: "Dosya yöneticisi · yerleşik", sayfa: "#/dosyalar" }),
+      tailscale: cell("kapali"), internet: cell("kapali"), guncelleme: "guncel", eylemler: ["baslat", "kaldir"] }),
+    app({ id: "yerlesik:dosya", ad: "Dosyalar", tur: "yerlesik", aciklama: "Dosya yöneticisi · yerleşik" }),
     app({ id: "yerlesik:paylasim", ad: "Paylaşımlar", tur: "yerlesik", aciklama: "WebDAV · yerleşik · 2 klasör", tailscale: cell("acik", ["paylas.ev"], "", "2 klasör"),
-      internet: cell("acik", ["http://203.0.113.10:61010"], "Şifresiz HTTP", "1 klasör"), sayfa: "#/dosyalar/paylasim" }),
+      internet: cell("acik", ["http://203.0.113.10:61010"], "Şifresiz HTTP", "1 klasör") }),
   ];
 }
 
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.08.06-v2-244", surum: "1.0.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
-    cores: 4, interval: 10, read_at: 1791845000, sampled_at: 1791845000, cpu: [1.0, 2.0], mem: { total: 8375186227, used: 696254464, graph: [8.0] },
+    cores: 4, read_at: 1791845000, sampled_at: 1791845000, cpu: 2.0, mem: { total: 8375186227, used: 696254464 },
     net: { wan: "203.0.113.10", wan6: "", iface: "eth0", tailscale: "100.64.0.2", tailscale6: "" }, root: "/srv", disk: { total: 269186688614, free: 255550000000 } },
   saglik: { status: "bad", read_at: 1791844900, checks: [BAD_CHECK, ...OK_CHECKS] },
   guncelleme: { kurulu: "2026.08.06-v2-244", kurulu_surum: "1.0.0", son: "2026.08.06-v2-244", son_surum: "1.0.0", commit: "0".repeat(40), yeni: false,
@@ -57,9 +57,9 @@ const data = {
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null }, internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
       wireguard: { kurulu: true, not: VPN_NOTE, aglar: [] }, sertifikalar: [] } },
   uygulamalar: { read_at: 1791845000, hatalar: [], katalog: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 3, kullanilmayan_imaj: 1, birim: 2, ag: 3 }, items: apps() },
-  ag: { read_at: 1791845000, iface: "eth0", window: 600, sampled_at: 1791845000, rx: 10240, tx: 38912, points: [],
-    apps: [{ id: "torrent", name: "qBittorrent", state: "calisiyor", down: 932184064, up: 75497472, since: 1791000000, at: null },
-      { id: "wireguard", name: "WireGuard", state: "calisiyor", down: 5368709120, up: 291504128, since: 1790000000, at: null }] },
+  ag: { read_at: 1791845000, sampled_at: 1791845000, rx: 10240, tx: 38912,
+    apps: [{ id: "torrent", name: "qBittorrent", down: 932184064, up: 75497472 },
+      { id: "wireguard", name: "WireGuard", down: 5368709120, up: 291504128 }] },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
 };
 
@@ -109,11 +109,11 @@ const CONTAINERS = {
     user: "", command: "" }),
 };
 const PACKAGES = [
-  { id: "torrent", runtime: "konteyner", installed: true, state: "calisiyor", live: "running", busy: false, progress: null, durdurulabilir: true,
+  { id: "torrent", installed: true, state: "calisiyor", live: "running", busy: false, progress: null, durdurulabilir: true,
     konsol: { ad: "qBittorrent", alt: "Torrent indirmelerini yönetin.", simge: "download", form: { ayar_baslik: "qBittorrent ayarları", oku: "/durum", yaz: "/ayar",
       alanlar: [{ ad: "username", tur: "metin", etiket: "Kullanıcı adı" }, { ad: "password", tur: "parola", etiket: "Parola", en_az: 8 },
         { ad: "save", tur: "klasor", etiket: "İndirme klasörü" }] } } },
-  { id: "gezgin", runtime: "konteyner", installed: true, state: "calisiyor", live: "running", busy: false, progress: null, durdurulabilir: true,
+  { id: "gezgin", installed: true, state: "calisiyor", live: "running", busy: false, progress: null, durdurulabilir: true,
     konsol: { ad: "Gezgin", alt: "Sunucudaki dosyalarınızı tarayıcıdan yönetin.", simge: "folder", form: { alanlar: [{ ad: "username", tur: "metin", etiket: "Kullanıcı adı" }] } } },
 ];
 const LOG = Array.from({ length: 30 }, (_, i) => `2026-10-13T01:${String(10 + i).padStart(2, "0")}:00+03:00 torrent[812]: satır ${i + 1}`);

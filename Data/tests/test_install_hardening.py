@@ -48,7 +48,7 @@ class PermissionRepairTests(unittest.TestCase):
 
     def repair(self, **kwargs):
         return permissions.repair(self.root, self.uid, self.gid,
-                                  kwargs.get("excluded", (".arsiv", ".pay")))
+                                  kwargs.get("excluded", (".arsiv",)))
 
     def test_regular_files_directories_and_counts_are_selective(self):
         folder = self.root / "folder"
@@ -118,12 +118,13 @@ class PermissionRepairTests(unittest.TestCase):
 
     def test_top_level_workspaces_are_excluded_but_similar_and_nested_names_are_data(self):
         protected = []
-        for name in (".arsiv", ".pay"):
+        for name in (".arsiv",):
             folder = self.root / name
             (folder / "work").mkdir(parents=True, mode=0o700)
             folder.chmod(0o700)
             protected.extend((folder, folder / "work", self.file(folder / "work/private")))
-        for name in (".arsiv-copy", ".pay-copy", ".cop", "media"):
+        # DD-269: .pay is no longer reserved; it is ordinary data like any other folder.
+        for name in (".arsiv-copy", ".pay", ".cop", "media"):
             (self.root / name).mkdir(mode=0o700)
         nested = self.root / "media/.arsiv"
         nested.mkdir(mode=0o700)
@@ -270,23 +271,22 @@ class PermissionRepairTests(unittest.TestCase):
         existing = self.root / "existing"
         existing.mkdir(mode=0o700)
         before = metadata(existing)
-        permissions.prepare_directory(existing, self.uid, self.gid)
+        permissions.prepare_directory(existing)
         self.assertEqual(metadata(existing), before)
         destination = existing / "new/media/movies"
-        permissions.prepare_directory(destination, self.uid, self.gid)
+        permissions.prepare_directory(destination)
         self.assertTrue(destination.is_dir())
         self.assertEqual(stat.S_IMODE(existing.stat().st_mode), 0o700)
         before = metadata(destination)
-        permissions.prepare_directory(destination, self.uid, self.gid)
+        permissions.prepare_directory(destination)
         self.assertEqual(metadata(destination), before)
 
     def test_mkdir_rejects_symlink_parent_without_creating_outside_children(self):
         parent = self.root / "media"
         parent.symlink_to(self.outside, target_is_directory=True)
         before = metadata(self.outside), metadata(self.target)
-        for mode in (None, 0o700):
-            with self.subTest(mode=mode), self.assertRaises(OSError):
-                permissions.prepare_directory(parent / "movies/new", self.uid, self.gid, mode)
+        with self.assertRaises(OSError):
+            permissions.prepare_directory(parent / "movies/new")
         self.assertFalse((self.outside / "movies").exists())
         self.assertEqual((metadata(self.outside), metadata(self.target)), before)
 
@@ -305,65 +305,25 @@ class PermissionRepairTests(unittest.TestCase):
             return result
 
         with mock.patch.object(permissions.os, "mkdir", side_effect=swap), self.assertRaises(OSError):
-            permissions.prepare_directory(self.root / "new-parent/child", self.uid, self.gid)
+            permissions.prepare_directory(self.root / "new-parent/child")
         self.assertEqual(fired, [True])
         self.assertFalse((self.outside / "child").exists())
         self.assertEqual(metadata(self.outside), before)
 
-    def test_private_directory_is_selective_and_never_walks_its_contents(self):
-        private = self.root / ".arsiv"
-        private.mkdir(mode=0o755)
-        payload = self.file(private / "jobs.json", 0o600)
-        before = metadata(payload)
-        permissions.prepare_directory(private, self.uid, self.gid, 0o700)
-        self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o700)
-        self.assertEqual(metadata(payload), before)
-        before = metadata(private)
-        with mock.patch.object(permissions.os, "fchmod", wraps=os.fchmod) as chmod, \
-                mock.patch.object(permissions.os, "fchown", wraps=os.fchown) as chown:
-            permissions.prepare_directory(private, self.uid, self.gid, 0o700)
-            chmod.assert_not_called()
-            chown.assert_not_called()
-        self.assertEqual(metadata(private), before)
-
-    def test_private_directory_symlink_and_fifo_are_refused(self):
-        link = self.root / "archive-link"
+    def test_mkdir_refuses_a_symlink_or_fifo_target(self):
+        link = self.root / "folder-link"
         link.symlink_to(self.outside, target_is_directory=True)
-        fifo = self.root / "archive-fifo"
+        fifo = self.root / "folder-fifo"
         os.mkfifo(fifo, 0o600)
         before = metadata(self.outside), metadata(self.target), metadata(fifo)
         for path in (link, fifo):
             with self.subTest(path=path):
-                result = subprocess.run([sys.executable, str(HELPER), "--directory-mode", "0700",
+                result = subprocess.run([sys.executable, str(HELPER), "--mkdir",
                                          str(path), str(self.uid), str(self.gid)],
                                         capture_output=True, text=True, timeout=5)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("güvenli onarılamadı", result.stderr)
         self.assertEqual((metadata(self.outside), metadata(self.target), metadata(fifo)), before)
-
-    def test_private_directory_swapped_after_open_does_not_chmod_link_target(self):
-        private = self.root / ".arsiv"
-        private.mkdir(mode=0o755)
-        parked = self.root / "parked-archive"
-        real_open = os.open
-        before = metadata(self.outside), metadata(self.target)
-        fired = []
-
-        def swap(path, flags, *args, **kwargs):
-            fd = real_open(path, flags, *args, **kwargs)
-            if path == ".arsiv" and not fired:
-                private.rename(parked)
-                private.symlink_to(self.outside, target_is_directory=True)
-                fired.append(True)
-            return fd
-
-        with mock.patch.object(permissions.os, "open", side_effect=swap):
-            permissions.prepare_directory(private, self.uid, self.gid, 0o700)
-        self.assertEqual(fired, [True])
-        self.assertTrue(private.is_symlink())
-        self.assertEqual(stat.S_IMODE(parked.stat().st_mode), 0o700)
-        self.assertEqual((metadata(self.outside), metadata(self.target)), before)
-
 
 if __name__ == "__main__":
     unittest.main()

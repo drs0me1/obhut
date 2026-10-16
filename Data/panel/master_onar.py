@@ -589,7 +589,7 @@ class Repair:
             notes.append("güncelleme yarıda kalmış (%s); Sistem → Güncellemeler'den yeniden deneyin" % state.get("hedef", "?"))
         pending = self.env.get("SETTINGS_PENDING_FILE", "")
         if pending and os.path.exists(pending):
-            notes.append("Ayarlar'da onay ya da geri alma bekleyen bir işlem var")
+            notes.append("Konsol'da onay ya da geri alma bekleyen bir ayar işlemi var")
         return ("sorun", upper_first("; ".join(notes))) if notes else ("ok", "Yarıda kalan işlem yok")
 
     def others(self):

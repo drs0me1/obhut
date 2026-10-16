@@ -36,7 +36,7 @@ class HttpsSettingsTests(unittest.TestCase):
         self.env.update(LOCAL_DOMAIN="ayc", TAILSCALE_IF="tailscale0", WAN_INTERFACE="eth0", WAN_IPV4="8.8.8.8",
                         TAILSCALE_IPV4="100.64.0.2", DOWNLOADS_UID=str(os.getuid()), DOWNLOADS_GID=str(os.getgid()),
                         MEDIA_SUBDIR="media", SHARE_PORT="61010", SHARE_HTTPS_PORT="443", SHARE_WAN_BACKEND="127.0.0.2",
-                        TORRENT_TEMP_DIR="incomplete", FILES_PANEL_TRASH=".cop", SHARE_DIR=".pay", DNS_PORT="53", CADDY_HTTP_PORT="80")
+                        TORRENT_TEMP_DIR="incomplete", FILES_PANEL_TRASH=".cop", DNS_PORT="53", CADDY_HTTP_PORT="80")
         (self.root / "modules").write_text("paylasim\tcalisiyor\n")
         (self.root / "Caddyfile").write_text("{\n auto_https disable_redirects\n}\n")
         self.state = self.root / "state.env"
@@ -169,13 +169,13 @@ class HttpsSettingsTests(unittest.TestCase):
         self.s.env["SHARE_HTTPS_PORT"] = "8443"
         self.assertIn(":8443/s/", self.s.public()["items"][0]["urls"]["wan"])
 
-    def test_status_names_the_https_port_even_in_legacy_http_mode(self):
-        # DD-193: legacy HTTP reports SHARE_PORT as "port"; the table needs the HTTPS port.
+    def test_status_port_is_share_port_in_legacy_http_mode_and_the_https_port_after(self):
+        # DD-193: legacy HTTP reports SHARE_PORT as "port"; a saved domain the HTTPS port.
         env = dict(self.env, SHARE_HTTPS_PORT="8443")
-        self.assertEqual((tls.status(env)["port"], tls.status(env)["https_port"]), (61010, 8443))
+        self.assertEqual(tls.status(env)["port"], 61010)
         self.m.apply(self.payload())
         with patch.object(tls, "certificate", return_value=1900000000):
-            self.assertEqual((tls.status(env)["port"], tls.status(env)["https_port"]), (8443, 8443))
+            self.assertEqual(tls.status(env)["port"], 8443)
 
     def test_crash_recovery_restores_only_uncommitted_https(self):
         def crash(*_):

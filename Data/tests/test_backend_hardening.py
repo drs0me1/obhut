@@ -57,9 +57,9 @@ class ConfigReadTests(unittest.TestCase):
         self.assertEqual(self.manager.validate_path(self.data, "media")[0], "media")
         self.conf.write_text("[BitTorrent]\nSession\\TempPath=" + str(self.root / "srv/media")
                              + "\nWebUI\\Password_PBKDF2=fixture-secret\n")
-        # The package worker's view carries paths only, never the hash the file also holds.
+        # The package worker's view carries the user name and the folder only, never the hash the file also holds.
         view = ayar.durum({"TORRENT_PROFILE_DIR": str(self.root / "profile"), "DOWNLOADS_PATH": str(self.root / "srv")})
-        self.assertEqual((view["temp"], view["temp_inside"]), (str(self.root / "srv/media"), True))
+        self.assertEqual(set(view), {"username", "save"})
         self.assertNotIn("fixture-secret", json.dumps(view))
         with self.assertRaisesRegex(shares.ShareError, "çakışıyor"):
             self.manager.validate_path(self.data, "media")
@@ -119,14 +119,14 @@ class ReservedNamesTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        for name in (".cop", ".pay", "dest"):
+        for name in (".cop", "dest"):
             (self.root / name).mkdir()
             (self.root / name / "marker").write_text(name)
         (self.root / "ordinary").write_text("keep")
-        self.files = files.Files(str(self.root), ".cop", ".pay")
+        self.files = files.Files(str(self.root), ".cop")
 
     def test_reserved_sources_reject_rename_move_and_trash_before_any_mutation(self):
-        for name in (".cop", ".pay"):
+        for name in (".cop",):
             actions = [lambda: self.files.rename([], name, "renamed"),
                        lambda: self.files.move([], ["ordinary", name], ["dest"]),
                        lambda: self.files.to_trash([], ["ordinary", name])]
@@ -140,7 +140,7 @@ class ReservedNamesTests(unittest.TestCase):
                 self.assertEqual(sorted(p.name for p in (self.root / ".cop").iterdir()), ["marker"])
 
     def test_moving_nested_reserved_name_cannot_create_a_root_system_area(self):
-        for name in (".cop", ".pay"):
+        for name in (".cop",):
             source = self.root / "dest" / name
             source.mkdir()
             with self.subTest(name=name), self.assertRaises(files.PanelError) as error:
@@ -156,7 +156,7 @@ class ReservedNamesTests(unittest.TestCase):
         self.assertEqual((self.root / "dest/renamed").read_text(), "keep")
 
     def test_restore_never_publishes_a_reserved_root_name(self):
-        for name in (".pay",):
+        for name in (".cop",):
             # A historical/manually edited trash entry must choose a harmless new name.
             token = "1700000000000-" + "a" * 8
             target = self.root / ".cop" / token
@@ -168,6 +168,13 @@ class ReservedNamesTests(unittest.TestCase):
             self.assertEqual((self.root / result["name"]).read_text(), "saved")
             self.assertEqual((self.root / name / "marker").read_text(), name)
 
+    def test_the_retired_share_workspace_name_is_an_ordinary_folder(self):
+        # DD-269: the pre-v2-145 share tree's name is no longer reserved (the installer refuses to run beside one).
+        (self.root / ".pay").mkdir()
+        self.assertIn(".pay", [e["name"] for e in self.files.listing([], False)["entries"]])
+        self.files.rename([], ".pay", "pay")
+        self.assertTrue((self.root / "pay").is_dir())
+
     def test_the_retired_archive_workspace_name_is_an_ordinary_folder(self):
         # DD-267: the ZIP/RAR jobs and their private .arsiv workspace are gone; the name is no longer reserved.
         (self.root / ".arsiv").mkdir()
@@ -175,9 +182,9 @@ class ReservedNamesTests(unittest.TestCase):
         self.files.rename([], ".arsiv", "arsiv")
         self.files.mkdir([], ".arsiv")
         self.assertTrue((self.root / "arsiv").is_dir() and (self.root / ".arsiv").is_dir())
-        # A fourth positional argument (the old archive name) is refused, never read as the system flag.
+        # A third positional argument (the old share or archive name) is refused, never read as the system flag.
         with self.assertRaises(TypeError):
-            files.Files(str(self.root), ".cop", ".pay", ".arsiv")
+            files.Files(str(self.root), ".cop", ".pay")
 
 
 class ListenQueueTests(unittest.TestCase):

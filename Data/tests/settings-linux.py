@@ -249,8 +249,8 @@ def main():
                 with request("auth/login", dict(username="initial", password="test-initial-password")) as response:
                     assert response.read() == b"Ok."
                 conf, drop = ayar.conf_path(e), ayar.drop_in_path(e)
-                assert ayar.hesap(e, dict(username="operator", password="test-new-password-123")) == {"ok": True, "username": "operator"}
-                assert ayar.dizin(e, dict(save=str(root / "srv/media")), str(state))["save"] == str(root / "srv/media") + "/"
+                saved = ayar.ayar(e, dict(username="operator", password="test-new-password-123", save=str(root / "srv/media")), str(state))
+                assert saved == {"ok": True, "username": "operator", "save": str(root / "srv/media") + "/"}, saved
                 with request("auth/login", dict(username="operator", password="test-new-password-123")) as response:
                     assert response.read() == b"Ok."
                     cookie = response.headers["Set-Cookie"].split(";", 1)[0]
@@ -262,13 +262,13 @@ def main():
                 assert "test-new-password" not in conf.read_text()
                 before = conf.read_bytes()
                 try:
-                    ayar.hesap(e, dict(password="1234567"))
+                    ayar.ayar(e, dict(password="1234567"), str(state))
                 except settings.SettingsError:
                     pass
                 else:
                     raise AssertionError("Seven-character password was accepted")
                 assert conf.read_bytes() == before
-                assert ayar.hesap(e, dict(username="saved-user", password="Pass8!xy"))["ok"]
+                assert ayar.ayar(e, dict(username="saved-user", password="Pass8!xy"), str(state))["ok"]
                 with request("auth/login", dict(username="saved-user", password="Pass8!xy")) as response:
                     assert response.read() == b"Ok."
                 with request("auth/login", dict(username="operator", password="test-new-password-123")) as response:
@@ -286,7 +286,7 @@ def main():
                     return adapted(argv, **kwargs)
                 with patch.object(settings, "run", side_effect=failing_start):
                     try:
-                        ayar.hesap(e, dict(username="failed-user", password="test-failed-password-123"))
+                        ayar.ayar(e, dict(username="failed-user", password="test-failed-password-123"), str(state))
                     except settings.SettingsError:
                         pass
                     else:
@@ -296,7 +296,7 @@ def main():
                 with request("auth/login", dict(username="saved-user", password="Pass8!xy")) as response:
                     assert response.read() == b"Ok."
                 stop("qbit")
-                assert ayar.hesap(e, dict(username="stopped-user"))["ok"]
+                assert ayar.ayar(e, dict(username="stopped-user"), str(state))["ok"]
                 assert "qbit" not in processes, "Durdurulmuş servis kendiliğinden açıldı"
                 start("qbit")
                 with request("auth/login", dict(username="stopped-user", password="Pass8!xy")) as response:

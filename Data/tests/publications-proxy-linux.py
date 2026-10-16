@@ -134,7 +134,7 @@ def main():
             assert request("/api/v2/app/version",cookie=cookie,extra={"X-Forwarded-Host":"evil.example.net"})[0] == 200
             assert request("/api/v2/app/preferences",cookie=cookie,origin="https://evil.example.net")[0] == 401
             assert request("/api/v2/app/version",cookie=cookie,host="panel.ayc")[0] == 421
-            assert request("/api/konsol/ayarlar",cookie=cookie)[0] == 404
+            assert request("/api/konsol/kaynaklar",cookie=cookie)[0] == 404
             print("PASS real generated Caddy HTTPS/qBittorrent login, cookie/API, bad-password, CSRF, SNI/Host and Panel isolation (test-only certificate, port %s)" % args.port,flush=True)
         finally:
             for process in reversed(processes):

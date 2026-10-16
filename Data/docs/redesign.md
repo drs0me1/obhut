@@ -68,9 +68,9 @@ Each goal is checked by a test or a measured flow when its phase lands.
 | **Genel Bakış** | Health first ("everything is fine" or what needs attention, each with its fix), then applications, resources, network and the server |
 | **Uygulamalar** | Every application in one list: App Store packages, Konsol containers, built-ins. Each has the same page: Özet · Erişim · Depolama · Ayarlar · Günlük. "+ Uygulama ekle": from the catalogue, from an image, adopt an existing container |
 | **Erişim** | The reachability matrix (this server · Tailscale · WireGuard · internet) with the technical details on demand, and the "Yayınla" flow. Under it: Adresler (names and certificates), Tailscale, WireGuard, Güvenlik duvarı |
-| **Dosyalar** | Gezgin as the file application; storage and folders with the applications that use them; the root "Sistem dosyaları" view (tailnet only); a lean rescue view of `/srv` |
-| **Sistem** | Sağlık ve onarım, Güncellemeler, Hesap ve oturum, Görünüm (light/dark/system), Günlük |
-| **Gelişmiş** | The effective Caddy configuration, DNS records, technical firewall rules, Podman images/volumes/networks, raw logs |
+| **Dosyalar** | Gezgin as the file application; Depolama (storage and folders with the applications that use them); Sunucu klasörleri (a lean rescue view of `/srv`), Çöp kutusu, Paylaşımlar; the root "Sistem dosyaları" view (tailnet only) |
+| **Sistem** | Sağlık ve onarım, Güncellemeler, Hesap ve oturum, Sunucu, Görünüm (light/dark/system), Günlük |
+| **Gelişmiş** | The effective Caddy configuration, DNS records, technical firewall rules (a link to Erişim), Podman images/volumes/networks. Logs are each application's Günlük and Sistem → Günlük, not a raw-log view |
 
 Shared behaviour:
 
@@ -105,9 +105,10 @@ Shared behaviour:
     test fails when it does not match the sources. Node is needed only on the build machine.
   - Templates are precompiled (no runtime compiler, no `eval`); styles live in files; style bindings
     go through the CSSOM. The CSP stays as it is, plus `font-src 'self'` for a local Outfit.
-  - Design tokens and base components are shared with Gezgin at build time.
-- **Later:** a PWA manifest with the Ô icons; an `obhut` command-line tool over the same socket API
-  for recovery over SSH.
+  - Design tokens and base components were to be shared with Gezgin at build time; Konsol keeps its
+    own (`src/styles/tokens.css`), Gezgin being a separate project.
+- **Phase 5 (DD-268):** a PWA manifest with the Ô icons; the `obhut` command-line tool over the same
+  socket API for recovery over SSH.
 - **Not used:** Java (JVM memory and start-up cost, a large dependency surface in a root process, no
   gain for a single-operator panel); a runtime template compiler; CDN assets; framing Gezgin inside
   Konsol.
@@ -119,8 +120,8 @@ Shared behaviour:
   digest-pinned image, its own bridge (DD-217), the Files account (DD-227), declared folders, a declared
   publication (one loopback port, a tailnet name, an optional public name) in place of today's manual
   address and direct tailnet ports, update checks applied only on the operator's confirmation
-  (DD-214), an install form for the first administrator, and removal that asks whether to keep
-  `gezgin-db`.
+  (DD-214), an install form for the first administrator, and removal that asks whether to keep its
+  data.
 - Sharing does not move (DD-268): Konsol's folder shares stay, with their separate tailnet and internet
   policies; Gezgin, as a container, shares its own content with its own links and tailnet WebDAV
   (DD-264). Konsol decides whether Gezgin is reachable at all (Erişim).

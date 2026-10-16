@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-16 — Leftovers of the old interface removed (v2-253)
+
+- Konsol's backend no longer reads the firewall rule by rule for a page that is gone: opening Erişim or
+  Gelişmiş runs six fewer `iptables` commands. Genel Bakış gets the last CPU sample and the last network
+  rate instead of histories nothing drew (DD-269).
+- qBittorrent's settings have one route, the Ayarlar tab's `/ayar`; the old account and folder routes
+  answer 404. Its journal line now reads "qBittorrent ayarları kaydedildi (…)". WireGuard no longer
+  offers a masked profile preview; a device profile is a download or a QR code, as before.
+- Messages on the server terminal, in `wireguard.command`, `kur.sh` and the repair report name today's
+  places (Erişim → Adresler, Erişim → WireGuard, Uygulamalar, the pending-change bar) instead of
+  Ayarlar, App Store or Ana Menü. The install summary no longer lists an archive tool.
+- Live checks that still asked for removed routes (`https-live`, `publications-live`,
+  `panel-public-live`, `konsol-login-live`) read the current ones again.
+- Code kept only for installs from before v2-190 is gone. A server that still has the share folder
+  of releases before v2-145 (`/srv/.pay`) is not installed any more: the installer stops before
+  changing anything and asks for that folder to be checked and removed, since it may hold old account
+  data and is no longer hidden. The user area is `/srv` only (no `/data`), and the old native
+  qBittorrent service is not checked for.
+
 ### 2026-10-16 — Konsol as an app on the home screen, and `obhut` for SSH (v2-252)
 
 - Konsol can be added to a phone's or computer's home screen and opens in its own window with the Ô

@@ -45,7 +45,7 @@ def resources(row):
 
 
 def texts(meta):
-    """A package's own stop and removal words from its konsol.json (DD-200), as App Store shows them:
+    """A package's own stop and removal words from its konsol.json (DD-200), as its page asks them:
     what removal takes away, the data switch's label, what stays and what goes with it."""
     remove = meta.get("kaldir") if isinstance(meta.get("kaldir"), dict) else {}
 

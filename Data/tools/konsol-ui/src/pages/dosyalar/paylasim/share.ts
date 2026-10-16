@@ -46,7 +46,7 @@ export function transportText(scope: ShareScope, view: Paylasimlar | null): stri
   return "Kapalı";
 }
 
-/** A share's state over both connections (the current Konsol's words). */
+/** A share's state over both connections. */
 export function shareState(s: Pick<Paylasim, "connections" | "available">): { text: string; tone: Tone } {
   const list = SCOPES.map((scope) => s.connections[scope]).filter((c): c is PaylasimBaglantisi => Boolean(c));
   if (!list.length) return { text: "Bağlantı bilgisi yok", tone: "neutral" };

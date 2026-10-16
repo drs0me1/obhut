@@ -207,11 +207,10 @@ the ones agreed on 2026-08-05:
   (no full-tree rewrite). qBittorrent and Konsol's file backend share
   read/write that way. WebDAV enforces each connection's RO/RW permission
   within the folder account (DD-158/DD-192).
-- The reserved `.pay` name (`SHARE_DIR`) is excluded from ordinary
-  ownership/mode repair. `.pay` is never created or read; the file backend hides
-  and refuses it (the name is reserved), WebDAV and qBittorrent cannot access it,
-  and its contents are never deleted (**DD-171**).
-  `.cop` and `.pay` are internal areas, not shareable folders.
+- The pre-v2-145 share tree `SERVER_ROOT/.pay` is no longer hidden anywhere: stage 0 stops,
+  before any write, while it exists as a folder or a link, and asks for it to be checked and
+  removed (**DD-269**, retiring DD-171's reserved name). `.cop` is an internal area, not a
+  shareable folder.
 - The retired archive workspace `SERVER_ROOT/.arsiv` (`RETIRED_ARCHIVE_DIR`,
   **DD-267**) is skipped by that repair and removed in stage 7, after the new
   units run, only while it is a real directory directly under the user area owned
@@ -397,8 +396,9 @@ Contract in §5–§7 and `folder-shares.md`.
   - **Sign-in (DD-194, DD-205):** Caddy's `forward_auth` asks this backend
     (`GET /oturum-denetle` on its socket) before every panel request except
     the sign-in page's own files and the marks (`/giris.js`, `/giris.css`,
-    `/tema.js`, `/fonts/Outfit-Variable.woff2`, `/obhut.svg`, `/obhut.png`; they
-    carry nothing private, **DD-267**) and `/api/konsol/oturum[/*]`. The
+    `/tema.js`, `/fonts/Outfit-Variable.woff2`, `/obhut.svg`, `/obhut.png`, and the app
+    manifest `/manifest.json` with `/obhut-192.png` and `/obhut-512.png`; they carry nothing
+    private, **DD-267**, **DD-268**) and `/api/konsol/oturum[/*]`. The
     answer follows the channel Caddy wrote: on the tailnet site (another
     Tailscale device, DD-180) 204 without any cookie and 302 from `/giris.html`
     to `/`; on the public site, and for a caller without Caddy's forwarding
@@ -634,14 +634,14 @@ Contract in §5–§7 and `folder-shares.md`.
   - **Network card (DD-206, DD-212).** Genel Bakış's Ağ card reads `GET
     /api/konsol/ag` every 5 s while the page is shown and the browser tab visible. The
     endpoint returns the WAN interface's (`WAN_INTERFACE`) receive
-    and send rates in bytes/s — computed from `/sys/class/net/<if>/statistics`, a point at
-    most every 1.5 s plus one per background sample, the last 120 s returned — and, per
-    installed package that declares `PAKET_TRAFIK`, its own module's cumulative totals
-    `{down, up, since}` (cached 2 s; a stopped package shows as stopped, a failing module
-    only empties its own row). qBittorrent's are its own all-time totals from
-    `qBittorrent-data.conf` with the file's time (`at`); these can lag between the
-    application's statistics-file saves. WireGuard's are its networks' interface
-    counters since the networks came up (`since`; down = sent to the peers).
+    and send rates in bytes/s — computed from `/sys/class/net/<if>/statistics`, measured at
+    most every 1.5 s plus once per background sample; only the last rate, none older than
+    120 s — and, per installed package that declares `PAKET_TRAFIK`, its own module's
+    cumulative totals `{down, up}` (cached 2 s; a stopped package's are empty, a failing
+    module only empties its own row). qBittorrent's are its own all-time totals from
+    `qBittorrent-data.conf`; these can lag between the application's statistics-file saves.
+    WireGuard's are its networks' interface counters since the networks came up (down = sent
+    to the peers).
     Application totals use byte units, never bytes/s; only the server's rates are live
     speeds. Existing backend traffic sources and authentication are unchanged; no new
     rate module or additional qBittorrent login is introduced.
@@ -939,7 +939,7 @@ Contract in §5–§7 and `folder-shares.md`.
     symbolic link is listed but never followed, and `..` and `/` are refused.
   - Rename and move use `renameat2(RENAME_NOREPLACE)`. An existing target
     refuses the operation, and a folder cannot move into itself.
-    Root `.cop` and `.pay` sources are rejected before any item in a
+    A root `.cop` source is rejected before any item in a
     move/trash batch is changed; nested reserved names cannot be moved into
     the root. Restore chooses an alternate name for a reserved root name
     (**DD-186**).
@@ -955,8 +955,8 @@ Contract in §5–§7 and `folder-shares.md`.
     `onayla`. The trash is not reachable through any path, and the root listing
     hides it.
   - The installer creates the folder. It lies outside `SERVER_ROOT/downloads`,
-    so qBittorrent never sees it (**DD-144**). The WebDAV unit lists the trash,
-    `.pay` when present and `PRIVATE_STATE_ROOT` in one
+    so qBittorrent never sees it (**DD-144**). The WebDAV unit lists the trash
+    and `PRIVATE_STATE_ROOT` in one
     `InaccessiblePaths=` line (**DD-225**), and a share can be neither the root nor
     contain a hidden or reserved name (**DD-158**, §7).
 - Text view: the first 1 MiB of a regular file.
@@ -1090,9 +1090,11 @@ Contract in §5–§7 and `folder-shares.md`.
   lines and `TORRENTING_PORT` there, sets the profile's `Session\Port`, records the override and
   reapplies the container guard before the restart (**DD-221**). The application page labels a
   publication on the WAN address as internet access and shows the bridge's name.
-- **Gezgin (DD-262).** The file manager is a container application on its own bridge `gezgin`
-  with one publication, its interface on `127.0.0.1:GEZGIN_UI_PORT` (62983), reached on the tailnet
-  as `gezgin.<domain>`; the image is pinned by digest and follows the `1.0` channel only on the
+- **Gezgin (DD-262, DD-264).** The file manager is a container application on its own bridge `gezgin`
+  with two publications: its interface on `127.0.0.1:GEZGIN_UI_PORT` (62983), reached on the tailnet
+  as `gezgin.<domain>`, and its own WebDAV shares on the Tailscale address only
+  (`TAILSCALE_IPV4:GEZGIN_WEBDAV_PORT`, 62984, the same port inside; `master-modul` fills the address
+  each time it places the unit; plain HTTP, never on the internet); the image is pinned by digest and follows the `1.0` channel only on the
   operator's confirmation. The process runs as the Files account with every capability dropped and
   `no-new-privileges`. `SERVER_ROOT` is mounted whole at `/srv` (Gezgin's own trash, uploads and
   archive folders at its root are the package's declared folders); Konsol's trash is covered
@@ -1103,7 +1105,8 @@ Contract in §5–§7 and `folder-shares.md`.
   verified. A kept database keeps its users and the form's account is not created. Install, start,
   restart and apply refuse while a Konsol container definition named `gezgin`, or a `gezgin` container
   of another unit, exists. The publication row needs a running Gezgin that refuses an anonymous API
-  call; Gezgin has no setting that bypasses its sign-in. Gezgin's WebDAV shares stay off. `kaldir`
+  call; Gezgin has no setting that bypasses its sign-in. Gezgin shares its own content with its own links
+  and those WebDAV shares; Konsol's folder shares stay beside them (**DD-268**). `kaldir`
   keeps the data and the image, `--veri` removes both; the user area is never touched. There is no
   Konsol page or API: Konsol opens Gezgin's address, and Konsol's session does not sign in to it.
 - **Install form (DD-210).** A package may declare an install form: `konsol.json`
@@ -1242,8 +1245,7 @@ Contract in §5–§7 and `folder-shares.md`.
     on `127.0.0.1` only, that its API answers
     `403` without a login on `127.0.0.1:TORRENT_UI_PORT` and through
     `torrent.${LOCAL_DOMAIN}`, and that the name resolves; a failed install is taken
-    back. An active old Debian `qbittorrent-nox@` unit stops the install with the
-    manual step (`systemctl disable --now …`).
+    back.
   - Names: `torrent.${LOCAL_DOMAIN}` (Caddy site and dnsmasq name); no
     WireGuard publication.
   - Inbound peers (**DD-217**, **DD-219**, **DD-221**): only `WAN_IPV4:TORRENT_PEER_PORT` (63851 unless
@@ -1258,7 +1260,7 @@ Contract in §5–§7 and `folder-shares.md`.
     `gunluk` masks that line.
   - Its Konsol files (**DD-200**, **DD-202**): `konsol.json` (texts, the install and
     settings form) and `api.py` with the worker `ayar.py`
-    (`/api/uygulama/torrent/{durum,hesap,dizin,ayar}`; `ayar` is the settings form's
+    (`/api/uygulama/torrent/{durum,ayar}`: `durum` the form's user name and folder, `ayar` its
     single save of any of username, password and folder with one stop/start, **DD-210**;
     the worker also has `kur-hazirla`/`kur-uygula`/`kur-geri`; the worker edits the profile
     and the quadlet drop-in `90-konsol.conf`, §1.10). Its own settings `torrent.env`
@@ -1498,6 +1500,7 @@ asking; a domain confirmed in Konsol (`SETTINGS_FILE.domain`) takes precedence
 | Name | dnsmasq answer | Caddy site | Upstream |
 |---|---|---|---|
 | `torrent.${LOCAL_DOMAIN}` (qBittorrent module only) | `${TAILSCALE_IPV4}` | `http://torrent.…` | `127.0.0.1:62947` (**DD-117**, **DD-151**, **DD-219**) |
+| `gezgin.${LOCAL_DOMAIN}` (Gezgin module only) | `${TAILSCALE_IPV4}` | `http://gezgin.…` | `127.0.0.1:62983` (**DD-262**); its WebDAV shares are the container's own publication on `${TAILSCALE_IPV4}:62984`, not a Caddy site (**DD-264**) |
 | `paylas.${LOCAL_DOMAIN}` (built-in folder sharing) | `${TAILSCALE_IPV4}` | `http://paylas.…/s/<id>/` and `http://${TAILSCALE_IPV4}:61010/s/<id>/` | `127.0.0.1:61010` (**DD-158**, **DD-159**) |
 | Public WebDAV domain (optional, separate from `LOCAL_DOMAIN`) | Not a private dnsmasq record; public DNS must resolve only to `${WAN_IPV4}` | `https://<public-domain>/s/<id>/`, bound to `${WAN_IPV4}:${SHARE_HTTPS_PORT}`; legacy HTTP/off modes in §3.1 (**DD-190**) | `SHARE_WAN_BACKEND:61010` |
 | `panel.${LOCAL_DOMAIN}` (Konsol) | `${TAILSCALE_IPV4}` | `http://panel.…` (`import konsol tailscale`) | the interface and the sign-in page from `CONSOLE_WEB_DIR` (`/yeni` and `/yeni/*` → 308 to `/`, **DD-267**); `/api/konsol/*` and `/api/uygulama/*` → Unix socket `PANEL_SOCKET` (`/run/master-panel/api.sock`, **DD-180**), other `/api/*` → `127.0.0.1:61009` (**DD-140**) |

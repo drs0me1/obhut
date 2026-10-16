@@ -93,8 +93,8 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
 - Mevcut kullanıcı ağacında sahiplik/izin **seçici** onarılır (DD-84/DD-187):
   sabit dosya tanıtıcılarıyla `fchown/fchmod`, sapmış dizin `0775` / dosya `0664`;
   sembolik bağ, çok bağlantılı dosya ve özel dosyalar atlanır; eşleşen
-  girdilere dokunulmaz. Koşulsuz full-tree rewrite yok. `.cop` çöptür; `.pay` uyumluluk
-  kalıntısı hâlâ kurulum/izin denetimlerinde kullanılır. Bu alanları veri dizini sanıp
+  girdilere dokunulmaz. Koşulsuz full-tree rewrite yok. `.cop` çöptür; eski `.pay` ağacı varken
+  kurulum durur (DD-269). Bu alanları veri dizini sanıp
   yayımlama veya körlemesine silme. Kaldırılan arşiv işlerinin `.arsiv` alanı
   (`RETIRED_ARCHIVE_DIR`, DD-267) izin taramasından hariçtir ve aşama 7'de yalnız indirme
   hesabının 0700 gerçek klasörüyse silinir.
@@ -190,6 +190,7 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - `panel.${LOCAL_DOMAIN}` (Konsol; temel, `SERVICE_NAMES`)
   - `paylas.${LOCAL_DOMAIN}` (yerleşik WebDAV)
   - `torrent.${LOCAL_DOMAIN}` (qBittorrent kuruluysa)
+  - `gezgin.${LOCAL_DOMAIN}` (Gezgin kuruluysa)
 - `health` adı yoktur. Panel DNS adı kapatılamaz; özel alanın bilinmeyen/kapalı adları public DNS'e sızdırılmaz. Genel sorguların seçilen üst DNS'lere aktarımı panelden açılıp kapatılır.
 - Gerekli görülürse ek servis isimleri aynı açık listeye eklenebilir.
 - Wildcard davranışı varsayılan olmasın. Yalnız tanımlı servis isimleri çözülsün.
@@ -233,7 +234,8 @@ Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tu
   - `http://paylas.${LOCAL_DOMAIN}` + Infuse için `http://<ts-ip>:61010/s/<id>/` (yerleşik; `CADDY_MODULES_DIR/paylasim.caddy`)
 - Panel statik dosyaları Caddy'den, API'ler ve diğer servisler ilgili loopback upstream'inden sunulur. Sağlık kontrolü gerçek panel/API'lerle yapılır.
 - Örnek:
-  - `torrent.${LOCAL_DOMAIN}` → `127.0.0.1:61006`
+  - `torrent.${LOCAL_DOMAIN}` → `127.0.0.1:62947`
+  - `gezgin.${LOCAL_DOMAIN}` → `127.0.0.1:62983`
 - Tüm upstream'ler loopback üzerinde düz HTTP'dir; tek HTTPS upstream (Portainer, DD-62) Portainer'la birlikte kaldırıldı (DD-116).
 
 ### Firewall

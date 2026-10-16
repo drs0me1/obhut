@@ -1,4 +1,4 @@
-/* Konsol's new shell at /yeni/ (DD-258, phase 1; phase 2 pages in yeni-uygulamalar-ui.cjs): the committed
+/* Konsol's shell at / (DD-258, phase 1; DD-267; phase 2 pages in yeni-uygulamalar-ui.cjs): the committed
    build under Data/console/yeni with the real CSP from Data/templates/Caddyfile on every page response,
    fixture APIs, and the event stream served by the suite's own static server (yeni-harness.cjs) so that
    it can stay open and push events. Fails on any console error, CSP violation or page error. Never
@@ -11,10 +11,10 @@ const assert = require("node:assert/strict");
 const cell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
 const app = (id, ad, extra) => ({ id, ad, tur: "paket", aciklama: "", modul: id.split(":")[1], konteyner: null, simge: null, durum: "calisiyor", islem: null,
   tailscale: cell("yok"), internet: cell("yok"), kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null },
-  sayfa: null, eylemler: ["durdur", "yeniden-baslat", "kaldir"], revizyon: null, hesap: false, ...extra });
+  eylemler: ["durdur", "yeniden-baslat", "kaldir"], revizyon: null, hesap: false, ...extra });
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.08.06-v2-242", surum: "1.0.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
-    cores: 4, interval: 10, read_at: 1791845000, sampled_at: 1791845000, cpu: [2.0], mem: { total: 8300000000, used: 700000000, graph: [8.0] },
+    cores: 4, read_at: 1791845000, sampled_at: 1791845000, cpu: 2.0, mem: { total: 8300000000, used: 700000000 },
     net: { wan: "203.0.113.10", wan6: "", iface: "eth0", tailscale: "100.64.0.2", tailscale6: "" }, root: "/srv", disk: { total: 250700000000, free: 238000000000 } },
   saglik: { status: "bad", read_at: 1791845000, checks: [
     { id: "units", name: "Servisler", status: "bad", detail: "Çalışmayan: konsol-eski.service" },
@@ -22,11 +22,11 @@ const data = {
   // Files (yerlesik:dosya) is not counted: it has its own section.
   uygulamalar: { read_at: 1791845000, katalog: [], hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 1, kullanilmayan_imaj: 0, birim: 0, ag: 1 },
     items: [
-      app("paket:wireguard", "WireGuard", { simge: "shield", sayfa: "#/wireguard" }),
+      app("paket:wireguard", "WireGuard", { simge: "shield" }),
       app("paket:torrent", "qBittorrent", { konteyner: "torrent", simge: "download", tailscale: cell("acik", ["torrent.ev"]), adres: { tailscale: "http://torrent.ev", internet: null },
-        sayfa: "#/torrent", revizyon: "r1" }),
-      app("yerlesik:dosya", "Dosyalar", { tur: "yerlesik", modul: null, sayfa: "#/dosyalar", eylemler: [] })] },
-  ag: { read_at: 1791845000, iface: "eth0", window: 600, sampled_at: 1791845000, rx: 1024, tx: 2048, points: [], apps: [] },
+        revizyon: "r1" }),
+      app("yerlesik:dosya", "Dosyalar", { tur: "yerlesik", modul: null, eylemler: [] })] },
+  ag: { read_at: 1791845000, sampled_at: 1791845000, rx: 1024, tx: 2048, apps: [] },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
   guncelleme: { kurulu: "2026.08.06-v2-242", kurulu_surum: "1.0.0", son: "2026.08.06-v2-242", son_surum: "1.0.0", commit: "0".repeat(40), yeni: false, denetlendi: 1791845000, hata: "",
     is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true },
@@ -89,7 +89,6 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert.equal(await page.getByTestId("version").innerText(), "Obhut 1.0.0 · güncel");
     // Phase 2: Genel Bakış is built (yeni-uygulamalar-ui.cjs covers it) and starts with health.
     assert.equal(await page.locator("#saglik-baslik").innerText(), "2 konu dikkat istiyor", "the same two topics as the chip");
-    assert.equal(await page.getByTestId("legacy").count(), 0, "no placeholder");
     assert.equal(await page.locator(".pending").count(), 0);
     assert.equal(await page.getByRole("button", { name: "İşlemler", exact: true }).count(), 1);
     assert.deepEqual(await page.locator("body *").evaluateAll((els) => els.filter((e) => e.hasAttribute("style")).map((e) => e.tagName)), [], "no style attributes");
@@ -276,12 +275,10 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert(await page.getByRole("radio", { name: "Sistem" }).evaluate((el) => el === document.activeElement));
     assert.equal(await page.evaluate(() => document.documentElement.hasAttribute("data-theme")), false, "Sistem follows the system");
     assert.equal(await page.evaluate(() => localStorage.getItem("konsol.tema")), "sistem");
-    assert.equal(await page.getByTestId("legacy").count(), 0, "Sistem is built (phase 4a)");
     // Every section is built (phase 4b); an old address lands on its new home (yeni-paylasim-ui.cjs covers them all).
     await page.evaluate(() => { location.hash = "#/ayarlar"; });
     await page.waitForFunction(() => location.hash === "#/sistem");
     await page.getByTestId("checks").waitFor();
-    assert.equal(await page.locator('a[href^="/#/"]').count(), 0, "no link to the old interface");
     // The skip link is the first stop and focuses the page.
     await page.reload();
     await h1.filter({ hasText: "Sistem" }).waitFor();
@@ -389,7 +386,6 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await waitFor(() => count("saglik") === c0.s + 1 && count("uygulamalar") === c0.m + 1 && count("guncelleme") === c0.g + 1, "60 s reads");
     await page.locator(".pending").waitFor({ state: "detached" });
     assert.equal(stream.connections, connectionsBefore + 1, "a 404 stream is not asked again");
-    assert.equal(count("ayarlar/durum"), 0, "the heavy settings status is not polled");
     await page.getByRole("button", { name: "İşlemler", exact: true }).click();
     assert.equal(await page.getByTestId("connection").innerText(), "Canlı bağlantı yok; durum birkaç saniyede bir okunuyor.");
     await page.context().close();

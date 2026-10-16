@@ -50,7 +50,7 @@ export const fold = (text: string): string => text.toLocaleLowerCase("tr-TR");
 
 const decimal = (v: number, digits: number) => v.toFixed(digits).replace(".", ",");
 
-/** Bytes the way the current Konsol shows them: 1024-based, one decimal from GB up ("7,8 GB", "664 MB"). */
+/** Bytes the way Konsol shows them: 1024-based, one decimal from GB up ("7,8 GB", "664 MB"). */
 export function bytes(value: number | null | undefined): string {
   if (!isNumber(value) || value < 0) return UNKNOWN;
   if (value === 0) return "0 B";

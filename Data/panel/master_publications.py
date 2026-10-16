@@ -5,7 +5,7 @@ Settings owns transactions; the share publisher applies the projection under its
 locks. The built-in WebDAV row and the Konsol (panel) row are fixed; package rows
 come from a manifest with PAKET_YAYIN=1: a name, a local name, a loopback upstream
 and an optional security module inside the package folder. DD-252 adds addresses the
-operator enters in Settings → Caddy: a name, a local name and a port on this server's
+operator enters in Erişim → Adresler: a name, a local name and a port on this server's
 loopback, guarded by the application's own login. No other upstreams or tunnels.
 Application preferences are inspected, never rewritten.
 """
@@ -496,8 +496,7 @@ def status(env):
                installed=BUILTIN_ID in states, running=states.get(BUILTIN_ID) == "calisiyor", expires=None,
                status="disabled", message="İnternet yayını kapalı.")
     info = tls.status(env)
-    row.update({k: info[k] for k in ("status", "message", "expires", "mode")})
-    row["wan_active"] = legacy_http_active(env) if info["mode"] == "http" else None
+    row.update({k: info[k] for k in ("status", "message", "expires")})
     if info["mode"] == "http" and https_apps_enabled(env, rows):
         row["message"] = ("HTTPS alan adı tanımlanmadı. Bir uygulamanın veya Panel'in internet yayını açıkken "
                           "WebDAV internet erişimi için HTTPS alan adı gerekir.")

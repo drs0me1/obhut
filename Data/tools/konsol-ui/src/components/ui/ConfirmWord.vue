@@ -1,6 +1,6 @@
 <!-- The typed confirmation (DD-258 goal 5; the security floor: an irreversible action needs a typed word).
      `confirmed` turns true once the field holds the word, compared with Turkish case rules and without
-     surrounding spaces, as in the current Konsol ("ONAYLA" counts, "onay" does not). -->
+     surrounding spaces ("ONAYLA" counts, "onay" does not). -->
 <script setup lang="ts">
 import { computed, ref, useId, watch } from "vue";
 import { fold } from "../../format";

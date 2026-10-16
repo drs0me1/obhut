@@ -50,7 +50,7 @@ class NetworkManagerTests(unittest.TestCase):
         self.env = dict(SHARE_STATE_FILE=str(self.root/"registry"), MODULES_FILE=str(self.root/"modules"),
                         MODULES_DIR=str(self.root/"mods"),
                         RUNTIME_DIR=str(self.root/"run"), SERVER_ROOT=str(self.root/"srv"),
-                        DOWNLOADS_PATH=str(self.root/"srv/downloads"), FILES_PANEL_TRASH=".cop", SHARE_DIR=".pay",
+                        DOWNLOADS_PATH=str(self.root/"srv/downloads"), FILES_PANEL_TRASH=".cop",
                         SETTINGS_PENDING_FILE=str(self.root/"settings-pending"),
                         SHARE_PORT="61010", TAILSCALE_IPV4="100.64.0.2", WAN_IPV4="8.8.8.8",
                         SHARE_WAN_BACKEND="127.0.0.2", CADDY_MODULES_DIR=str(self.root/"sites"),
@@ -260,7 +260,7 @@ class NetworkManagerTests(unittest.TestCase):
             self.m.publish()
         Path(self.env["CADDYFILE"]).write_text("{\n servers 8.8.8.8:61010 {\n timeouts {\n read_header 10s\n }\n }\n}\n")
         p=object.__new__(panel.Panel)
-        entries=p.web_view(self.env,[])["entries"]
+        entries=p.web_view(self.env)["entries"]
         self.assertEqual(len(entries),1)
         self.assertEqual(entries[0]["address"],"8.8.8.8:61010")
         self.assertEqual(entries[0]["access"],"wan")

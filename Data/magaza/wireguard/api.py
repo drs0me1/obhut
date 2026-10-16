@@ -32,7 +32,6 @@ NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 ACTIVE_WINDOW = float(os.environ.get("PANEL_ACTIVE_WINDOW", "45"))
 SAMPLE_SECONDS = float(os.environ.get("PANEL_SAMPLE_SECONDS", "10"))
 HANDSHAKE_FRESH = 180
-MASK = "•" * 44
 APP_NAME = "WireGuard"
 
 
@@ -57,20 +56,12 @@ def dns_provider(dns):
     return "Özel"
 
 
-def mask_profile(text):
-    out = []
-    for line in text.splitlines():
-        key, sep, _ = line.partition(" = ")
-        out.append("%s = %s" % (key, MASK) if sep and key in ("PrivateKey", "PresharedKey") else line)
-    return "\n".join(out) + "\n"
-
-
 def create(ctx):
     return Api(ctx)
 
 
 class Api:
-    APP_NAME = APP_NAME  # Ayarlar'ın VPN sekmesi bu adı taşır (DD-200)
+    APP_NAME = APP_NAME  # Erişim → Güvenlik duvarı VPN ağlarını bu adla anar (DD-200)
 
     def __init__(self, ctx):
         self.ctx = ctx
@@ -100,7 +91,7 @@ class Api:
         return self.ctx.run(cmd, binary=binary, timeout=120)
 
     def net_rows(self):
-        """master-wg nets satırları (peer listesi olmadan); state ve Ayarlar aynı kaynağı okur."""
+        """master-wg nets satırları (peer listesi olmadan); state ve networks() aynı kaynağı okur."""
         rc, out, message = self.run("nets")
         if rc != 0:
             raise RuntimeError(message or "ağ listesi okunamadı")
@@ -118,13 +109,13 @@ class Api:
         return rows
 
     def networks(self):
-        """DD-200: Ayarlar'ın güvenlik duvarı ve port görünümleri için ağlar (anahtar yok)."""
+        """DD-200: Erişim'in güvenlik duvarı ve port görünümleri için ağlar (anahtar yok)."""
         try:
             rows = self.net_rows()
         except RuntimeError:
             return []
         return [{"app": APP_NAME, "iface": n["iface"], "port": n["port"], "label": n["label"], "active": n["active"],
-                 "server4": n["server4"], "subnet4": n["subnet4"], "server6": n["server6"], "subnet6": n["subnet6"]}
+                 "server4": n["server4"], "server6": n["server6"]}
                 for n in rows]
 
     def peers(self, net, seen=None):
@@ -250,8 +241,6 @@ class Api:
             rc, out, message = self.run("profile", name, net=net)
             if rc != 0:
                 raise self.ctx.error(404, message or "profil yok")
-            if req.query.get("masked") == ["1"]:
-                return 200, mask_profile(out).encode("utf-8"), "text/plain; charset=utf-8", {}
             req.audit("profil", "%s/%s" % (net, name), True)
             return (200, out.encode("utf-8"), "text/plain; charset=utf-8",
                     {"Content-Disposition": 'attachment; filename="%s.conf"' % name})

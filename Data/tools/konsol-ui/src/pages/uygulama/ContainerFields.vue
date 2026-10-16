@@ -1,4 +1,4 @@
-<!-- The container definition's fields (DD-211, DD-227), as the current Konsol's Podman editor has them:
+<!-- The container definition's fields (DD-211, DD-227):
      the image (and on create the name), the network and the published ports (each with its scope, server
      and container port, protocol, and for an internet port the operator's acknowledgement), the mounts (a
      named volume, or a server folder through the picker; the path inside; read-only), the environment (a

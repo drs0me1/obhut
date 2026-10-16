@@ -188,7 +188,7 @@ class PublicationTests(unittest.TestCase):
             self.m.validate(self.payload(service="torrent", domain="torrent.example.net"))
         self.assertIn("eski HTTP ile açık", str(err.exception))
         row = {r["service"]: r for r in pubs.status(self.env)}["paylasim"]
-        self.assertEqual((row["mode"], row["wan_active"]), ("http", True))
+        self.assertEqual(row["status"], "http")
         # Closing that folder's internet connection frees the port; no WebDAV name is needed.
         item = self.s.read()["items"][0]
         self.s.change("save", {"id": item["id"], "connections": {"wan": {"enabled": False}}})
@@ -205,7 +205,7 @@ class PublicationTests(unittest.TestCase):
             self.s.change("save", {"id": item["id"], "connections": {"wan": {"enabled": True}}, "ack_wan_http": True})
         self.assertFalse(self.s.wan_active())
         row = {r["service"]: r for r in pubs.status(self.env)}["paylasim"]
-        self.assertEqual((row["status"], row["wan_active"]), ("http", False))
+        self.assertEqual(row["status"], "http")
         self.assertIn("HTTPS alan adı gerekir", row["message"])
         # Turning the Panel row off reopens legacy HTTP for the folders (a plain re-enable).
         self.m.apply(self.payload(service="panel", enabled=False, domain="konsol.example.net"))

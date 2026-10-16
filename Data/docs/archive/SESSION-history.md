@@ -4,8 +4,8 @@ Historical session notes moved verbatim from `Data/SESSION.md` on 2026-09-30
 (v2-158 documentation trim): task entries from v2-153 back to the 2026-08
 Docker/wg-easy era, the last status table (v2-79) and the 2026-08-28
 "Evaluated and rejected" list. They describe past states, not current
-behaviour; `Data/SESSION.md`, `Data/docs/contract.md` and
-`Data/docs/design-decisions.md` take precedence. Relative paths inside the
+behaviour; `Data/docs/contract.md` and `Data/docs/design-decisions.md` take
+precedence (the later notes, to v2-206, are in `SESSION-to-v2-206.md`). Relative paths inside the
 entries are relative to `Data/` as originally written.
 
 ## Previous tasks (historical; newer decisions take precedence)

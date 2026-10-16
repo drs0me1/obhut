@@ -76,7 +76,7 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(data["version"], "test")
         self.assertGreater(data["disk"]["total"], 0)
         self.assertIsNone(data["sampled_at"])
-        self.assertEqual(data["cpu"], [])
+        self.assertIsNone(data["cpu"])
         self.assertGreater(data["read_at"], 0)
 
     def test_missing_disk_is_unknown_not_zero_percent(self):
@@ -85,19 +85,20 @@ class ResourceTests(unittest.TestCase):
 
     def test_sample_excludes_guest_time_and_keeps_timestamp(self):
         with patch("builtins.open", side_effect=[io.BytesIO(b"cpu 100 0 0 100 0 0 0 0 50 0\n"),
-                                                io.BytesIO(b"cpu 120 0 0 120 0 0 0 0 70 0\n")]), \
-             patch.object(self.p, "meminfo", return_value=(1000, 200)):
+                                                io.BytesIO(b"cpu 120 0 0 120 0 0 0 0 70 0\n")]):
             self.p.sample_system()
-            self.assertEqual(self.p.samples, [])
+            self.assertIsNone(self.p.cpu_sample)
             self.p.sample_system()
-        self.assertEqual(self.p.samples[-1]["cpu"], 50)
-        self.assertEqual(self.p.samples[-1]["mem"], 20)
-        self.assertGreater(self.p.samples[-1]["t"], 0)
+        self.assertEqual(self.p.cpu_sample["cpu"], 50)
+        self.assertGreater(self.p.cpu_sample["t"], 0)
+        with patch.object(self.p, "meminfo", return_value=(1000, 200)):
+            data = self.p.system()
+        self.assertEqual((data["cpu"], data["sampled_at"], data["mem"]), (50, self.p.cpu_sample["t"], {"total": 1000, "used": 200}))
 
     def test_short_proc_record_does_not_crash(self):
         with patch("builtins.open", return_value=io.BytesIO(b"cpu 1 2\n")):
             self.p.sample_system()
-        self.assertEqual(self.p.samples, [])
+        self.assertIsNone(self.p.cpu_sample)
 
     def test_resource_sampler_does_not_wait_for_wireguard(self):
         # DD-200: no package command runs here; only the package API list is refreshed.

@@ -13,7 +13,7 @@ const VPN_NOTE = "WireGuard cihazları yalnız internete çıkar; bu sunucudaki 
 const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
 const ucell = (durum, adresler = [], uyari = "", not = "") => ({ durum, adresler, uyari, not });
 const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: ucell("yok"), internet: ucell("yok"),
-  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, sayfa: null, eylemler: [], revizyon: null,
+  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
   metinler: null, hesap: false, aciklama: "", ...o });
 const row = (id, ad, tur, cells, ayrinti = [], aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, calisiyor: true, yerel: cell("yok"),
   tailscale: cell("yok"), wireguard: cell("kapali", [], VPN_NOTE), internet: cell("yok"), yayinlar: [], ayrinti, ...cells });
@@ -122,7 +122,7 @@ function names() {
 
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.08.06-v2-248", surum: "1.1.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
-    cores: 4, interval: 10, read_at: NOW, sampled_at: NOW, cpu: [2.0], mem: { total: 8375186227, used: 696254464, graph: [8.0] },
+    cores: 4, read_at: NOW, sampled_at: NOW, cpu: 2.0, mem: { total: 8375186227, used: 696254464 },
     net: { wan: "203.0.113.10", wan6: "", iface: "eth0", tailscale: "100.64.0.2", tailscale6: "" }, root: "/srv", disk: { total: 269186688614, free: 255550000000 } },
   saglik: { status: "ok", read_at: NOW - 60, checks: [{ id: "tailscale", name: "Tailscale", status: "ok", detail: "çalışıyor" }] },
   guncelleme: { kurulu: "2026.08.06-v2-248", kurulu_surum: "1.1.0", son: "2026.08.06-v2-248", son_surum: "1.1.0", commit: "0".repeat(40), yeni: false,
@@ -136,11 +136,11 @@ const data = {
     app({ id: "paket:wireguard", ad: "WireGuard", tur: "paket", modul: "wireguard", simge: "shield", aciklama: "Cihazlarınız için VPN bağlantısı." }),
     app({ id: "konteyner:medya", ad: "medya", tur: "konteyner", konteyner: "medya", aciklama: "Konteyner · docker.io/library/nginx",
       tailscale: ucell("acik", ["100.64.0.2:8096/tcp"]), internet: ucell("acik", ["203.0.113.10:8096/tcp"], "Doğrudan WAN"), eylemler: ["durdur", "kaldir"] }),
-    app({ id: "yerlesik:paylasim", ad: "Paylaşımlar", tur: "yerlesik", aciklama: "WebDAV · yerleşik · 2 klasör", sayfa: "#/dosyalar/paylasim" })] },
+    app({ id: "yerlesik:paylasim", ad: "Paylaşımlar", tur: "yerlesik", aciklama: "WebDAV · yerleşik · 2 klasör" })] },
   yayinlar: { revizyon: "rev-1", alan: "ev", wan_ipv4: "203.0.113.10", adaylar: candidates(), hatalar: [] },
   adlar: names(),
   "guvenlik-duvari": firewall(),
-  ag: { read_at: NOW, iface: "eth0", window: 600, sampled_at: NOW, rx: 1024, tx: 2048, points: [], apps: [] },
+  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048, apps: [] },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
 };
 
@@ -253,7 +253,6 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     let page = await newPage();
     await page.goto(url("#/erisim"));
     assert.equal(await page.locator("main h1").innerText(), "Erişim");
-    assert.equal(await page.getByTestId("legacy").count(), 0, "Erişim is no placeholder any more");
     const tabs = page.getByRole("tablist", { name: "Erişim bölümleri" }).getByRole("tab");
     assert.deepEqual(await tabs.allInnerTexts(), ["Genel", "Adresler", "Tailscale", "WireGuard", "Güvenlik duvarı"]);
     await page.getByTestId("access-warnings").waitFor();

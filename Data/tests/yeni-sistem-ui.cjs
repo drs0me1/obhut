@@ -13,7 +13,7 @@ const DAY = 86400;
 const HEX = (c) => c.repeat(32);
 const ucell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
 const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: ucell("yok"), internet: ucell("yok"),
-  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, sayfa: null, eylemler: [], revizyon: null,
+  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
   metinler: null, hesap: false, aciklama: "", ...o });
 
 const CHECKS = [
@@ -45,13 +45,13 @@ const AUDIT = [
   { at: NOW - 2100, source: "panel", user: "konsol", client: "203.0.113.50", action: "parola-degis", detail: "-", ok: false },
   { at: NOW - 2400, source: "panel", user: "konsol", client: "100.64.0.5", action: "ayar-apply", detail: "ayarlar", ok: true },
   { at: NOW - 2700, source: "panel", user: "konsol", client: "100.64.0.5", action: "yeniden-baslat", detail: "5 sn", ok: true },
-  { at: NOW - 2 * DAY, source: "panel", user: "konsol", client: "100.64.0.5", action: "torrent:hesap", detail: "yonetici", ok: true },
+  { at: NOW - 2 * DAY, source: "panel", user: "konsol", client: "100.64.0.5", action: "torrent:ayar", detail: "kullanıcı adı", ok: true },
 ];
 const MODULES = [
-  { id: "wireguard", runtime: "host", installed: true, state: "calisiyor", live: "", busy: false, progress: null, durdurulabilir: true,
+  { id: "wireguard", installed: true, state: "calisiyor", live: "", busy: false, progress: null, durdurulabilir: true,
     konsol: { ad: "WireGuard", gunluk: { ekle: "{detail} eklendi", "peer-durum": "{0} {1}" } } },
-  { id: "torrent", runtime: "konteyner", installed: true, state: "calisiyor", live: "", busy: false, progress: null, durdurulabilir: true,
-    konsol: { ad: "qBittorrent", gunluk: { hesap: "qBittorrent hesabı kaydedildi ({detail})" } } },
+  { id: "torrent", installed: true, state: "calisiyor", live: "", busy: false, progress: null, durdurulabilir: true,
+    konsol: { ad: "qBittorrent", gunluk: { ayar: "qBittorrent ayarları kaydedildi ({detail})" } } },
 ];
 
 const CADDYFILE = "{\n\tadmin off\n}\nhttp://panel.ev {\n\treverse_proxy 127.0.0.1:62000\n}\n";
@@ -98,7 +98,7 @@ const resources = (o = {}) => ({
 
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.08.06-v2-248", surum: "1.1.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0-1-amd64", uptime: 5 * DAY + 3600,
-    cores: 4, interval: 10, read_at: NOW, sampled_at: NOW, cpu: [2.0], mem: { total: 8375186227, used: 696254464, graph: [8.0] },
+    cores: 4, read_at: NOW, sampled_at: NOW, cpu: 2.0, mem: { total: 8375186227, used: 696254464 },
     net: { wan: "203.0.113.10", wan6: "", iface: "eth0", tailscale: "100.64.0.2", tailscale6: "fd7a:115c:a1e0::2" }, root: "/srv", disk: { total: 269186688614, free: 255550000000 } },
   saglik: { status: "bad", read_at: NOW - 120, checks: CHECKS },
   guncelleme: update(),
@@ -111,7 +111,7 @@ const data = {
     app({ id: "paket:torrent", ad: "qBittorrent", tur: "paket", modul: "torrent", konteyner: "torrent", simge: "download" }),
     app({ id: "paket:wireguard", ad: "WireGuard", tur: "paket", modul: "wireguard", simge: "shield" })] },
   onarim: repairState(),
-  ag: { read_at: NOW, iface: "eth0", window: 600, sampled_at: NOW, rx: 1024, tx: 2048, points: [], apps: [] },
+  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048, apps: [] },
   islemler: { items: AUDIT },
   moduller: { items: MODULES },
   gelismis: ADVANCED,
@@ -193,7 +193,6 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     let page = await newPage({ permissions: ["clipboard-read", "clipboard-write"] });
     await page.goto(url("#/sistem"));
     assert.equal(await page.locator("main h1").innerText(), "Sistem");
-    assert.equal(await page.getByTestId("legacy").count(), 0, "Sistem is no placeholder any more");
     const tabs = page.getByRole("tablist", { name: "Sistem bölümleri" }).getByRole("tab");
     assert.deepEqual(await tabs.allInnerTexts(), ["Sağlık", "Güncellemeler", "Hesap", "Sunucu", "Görünüm", "Günlük"]);
     assert.deepEqual(await page.locator('.sidebar .nav-item[aria-current="page"] .nav-label').allInnerTexts(), ["Sistem"]);
@@ -511,7 +510,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.deepEqual(await audit.getByTestId("audit-line").allInnerTexts(), [
       "Denetim ve onarım başlatıldı", "wg-telefon eklendi", "telefon kapalı", "qBittorrent kurulumu başlatıldı",
       "İmaj indirme istendi: docker.io/library/redis:7.4", "Yeni klasör: Filmler", "Konsol parolası değiştirildi — başarısız", "Ayarlar uygulandı",
-      "Sunucunun yeniden başlatılması istendi (5 sn)", "qBittorrent hesabı kaydedildi (yonetici)"]);
+      "Sunucunun yeniden başlatılması istendi (5 sn)", "qBittorrent ayarları kaydedildi (kullanıcı adı)"]);
     assert.deepEqual(await audit.locator('td[data-label="Tür"]').allInnerTexts(),
       ["Konsol", "WireGuard", "WireGuard", "Uygulamalar", "Uygulamalar", "Dosyalar", "Konsol", "Ayarlar", "Konsol", "qBittorrent"]);
     const failed = audit.locator('tr[data-eylem="parola-degis"]');
@@ -626,7 +625,6 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     page = await newPage({ permissions: ["clipboard-read", "clipboard-write"] });
     await page.goto(url("#/gelismis"));
     assert.equal(await page.locator("main h1").innerText(), "Gelişmiş");
-    assert.equal(await page.getByTestId("legacy").count(), 0);
     assert.deepEqual(await page.getByRole("tablist", { name: "Gelişmiş bölümleri" }).getByRole("tab").allInnerTexts(), ["Caddy", "DNS", "Güvenlik duvarı", "Podman"]);
     const caddy = page.getByTestId("caddy");
     await caddy.locator("tbody tr").first().waitFor();

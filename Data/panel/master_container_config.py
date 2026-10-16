@@ -185,7 +185,7 @@ class Store:
 
 def protected_paths(env):
     root = Path(env['SERVER_ROOT'])
-    paths = [root / env.get('FILES_PANEL_TRASH', '.cop'), root / env.get('SHARE_DIR', '.pay')]
+    paths = [root / env.get('FILES_PANEL_TRASH', '.cop')]
     for mid, manifest in settings.read_manifests(env).items():
         paths.extend(Path(p) for p in manifest.get('PAKET_KLASORLER', '').split())
         report = manifest.get('PAKET_KLASOR_MODUL')

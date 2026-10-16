@@ -157,7 +157,7 @@ select_only_net() {
         names="${names}${names:+ }$name"
     done < <(net_names)
     [[ -n "$names" ]] ||
-        die "sunucuda WireGuard ağı yok; Konsol'da WireGuard sayfasından Yapılandır ile oluşturun"
+        die "sunucuda WireGuard ağı yok; Konsol'da Erişim → WireGuard → Yapılandır ile oluşturun"
     [[ "$names" != *" "* ]] ||
         die "birden çok ağ var ($names); ağı seçin: master-wg --if wgN KOMUT"
     select_net "$names"
@@ -213,7 +213,7 @@ net_teardown() {
 # DD-229: WireGuard bütünüyle durdurulmuşken ağ açılmaz ve eklenmez; önce Başlat.
 not_stopped() {
     [[ -z "${WG_STOPPED_FILE:-}" || ! -e "$WG_STOPPED_FILE" ]] ||
-        die "WireGuard durduruldu; önce Ana Menü ya da App Store'dan başlatın"
+        die "WireGuard durduruldu; önce Konsol → Uygulamalar → WireGuard sayfasından başlatın"
 }
 
 cmd_net_add() {
@@ -299,7 +299,7 @@ for ip in ips: ipaddress.ip_address(ip)' "$dns" 2>/dev/null || die "DNS için en
     [[ "$relabel" -lt 3 ]] || check_label "$label"
     take_lock
     [[ -z "${SETTINGS_PENDING_FILE:-}" || ! -e "$SETTINGS_PENDING_FILE" ]] ||
-        die "Önce Ayarlar sayfasındaki bekleyen işlemi onaylayın veya geri alın"
+        die "Önce Konsol'daki bekleyen ayar işlemini onaylayın veya geri alın"
     select_net "$WG_INTERFACE"
     [[ -f "$WG_CONF_FILE" ]] || die "WireGuard yapılandırması bulunamadı"
     line="$(net_line "$WG_INTERFACE")"
@@ -557,7 +557,7 @@ cmd_net() {
     local want="$1" unit="wg-quick@${WG_INTERFACE}.service"
     [[ "$want" == ac || "$want" == kapat ]] || die "kullanım: master-wg [--if wgN] net ac|kapat"
     [[ -f "$WG_CONF_FILE" ]] || die "$WG_CONF_FILE yok; önce kurulumu çalıştırın"
-    # DD-229: App Store'un Durdur'u bu kilitle durdurulmuş listesini yazar; kilitsiz "ac" onu geçebilirdi.
+    # DD-229: uygulamanın Durdur'u bu kilitle durdurulmuş listesini yazar; kilitsiz "ac" onu geçebilirdi.
     take_lock
     not_stopped
     if [[ "$want" == kapat ]]; then

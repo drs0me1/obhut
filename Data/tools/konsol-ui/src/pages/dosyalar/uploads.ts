@@ -121,9 +121,6 @@ export function cancelUpload(id: number): void {
   drop(id);
 }
 
-/** Whether anything is still to be sent (the browser tab asks before it closes meanwhile). */
-export const uploading = (): boolean => uploads.items.some((u) => u.state === "sirada" || u.state === "yukleniyor");
-
 /** Calls `fn` with each upload that finished; returns the unsubscribe. */
 export function onUploaded(fn: (item: UploadItem) => void): () => void {
   listeners.add(fn);

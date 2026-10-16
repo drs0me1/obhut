@@ -125,42 +125,37 @@ class WorkerTests(Scratch):
         self.assertIn("[Preferences]\nA=1\n", result)
         self.assertIn('[BitTorrent]\nSession\\DefaultSavePath="/x/"', result)
 
-    def test_durum_reports_paths_and_account_name_without_the_hash(self):
+    def test_durum_reports_the_account_name_and_folder_without_the_hash(self):
         d = ayar.durum(self.env)
-        self.assertEqual((d["profile"], d["downloads"]), (self.env["TORRENT_PROFILE_DIR"], self.env["DOWNLOADS_PATH"]))
-        self.assertEqual((d["save"], d["save_inside"]), (self.env["DOWNLOADS_PATH"] + "/", True))
-        self.assertEqual((d["temp"], d["temp_on"], d["temp_inside"]), ("", False, False))
-        self.assertEqual((d["ui"], d["peer_port"], d["username"]), ("127.0.0.1:61006", 45410, "admin"))
+        self.assertEqual(d, {"username": "admin", "save": self.env["DOWNLOADS_PATH"] + "/"}, "only the form's fields")
         self.assertNotIn("oldhash", json.dumps(d))
         self.assertNotIn("Password", json.dumps(d))
-        with self.conf.open("a") as fh:
-            fh.write("Session\\TempPath=%s/incomplete/\nSession\\TempPathEnabled=true\n" % self.env["DOWNLOADS_PATH"])
-        d = ayar.durum(self.env)
-        self.assertEqual((d["temp"], d["temp_on"], d["temp_inside"]), (self.env["DOWNLOADS_PATH"] + "/incomplete/", True, True))
+        # A folder outside the downloads tree is reported as stored.
         self.conf.write_text(SEED % "/root/indirilenler")
-        self.assertFalse(ayar.durum(self.env)["save_inside"])
+        self.assertEqual(ayar.durum(self.env)["save"], "/root/indirilenler/")
         self.conf.unlink()
-        self.assertEqual(ayar.durum(self.env), {"error": "qBittorrent'in ayar dosyası okunamadı", "profile": self.env["TORRENT_PROFILE_DIR"]})
+        self.assertEqual(ayar.durum(self.env), {"error": "qBittorrent'in ayar dosyası okunamadı"})
         self.conf.symlink_to(self.root / "dns/base.conf")
         self.assertIn("error", ayar.durum(self.env))
         self.assertEqual(self.calls, [], "the view runs no command")
 
-    def test_hesap_validation_runs_before_any_service_change(self):
+    def test_ayar_validation_runs_before_any_service_change(self):
         before = self.conf.read_bytes()
         for data in ({}, {"x": 1}, {"username": "bad user"}, {"username": ""}, {"username": "a" * 65}, {"password": "short"},
                      {"password": "x" * 257}, {"password": "1234567\n9"}, {"password": None}, {"username": 5}, "text", None,
-                     {"username": "ok", "password": ""}):
+                     {"username": "ok", "password": ""}, {"username": "ok", "save": "/etc"}):
             with self.subTest(data=data), self.assertRaises(settings.SettingsError):
-                ayar.hesap(self.env, data)
+                ayar.ayar(self.env, data, str(self.state))
         self.assertEqual(self.conf.read_bytes(), before)
         self.assertEqual(self.calls, [])
         for phrase in ("Pass8!xy", "ü" * 8, "x" * 256):
             with self.subTest(phrase=phrase):
-                ayar.hesap(self.env, {"password": phrase})
+                ayar.ayar(self.env, {"password": phrase}, str(self.state))
 
-    def test_hesap_stops_writes_and_starts_again_without_plaintext(self):
+    def test_ayar_stops_writes_and_starts_again_without_plaintext(self):
         phrase = "sample-only-test-password"
-        self.assertEqual(ayar.hesap(self.env, {"username": "newuser", "password": phrase}), {"ok": True, "username": "newuser"})
+        self.assertEqual(ayar.ayar(self.env, {"username": "newuser", "password": phrase}, str(self.state)),
+                         {"ok": True, "username": "newuser", "save": self.env["DOWNLOADS_PATH"] + "/"})
         text = self.conf.read_text()
         self.assertIn("WebUI\\Username=newuser\n", text)
         for keep in ("Unrelated=keep\n", "[BitTorrent]\n", "Session\\Port=45410\n", "WebUI\\Address=127.0.0.1\n"):
@@ -175,9 +170,9 @@ class WorkerTests(Scratch):
         self.assertFalse(self.drop.exists(), "an account change adds no drop-in")
 
     def test_username_only_keeps_hash_and_password_only_keeps_username(self):
-        ayar.hesap(self.env, {"username": "other"})
+        ayar.ayar(self.env, {"username": "other"}, str(self.state))
         self.assertIn("WebUI\\Password_PBKDF2=oldhash\n", self.conf.read_text())
-        ayar.hesap(self.env, {"password": "password-only-test"})
+        ayar.ayar(self.env, {"password": "password-only-test"}, str(self.state))
         text = self.conf.read_text()
         self.assertIn("WebUI\\Username=other\n", text)
         self.assertNotIn("oldhash", text)
@@ -186,14 +181,15 @@ class WorkerTests(Scratch):
         before = self.conf.read_bytes()
         self.fail_cmd = "start qbittorrent.service"
         with self.assertRaises(settings.SettingsError):
-            ayar.hesap(self.env, {"username": "failed-user"})
+            ayar.ayar(self.env, {"username": "failed-user"}, str(self.state))
         self.assertEqual(self.conf.read_bytes(), before)
         self.assertEqual(self.conf.stat().st_mode & 0o777, 0o640)
         self.assertEqual(self.systemctl(), ["is-active", "stop", "start", "start"], "the second start is the recovery")
 
     def test_stopped_service_stays_stopped(self):
         self.active = False
-        self.assertEqual(ayar.hesap(self.env, {"username": "stopped-user"}), {"ok": True, "username": "stopped-user"})
+        self.assertEqual(ayar.ayar(self.env, {"username": "stopped-user"}, str(self.state)),
+                         {"ok": True, "username": "stopped-user", "save": self.env["DOWNLOADS_PATH"] + "/"})
         self.assertEqual(self.systemctl(), ["is-active", "stop"])
         self.assertEqual(self.ui_waits, [], "a stopped service is not waited for")
         self.assertIn("WebUI\\Username=stopped-user\n", self.conf.read_text())
@@ -205,14 +201,15 @@ class WorkerTests(Scratch):
         self.drop.write_text("[Container]\nVolume=/x:/x\n")
         self.fail_cmd = "stop qbittorrent.service"
         with self.assertRaises(settings.SettingsError):
-            ayar.hesap(self.env, {"username": "stop-fails"})
+            ayar.ayar(self.env, {"username": "stop-fails"}, str(self.state))
         self.assertEqual(self.conf.read_bytes(), before)
         self.assertEqual(self.drop.read_text(), "[Container]\nVolume=/x:/x\n")
 
     def test_a_stopped_app_whose_unit_is_not_loaded_still_saves(self):
         self.active = False
         self.fail_cmd = "stop qbittorrent.service"
-        self.assertEqual(ayar.hesap(self.env, {"username": "not-loaded"}), {"ok": True, "username": "not-loaded"})
+        self.assertEqual(ayar.ayar(self.env, {"username": "not-loaded"}, str(self.state)),
+                         {"ok": True, "username": "not-loaded", "save": self.env["DOWNLOADS_PATH"] + "/"})
         self.assertIn("WebUI\\Username=not-loaded\n", self.conf.read_text())
 
     def test_an_account_change_that_fails_late_keeps_the_existing_drop_in(self):
@@ -220,39 +217,40 @@ class WorkerTests(Scratch):
         self.drop.write_text("[Container]\nVolume=/x:/x\n")
         with patch.object(ayar, "wait_ui", side_effect=settings.SettingsError("açılmadı")):
             with self.assertRaises(settings.SettingsError):
-                ayar.hesap(self.env, {"username": "late-fail"})
+                ayar.ayar(self.env, {"username": "late-fail"}, str(self.state))
         self.assertEqual(self.drop.read_text(), "[Container]\nVolume=/x:/x\n")
 
     def test_an_interface_that_never_opens_restores_the_profile(self):
         before = self.conf.read_bytes()
         with patch.object(ayar, "wait_ui", side_effect=settings.SettingsError("qBittorrent arayüzü yeniden başlatmadan sonra açılmadı.")):
             with self.assertRaises(settings.SettingsError):
-                ayar.hesap(self.env, {"username": "slow-user"})
+                ayar.ayar(self.env, {"username": "slow-user"}, str(self.state))
         self.assertEqual(self.conf.read_bytes(), before)
         self.assertEqual(self.systemctl(), ["is-active", "stop", "start", "is-active", "start"], "restored, then started again")
 
-    def test_dizin_writes_one_narrow_drop_in_and_restores_both_files_on_failure(self):
+    def test_a_folder_outside_downloads_gets_one_narrow_drop_in_and_failures_restore_both_files(self):
         before = self.conf.read_bytes()
         for data in ({}, {"save": 1}, {"save": "/etc"}, {"save": str(self.root / "srv")}, {"save": str(self.root / "srv/.pay")},
                      {"save": str(self.root / "srv/downloads/../media")}, {"other": "x"}, {"save": str(self.root / "srv/media"), "x": 1}):
             with self.subTest(data=data), self.assertRaises(settings.SettingsError):
-                ayar.dizin(self.env, data, str(self.state))
+                ayar.ayar(self.env, data, str(self.state))
         self.assertEqual(self.conf.read_bytes(), before)
         self.assertEqual(self.calls, [], "validation runs no command")
         media = str(self.root / "srv/media")
         # First failure, no drop-in yet: the profile is restored and the drop-in does not appear.
         self.fail_cmd = "start qbittorrent.service"
         with self.assertRaises(settings.SettingsError):
-            ayar.dizin(self.env, {"save": media}, str(self.state))
+            ayar.ayar(self.env, {"save": media}, str(self.state))
         self.assertEqual(self.conf.read_bytes(), before)
         self.assertFalse(self.drop.exists())
         self.assertEqual(self.systemctl().count("daemon-reload"), 2)
         self.calls.clear()
-        self.assertEqual(ayar.dizin(self.env, {"save": media}, str(self.state)), {"ok": True, "save": media + "/"})
+        self.assertEqual(ayar.ayar(self.env, {"save": media}, str(self.state)), {"ok": True, "username": "admin", "save": media + "/"})
         text = self.conf.read_text()
         self.assertIn('Session\\DefaultSavePath="%s/"\n' % media, text)
         self.assertIn('Downloads\\SavePath="%s/"\n' % media, text)
         self.assertIn("Unrelated=keep\n", text)
+        self.assertIn("WebUI\\Password_PBKDF2=oldhash\n", text, "a folder change keeps the account")
         # DD-209: a folder outside the downloads tree is one bind mount at the same path in the quadlet drop-in.
         self.assertEqual(self.drop, self.root / "quadlet/qbittorrent.container.d/90-konsol.conf")
         self.assertEqual(self.drop.read_text(), "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=%s:%s\n" % (media, media))
@@ -266,19 +264,19 @@ class WorkerTests(Scratch):
         saved_conf, saved_drop = self.conf.read_bytes(), self.drop.read_bytes()
         self.fail_cmd = "start qbittorrent.service"
         with self.assertRaises(settings.SettingsError):
-            ayar.dizin(self.env, {"save": self.env["DOWNLOADS_PATH"]}, str(self.state))
+            ayar.ayar(self.env, {"save": self.env["DOWNLOADS_PATH"]}, str(self.state))
         self.assertEqual((self.conf.read_bytes(), self.drop.read_bytes()), (saved_conf, saved_drop))
         # Back inside the downloads tree: the extra mount goes (the container already sees that folder).
         self.calls.clear()
         inner = self.env["DOWNLOADS_PATH"] + "/filmler"
         os.mkdir(inner)
-        self.assertEqual(ayar.dizin(self.env, {"save": inner}, str(self.state)), {"ok": True, "save": inner + "/"})
+        self.assertEqual(ayar.ayar(self.env, {"save": inner}, str(self.state)), {"ok": True, "username": "admin", "save": inner + "/"})
         self.assertFalse(self.drop.exists())
         self.assertEqual(self.systemctl(), ["is-active", "stop", "daemon-reload", "start", "is-active"])
         # A folder name a bind mount cannot carry (space, ':' or '%') is refused before any service change.
         self.calls.clear()
         with self.assertRaises(settings.SettingsError) as err:
-            ayar.dizin(self.env, {"save": str(self.root / "srv/media/a b")}, str(self.state))
+            ayar.ayar(self.env, {"save": str(self.root / "srv/media/a b")}, str(self.state))
         self.assertIn("konteynere bağlanamaz", str(err.exception))
         self.assertEqual(self.systemctl(), [])
 
@@ -325,26 +323,36 @@ class WorkerTests(Scratch):
                 except SystemExit as stop:
                     return stop.code, json.loads(out.getvalue())
             return 0, json.loads(out.getvalue())
-        code, view = main("durum")
-        self.assertEqual((code, view["save"], view["username"]), (0, self.env["DOWNLOADS_PATH"] + "/", "admin"))
-        self.assertEqual(main("hesap", json.dumps({"username": "cliuser"})), (0, {"ok": True, "username": "cliuser"}))
+        saved = self.env["DOWNLOADS_PATH"] + "/"
+        self.assertEqual(main("durum"), (0, {"username": "admin", "save": saved}))
+        self.assertEqual(main("ayar", json.dumps({"username": "cliuser"})), (0, {"ok": True, "username": "cliuser", "save": saved}))
         self.assertIn("WebUI\\Username=cliuser\n", self.conf.read_text())
-        code, err = main("hesap", json.dumps({"password": "short"}))
+        code, err = main("ayar", json.dumps({"password": "short"}))
         self.assertEqual((code, err), (1, {"error": "Parola 8–256 karakter olmalı."}))
-        code, err = main("hesap", "not json")
+        code, err = main("ayar", "not json")
         self.assertEqual(code, 1)
         self.assertEqual(err["error"], "qBittorrent ayarı uygulanamadı; önceki ayar geri yüklendi.")
-        code, err = main("hesap", json.dumps({"username": "a" * (ayar.LIMIT + 1)}))
+        code, err = main("ayar", json.dumps({"username": "a" * (ayar.LIMIT + 1)}))
         self.assertEqual((code, err), (1, {"error": "İstek çok büyük."}))
-        code, err = main("dizin", json.dumps({"save": str(self.root / "srv")}))
+        code, err = main("ayar", json.dumps({"save": str(self.root / "srv")}))
         self.assertEqual(code, 1)
         self.assertIn("Yalnız indirmeler", err["error"])
         # The base's settings lock is honoured: a held lock refuses the worker.
         with settings.Manager(str(self.state)).locked():
-            code, err = main("hesap", json.dumps({"username": "locked"}))
+            code, err = main("ayar", json.dumps({"username": "locked"}))
         self.assertEqual(code, 1)
         self.assertIn("WebUI\\Username=cliuser\n", self.conf.read_text())
-
+        # The old account and folder actions are gone: argparse refuses them before anything is read.
+        for old, data in (("hesap", {"username": "old-action"}), ("dizin", {"save": self.env["DOWNLOADS_PATH"]})):
+            out, err = io.StringIO(), io.StringIO()
+            with self.subTest(action=old), patch("sys.argv", ["ayar.py", "--lib", str(REPO / "panel"), "--state", str(self.state), old]), \
+                    patch("sys.stdin", io.StringIO(json.dumps(data))), patch("sys.stderr", err), contextlib.redirect_stdout(out), \
+                    self.assertRaises(SystemExit) as stop:
+                ayar.main()
+            self.assertEqual((stop.exception.code, out.getvalue()), (2, ""))
+            self.assertIn(repr(old), err.getvalue())
+        self.assertIn("WebUI\\Username=cliuser\n", self.conf.read_text())
+        self.assertEqual(self.systemctl().count("stop"), 1, "only the accepted change touched the service")
 
 
 class InstallWorkerTests(Scratch):
@@ -503,7 +511,7 @@ class FakeContext:
     def __init__(self, env, state, active=True):
         self._env, self._state, self.active = env, state, active
         self.worker_calls, self.runs = [], []
-        self.worker_result = (200, {"ok": True, "username": "worker-user"})
+        self.worker_result = (200, {"ok": True, "username": "worker-user", "save": "/srv/downloads/"})
 
     def env(self):
         return {k: v for k, v in self._env.items() if not k.startswith("TORRENT_")}  # the state has none (DD-203)
@@ -546,62 +554,65 @@ class ApiModuleTests(Scratch):
         self.ctx = FakeContext(self.env, str(self.state))
         self.api = self.api_module.create(self.ctx)
 
-    def test_status_is_the_workers_view_plus_the_service_state(self):
+    def test_status_is_the_workers_view_of_the_form_fields(self):
         code, body = self.api.handle(FakeRequest("GET", "/durum"))
-        self.assertEqual(code, 200)
-        self.assertEqual((body["installed"], body["running"], body["save"], body["username"]), (True, True, self.env["DOWNLOADS_PATH"] + "/", "admin"))
-        self.assertEqual(body["unit"], ayar.unit_name(self.env))
-        self.assertEqual(self.ctx.runs, [["systemctl", "is-active", "--quiet", body["unit"]]])
+        self.assertEqual((code, body), (200, {"username": "admin", "save": self.env["DOWNLOADS_PATH"] + "/"}))
         self.assertNotIn("oldhash", json.dumps(body))
-        self.ctx.active = False
-        self.assertFalse(self.api.handle(FakeRequest("GET", "/durum"))[1]["running"])
+        self.assertEqual(self.ctx.runs, [], "the view runs no command")
         self.assertEqual(self.ctx.worker_calls, [], "reads never start the worker")
 
     def test_bad_shapes_are_refused_before_the_worker(self):
-        for path, data in (("/hesap", {}), ("/hesap", None), ("/hesap", {"x": 1}), ("/hesap", {"username": "bad user"}),
-                           ("/hesap", {"username": 5}), ("/hesap", {"password": "short"}), ("/hesap", {"password": "x" * 257}),
-                           ("/hesap", {"password": "tab\there"}), ("/dizin", {}), ("/dizin", {"save": 1}), ("/dizin", {"save": "x" * 1025}),
-                           ("/dizin", {"save": "/x", "y": 1}), ("/dizin", None)):
-            with self.subTest(path=path, data=data), self.assertRaises(panel.ApiError) as caught:
-                self.api.handle(FakeRequest("POST", path, data))
+        for data in ({}, None, {"x": 1}, {"username": "bad user"}, {"username": 5}, {"password": "short"}, {"password": "x" * 257},
+                     {"password": "tab\there"}, {"save": 1}, {"save": "x" * 1025}, {"save": "/x", "y": 1}):
+            with self.subTest(data=data), self.assertRaises(panel.ApiError) as caught:
+                self.api.handle(FakeRequest("POST", "/ayar", data))
             self.assertEqual(caught.exception.code, 400)
         self.assertEqual(self.ctx.worker_calls, [])
         with self.assertRaises(panel.ApiError) as caught:
             self.api.handle(FakeRequest("GET", "/yok"))
         self.assertEqual(caught.exception.code, 404)
         with self.assertRaises(panel.ApiError) as caught:
-            self.api.handle(FakeRequest("PUT", "/hesap", {"username": "x"}))
+            self.api.handle(FakeRequest("PUT", "/ayar", {"username": "x"}))
         self.assertEqual(caught.exception.code, 405)
 
+    def test_the_old_account_and_folder_routes_are_gone(self):
+        for path, data in (("/hesap", {"username": "old-route", "password": "dummy-api-password"}), ("/dizin", {"save": "/srv/media"})):
+            req = FakeRequest("POST", path, data)
+            with self.subTest(path=path), self.assertRaises(panel.ApiError) as caught:
+                self.api.handle(req)
+            self.assertEqual(caught.exception.code, 404)
+            self.assertEqual(req.audits, [])
+        self.assertEqual(self.ctx.worker_calls, [])
+
     def test_changes_run_the_packages_worker_with_the_state_and_audit_without_secrets(self):
-        req = FakeRequest("POST", "/hesap", {"username": "new-user", "password": "dummy-api-password"})
-        self.assertEqual(self.api.handle(req), (200, {"ok": True, "username": "worker-user"}))
+        req = FakeRequest("POST", "/ayar", {"username": "new-user", "password": "dummy-api-password"})
+        self.assertEqual(self.api.handle(req), (200, {"ok": True, "username": "worker-user", "save": "/srv/downloads/"}))
         argv, data = self.ctx.worker_calls[0]
-        self.assertEqual(argv, ["/usr/bin/python3", str(self.pkg / "ayar.py"), "--lib", "/fixture/sbin", "--state", str(self.state), "hesap"])
+        self.assertEqual(argv, ["/usr/bin/python3", str(self.pkg / "ayar.py"), "--lib", "/fixture/sbin", "--state", str(self.state), "ayar"])
         self.assertEqual(data, {"username": "new-user", "password": "dummy-api-password"})
-        self.assertEqual(req.audits, [("hesap", "kullanıcı adı ve parola", True)])
-        req = FakeRequest("POST", "/hesap", {"password": "dummy-api-password"})
+        self.assertEqual(req.audits, [("ayar", "kullanıcı adı ve parola", True)])
+        req = FakeRequest("POST", "/ayar", {"password": "dummy-api-password"})
         self.api.handle(req)
-        self.assertEqual(req.audits, [("hesap", "parola", True)])
-        self.ctx.worker_result = (200, {"ok": True, "save": "/srv/media/"})
-        req = FakeRequest("POST", "/dizin", {"save": "/srv/media"})
-        self.assertEqual(self.api.handle(req), (200, {"ok": True, "save": "/srv/media/"}))
-        self.assertEqual(self.ctx.worker_calls[-1][0][-1], "dizin")
-        self.assertEqual(req.audits, [("dizin", "/srv/media", True)])
+        self.assertEqual(req.audits, [("ayar", "parola", True)])
+        self.ctx.worker_result = (200, {"ok": True, "username": "admin", "save": "/srv/media/"})
+        req = FakeRequest("POST", "/ayar", {"save": "/srv/media"})
+        self.assertEqual(self.api.handle(req), (200, {"ok": True, "username": "admin", "save": "/srv/media/"}))
+        self.assertEqual(self.ctx.worker_calls[-1], (argv, {"save": "/srv/media"}))
+        self.assertEqual(req.audits, [("ayar", "dizin /srv/media", True)])
+        self.assertNotIn("dummy-api-password", json.dumps([call[0] for call in self.ctx.worker_calls]))
         self.assertEqual(self.calls, [], "the API module itself touches no file and runs no service command")
 
     def test_worker_refusals_become_the_requests_error(self):
         self.ctx.worker_result = (400, {"error": "Kullanıcı adı geçersiz."})
-        req = FakeRequest("POST", "/hesap", {"username": "x"})
+        req = FakeRequest("POST", "/ayar", {"username": "x"})
         with self.assertRaises(panel.ApiError) as caught:
             self.api.handle(req)
         self.assertEqual((caught.exception.code, caught.exception.message), (400, "Kullanıcı adı geçersiz."))
-        self.assertEqual(req.audits, [("hesap", "kullanıcı adı", False)])
+        self.assertEqual(req.audits, [("ayar", "kullanıcı adı", False)])
         self.ctx.worker_result = (502, "garbage")
         with self.assertRaises(panel.ApiError) as caught:
-            self.api.handle(FakeRequest("POST", "/dizin", {"save": "/x"}))
+            self.api.handle(FakeRequest("POST", "/ayar", {"save": "/x"}))
         self.assertEqual((caught.exception.code, caught.exception.message), (502, "qBittorrent ayarı uygulanamadı"))
-
 
     def test_ayar_route_checks_the_shape_and_runs_the_worker_once(self):
         for data in ({}, None, {"x": 1}, {"username": "bad user"}, {"password": "short"}, {"password": ""},
@@ -657,31 +668,34 @@ class DispatcherTests(Scratch):
     def test_status_and_private_worker_run_through_the_dispatcher(self):
         self.assertEqual(self.request("GET", "/api/uygulama/torrent/durum", headers={})[0], 403)
         status, body = self.request("GET", "/api/uygulama/torrent/durum")
-        self.assertEqual((status, body["installed"], body["running"], body["save"]), (200, True, False, self.env["DOWNLOADS_PATH"] + "/"))
-        self.assertNotIn("oldhash", json.dumps(body))
-        self.assertEqual(self.request("POST", "/api/uygulama/torrent/hesap", {"password": "short"})[0], 400)
+        self.assertEqual((status, body), (200, {"username": "admin", "save": self.env["DOWNLOADS_PATH"] + "/"}))
+        self.assertFalse([r for r in self.runs if r[0][:2] == ["systemctl", "is-active"]], "the view asks no service state")
+        self.assertEqual(self.request("POST", "/api/uygulama/torrent/ayar", {"password": "short"})[0], 400)
+        # The old account and folder routes are gone: unknown paths of the package, before any worker.
+        self.assertEqual(self.request("POST", "/api/uygulama/torrent/hesap", {"password": "dummy-api-password"})[0], 404)
+        self.assertEqual(self.request("POST", "/api/uygulama/torrent/dizin", {"save": self.env["DOWNLOADS_PATH"]})[0], 404)
         self.assertFalse([r for r in self.runs if r[0][0] == "systemd-run"], "a refused shape starts no worker")
         with patch("builtins.print") as out:
-            status, body = self.request("POST", "/api/uygulama/torrent/hesap", {"password": "dummy-api-password"})
+            status, body = self.request("POST", "/api/uygulama/torrent/ayar", {"password": "dummy-api-password"})
         self.assertEqual((status, body), (200, {"ok": True, "username": "u"}))
         argv, stdin = [r for r in self.runs if r[0][0] == "systemd-run"][0]
         self.assertEqual(argv[:5], ["systemd-run", "--quiet", "--wait", "--pipe", "--collect"])
-        self.assertEqual(argv[-7:], ["/usr/bin/python3", str(self.root / "mods/torrent/ayar.py"), "--lib", str(self.root / "bin"), "--state", str(self.state), "hesap"])
+        self.assertEqual(argv[-7:], ["/usr/bin/python3", str(self.root / "mods/torrent/ayar.py"), "--lib", str(self.root / "bin"), "--state", str(self.state), "ayar"])
         self.assertEqual(json.loads(stdin), {"password": "dummy-api-password"})
         self.assertNotIn("dummy-api-password", " ".join(argv))
         lines = [str(c.args[0]) for c in out.call_args_list if c.args]
-        self.assertEqual([l for l in lines if "torrent:hesap" in l], ["panel: konsol yerel torrent:hesap parola -> ok"])
+        self.assertEqual([l for l in lines if "torrent:" in l], ["panel: konsol yerel torrent:ayar parola -> ok"])
         self.assertFalse([l for l in lines if "dummy-api-password" in l])
         self.assertEqual(self.conf.read_text(), SEED % self.env["DOWNLOADS_PATH"], "the backend itself never writes the profile")
         (self.root / "modules").write_text("")
         self.assertEqual(self.request("GET", "/api/uygulama/torrent/durum")[0], 404)
-        self.assertEqual(self.request("POST", "/api/uygulama/torrent/hesap", {"username": "x"})[0], 409)
+        self.assertEqual(self.request("POST", "/api/uygulama/torrent/ayar", {"username": "x"})[0], 409)
 
     def test_worker_scripts_must_live_in_the_package_folder(self):
         ctx = panel.PackageContext(self.p, "torrent")
         outside = self.root / "elsewhere.py"
         outside.write_text("")
-        code, body = ctx.worker(["/usr/bin/python3", str(outside), "--state", str(self.state), "hesap"], {})
+        code, body = ctx.worker(["/usr/bin/python3", str(outside), "--state", str(self.state), "ayar"], {})
         self.assertEqual(code, 400)
         self.assertIn("paket klasöründe değil", body["error"])
         link = self.root / "mods" / "torrent" / "link.py"
@@ -694,10 +708,10 @@ class DispatcherTests(Scratch):
 
     def test_settings_of_a_stopped_app_read_and_save_without_starting_it(self):
         # DD-210: an installed but stopped qBittorrent (registry durduruldu) keeps its settings route: the
-        # overview dialog reads /durum and saves /ayar through the worker; the backend starts nothing.
+        # application page's Ayarlar tab reads /durum and saves /ayar through the worker; the backend starts nothing.
         (self.root / "modules").write_text("torrent\tdurduruldu\n")
         status, body = self.request("GET", "/api/uygulama/torrent/durum")
-        self.assertEqual((status, body["installed"], body["running"], body["username"]), (200, True, False, "admin"))
+        self.assertEqual((status, body), (200, {"username": "admin", "save": self.env["DOWNLOADS_PATH"] + "/"}))
         self.assertNotIn("oldhash", json.dumps(body))
         status, body = self.request("POST", "/api/uygulama/torrent/ayar", {"username": "stopped-edit", "password": "dummy-stopped-pass"})
         self.assertEqual(status, 200)

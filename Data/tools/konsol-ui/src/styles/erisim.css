@@ -106,11 +106,6 @@
 }
 
 /* ---- Adresler */
-.mono-soft {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-}
-
 .forward {
   display: flex;
   flex-direction: column;

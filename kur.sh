@@ -99,7 +99,7 @@ main() {
     fi
     printf '\n==> Kurulum başlıyor. Sistem önce güncellenir.\n'
     printf '    Özeti kontrol edip onaya E yazın. Tailscale URL gelirse tarayıcıda onaylayın.\n'
-    printf '    Uygulamalar kurulumdan sonra Konsol → App Store'"'"'dan kurulur.\n\n'
+    printf '    Uygulamalar kurulumdan sonra Konsol → Uygulamalar → Uygulama ekle ile kurulur.\n\n'
     rm -rf -- "$tmp"
     trap - EXIT
     exec bash "$root/install.sh" </dev/tty

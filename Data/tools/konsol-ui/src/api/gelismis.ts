@@ -162,7 +162,7 @@ export async function startResourceJob(request: ResourceJob): Promise<KonteynerI
   return shaped<KonteynerIsi & { id: string }>(await postJson(YOLLAR.konteyner_islemi, request), (v) => isText(v.id) && v.id !== "");
 }
 
-// The current Konsol's rules (console/konteynerler.js); the worker checks them again.
+// The worker checks these again.
 /** A fully qualified image: a registry (with a dot or a port, or localhost), a repository and a tag or digest. */
 export const IMAGE_RE =
   /^(localhost|[a-z0-9-]+(\.[a-z0-9-]+)+)(:[0-9]{1,5})?\/[a-z0-9]+([._-][a-z0-9]+)*(\/[a-z0-9]+([._-][a-z0-9]+)*)*(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}|@sha256:[0-9a-f]{64})$/;

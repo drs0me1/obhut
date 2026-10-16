@@ -257,7 +257,7 @@ class Manager:
     def initial(self):
         e = self.env
         return {"schema": 4, "limits": dict(DEFAULT_LIMITS), "root": e["SERVER_ROOT"], "items": [],
-                "blocked": [e["FILES_PANEL_TRASH"], e["SHARE_DIR"]], "protected": self.protected_folders()}
+                "blocked": [e["FILES_PANEL_TRASH"]], "protected": self.protected_folders()}
 
     def read(self):
         try:
@@ -325,7 +325,7 @@ class Manager:
             return ""
 
     def tail_available(self):
-        """DD-191 global gate: Settings → Caddy can close WebDAV on Tailscale."""
+        """DD-191 global gate: Erişim → Adresler can close WebDAV on Tailscale."""
         from master_publications import config as publication_config
         from master_settings import SettingsError
         try:
@@ -460,9 +460,9 @@ class Manager:
             os.close(fd)
 
     def change(self, action, request):
-        if not isinstance(request, dict):
+        if not isinstance(request, dict) or action not in ("save", "remove"):
             raise ShareError("Geçersiz paylaşım işlemi.")
-        if any(k in request for k in ("permission", "days", "expires", "networks", "paused", "ack_write")) or action == "pause":
+        if any(k in request for k in ("permission", "days", "expires", "networks", "paused", "ack_write")):
             raise ShareError("Paylaşım ayarları bağlantı bazında değişti; sayfayı yenileyin.")
         allowed = {"id", "path", "username", "password", "connections", "ack_wan_http"} if action == "save" else {"id"}
         if set(request) - allowed:
@@ -736,7 +736,7 @@ def main():
     from master_settings import SettingsError
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
-    parser.add_argument("action", choices=("prepare", "status", "save", "pause", "remove", "publish", "guard", "wan-firewall"))
+    parser.add_argument("action", choices=("prepare", "status", "save", "remove", "publish", "guard", "wan-firewall"))
     args = parser.parse_args()
     try:
         manager = Manager(args.state)

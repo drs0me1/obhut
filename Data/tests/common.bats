@@ -627,8 +627,10 @@ EOF
     [ -n "$downloads_tree" ]
     run ! grep -q 'chown -R' <<<"$downloads_tree"
     grep -qF 'python3 "$V2_ROOT/panel/master_permissions.py" "$root" "$uid" "$gid"' <<<"$downloads_tree"
-    # DD-267: the retired archive workspace stays out of the walk until stage 7 removes it.
-    grep -qF '"${RETIRED_ARCHIVE_DIR:-.arsiv}" "${SHARE_DIR:-.pay}"' <<<"$downloads_tree"
+    # DD-267: the retired archive workspace stays out of the walk until stage 7 removes it; DD-269: .pay is
+    # no longer reserved.
+    grep -qF 'master_permissions.py" "$root" "$uid" "$gid" "$RETIRED_ARCHIVE_DIR"' <<<"$downloads_tree"
+    run ! grep -q 'SHARE_DIR' <<<"$downloads_tree"
     run ! grep -qE 'find |chown |chmod ' <<<"$(grep -v '^[[:space:]]*#' <<<"$downloads_tree")"
 }
 
@@ -1135,7 +1137,7 @@ EOF
         'Group=__DOWNLOADS_GID__' 'Type=exec' 'ProtectSystem=strict' 'ProtectHome=true' \
         'PrivateTmp=true' 'NoNewPrivileges=true' 'CapabilityBoundingSet=' \
         'IPAddressDeny=any' 'IPAddressAllow=localhost' 'ReadWritePaths=__SERVER_ROOT__' \
-        'InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__ -__SERVER_ROOT__/__SHARE_DIR__ __PRIVATE_STATE_ROOT__' \
+        'InaccessiblePaths=__SERVER_ROOT__/__FILES_PANEL_TRASH__ __PRIVATE_STATE_ROOT__' \
         'RequiresMountsFor=__SERVER_ROOT__'; do
         grep -qxF "$line" "$unit"
     done
@@ -1339,7 +1341,8 @@ EOF
 
 @test "every run upgrades the system and re-runs skip unchanged edge restart" {
     # DD-228: full-upgrade is not a question any more, re-runs included.
-    grep -q 'RUN_FULL_UPGRADE' "$V2_ROOT/install.sh"
+    awk '/^stage_1\(\)/,/^stage_2\(\)/' "$V2_ROOT/install.sh" | grep -q -- '-o Dpkg::Options::=--force-confold full-upgrade'
+    run ! grep -q 'RUN_FULL_UPGRADE' "$V2_ROOT/install.sh"
     run ! grep -q 'V2_FULL_UPGRADE' "$V2_ROOT/install.sh"
     run ! grep -q 'full-upgrade yapılsın mı' "$V2_ROOT/install.sh"
     grep -q 'FIREWALL_NEEDS_RESTART' "$V2_ROOT/install.sh"
@@ -1716,8 +1719,8 @@ EOF
     awk '/saved-domain/ {s = NR} /Yerel alan adı/ {p = NR} /prompt confirm_ans/ {c = NR}
          END { exit !(s && p && c && s < p && p < c) }' <<<"$stage0"
     # Every run upgrades the system first; nothing asks or skips it.
-    grep -qx '    RUN_FULL_UPGRADE=1' <<<"$stage0"
-    run ! grep -qE 'upgrade_ans|V2_FULL_UPGRADE' "$V2_ROOT/install.sh"
+    grep -qx '  full-upgrade:  evet' <<<"$stage0"
+    run ! grep -qE 'upgrade_ans|V2_FULL_UPGRADE|yes_no_upgrade' "$V2_ROOT/install.sh"
     # DD-124/DD-143: nothing of WireGuard is an input.
     run ! grep -qE 'take_snapshot_input|validate_snapshot' <<<"$stage0"
     run ! grep -qE 'INPUT_WG_DIR|OUTPUT_DIR|OUTPUT_WG_DIR|\bWG_PEERS\b' \
@@ -2162,7 +2165,6 @@ share_fixture() {
     cp "$V2_ROOT/panel/master_https.py" "$TMP/lib/master_https.py"
     cat >>"$TMP/mstate.env" <<EOF
 SERVER_ROOT=$TMP/srv
-SHARE_DIR=.pay
 SHARE_PORT=61010
 SHARE_HTTPS_PORT=443
 SHARE_STATE_FILE=$TMP/etc/webdav.json
@@ -2269,7 +2271,6 @@ file_mode() { python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode
     [ "$output" = '0 16 64 61010' ]
     cmp -s "$TMP/mods/paylasim/master-paylasim.service" "$TMP/units/master-paylasim.service"
     cmp -s "$TMP/mods/dosya/master-files-panel.service" "$TMP/units/master-files-panel.service"
-    [ ! -e "$TMP/srv/.pay" ]
     run mm liste
     [ "$(cut -f1 <<<"$output" | tr '\n' ' ')" = 'wireguard torrent ' ]
 }
@@ -2339,26 +2340,17 @@ liste_live() { mm liste | awk -F'\t' -v i="$1" '$1 == i {print $4}'; }
     run ! grep -qE 'RETIRED_SHARE_MESSAGE|/api/paylas"' "$V2_ROOT/files-panel/master-files-panel"
 }
 
-@test "builtins preserve legacy metadata and do not follow or recreate its marker" {
+@test "a builtins re-run leaves the folder-account registry as it is" {
     builtin_fixture
-    mkdir -p "$TMP/srv/.pay/w"
-    printf 'old registry\n' >"$TMP/srv/.pay/kayit.json"
-    printf 'old credential\n' >"$TMP/etc/paylasim.cred"
-    printf 'unchanged\n' >"$TMP/marker-target"
-    ln -s "$TMP/marker-target" "$TMP/srv/.pay/acik"
     run mm yerlesik
     [ "$status" -eq 0 ]
-    [ -L "$TMP/srv/.pay/acik" ]
-    [ "$(cat "$TMP/marker-target")" = unchanged ]
-    [ "$(cat "$TMP/srv/.pay/kayit.json")" = 'old registry' ]
-    [ "$(cat "$TMP/etc/paylasim.cred")" = 'old credential' ]
     cp "$TMP/etc/webdav.json" "$TMP/registry-before"
     run mm yerlesik
     [ "$status" -eq 0 ]
     cmp -s "$TMP/registry-before" "$TMP/etc/webdav.json"
 }
 
-@test "stage 3 creates the current tree without legacy sharing and preserves old private modes" {
+@test "stage 3 creates the current tree without legacy sharing; stage 0 refuses an old share tree" {
     eval "$(awk '/^stage_3\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     eval "$(awk '/^ensure_downloads_tree\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     detect_wan() { :; }
@@ -2366,23 +2358,20 @@ liste_live() { mm liste | awk -F'\t' -v i="$1" '$1 == i {print $4}'; }
     write_state() { V2_LAST_ATOMIC_CHANGED=0; }
     log() { :; }
     SERVER_ROOT="$TMP/root" DOWNLOADS_PATH="$TMP/root/downloads" MEDIA_SUBDIR=media
-    FILES_PANEL_TRASH=.cop FILES_ARCHIVE_DIR=.arsiv SHARE_DIR=.pay
+    FILES_PANEL_TRASH=.cop RETIRED_ARCHIVE_DIR=.arsiv
     DOWNLOADS_UID="$(id -u)" DOWNLOADS_GID="$(id -g)"
     stage_3
     [ -d "$SERVER_ROOT/downloads" ]
     [ -d "$SERVER_ROOT/media/movies" ]
     [ -d "$SERVER_ROOT/.cop" ]
     [ ! -e "$SERVER_ROOT/.pay" ]
-    mkdir -p "$SERVER_ROOT/.pay/w"
-    printf 'old private metadata\n' >"$SERVER_ROOT/.pay/kayit.json"
-    chmod 0700 "$SERVER_ROOT/.pay" "$SERVER_ROOT/.pay/w"
-    chmod 0600 "$SERVER_ROOT/.pay/kayit.json"
-    stage_3
-    [ "$(file_mode "$SERVER_ROOT/.pay")" = 0o700 ]
-    [ "$(file_mode "$SERVER_ROOT/.pay/w")" = 0o700 ]
-    [ "$(file_mode "$SERVER_ROOT/.pay/kayit.json")" = 0o600 ]
-    [ "$(cat "$SERVER_ROOT/.pay/kayit.json")" = 'old private metadata' ]
-    [ ! -e "$SERVER_ROOT/.pay/acik" ]
+    # DD-269: the pre-v2-145 share tree is no longer kept hidden anywhere, so stage 0 refuses to run
+    # beside one (a folder or a link) before anything is written.
+    stage0="$(awk '/^stage_0\(\)/,/^stage_1\(\)/' "$V2_ROOT/install.sh")"
+    grep -qF '[[ ! -e "$SERVER_ROOT/.pay" && ! -L "$SERVER_ROOT/.pay" ]] ||' <<<"$stage0"
+    grep -qF '.pay eski bir sürümün paylaşım klasörü' <<<"$stage0"
+    awk '/\.pay eski bir sürümün/ {g = NR} /prompt confirm_ans|Bu değerlerle kurulum/ {c = NR} END { exit !(g && c && g < c) }' <<<"$stage0"
+    run ! grep -rq --exclude-dir=__pycache__ 'SHARE_DIR' "$V2_ROOT/config/defaults.env" "$V2_ROOT/scripts" "$V2_ROOT/systemd" "$V2_ROOT/magaza" "$V2_ROOT/panel"
 }
 
 @test "stage 3 refuses a symlink media parent before creating outside directories" {
@@ -2393,14 +2382,14 @@ liste_live() { mm liste | awk -F'\t' -v i="$1" '$1 == i {print $4}'; }
     write_state() { V2_LAST_ATOMIC_CHANGED=0; }
     log() { :; }
     SERVER_ROOT="$TMP/root" DOWNLOADS_PATH="$TMP/root/downloads" MEDIA_SUBDIR=media
-    FILES_PANEL_TRASH=.cop FILES_ARCHIVE_DIR=.arsiv SHARE_DIR=.pay
+    FILES_PANEL_TRASH=.cop RETIRED_ARCHIVE_DIR=.arsiv
     DOWNLOADS_UID="$(id -u)" DOWNLOADS_GID="$(id -g)"
     mkdir -p "$SERVER_ROOT" "$TMP/outside"
     ln -s "$TMP/outside" "$SERVER_ROOT/media"
     # Match the installer's errexit semantics; never source its stage dispatcher.
     run -- bash -c 'set -Eeuo pipefail; eval "$1"; eval "$2"; stage_3' _ \
         "$(declare -f stage_3 ensure_downloads_tree detect_wan detect_tailscale write_state log die)" \
-        "$(declare -p SERVER_ROOT DOWNLOADS_PATH MEDIA_SUBDIR FILES_PANEL_TRASH FILES_ARCHIVE_DIR SHARE_DIR DOWNLOADS_UID DOWNLOADS_GID V2_ROOT)"
+        "$(declare -p SERVER_ROOT DOWNLOADS_PATH MEDIA_SUBDIR FILES_PANEL_TRASH RETIRED_ARCHIVE_DIR DOWNLOADS_UID DOWNLOADS_GID V2_ROOT)"
     [ "$status" -ne 0 ]
     case "$output" in *"güvenli onarılamadı"*) ;; *) false ;; esac
     [ ! -e "$TMP/outside/movies" ]
@@ -2416,7 +2405,7 @@ liste_live() { mm liste | awk -F'\t' -v i="$1" '$1 == i {print $4}'; }
     python3 -c '
 import json, sys
 m = [i for i in json.load(open(sys.argv[1]))["items"] if i["id"] == "torrent"][0]
-assert (m["id"], m["runtime"], m["installed"], m["state"], m["busy"], m["progress"]) == ("torrent", "host", False, "", False, None), m
+assert (m["id"], m["installed"], m["state"], m["busy"], m["progress"]) == ("torrent", False, "", False, None) and "runtime" not in m, m
 ' "$TMP/body"
     local json=(-H 'X-Konsol: 1' -H 'Content-Type: application/json') islem=/api/konsol/uygulamalar/islem
     # DD-210: qBittorrent declares an install form; without it nothing starts (DD-266: the table's route).
@@ -2610,14 +2599,11 @@ EOF
     python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"peers": 4, "profiles": 4}' "$TMP/body"
     [ "$(pc /api/uygulama/wireguard/nets/wg1/remove "${auth[@]}" "${json[@]}" -d '{"confirm":"onayla"}')" = 200 ]
     grep -qx 'yok|net-remove|wg1|--onay' "$TMP/mwg-calls"
-    # The masked preview carries no secret; the download and the QR only when asked.
-    [ "$(pc '/api/uygulama/wireguard/nets/wg0/peers/iphone/profile?masked=1' "${auth[@]}")" = 200 ]
-    grep -q '^PrivateKey = •' "$TMP/body"
-    grep -q '^Endpoint = 203.0.113.7:61001$' "$TMP/body"
-    run ! grep -qE 'SECRETPRIV|SECRETPSK' "$TMP/body"
-    grep -qx 'wg0|profile|iphone' "$TMP/mwg-calls"
+    # The profile and the QR only when asked, as a download (the old masked preview is gone).
     [ "$(pc /api/uygulama/wireguard/nets/wg0/peers/iphone/profile "${auth[@]}")" = 200 ]
+    grep -qx 'wg0|profile|iphone' "$TMP/mwg-calls"
     grep -q 'SECRETPRIV' "$TMP/body"
+    grep -q '^Endpoint = 203.0.113.7:61001$' "$TMP/body"
     grep -qi '^Content-Disposition: attachment; filename="iphone.conf"' "$TMP/head"
     [ "$(pc /api/uygulama/wireguard/nets/wg0/peers/iphone/qr.png "${auth[@]}")" = 200 ]
     grep -qi '^Content-Type: image/png' "$TMP/head"
@@ -2956,17 +2942,13 @@ EOF
 files_panel_start() {
     # DD-139: the file panel on a scratch root, with an account written by the WireGuard panel.
     FPANEL="$V2_ROOT/files-panel/master-files-panel"
-    mkdir -p "$TMP/fweb" "$TMP/root/Filmler/Kuzey" "$TMP/root/incomplete" "$TMP/outside"
-    printf '<!doctype html><title>konsol</title>\n' >"$TMP/fweb/index.html"
-    printf 'body{}\n' >"$TMP/fweb/konsol.css"
-    printf '/* js */\n' >"$TMP/fweb/konsol.js"
+    mkdir -p "$TMP/root/Filmler/Kuzey" "$TMP/root/incomplete" "$TMP/outside"
     printf 'gizli\n' >"$TMP/outside/secret.txt"
     ln -s "$TMP/outside" "$TMP/root/kacis"
     printf 'merhaba dünya\n' >"$TMP/root/notlar.txt"
     # DD-149: the share account never reaches this backend; it only manages the links.
     FPORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
     python3 "$FPANEL" serve --listen "127.0.0.1:$FPORT" --root "$TMP/root" \
-        --share .pay \
         --domain ayc --version 2026.08.06-v2-test --protected "incomplete=Deneme Uygulaması" >"$TMP/fpanel.log" 2>&1 &
     PANEL_PID=$!
     for _ in $(seq 1 100); do
@@ -3167,13 +3149,10 @@ PY
     grep -q 'dosya: konsol 127.0.0.1 indir "notlar.txt" -> ok' "$TMP/fpanel.log"
 }
 
-@test "files panel has no shared-root share API and hides its internal directory" {
+@test "files panel has no shared-root share API" {
     files_panel_start
     [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":7}')" = 404 ]
-    [ ! -e "$TMP/root/.pay/w/Kuzey" ]
-    mkdir -p "$TMP/root/.pay"
-    printf 'paylasim\n' >"$TMP/root/.pay/acik"
-    [ "$(fpost /api/paylas '{"path":"Filmler/Kuzey","days":7}')" = 404 ]
+    [ ! -e "$TMP/root/.pay" ]
     [ "$(fpost /api/paylas/kaldir '{"name":"Kuzey"}')" = 404 ]
     [ "$(fp /api/paylas)" = 404 ]
     [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: attacker.example' -H 'X-Konsol: 1' "http://127.0.0.1:$FPORT/api/state")" = 403 ]
@@ -3181,8 +3160,6 @@ PY
     [ "$(fp /api/state -H 'Sec-Fetch-Site: cross-site')" = 403 ]
     [ "$(fp /api/state)" = 200 ]
     python3 -c 'import json,sys; assert "share" not in json.load(open(sys.argv[1]))' "$TMP/body"
-    [ "$(cat "$TMP/root/.pay/acik")" = paylasim ]
-    [ "$(fp '/api/list?path=.pay')" = 403 ]
     [ -d "$TMP/root/Filmler/Kuzey" ]
 }
 
@@ -3200,11 +3177,10 @@ PY
     cmp -s "$TMP/payload.bin" "$TMP/root/Filmler/arsiv.bin"
     # Geçici ad kalmaz.
     [ "$(ls -A "$TMP/root/Filmler" | grep -c '^\.yukleniyor-')" = 0 ]
-    # Geçersiz ad ve gövdesiz istek reddedilir; çöp ve paylaşım klasörü hedef olamaz.
+    # Geçersiz ad ve gövdesiz istek reddedilir; çöp hedef olamaz.
     [ "$(fp "/api/upload?path=Filmler&name=..%2Fkacak" --data-binary "@$TMP/other.bin")" = 400 ]
     [ "$(fp "/api/upload?path=Filmler&name=bos.bin" -X POST -H 'Content-Length: 0')" = 411 ]
     [ "$(fp "/api/upload?path=.cop&name=x.bin" --data-binary "@$TMP/other.bin")" = 403 ]
-    [ "$(fp "/api/upload?path=.pay&name=x.bin" --data-binary "@$TMP/other.bin")" = 403 ]
     # A refusal decided before the body is read still reads (drains) the body first, so a
     # proxy sees the real answer instead of a reset connection (Caddy turned that into 502).
     head -c 8388608 /dev/zero >"$TMP/big.bin"
@@ -3319,7 +3295,7 @@ PY
     [ -f "$V2_ROOT/magaza/torrent/trafik.py" ]
     [ -f "$V2_ROOT/magaza/wireguard/trafik.py" ]
     # qBittorrent's own all-time statistics, not systemd IP accounting (a daemon-reload drops those counters).
-    run ! grep -q 'IPAccounting' "$V2_ROOT/magaza/torrent/master-stack.conf"
+    run ! grep -rq 'IPAccounting' "$V2_ROOT/magaza/torrent"
     grep -qF '"qBittorrent-data.conf"' "$V2_ROOT/magaza/torrent/trafik.py"
     run ! grep -qE '^import subprocess|subprocess\.run' "$V2_ROOT/magaza/torrent/trafik.py"
     grep -qF 'PAKET_TRAFIK=""' "$V2_ROOT/scripts/master-modul"
@@ -3343,7 +3319,7 @@ PY
     # The base read mapper stays read-only; manager writes have one gated route and an external worker.
     grep -qF 'atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"' "$V2_ROOT/install.sh"
     # DD-266: the reads are table routes too, on the same view; no Podman path is matched by hand.
-    for read in liste ayrinti gunluk guncellemeler islem; do
+    for read in liste ayrinti guncellemeler islem; do
         grep -qF "Route(\"GET\", \"/api/konsol/konteynerler/$read\"," "$V2_ROOT/panel/master_api.py"
     done
     grep -qF 'return self.panel.containers.view()' "$V2_ROOT/panel/master-panel"
@@ -3405,14 +3381,16 @@ PY
     body="$(awk '/^torrent_off\(\)/,/^}$/' "$pkg/kanca")"
     grep -qF 'paket_konteyner_kaldir' <<<"$body"
     # (the only "systemctl disable" is the manual step named for an old Debian qbittorrent-nox unit)
-    [ "$(grep -E 'systemctl (enable|disable)' "$pkg/kanca" | grep -vc 'eski qBittorrent servisi')" -eq 0 ]
+    [ "$(grep -cE 'systemctl (enable|disable)' "$pkg/kanca")" -eq 0 ]
+    # DD-269: no check for the native qbittorrent-nox@ unit of installs before v2-186 any more.
+    run ! grep -q 'qbittorrent-nox@' "$pkg/kanca"
     body="$(awk '/^paket_kur\(\)/,/^}$/' "$pkg/kanca")"
     [ "$(grep -n 'torrent_profile' <<<"$body" | cut -d: -f1)" -lt "$(grep -n 'systemctl start' <<<"$body" | cut -d: -f1)" ]
     # DD-210: the install form's account and folder are written before the first start.
     [ "$(grep -n 'torrent_tohum uygula' <<<"$body" | cut -d: -f1)" -lt "$(grep -n 'systemctl start' <<<"$body" | cut -d: -f1)" ]
     body="$(awk '/^torrent_verify\(\)/,/^}$/' "$pkg/kanca")"
     grep -qF 'podman inspect --format' <<<"$body"
-    grep -qF '"$SERVER_ROOT/$FILES_PANEL_TRASH/"* | "$SERVER_ROOT/$SHARE_DIR/"*)' <<<"$body"
+    grep -qF '/ | "$SERVER_ROOT/" | "$SERVER_ROOT/$FILES_PANEL_TRASH/"*)' <<<"$body"
     grep -qF "awk '\$4 !~ /^127\\.0\\.0\\.1:/ {print \$4}'" <<<"$body"
     # A folder outside the downloads tree is one quadlet drop-in bind mount at the same path.
     grep -qF 'return updates, "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=" + folder + ":" + folder + "\n"' "$pkg/ayar.py"
@@ -3454,7 +3432,7 @@ PY
     [ "$(tail -n 1 "$V2_ROOT/templates/Caddyfile")" = 'import __CADDY_MODULES_DIR__/*.caddy' ]
     s6="$(awk '/^stage_6\(\)/,/^stage_7\(\)/' "$V2_ROOT/install.sh")"
     awk '/install -d -m 0755 -o root -g root "\$CADDY_MODULES_DIR"/ {a = NR} /caddy validate --config/ {b = NR} END {exit !(a && b && a < b)}' <<<"$s6"
-    for k in SHARE_DIR SHARE_STATE_FILE SHARE_HTTPS_PORT STATE_DIR CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR; do
+    for k in SHARE_STATE_FILE SHARE_HTTPS_PORT STATE_DIR CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR; do
         awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx "$k=\\\$$k"
     done
     # reapply_modules: a changed module file is applied to an installed module in either state.
@@ -3528,14 +3506,13 @@ PY
         for key in $(grep -oE '__[A-Z][A-Z0-9_]*__' "$unit" | sort -u | sed 's/^__//; s/__$//'); do
             case "$key" in
                 SERVER_ROOT) args+=("$key=/srv") ;; FILES_PANEL_TRASH) args+=("$key=.cop") ;;
-                SHARE_DIR) args+=("$key=.pay") ;;
                 PRIVATE_STATE_ROOT) args+=("$key=/var/lib") ;; *) args+=("$key=x") ;;
             esac
         done
         render_template "$unit" "$TMP/rendered" 0644 "${args[@]}"
         out="$(grep '^InaccessiblePaths=' "$TMP/rendered")"
         if [ "$unit" = "$dav" ]; then
-            [ "$out" = 'InaccessiblePaths=/srv/.cop -/srv/.pay /var/lib' ]
+            [ "$out" = 'InaccessiblePaths=/srv/.cop /var/lib' ]
         else
             [ "$out" = 'InaccessiblePaths=/var/lib' ]
         fi
@@ -3763,10 +3740,12 @@ EOF
     [ "$(grep -rhE 'AutoUpdate=|podman-auto-update|auto-update' "$V2_ROOT/magaza" "$V2_ROOT/panel" "$V2_ROOT/systemd" "$V2_ROOT/install.sh" "$V2_ROOT/scripts" | grep -cvE '^[[:space:]]*#')" -eq 0 ]
 }
 
-@test "the files backend has no archive jobs any more and still starts with a retired --archive-dir (DD-267)" {
+@test "the files backend has no archive jobs any more and still starts with a retired --archive-dir or --share (DD-267, DD-269)" {
     # No route and no result line.
     run ! grep -qE 'arsiv|/api/archives' "$V2_ROOT/files-panel/master-files-panel"
-    # A unit rendered before the upgrade may still pass --archive-dir: accepted and ignored, never a start failure.
+    # A unit rendered before the upgrade may still pass --archive-dir or --share: accepted and ignored, never a
+    # start failure; the unit itself passes neither.
+    run ! grep -qE -- '--archive-dir|--share' "$V2_ROOT/systemd/master-files-panel.service"
     PYTHONDONTWRITEBYTECODE=1 python3 - "$V2_ROOT/files-panel/master-files-panel" <<'PY'
 import importlib.machinery, sys, types
 loader = importlib.machinery.SourceFileLoader("files_panel", sys.argv[1])
@@ -3775,9 +3754,10 @@ m.__file__ = sys.argv[1]
 loader.exec_module(m)
 seen = []
 m.cmd_serve = seen.append
-sys.argv = ["master-files-panel", "serve", "--listen", "127.0.0.1:1", "--root", "/srv", "--archive-dir", "/srv/.arsiv"]
+sys.argv = ["master-files-panel", "serve", "--listen", "127.0.0.1:1", "--root", "/srv", "--archive-dir", "/srv/.arsiv",
+            "--share", ".pay"]
 m.main()
-assert len(seen) == 1 and seen[0].root == "/srv", seen
+assert len(seen) == 1 and seen[0].root == "/srv" and not hasattr(seen[0], "share"), seen
 PY
 }
 
@@ -4227,7 +4207,7 @@ wg_revision() {
     touch "$TMP/pending.json"
     run master_wg --if wg0 net-settings 9.9.9.9 "$revision"
     [ "$status" -ne 0 ]
-    case "$output" in *'bekleyen işlemi'*) ;; *) false ;; esac
+    case "$output" in *'bekleyen ayar işlemini'*) ;; *) false ;; esac
     cmp -s "$TMP/original.networks" "$TMP/etc/wireguard/networks"
     [ ! -s "$TMP/calls" ]
 }
@@ -4555,7 +4535,6 @@ torrent_fixture() {
     cat >>"$TMP/mstate.env" <<EOF
 CONSOLE_WEB_DIR=$TMP/web
 DOWNLOADS_GID=1000
-SHARE_DIR=.pay
 CADDYFILE=$TMP/caddy/Caddyfile
 CADDY_MODULES_DIR=$TMP/caddy/moduller
 DNSMASQ_CONF_DIR=$TMP/dnsmasq.d
@@ -4575,7 +4554,6 @@ case "\$*" in
     "stop qbittorrent.service") rm -f "$TMP/qb-active" ;;
     "is-active --quiet qbittorrent.service") [ -e "$TMP/qb-active" ]; exit \$? ;;
     "show -p InvocationID --value qbittorrent.service") echo 0123456789abcdef0123456789abcdef ;;
-    list-units*) [ ! -e "$TMP/qb-legacy" ] || echo "qbittorrent-nox@master-downloads.service loaded active running qBittorrent" ;;
 esac
 exit 0
 EOF
@@ -4798,14 +4776,6 @@ torrent_seed() { # [SAVE_DIR]
         [ ! -e "$TMP/qb-active" ]
         rm -f "$TMP/$trap_file"
     done
-    # An old Debian qbittorrent-nox unit that is still active holds the port: the manual step is named.
-    touch "$TMP/qb-legacy"
-    torrent_seed
-    run mm kur torrent
-    [ "$status" -ne 0 ]
-    case "$output" in *"systemctl disable --now qbittorrent-nox@master-downloads.service"*) ;; *) false ;; esac
-    [ ! -e "$TMP/quadlet/qbittorrent.container" ]
-    [ ! -e "$TMP/run/modul-torrent.kur" ]
 }
 
 @test "master-modul account refuses a FIFO profile promptly without leaking journal credentials" {
@@ -5158,7 +5128,7 @@ PY
     iptables_nat() { shift 2; printf '%s\n' "$*" >>"$TMP/nat4"; }
     ip6tables_nat() { shift 2; printf '%s\n' "$*" >>"$TMP/nat6"; }
     WAN_INTERFACE=eth0 TAILSCALE_IF=tailscale0 TAILSCALE_UDP_PORT=41641 SSH_PUBLIC_PORT=22
-    CHAIN_STAGING_PREFIX=MASTER-NEXT-
+    CHAIN_STAGING_PREFIX=MASTER-NEXT- KONTEYNER_BRIDGE_PREFIX=ksl
     eval "$(grep '^VPN_BLOCK_DEST[46]=' "$V2_ROOT/config/defaults.env")"
     eval "$(sed -n '/^ICMP6_TYPES=(/,/)$/{p;}' "$fw")"
     MODULES_FILE="$TMP/moduller"
@@ -5456,23 +5426,8 @@ g = json.load(open(sys.argv[3]))
 assert (g["caddy"], g["dnsmasq"]) == (d["web"], d["dns"]), g
 fw = d["firewall"]
 assert fw["ok"] and fw["check"] == "firewall: kritik politikalar yerinde", fw
-v4 = fw["v4"]["entries"]
-k = lambda g, kind: [e for e in v4 if e["group"] == g and e["kind"] == kind]
-assert k("wan", "ssh")[0]["pkts"] == 23 and k("wan", "ssh")[0]["port"] == 22, v4
-assert k("wan", "drop")[0]["pkts"] == 1631
-wgp = k("wan", "vpn")[0]
-assert (wgp["iface"], wgp["port"], wgp["label"]) == ("wg0", 61001, "Ana ağ"), wgp
-assert k("wg:wg0", "nat")[0]["subnet"] == "10.8.0.0/24" and k("wg:wg0", "egress")[0]["pkts"] == 9
-assert k("ts", "all")[0]["pkts"] == 4 and k("self", "lo")[0]["pkts"] == 157
-# A rule Konsol does not know is shown, not hidden; RETURN is not a rule to show.
-other = [e for e in v4 if e["group"] == "other"]
-assert len(other) == 1 and "--dport 8080" in other[0]["spec"], other
-assert not [e for e in v4 if e["spec"] == "-j RETURN"]
-raw = fw["v4"]["raw"]
-assert "# iptables -S MASTER-INPUT" in raw and "# iptables -t nat -S MASTER-NAT" in raw and " -c " not in raw, raw
-v6 = fw["v6"]["entries"]
-assert sum(e["pkts"] for e in v6 if e["kind"] == "icmp6") == 10 and [e["pkts"] for e in v6 if e["kind"] == "drop"] == [111], v6
-assert [e["group"] for e in v6 if e["kind"] == "nat"] == ["wg:wg0"] and not [e for e in v6 if e["group"] == "other"], v6
+# The old Settings page's rule groups are gone: the technical rows (guvenlik-duvari teknik) carry the rules.
+assert "v4" not in fw and "v6" not in fw, sorted(fw)
 # Web: every address with where it goes, its source and who reaches it.
 web = {e["address"]: e for e in d["web"]["entries"]}
 routes = [(r["path"], r["kind"], r["to"]) for r in web["panel.ayc"]["routes"]]
@@ -5507,14 +5462,11 @@ PY
     python3 - "$TMP/body" "$TMP" <<'PY'
 import json, sys
 t, tmp = json.load(open(sys.argv[1])), sys.argv[2]
-assert t["installed"] and t["save"] == tmp + "/srv/downloads/" and t["save_inside"], t
-assert t["temp"] == "" and not t["temp_on"] and not t["temp_inside"], t
-assert t["peer_port"] == 45410 and t["ui"] == "127.0.0.1:61006" and t["username"] == "admin", t
-assert (t["unit"], t["container"], t["running"]) == ("qbittorrent.service", "qbittorrent", False), t
+# The settings form's two values only (Uygulamalar → qBittorrent → Ayarlar).
+assert t == {"username": "admin", "save": tmp + "/srv/downloads/"}, t
 PY
-    grep -qx "is-active --quiet qbittorrent.service" "$TMP/systemctl-calls"
-    # DD-178: absent in the seed, but an explicit user's temporary folder is
-    # still reported accurately; GET must never enable or rewrite it.
+    run ! grep -qs "is-active --quiet qbittorrent.service" "$TMP/systemctl-calls"
+    # DD-178: an explicit user's temporary folder is absent in the seed; GET must never enable or rewrite it.
     printf '\n[BitTorrent]\nSession\\TempPath=%s/srv/downloads/user-buffer/\nSession\\TempPathEnabled=true\n' \
         "$TMP" >>"$TMP/qb/qBittorrent/qBittorrent.conf"
     cp "$TMP/qb/qBittorrent/qBittorrent.conf" "$TMP/user-temp.conf"
@@ -5522,13 +5474,13 @@ PY
     python3 - "$TMP/body" "$TMP" <<'PY'
 import json, sys
 t = json.load(open(sys.argv[1]))
-assert t["temp"] == sys.argv[2] + "/srv/downloads/user-buffer/" and t["temp_on"] and t["temp_inside"], t
+assert set(t) == {"username", "save"}, t
 PY
     cmp -s "$TMP/user-temp.conf" "$TMP/qb/qBittorrent/qBittorrent.conf"
-    # A save path outside the downloads folder is flagged (it needs its own bind mount, DD-209).
+    # A save path outside the downloads folder is shown as it is (it needs its own bind mount, DD-209).
     sed -i.bak 's#^Session\\DefaultSavePath=.*#Session\\DefaultSavePath=/root/indirilenler/#' "$TMP/qb/qBittorrent/qBittorrent.conf"
     [ "$(pc /api/uygulama/torrent/durum -H 'X-Konsol: 1')" = 200 ]
-    python3 -c 'import json, sys; t = json.load(open(sys.argv[1])); assert t["save"] == "/root/indirilenler/" and not t["save_inside"], t' "$TMP/body"
+    python3 -c 'import json, sys; t = json.load(open(sys.argv[1])); assert t["save"] == "/root/indirilenler/", t' "$TMP/body"
     # Not installed: no application view at all, and the base view stays what it was.
     printf 'wireguard\tcalisiyor\n' >"$TMP/moduller"
     [ "$(pc /api/uygulama/torrent/durum -H 'X-Konsol: 1')" = 404 ]
@@ -5621,18 +5573,21 @@ PY
     mkdir -p "$TMP/templates/torrent"
     sed 's/__TORRENT_UI_PORT__/61006/g' "$V2_ROOT/magaza/torrent/paket.env" >"$TMP/templates/torrent/paket.env"
     cp "$V2_ROOT/magaza/torrent/api.py" "$V2_ROOT/magaza/torrent/ayar.py" "$TMP/mods/torrent/torrent.env" "$TMP/templates/torrent/"
-    [ "$(pc /api/uygulama/torrent/hesap -H 'Content-Type: application/json' --data '{"password":"dummy-api-password"}')" = 403 ]
-    [ "$(pc /api/uygulama/torrent/hesap "${headers[@]}" --data '{"password":"short"}')" = 400 ]
-    [ "$(pc /api/uygulama/torrent/hesap "${headers[@]}" --data '{"username":"bad user"}')" = 400 ]
+    [ "$(pc /api/uygulama/torrent/ayar -H 'Content-Type: application/json' --data '{"password":"dummy-api-password"}')" = 403 ]
+    [ "$(pc /api/uygulama/torrent/ayar "${headers[@]}" --data '{"password":"short"}')" = 400 ]
+    [ "$(pc /api/uygulama/torrent/ayar "${headers[@]}" --data '{"username":"bad user"}')" = 400 ]
+    # The account and folder had their own routes before the Ayarlar tab (DD-267); one route now.
+    [ "$(pc /api/uygulama/torrent/hesap "${headers[@]}" --data '{"password":"dummy-api-password"}')" = 404 ]
+    [ "$(pc /api/uygulama/torrent/dizin "${headers[@]}" --data '{"save":"/etc"}')" = 404 ]
     run ! grep -q 'ayar.py' "$TMP/sdrun-calls"
-    [ "$(pc /api/uygulama/torrent/hesap "${headers[@]}" --data '{"password":"dummy-api-password"}')" = 200 ]
-    tail -n 1 "$TMP/sdrun-calls" | grep -q -- "--wait --pipe --collect .*/templates/torrent/ayar.py --lib $TMP/pbin --state .* hesap$"
+    [ "$(pc /api/uygulama/torrent/ayar "${headers[@]}" --data '{"password":"dummy-api-password"}')" = 200 ]
+    tail -n 1 "$TMP/sdrun-calls" | grep -q -- "--wait --pipe --collect .*/templates/torrent/ayar.py --lib $TMP/pbin --state .* ayar$"
     grep -q 'dummy-api-password' "$TMP/worker-body"
     run ! grep -q 'dummy-api-password' "$TMP/sdrun-calls" "$TMP/panel.log" "$TMP/body"
-    grep -q 'panel: konsol yerel torrent:hesap parola -> ok' "$TMP/panel.log"
-    [ "$(pc /api/uygulama/torrent/dizin "${headers[@]}" --data '{"save":"/etc"}')" = 200 ]
-    tail -n 1 "$TMP/sdrun-calls" | grep -q "/templates/torrent/ayar.py --lib $TMP/pbin --state .* dizin$"
-    grep -q 'panel: konsol yerel torrent:dizin /etc -> ok' "$TMP/panel.log"
+    grep -q 'panel: konsol yerel torrent:ayar parola -> ok' "$TMP/panel.log"
+    [ "$(pc /api/uygulama/torrent/ayar "${headers[@]}" --data '{"save":"/etc"}')" = 200 ]
+    tail -n 1 "$TMP/sdrun-calls" | grep -q "/templates/torrent/ayar.py --lib $TMP/pbin --state .* ayar$"
+    grep -q 'panel: konsol yerel torrent:ayar dizin /etc -> ok' "$TMP/panel.log"
     [ "$(pc /api/konsol/ayarlar/onayla "${headers[@]}" --data '{"id":"sample","client":"100.64.0.9","host":"panel.forged"}')" = 200 ]
     # DD-180: without Caddy's X-Forwarded-For the client is the server itself, never a body value.
     python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["client"] == "yerel"' "$TMP/worker-body"

@@ -75,9 +75,14 @@ def public(path, data=None, cookie=None, api=True):
 
 
 def status():
-    code, body = tail("/api/konsol/ayarlar/durum")
+    """The settings revision and the publication rows in the shape this test checks, read from
+    Erişim's GET yayinlar (DD-265)."""
+    code, body = tail("/api/konsol/yayinlar")
     assert code == 200, code
-    return json.loads(body)
+    view = json.loads(body)
+    return {"revision": view["revizyon"], "publications": [
+        {"service": c["servis"], "tail": c["tailscale"], "enabled": c["internet"], "domain": c["alan_adi"],
+         "status": c["durum"]} for c in view["adaylar"] if c.get("servis")]}
 
 
 def save(**item):
@@ -113,7 +118,7 @@ try:
 
     status_code, headers, _ = public("/giris.html", api=False)
     assert status_code == 200 and headers.get("strict-transport-security") == "max-age=31536000", status_code
-    for page in ("/", "/konsol.js", "/index.html"):
+    for page in ("/", "/app.js", "/index.html"):
         status_code, headers, _ = public(page, api=False)
         assert (status_code, headers.get("location")) == (302, "/giris.html"), (page, status_code)
     for api in ("/api/konsol/kaynaklar", "/api/state", "/api/uygulama/wireguard/state"):
@@ -127,8 +132,8 @@ try:
     print("PASS: public sign-in page with HSTS; pages, Files and root APIs need a session; no account creation over the internet", flush=True)
 
     status_code, _, body = public("/", cookie=COOKIE, api=False)
-    assert status_code == 200 and b'id="panel-sidebar"' in body, status_code
-    for api in ("/api/konsol/kaynaklar", "/api/state", "/api/konsol/ayarlar/durum"):
+    assert status_code == 200 and b'<div id="app">' in body and b'src="/app.js"' in body, status_code
+    for api in ("/api/konsol/kaynaklar", "/api/state", "/api/konsol/yayinlar"):
         assert public(api, cookie=COOKIE)[0] == 200, api
     assert json.loads(public("/api/konsol/oturum", cookie=COOKIE)[2])["kanal"] == "internet"
     # A request without the session-gated API header is still refused (CSRF gate).

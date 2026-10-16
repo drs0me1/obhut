@@ -2,8 +2,8 @@
 # Tailscale adres değişince state.env güncelle; Caddy ve bağlı konteyner adreslerini yenile.
 # Modül siteleri (ör. Paylaşım'ın Infuse adresi {$TAILSCALE_IPV4}:port) Caddyfile'a içe
 # aktarılır; Caddy yeniden başlayınca onlar da yeni adresle açılır (DD-98, DD-149).
-# DD-239: 5 dakikalık döngü yok. Açılışta bir kez, Caddy çökünce (OnFailure) ve master-onar
-# (Konsol'un "Denetle ve onar" düğmesi ya da SSH) istediğinde çalışır.
+# DD-239/DD-240: 5 dakikalık döngü yok. Açılışta bir kez, her gece 03:00–04:00 arasında bir kez, Caddy
+# çökünce (OnFailure) ve master-onar (Konsol'un "Denetle ve onar" düğmesi ya da SSH) istediğinde çalışır.
 set -Eeuo pipefail
 umask 077
 

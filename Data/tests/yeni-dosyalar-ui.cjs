@@ -19,7 +19,7 @@ const TZ = "Europe/Istanbul";
 const SHA = (c) => c.repeat(64);
 const ucell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
 const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: ucell("yok"), internet: ucell("yok"),
-  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, sayfa: null, eylemler: [], revizyon: null,
+  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
   metinler: null, hesap: false, aciklama: "", ...o });
 const GEZGIN = app({ id: "paket:gezgin", ad: "Gezgin", tur: "paket", modul: "gezgin", konteyner: "gezgin", simge: "folder", aciklama: "Sunucudaki dosyalarınızı tarayıcıdan yönetin.",
   tailscale: ucell("acik", ["gezgin.ev"]), adres: { tailscale: "http://gezgin.ev", internet: null } });
@@ -27,7 +27,7 @@ const APPS = [
   GEZGIN,
   app({ id: "paket:torrent", ad: "qBittorrent", tur: "paket", modul: "torrent", konteyner: "torrent", simge: "download" }),
   app({ id: "konteyner:notlar", ad: "notlar", tur: "konteyner", konteyner: "notlar" }),
-  app({ id: "yerlesik:dosya", ad: "Dosyalar", tur: "yerlesik", sayfa: "#/dosyalar" }),
+  app({ id: "yerlesik:dosya", ad: "Dosyalar", tur: "yerlesik" }),
 ];
 const conn = (active, o = {}) => ({ enabled: active, permission: "ro", expires: null, expired: false, available: true, active, reason: "", url: "", ...o });
 const SHARES = { enabled: true, running: true, host: "paylas.ev", max: 32, tail_enabled: true, limits: {},
@@ -44,7 +44,7 @@ const STORAGE = { read_at: NOW, kok: "/srv", hatalar: ["notlar2: konteyner okuna
 
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.10.16-v2-250", surum: "1.2.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 5 * DAY,
-    cores: 4, interval: 10, read_at: NOW, sampled_at: NOW, cpu: [2.0], mem: { total: 8 * GB, used: 700 * MB, graph: [8.0] },
+    cores: 4, read_at: NOW, sampled_at: NOW, cpu: 2.0, mem: { total: 8 * GB, used: 700 * MB },
     net: { wan: "203.0.113.10", wan6: "", iface: "eth0", tailscale: "100.64.0.2", tailscale6: "" }, root: "/srv", disk: { total: 500 * GB, free: 320 * GB } },
   saglik: { status: "ok", read_at: NOW - 60, checks: [{ id: "firewall", name: "Güvenlik duvarı", status: "ok", detail: "Kurallar yerinde" }] },
   guncelleme: { kurulu: "2026.10.16-v2-250", kurulu_surum: "1.2.0", son: "2026.10.16-v2-250", son_surum: "1.2.0", commit: "0".repeat(40), yeni: false,

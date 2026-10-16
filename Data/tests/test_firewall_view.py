@@ -105,14 +105,13 @@ class FirewallViewTests(unittest.TestCase):
         with patch.object(panel, "read_env", return_value=self.env), \
              patch.object(self.p, "package_networks", return_value=nets), \
              patch.object(self.p, "vpn_apps", return_value=["WireGuard"]), \
-             patch.object(self.p, "firewall_view", return_value={}), \
+             patch.object(self.p, "firewall_check", return_value={}), \
              patch.object(self.p, "web_view", return_value={}), \
              patch.object(self.p, "dns_view", return_value={}):
             fw = self.p.settings(fresh=True)["firewall"]
-        self.assertTrue(fw["vpn_installed"])
         self.assertEqual(fw["vpn_name"], "WireGuard")
         self.assertEqual(len(fw["networks"]), 2)
-        self.assertEqual(set(fw["networks"][0]), {"app", "iface", "label", "active", "server4", "server6"})
+        self.assertEqual(set(fw["networks"][0]), {"app", "iface", "label", "active"})
         self.assertFalse(fw["networks"][1]["active"])
 
     def test_wireguard_endpoints_have_no_tunnel_host_service(self):
@@ -191,27 +190,13 @@ class FirewallViewTests(unittest.TestCase):
             rows = self.p.settings_ports(self.env, [])
         self.assertFalse(any(r["scope"].startswith("wg") or r["name"].startswith("WireGuard ") for r in rows))
 
-    def test_a_wireguard_to_host_accept_is_shown_as_unknown(self):
-        # DD-177: the firewall never emits these; one added by hand must stand out, not look known.
-        for spec in ("-d 10.8.0.1/32 -i wg0 -p tcp -m tcp --dport 61004 -j ACCEPT",
-                     "-d 10.8.0.1/32 -i wg0 -p icmp -m icmp --icmp-type 8 -j ACCEPT"):
-            rows = panel.classify_rules("input", [{"spec": spec, "pkts": 3}], self.env, self.nets)
-            self.assertEqual((rows[0]["group"], rows[0]["kind"]), ("other", "unknown"))
-
-    def test_absent_wg_chains_are_expected_only_without_networks(self):
-        env = {**self.env, "CHAIN_INPUT": "MASTER-INPUT", "CHAIN_FORWARD": "MASTER-FORWARD", "CHAIN_NAT": "MASTER-NAT"}
-        def read(binary, chain, table):
-            return ([], "-N MASTER-INPUT") if chain == "MASTER-INPUT" else (None, "")
-        with patch.object(self.p, "iptables_chain", side_effect=read), \
-             patch.object(panel.subprocess, "run", return_value=types.SimpleNamespace(returncode=0, stdout=b"ok", stderr=b"")):
-            self.assertTrue(self.p.firewall_view(env, [])["v4"]["readable"])
-            self.assertFalse(self.p.firewall_view(env, self.nets)["v4"]["readable"])
-        # Missing INPUT or a failed --check must never appear as healthy.
-        with patch.object(self.p, "iptables_chain", return_value=(None, "")), \
-             patch.object(panel.subprocess, "run", return_value=types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"failed")):
-            view = self.p.firewall_view(env, [])
-            self.assertFalse(view["v4"]["readable"])
-            self.assertFalse(view["ok"])
+    def test_the_firewall_check_reports_its_last_line_and_a_failure_is_never_healthy(self):
+        with patch.object(panel.subprocess, "run", return_value=types.SimpleNamespace(returncode=0, stdout=b"a\nfirewall: tamam\n", stderr=b"")):
+            self.assertEqual(self.p.firewall_check(), {"ok": True, "check": "firewall: tamam"})
+        with patch.object(panel.subprocess, "run", return_value=types.SimpleNamespace(returncode=1, stdout=b"", stderr=b"failed")):
+            self.assertEqual(self.p.firewall_check(), {"ok": False, "check": "failed"})
+        with patch.object(panel.subprocess, "run", side_effect=OSError("no master-firewall")):
+            self.assertEqual(self.p.firewall_check(), {"ok": False, "check": "denetim çalıştırılamadı"})
 
 
 if __name__ == "__main__":

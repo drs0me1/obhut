@@ -84,31 +84,21 @@ def repair(root, uid, gid, excluded):
     return changed
 
 
-def prepare_directory(path, uid, gid, mode=None):
-    fd = open_root(path, create=True)
-    try:
-        if mode is not None:
-            st = os.fstat(fd)
-            if (st.st_uid, st.st_gid) != (uid, gid):
-                os.fchown(fd, uid, gid)
-            if stat.S_IMODE(st.st_mode) != mode:
-                os.fchmod(fd, mode)
-    finally:
-        os.close(fd)
+def prepare_directory(path):
+    os.close(open_root(path, create=True))
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--mkdir', action='store_true')
-    parser.add_argument('--directory-mode', type=lambda value: int(value, 8))
     parser.add_argument('root')
     parser.add_argument('uid', type=int)
     parser.add_argument('gid', type=int)
     parser.add_argument('excluded', nargs='*')
     args = parser.parse_args()
     try:
-        if args.mkdir or args.directory_mode is not None:
-            prepare_directory(args.root, args.uid, args.gid, args.directory_mode)
+        if args.mkdir:
+            prepare_directory(args.root)
         else:
             print(repair(args.root, args.uid, args.gid, args.excluded))
     except (OSError, ValueError, RecursionError):

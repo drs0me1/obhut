@@ -1,6 +1,6 @@
 // The container manager's reads and writes for Uygulamalar' add flows and an application's page (DD-211,
-// DD-258 phase 4a; Data/docs/design/container-manager-api.md): the inventory, one container's detail and
-// log, the image update check, an operation's record, the write actions and the folder list of the picker.
+// DD-258 phase 4a; Data/docs/design/container-manager-api.md): the inventory, one container's detail,
+// the image update check, an operation's record, the write actions and the folder list of the picker.
 // Paths come from sema.ts (generated from panel/master_api.py); every reply is checked before a page shows
 // it, and a list item without its expected fields is left out. The browser never decides what a container
 // may do: it shows `actions` and `restricted_reason` as the server sends them.
@@ -8,7 +8,6 @@ import {
   YOLLAR,
   type Klasorler,
   type KonteynerAyrintisi,
-  type KonteynerGunlugu,
   type KonteynerPortu,
 } from "./sema";
 import { getJson, postJson } from "./http";
@@ -237,11 +236,6 @@ export async function readContainer(name: string): Promise<ContainerDetail> {
     user: textOf(v.user),
     command: textOf(v.command),
   };
-}
-
-export async function readContainerLog(name: string, lines: number): Promise<KonteynerGunlugu & { lines: string[] }> {
-  const v = shaped<KonteynerGunlugu>(await getJson(query(YOLLAR.konteyner_gunlugu, { ad: name, satir: String(lines) })), (d) => isList(d.lines));
-  return { ...v, lines: (v.lines ?? []).filter(isText) };
 }
 
 /** DD-214: the cached update check of every managed container; `force` asks the registries again (at most

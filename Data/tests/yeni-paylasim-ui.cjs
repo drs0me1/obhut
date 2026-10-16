@@ -52,7 +52,7 @@ function withConn(v, id, scope, patch) {
 
 const ucell = (durum, adresler = [], uyari = "", not = "") => ({ durum, adresler, uyari, not });
 const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: ucell("yok"), internet: ucell("yok"),
-  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, sayfa: null, eylemler: [], revizyon: null,
+  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
   metinler: null, hesap: false, aciklama: "", ...o });
 const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
 const row = (id, ad, tur, cells, aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, calisiyor: true, yerel: cell("yok"), tailscale: cell("yok"),
@@ -65,17 +65,17 @@ const ROWS = [
   row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"], "2 klasör"), internet: cell("acik", [WAN], "1 klasör", "Şifresiz HTTP") }, "WebDAV · 3 klasör"),
 ];
 const APPS = [
-  app({ id: "paket:torrent", ad: "qBittorrent", tur: "paket", modul: "torrent", konteyner: "torrent", simge: "download", sayfa: "#/torrent" }),
-  app({ id: "paket:wireguard", ad: "WireGuard", tur: "paket", modul: "wireguard", simge: "shield", sayfa: "#/wireguard" }),
+  app({ id: "paket:torrent", ad: "qBittorrent", tur: "paket", modul: "torrent", konteyner: "torrent", simge: "download" }),
+  app({ id: "paket:wireguard", ad: "WireGuard", tur: "paket", modul: "wireguard", simge: "shield" }),
   app({ id: "konteyner:notlar", ad: "notlar", tur: "konteyner", konteyner: "notlar", aciklama: "Konteyner · docker.io/library/nginx" }),
-  app({ id: "yerlesik:dosya", ad: "Dosyalar", tur: "yerlesik", aciklama: "Dosya yöneticisi · yerleşik", sayfa: "#/dosyalar" }),
-  app({ id: "yerlesik:paylasim", ad: "Paylaşımlar", tur: "yerlesik", aciklama: "WebDAV · yerleşik · 3 klasör", sayfa: "#/dosyalar/paylasim",
+  app({ id: "yerlesik:dosya", ad: "Dosyalar", tur: "yerlesik", aciklama: "Dosya yöneticisi · yerleşik" }),
+  app({ id: "yerlesik:paylasim", ad: "Paylaşımlar", tur: "yerlesik", aciklama: "WebDAV · yerleşik · 3 klasör",
     tailscale: ucell("acik", ["paylas.ev"]), internet: ucell("acik", [WAN], "Şifresiz HTTP") }),
 ];
 
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.10.16-v2-250", surum: "1.1.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
-    cores: 4, interval: 10, read_at: NOW, sampled_at: NOW, cpu: [2.0], mem: { total: 8375186227, used: 696254464, graph: [8.0] },
+    cores: 4, read_at: NOW, sampled_at: NOW, cpu: 2.0, mem: { total: 8375186227, used: 696254464 },
     net: { wan: "203.0.113.10", wan6: "", iface: "eth0", tailscale: "100.64.0.2", tailscale6: "" }, root: "/srv", disk: { total: 269186688614, free: 255550000000 } },
   saglik: { status: "ok", read_at: NOW - 60, checks: [{ id: "tailscale", name: "Tailscale", status: "ok", detail: "çalışıyor" }] },
   guncelleme: { kurulu: "2026.10.16-v2-250", kurulu_surum: "1.1.0", son: "2026.10.16-v2-250", son_surum: "1.1.0", commit: "0".repeat(40), yeni: false,
@@ -93,7 +93,7 @@ const data = {
       giris: "Klasör hesapları korur; her klasörün internet erişimi Paylaşımlar'dan açılır." })] },
   adlar: { revizyon: "rev-1", alan: "ev", hatalar: [], adlar: [{ ad: "panel.ev", aile: 4, hedef: "tailscale", kaynak: "base", kapali: false, kilitli: true }],
     kayitlar: [], yonlendirme: false, sunucular: [] },
-  ag: { read_at: NOW, iface: "eth0", window: 600, sampled_at: NOW, rx: 1024, tx: 2048, points: [], apps: [] },
+  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048, apps: [] },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
   depolama: { read_at: NOW, kok: "/srv", kullananlar: [], hatalar: [] },
   "konteynerler/liste": { read_at: NOW, runtime: { version: "5.4.2", ok: true, error: "" }, containers: [], images: [], volumes: [], networks: [],
@@ -731,7 +731,6 @@ async function openShares(page, extra = "") {
     assert.equal(await page.getByTestId("app-actions").locator('[data-eylem="ac"]').getAttribute("href"), "#/dosyalar");
     await page.goto(url("#/uygulamalar"));
     await page.locator('tr[data-uygulama="yerlesik:paylasim"]').waitFor();
-    assert.equal(await page.locator('a[href^="/#/"]').count(), 0, "no link to the old interface");
     // The palette: no "Eski arayüz"; Paylaşımlar is a Dosyalar tab and an application.
     await page.keyboard.press("Control+K");
     const palette = page.getByRole("dialog", { name: "Komut paleti" });

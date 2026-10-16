@@ -34,7 +34,7 @@ ROWS = [
      "tail": True, "enabled": False, "domain": "", "installed": True, "running": True, "answers": False,
      "status": "disabled", "message": "Hedef yanıt vermiyor.", "expires": None},
     {"service": "paylasim", "name": "WebDAV", "local": "paylas.ev", "tail": True, "enabled": False, "domain": "",
-     "installed": True, "running": True, "status": "disabled", "message": "İnternet yayını kapalı.", "expires": None, "mode": "off"},
+     "installed": True, "running": True, "status": "disabled", "message": "İnternet yayını kapalı.", "expires": None},
 ]
 PACKAGES = {"torrent": {"name": "qBittorrent", "local": "torrent", "upstream": "127.0.0.1:62947", "check": "yayin.py", "order": 20},
             "gezgin": {"name": "Gezgin", "local": "gezgin", "upstream": "127.0.0.1:62983", "check": "yayin.py", "order": 30}}

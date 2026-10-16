@@ -194,7 +194,9 @@ class ContainerRouteTests(unittest.TestCase):
             def log_message(self, *_args):
                 pass
         Handler.panel = self.p
-        with patch.object(self.p, "run_tool", side_effect=lambda argv, binary=False, timeout=120: fake.run(argv, timeout)):
+        # The routes read the container manager's view; here its read-only mapper over the fake runtime.
+        view = panel.master_containers.Containers(lambda argv, timeout: fake.run(argv, timeout))
+        with patch.object(self.p.containers, "view", return_value=view):
             _server, sock = start_unix(self, Handler)
             self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/liste", {})[0], 403)
             self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/liste", {"X-Konsol": "1", "Host": "evil.test"})[0], 403)
@@ -204,9 +206,8 @@ class ContainerRouteTests(unittest.TestCase):
             self.assertEqual((status, json.loads(body)["unit"]), (200, "deneme-qbit.service"))
             self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/ayrinti?ad=a%3Bb", {"X-Konsol": "1"})[0], 400)
             self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/ayrinti?ad=yok", {"X-Konsol": "1"})[0], 404)
-            status, _h, body = unix_get(sock, "/api/konsol/konteynerler/gunluk?ad=deneme-qbit&satir=100", {"X-Konsol": "1"})
-            self.assertEqual(status, 200)
-            self.assertIn("Zq3pL9ab2", body.decode(), "DD-251: the log is not filtered")
+            # A container's log is read as its application's (uygulamalar/gunluk); the Podman page's own route is gone.
+            self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/gunluk?ad=deneme-qbit&satir=100", {"X-Konsol": "1"})[0], 404)
             self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/baslat", {"X-Konsol": "1"})[0], 404)
             for path in ("/api/konsol/konteynerler/liste", "/api/konsol/konteynerler/durdur"):
                 self.assertEqual(unix_get(sock, path, {"X-Konsol": "1", "Content-Type": "application/json"}, "POST", b"{}")[0], 404)

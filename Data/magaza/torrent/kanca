@@ -19,7 +19,7 @@ paket_gerekli() {
         "${TORRENT_PEER_PORT:-}" =~ ^[1-9][0-9]{3,4}$ && -n "${TORRENT_NETWORK:-}" ]] ||
         fail_step "paket ayarı eksik (torrent.env); kurulumu yeniden çalıştırın"
     need_keys DOWNLOADS_PATH DOWNLOADS_UID DOWNLOADS_GID TORRENT_UI_PORT TORRENT_PROFILE_DIR KONTEYNER_BIRIM_DIR \
-        SERVER_ROOT FILES_PANEL_TRASH SHARE_DIR LOCAL_DOMAIN TAILSCALE_IPV4 WAN_IPV4 CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR
+        SERVER_ROOT FILES_PANEL_TRASH LOCAL_DOMAIN TAILSCALE_IPV4 WAN_IPV4 CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR
     command -v podman >/dev/null 2>&1 || fail_step "Podman yok; kurulumu yeniden çalıştırın"
 }
 
@@ -29,19 +29,6 @@ torrent_unit_name() { # Podman üreticisinin yazdığı birim: konteyner adı + 
 
 paket_birim() {
     torrent_unit_name
-}
-
-# Eski sürümlerin Debian servisi (qbittorrent-nox@) açık ya da etkinse aynı portu tutar; yeni kurulum
-# kuralı gereği taşınmaz, elle kapatılır (DD-209).
-torrent_eski_yok() {
-    local unit link
-    unit="$(systemctl list-units --all --plain --no-legend 'qbittorrent-nox@*.service' 2>/dev/null |
-        awk '$3 == "active" {print $1; exit}' || true)"
-    for link in "$UNIT_DIR"/*.wants/qbittorrent-nox@*.service; do
-        [[ -e "$link" || -L "$link" ]] || continue
-        unit="${unit:-${link##*/}}"
-    done
-    [[ -z "$unit" ]] || fail_step "eski qBittorrent servisi ($unit) açık; önce: systemctl disable --now $unit"
 }
 
 # Profil klasörü indirme sahibine ait; ayar dosyası yoksa şablondan bir kez yazılır. Konteyner ilk
@@ -84,7 +71,7 @@ torrent_verify() { # [--ilk]
     while IFS= read -r m; do
         [[ -n "$m" ]] || continue
         case "$m/" in
-            / | "$SERVER_ROOT/" | "$SERVER_ROOT/$FILES_PANEL_TRASH/"* | "$SERVER_ROOT/$SHARE_DIR/"*)
+            / | "$SERVER_ROOT/" | "$SERVER_ROOT/$FILES_PANEL_TRASH/"*)
                 FAIL="qBittorrent konteyneri korunan bir klasörü görüyor ($m)"; return 1 ;;
         esac
     done <<<"$mounts"
@@ -215,7 +202,6 @@ PY
 paket_kur() {
     paket_gerekli
     [[ -n "${KUR_TOHUM:-}" ]] || fail_step "kurulum bilgileri yok; Konsol → Uygulamalar'daki katalogdan kurun"
-    torrent_eski_yok
     progress_step 1 "İmaj indiriliyor"
     paket_imaj_cek || fail_step "$FAIL"
     progress_step 2 "Konteyner birimi"
@@ -235,7 +221,6 @@ paket_kur() {
 
 paket_baslat() {
     paket_gerekli
-    torrent_eski_yok
     paket_imaj_cek || fail_step "$FAIL"
     torrent_on || fail_step "$FAIL"
     torrent_verify || fail_step "$FAIL"
@@ -249,7 +234,6 @@ paket_durdur() { # servis durur, açılışta başlamaz; adlar kalır
 
 paket_yeniden_baslat() { # motorun tek install/modül kilidi altında
     paket_gerekli
-    torrent_eski_yok
     paket_imaj_cek || fail_step "$FAIL"
     paket_konteyner_koy || fail_step "$FAIL"
     systemctl restart "$(torrent_unit_name)" >/dev/null 2>&1 || fail_step "qBittorrent yeniden başlatılamadı"
@@ -271,7 +255,6 @@ paket_uygula() { # KAYIT_DURUMU
     paket_gerekli
     paket_adlar_ac || fail_step "$FAIL"
     if [[ "$state" == calisiyor ]]; then
-        torrent_eski_yok
         paket_imaj_cek || fail_step "$FAIL"
         torrent_on || fail_step "$FAIL"
         torrent_verify || fail_step "$FAIL"

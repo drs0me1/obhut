@@ -19,7 +19,7 @@ class Stage3FilesTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory(prefix="stage3-files-")
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name).resolve()
-        args = types.SimpleNamespace(root=str(self.root), trash=".cop", share=".pay",
+        args = types.SimpleNamespace(root=str(self.root), trash=".cop",
                                      domain="", version="test", temp_dir="",
                                      allow_host=[])
         self.handler = type("FixtureHandler", (fp.Handler,), {"panel": fp.Panel(args), "timeout": .2})

@@ -260,7 +260,7 @@ SHARE_FAIL=""
 
 share_need() {
     local k
-    for k in SERVER_ROOT SHARE_DIR SHARE_PORT SHARE_STATE_FILE STATE_DIR SBIN_DIR CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR LOCAL_DOMAIN TAILSCALE_IPV4 UNIT_DIR DOWNLOADS_UID; do
+    for k in SERVER_ROOT SHARE_PORT SHARE_STATE_FILE STATE_DIR SBIN_DIR CADDYFILE CADDY_MODULES_DIR DNSMASQ_CONF_DIR LOCAL_DOMAIN TAILSCALE_IPV4 UNIT_DIR DOWNLOADS_UID; do
         [[ -n "${!k:-}" ]] || fail_step "state.env'de $k yok; kurulumu yeniden çalıştırın"
     done
 }
@@ -465,11 +465,8 @@ paket_apt() {
     apt_install $PAKET_APT
 }
 
-# shellcheck disable=SC2034
-ARACLAR_DEGISTI=0
 paket_araclar_koy() {
     local name src dst tmp
-    ARACLAR_DEGISTI=0
     for name in $PAKET_ARACLAR; do
         [[ "$name" =~ ^[a-z][a-z0-9_.-]{1,40}$ ]] || { FAIL="paket aracı adı geçersiz: $name"; return 1; }
         src="$MODULES_DIR/$PAKET_ID/$name" dst="$SBIN_DIR/$name"
@@ -477,8 +474,6 @@ paket_araclar_koy() {
         if [[ -f "$dst" ]] && cmp -s -- "$src" "$dst"; then continue; fi
         tmp="$(mktemp "$SBIN_DIR/.$name.XXXXXX")"
         cp -- "$src" "$tmp" && chmod 0755 "$tmp" && mv -f -- "$tmp" "$dst"
-        # shellcheck disable=SC2034
-        ARACLAR_DEGISTI=1
     done
 }
 

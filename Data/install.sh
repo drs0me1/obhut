@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-252"
+V2_VERSION="2026.08.06-v2-253"
 # DD-260: insanların gördüğü sürüm (anlamlı sürümleme; yalnız bir yayında değişir, vX.Y.Z etiketlenir).
 # V2_VERSION yapı numarasıdır: Konsol güncelleme önerirken sunucular onu karşılaştırır.
 OBHUT_SURUM="1.1.0"
@@ -20,7 +20,6 @@ mkdir -p "$LOG_DIR" "$STATE_DIR" "$RUNTIME_DIR"
 V2_LOG_FILE="${V2_LOG_FILE:-$LOG_DIR/install.log}"
 # retry fonksiyonları ayrı bash'te çalıştırır; apt çıktısı loga oradan da yazılsın.
 export V2_LOG_FILE
-RUN_FULL_UPGRADE=0
 FIREWALL_NEEDS_RESTART=0
 # DD-233: Konsol'daki "Güncelle" düğmesi kurulumu master-guncelle birimiyle, terminalsiz yeniden
 # çalıştırır (V2_GUNCELLEME=1). Bu kip ilk kurulum yapmaz: alan adı ve Tailscale oturumu önceden
@@ -86,7 +85,6 @@ SHARE_PORT=$SHARE_PORT
 SHARE_HTTPS_PORT=$SHARE_HTTPS_PORT
 SHARE_WAN_BACKEND=$SHARE_WAN_BACKEND
 SHARE_STATE_FILE=$SHARE_STATE_FILE
-SHARE_DIR=$SHARE_DIR
 STATE_DIR=$STATE_DIR
 SBIN_DIR=$SBIN_DIR
 UNIT_DIR=$UNIT_DIR
@@ -372,7 +370,7 @@ stage_0() {
     fi
     acquire_lock "$RUNTIME_DIR/install.lock" "$LOCK_WAIT_SECONDS"
     [[ ! -f "$SETTINGS_PENDING_FILE" ]] ||
-        die "Konsol'da bekleyen ayar işlemi var; Ayarlar'da onaylayın veya geri alın (geri alma takıldıysa: Yeniden dene ya da Bırak)"
+        die "Konsol'da bekleyen ayar işlemi var; Konsol'un üstündeki şeritte onaylayın veya geri alın (geri alma takıldıysa: Yeniden dene ya da Bırak)"
 
     LOCAL_DOMAIN=""
     if [[ -r "$CONFIG_FILE" ]]; then
@@ -381,8 +379,8 @@ stage_0() {
     fi
 
     # DD-228: alan adının varsayılanı yoktur. Sıra: Konsol'da onaylanmış ad (DD-157), önceki
-    # kurulumun adı (config.env); ikisi de yoksa (ilk kurulum) sorulur. Sonradan Konsol →
-    # Ayarlar'dan değişir. İlk kurulumda ayar dosyası yoktur; henüz Python gerekmez.
+    # kurulumun adı (config.env); ikisi de yoksa (ilk kurulum) sorulur. Sonradan Konsol → Erişim →
+    # Adresler'den değişir. İlk kurulumda ayar dosyası yoktur; henüz Python gerekmez.
     local saved_domain="" domain_re='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
     if [[ -f "$SETTINGS_FILE" ]]; then
         saved_domain="$(python3 "$V2_ROOT/panel/master_settings.py" saved-domain "$SETTINGS_FILE")" ||
@@ -392,7 +390,7 @@ stage_0() {
         LOCAL_DOMAIN="$saved_domain"
         log INFO "alan adı Konsol'daki kayıttan: $LOCAL_DOMAIN"
     elif [[ -n "$LOCAL_DOMAIN" ]]; then
-        log INFO "alan adı önceki kurulumdan: $LOCAL_DOMAIN (değiştirmek için Konsol → Ayarlar)"
+        log INFO "alan adı önceki kurulumdan: $LOCAL_DOMAIN (değiştirmek için Konsol → Erişim → Adresler)"
     elif [[ "$UPDATE_MODE" == 1 ]]; then
         die "Konsol'dan güncelleme ilk kurulumu yapmaz (alan adı kaydı yok); kurulumu terminalden çalıştırın"
     else
@@ -414,6 +412,10 @@ stage_0() {
     [[ "$DOWNLOADS_SUBDIR" =~ ^[A-Za-z0-9._-]+$ && "$MEDIA_SUBDIR" =~ ^[A-Za-z0-9._-]+$ ]] ||
         die "DOWNLOADS_SUBDIR ve MEDIA_SUBDIR tek bir klasör adı olmalı"
     assert_downloads_path_allowed "$SERVER_ROOT"
+    # DD-269: v2-145 öncesinin paylaşım ağacı (.pay) eski hesap bilgisi taşıyabilir ve artık hiçbir yerde
+    # gizlenmez; o klasör varken kurulum yapılmaz.
+    [[ ! -e "$SERVER_ROOT/.pay" && ! -L "$SERVER_ROOT/.pay" ]] ||
+        die "$SERVER_ROOT/.pay eski bir sürümün paylaşım klasörü; içeriğini inceleyip kaldırın, sonra kurulumu yeniden çalıştırın"
     DOWNLOADS_PATH="$SERVER_ROOT/$DOWNLOADS_SUBDIR"
 
     # DD-143/201/203: hiçbir paket ayarı girdi ya da state değildir; her paket kendi ayarlarını
@@ -429,21 +431,18 @@ stage_0() {
     elif [[ "$UPDATE_MODE" == 1 ]]; then
         die "Tailscale oturumu açık değil; giriş bağlantısı gerektiği için kurulumu terminalden çalıştırın"
     fi
-    # DD-228: sistem her kurulumda (yeniden kurulum dahil) önce güncellenir.
-    RUN_FULL_UPGRADE=1
-
     # Girdiler tek ekranda, parolasız; ilk yazımdan (config.env) önce tek onay.
-    local yes_no_upgrade="evet" confirm_ans="h"
+    local confirm_ans="h"
     cat <<EOF
 
 Kurulum girdileri:
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
-  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları, arşiv aracı ve Podman (konteyner ortamı)
+  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları ve Podman (konteyner ortamı)
   App Store:    $(paket_katalog_adlar); isteğe bağlı kurulur
   Konsol:        kullanıcı adı ve parolayla; Tailscale'den, isteğe bağlı internet HTTPS (DD-194, DD-195)
   Tailscale:     $ts_note
-  full-upgrade:  $yes_no_upgrade
+  full-upgrade:  evet
 
 EOF
     if [[ "$UPDATE_MODE" == 1 ]]; then
@@ -548,11 +547,10 @@ stage_1() {
         log WARN "Caddy deposu yanıt vermiyor ($(head -c 80 "$caddy_mark")); Caddy bu kez güncellenmeden devam ediliyor (DD-253)"
     fi
     rm -f "$caddy_mark"
-    if [[ "$RUN_FULL_UPGRADE" -eq 1 ]]; then
-        retry "apt-upgrade" 2 "$APT_LOCK_TIMEOUT" -- \
-            apt-get "${APT_OPTS[@]}" -y -o Dpkg::Options::=--force-confdef \
-                -o Dpkg::Options::=--force-confold full-upgrade
-    fi
+    # DD-228: sistem her kurulumda (yeniden kurulum dahil) önce güncellenir.
+    retry "apt-upgrade" 2 "$APT_LOCK_TIMEOUT" -- \
+        apt-get "${APT_OPTS[@]}" -y -o Dpkg::Options::=--force-confdef \
+            -o Dpkg::Options::=--force-confold full-upgrade
     # DD-153: yalnız temelin kullandıkları. gnupg (Caddy anahtarı artık .asc), gawk (v1'den
     # kalma; awk sistemin mawk'ı) ve apache2-utils (ortak htpasswd hesabı kaldırıldı) yok.
     retry "apt-base" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y \
@@ -669,8 +667,7 @@ ensure_downloads_tree() {
     # No pathname-based chown/chmod of service-writable data. Keep one selective
     # descriptor walk; links/special files and private work areas stay untouched.
     # DD-267: the retired archive workspace keeps its private mode until stage 7 removes it.
-    python3 "$V2_ROOT/panel/master_permissions.py" "$root" "$uid" "$gid" \
-        "${RETIRED_ARCHIVE_DIR:-.arsiv}" "${SHARE_DIR:-.pay}"
+    python3 "$V2_ROOT/panel/master_permissions.py" "$root" "$uid" "$gid" "$RETIRED_ARCHIVE_DIR"
 }
 
 # Recursive chown/chmod only under an allowlisted data root (DD-93).
@@ -688,11 +685,11 @@ assert_downloads_path_allowed() {
     # DD-144: /srv FHS'te zaten "bu sistemin sunduğu veri" dizini ve Debian paketleri
     # oraya dosya koyamaz; kullanıcı alanının yeri orası.
     case "$p" in
-        /srv | /srv/* | /data | /data/* )
+        /srv | /srv/* )
             return 0
             ;;
         *)
-            die "kullanıcı alanı allowlist dışı (/srv, /data): $p"
+            die "kullanıcı alanı allowlist dışı (/srv): $p"
             ;;
     esac
 }
@@ -1000,7 +997,7 @@ stage_4() {
     # DD-233: Konsol'un "Güncelle" düğmesi: sürüm denetimi (arka uç) ve işi yürüten root aracı.
     atomic_write "$SBIN_DIR/master_update.py" 0755 <"$V2_ROOT/panel/master_update.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
-    # DD-259: yeni arayüzün rota tablosu, Erişim okuma modeli ve canlı olaylar (arka uç yükler).
+    # DD-259: Konsol'un rota tablosu, Erişim okuma modeli ve canlı olaylar (arka uç yükler).
     local panel_module
     for panel_module in master_api master_erisim master_olaylar master_uygulamalar master_yayin; do
         atomic_write "$SBIN_DIR/$panel_module.py" 0755 <"$V2_ROOT/panel/$panel_module.py"
@@ -1421,7 +1418,6 @@ ensure_files_panel() {
         SBIN_DIR="$SBIN_DIR" \
         FILES_PANEL_PORT="$FILES_PANEL_PORT" \
         FILES_PANEL_TRASH="$FILES_PANEL_TRASH" \
-        SHARE_DIR="$SHARE_DIR" \
         SERVER_ROOT="$SERVER_ROOT" \
         FILES_PANEL_USER="$user" \
         FILES_PANEL_GROUP="$group" \
@@ -1435,7 +1431,7 @@ ensure_files_panel() {
     [[ "$changed" -eq 0 ]] || { mark_module_pending dosya; MODULES_CHANGED="$MODULES_CHANGED dosya"; }
 }
 
-# DD-235: Dosyalar'ın "Sistem (/)" görünümü. master-files-panel'in --sistem kipi root olarak, kök /;
+# DD-235: Dosyalar'ın "Sistem dosyaları" görünümü. master-files-panel'in --sistem kipi root olarak, kök /;
 # yalnız SYSTEM_FILES_SOCKET Unix soketinde (0660 root:CADDY_GROUP). Caddy onu yalnız Tailscale
 # sitesinde /api/sistem/* için açar. Betik ya da unit değişince servis yeniden başlar.
 ensure_system_files() {

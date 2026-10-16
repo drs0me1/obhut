@@ -38,7 +38,7 @@ class SharesTests(unittest.TestCase):
         fixture.torrent_package(self.base / "mods", self.root / "downloads", self.base / "profile")
         self.env = {"SHARE_STATE_FILE": str(self.base / "webdav.json"), "MODULES_FILE": str(self.base / "modules"),
                     "MODULES_DIR": str(self.base / "mods"),
-                    "RUNTIME_DIR": str(self.base / "run"), "SERVER_ROOT": str(self.root), "SHARE_DIR": ".pay",
+                    "RUNTIME_DIR": str(self.base / "run"), "SERVER_ROOT": str(self.root),
                     "FILES_PANEL_TRASH": ".cop", "DOWNLOADS_PATH": str(self.root / "downloads"),
                     "SETTINGS_PENDING_FILE": str(self.base / "pending"),
                     "TAILSCALE_IPV4": "100.64.0.2", "SHARE_PORT": "61010"}

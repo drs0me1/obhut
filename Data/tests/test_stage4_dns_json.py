@@ -184,16 +184,5 @@ class JsonTests(unittest.TestCase):
         self.assertEqual(path.read_text(), DEEP)
 
 
-class FirewallTests(unittest.TestCase):
-    def test_only_unconditional_input_drop_is_classified_as_default(self):
-        rules = [{"spec": "-i eth0 -j DROP", "pkts": 4}, {"spec": "-j DROP", "pkts": 9},
-                 {"spec": "-s 192.0.2.0/24 -j DROP", "pkts": 2}]
-        rows = panel.classify_rules("input", rules, {"WAN_INTERFACE": "eth0"}, [])
-        self.assertEqual([(r["group"], r["kind"]) for r in rows],
-                         [("wan", "drop"), ("self", "default-drop"), ("other", "unknown")])
-        self.assertEqual(rows[1]["pkts"], 9)
-        self.assertEqual(rows[1]["spec"], "-j DROP")
-
-
 if __name__ == "__main__":
     unittest.main()

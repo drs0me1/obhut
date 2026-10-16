@@ -83,8 +83,6 @@ API_HEADER = "X-Konsol"
 # Günlükte işlemi yapan: hesap yok, istek Konsol'dan gelir (adres ayrıca yazılır).
 ACTOR = "konsol"
 CSP = ("default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
-# Sidebar resource sampling: bounded history, SAMPLE_SECONDS between samples.
-SYS_POINTS = 12
 # DD-259: live events. A stream ends after STREAM_SECONDS (the page reconnects and the session is
 # asked again), sends a heartbeat well inside the 180 s socket timeout and re-checks an internet
 # session every STREAM_CHECK_SECONDS. Caddy keeps 16 connections per site to this backend; at most
@@ -97,13 +95,13 @@ STREAM_LIMIT = 4
 # The activity drawer keeps a finished operation this long.
 JOB_KEEP_SECONDS = 120
 JOB_MODULE_ACTIONS = {"kur": "Kurulum", "kaldir": "Kaldırma", "baslat": "Başlatma", "durdur": "Durdurma",
-                      "yeniden-baslat": "Yeniden başlatma", "uygula": "Ayarların uygulanması"}
+                      "yeniden-baslat": "Yeniden başlatma"}
 JOB_CONTAINER_ACTIONS = {"create": "Oluşturma", "save": "Ayar kaydı", "start": "Başlatma", "stop": "Durdurma",
                          "restart": "Yeniden başlatma", "remove": "Kaldırma", "adopt": "Sahiplenme",
                          "image-pull": "İmaj indirme", "image-remove": "İmaj silme", "image-update": "İmaj güncelleme",
                          "volume-create": "Birim oluşturma", "volume-remove": "Birim silme",
                          "network-create": "Ağ oluşturma", "network-remove": "Ağ silme"}
-# Son işlemler: iki arka ucun günlük satırları; journalctl her istekte çalışmaz.
+# Sistem → Günlük: iki arka ucun günlük satırları; journalctl her istekte çalışmaz.
 ACTIONS_CACHE_SECONDS = 15
 # DD-182: Sağlık kartı. Salt okunur; sekme açıkken 30 sn'de bir hesaplanır.
 HEALTH_CACHE_SECONDS = 30
@@ -116,12 +114,11 @@ HEALTH_UNITS = ("tailscaled.service", "caddy.service", "dnsmasq.service",
 KEY_EXPIRY_WARN_DAYS = 14
 CERT_EXPIRY_WARN_DAYS = 14
 ACTIONS_LIMIT = 40
-# Ayarlar okuması: aynı anda gelen yenilemeler iptables'ı yormasın (DD-155, DD-156).
+# Ayar görünümü (Erişim, Gelişmiş): aynı anda gelen yenilemeler iptables'ı yormasın (DD-155, DD-156).
 SETTINGS_CACHE_SECONDS = 5
 SETTINGS_TEXT_LIMIT = 65536
-IPT_COUNTER_RE = re.compile(r" -c (\d+) (\d+)")
 ACTION_RE = re.compile(r"^(panel|dosya): (\S+) (\S+) (\S+) (.*) -> (ok|hata)$")
-# Settings service-port metadata: produced from configuration, no scanning.
+# The port catalogue's metadata (Erişim → Güvenlik duvarı): produced from configuration, no scanning.
 # Temel satırlar (state.env anahtarı, ad, protokol, kapsam, varsayılan); paketlerinkiler
 # bildirimlerinden gelir (DD-198: PAKET_PORTLAR, yalnız kayıtlı paketler için).
 PORT_ROWS = (
@@ -154,11 +151,10 @@ PUBLIC_CACHE_SECONDS = 5
 TAILNET_RANGES = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 # DD-206: Genel bakış'ın ağ kartı. WAN arayüzünün bayt sayaçları dosyadan okunur (dış komut yok):
 # arka plan örnekleyicisi her SAMPLE_SECONDS'te, kart açıkken her istekte en çok NET_STEP_SECONDS
-# arayla bir hız noktası ekler; son NET_WINDOW_SECONDS saniye geri verilir. Uygulama toplamlarını
-# paketlerin kendi modülleri (PAKET_TRAFIK) ölçer; en çok TRAFFIC_CACHE_SECONDS'te bir okunur.
+# arayla hızı yeniden ölçer; NET_WINDOW_SECONDS saniyeden eski bir ölçüm gösterilmez. Uygulama
+# toplamlarını paketlerin kendi modülleri (PAKET_TRAFIK) ölçer; en çok TRAFFIC_CACHE_SECONDS'te bir okunur.
 NET_STEP_SECONDS = 1.5
 NET_WINDOW_SECONDS = 120
-NET_POINTS = 160
 TRAFFIC_CACHE_SECONDS = 2
 # DD-261: at most one background image-update check (DD-214) a minute from the read model.
 UPDATE_KICK_SECONDS = 60
@@ -266,96 +262,6 @@ def read_text(path):
             return fh.read(SETTINGS_TEXT_LIMIT)
     except OSError:
         return None
-
-
-def rule_opts(spec):
-    """iptables -S kuralının seçenekleri: {"-i": "eth0", "--dport": "22", "-j": "ACCEPT", ...}."""
-    opts, tokens = {}, spec.split()
-    i = 0
-    while i < len(tokens):
-        tok = tokens[i]
-        if tok.startswith("-") and i + 1 < len(tokens) and not tokens[i + 1].startswith("-"):
-            if tok != "-m":
-                opts[tok] = tokens[i + 1]
-            i += 2
-        else:
-            i += 1
-    return opts
-
-
-def same_net(a, b):
-    """İki yazım aynı ağ mı: kayıt "…::0:0/112" yazar, ip6tables "…::/112" gösterir."""
-    try:
-        return bool(a and b) and ipaddress.ip_network(a, strict=False) == ipaddress.ip_network(b, strict=False)
-    except ValueError:
-        return False
-
-
-def classify_rules(chain_kind, rules, env, networks):
-    """Projenin zincirlerindeki kuralları sayfanın gruplarına ayırır. Tanınmayan kural "other"
-    grubuna düşer (elle eklenmiş ya da kaymış): Konsol onu gizlemez, uyarıyla gösterir."""
-    wan = env.get("WAN_INTERFACE", "")
-    ts_if = env.get("TAILSCALE_IF", "tailscale0")
-    ssh = str(env.get("SSH_PUBLIC_PORT", ""))
-    ts_port = str(env.get("TAILSCALE_UDP_PORT", ""))
-    by_iface = {n["iface"]: n for n in networks}
-    by_port = {str(n["port"]): n for n in networks}
-    out = []
-    for rule in rules:
-        o, spec, pkts = rule_opts(rule["spec"]), rule["spec"], rule["pkts"]
-        j, i_if, o_if = o.get("-j", ""), o.get("-i", ""), o.get("-o", "")
-        e = {"pkts": pkts, "spec": spec}
-        if j == "RETURN" and not i_if and not o_if:
-            continue
-        if chain_kind == "input":
-            if i_if == "lo" and j == "ACCEPT":
-                e.update(group="self", kind="lo")
-            elif "ESTABLISHED" in o.get("--ctstate", "") and not i_if and j == "ACCEPT":
-                e.update(group="self", kind="established")
-            elif o.get("-p") == "ipv6-icmp" and j == "ACCEPT":
-                e.update(group="self", kind="icmp6")
-            elif i_if == ts_if and j == "ACCEPT" and "-p" not in o:
-                e.update(group="ts", kind="all")
-            elif i_if == wan and j == "DROP" and "-p" not in o:
-                e.update(group="wan", kind="drop")
-            elif spec.strip() == "-j DROP":
-                e.update(group="self", kind="default-drop")
-            elif i_if == wan and j == "ACCEPT" and o.get("--dport"):
-                port, proto = o["--dport"], o.get("-p", "")
-                if port == ssh and proto == "tcp":
-                    e.update(group="wan", kind="ssh", port=int(port), proto=proto)
-                elif port == ts_port and proto == "udp":
-                    e.update(group="wan", kind="tailscale", port=int(port), proto=proto)
-                elif port in by_port and proto == "udp":
-                    net = by_port[port]
-                    e.update(group="wan", kind="vpn", port=int(port), proto=proto,
-                             iface=net["iface"], label=net["label"], app=net.get("app", ""))
-                else:
-                    e.update(group="other", kind="unknown")
-            elif i_if in by_iface and j == "DROP":
-                e.update(group="wg:" + i_if, kind="drop")
-            else:
-                e.update(group="other", kind="unknown")
-        elif chain_kind == "forward":
-            if i_if in by_iface and o_if == wan and j == "ACCEPT":
-                e.update(group="wg:" + i_if, kind="egress")
-            elif i_if in by_iface and j == "DROP":
-                e.update(group="wg:" + i_if, kind="fwd-drop")
-            elif o_if in by_iface and j == "ACCEPT" and "ESTABLISHED" in o.get("--ctstate", ""):
-                e.update(group="wg:" + o_if, kind="fwd-return")
-            elif o_if in by_iface and j == "DROP":
-                e.update(group="wg:" + o_if, kind="fwd-in-drop")
-            else:
-                e.update(group="other", kind="unknown")
-        else:  # nat
-            src = o.get("-s", "")
-            net = next((n for n in networks if same_net(src, n.get("subnet4")) or same_net(src, n.get("subnet6"))), None)
-            if net and o_if == wan and j == "MASQUERADE":
-                e.update(group="wg:" + net["iface"], kind="nat", subnet=src)
-            else:
-                e.update(group="other", kind="unknown")
-        out.append(e)
-    return out
 
 
 def caddy_line(raw):
@@ -514,7 +420,7 @@ class Panel:
         # DD-233: GitHub'daki son sürüm (önbellekli) ve master-guncelle birimi.
         self.updates = master_update.Updates()
         self.sys_lock = threading.Lock()
-        self.samples = []
+        self.cpu_sample = None
         self.cpu_prev = None
         self.actions_cache = (0.0, [])
         self.settings_cache = (0.0, None)
@@ -526,10 +432,10 @@ class Panel:
         self.attempts = master_auth.Attempts()
         self.public_cache = (-PUBLIC_CACHE_SECONDS, False)
         self.public_lock = threading.Lock()
-        # DD-206: WAN hız noktaları ve paketlerin trafik toplamları (kısa önbellek).
+        # DD-206: WAN'ın son hız ölçümü ve paketlerin trafik toplamları (kısa önbellek).
         self.net_lock = threading.Lock()
         self.net_prev = None
-        self.net_points = []
+        self.net_last = None
         self.traffic_lock = threading.Lock()
         self.traffic_cache = (-TRAFFIC_CACHE_SECONDS, None)
         self.traffic_errors = set()
@@ -667,12 +573,11 @@ class Panel:
                     continue
                 rows.append({"app": str(net.get("app") or mid), "iface": net["iface"], "port": net["port"],
                              "label": str(net.get("label", "")), "active": bool(net.get("active")),
-                             "server4": str(net.get("server4", "")), "subnet4": str(net.get("subnet4", "")),
-                             "server6": str(net.get("server6", "")), "subnet6": str(net.get("subnet6", ""))})
+                             "server4": str(net.get("server4", "")), "server6": str(net.get("server6", ""))})
         return rows
 
     def vpn_apps(self, env=None):
-        """Names of the installed packages that declare VPN networks (Settings labels its tab by them)."""
+        """Names of the installed packages that declare VPN networks (Erişim → Güvenlik duvarı names them)."""
         return [str(getattr(api, "APP_NAME", mid)) for mid, api in self.package_apis(env)
                 if callable(getattr(api, "networks", None))]
 
@@ -765,7 +670,7 @@ class Panel:
             if self.busy_units():
                 blocked = "Bir uygulama işlemi sürüyor; bitince yeniden deneyin."
             elif env.get("SETTINGS_PENDING_FILE") and os.path.exists(env["SETTINGS_PENDING_FILE"]):
-                blocked = "Ayarlar'da bekleyen bir işlem var; önce onaylayın ya da geri alın."
+                blocked = "Konsol'da bekleyen bir ayar işlemi var; önce onaylayın ya da geri alın."
             commit, version = self.updates.check_start(env, data, self.unit_active(unit), blocked)
             tool = os.path.join(os.path.dirname(os.path.abspath(self.args.master_modul)), "master-guncelle")
             argv = ["systemd-run", "--unit=" + unit, "--collect", "--quiet",
@@ -891,12 +796,12 @@ class Panel:
             f = line.split("\t")
             if len(f) != 8 or not MODULE_ID_RE.match(f[0]):
                 continue
-            mid, runtime, reg, live, action, step, total, text = f
+            mid, _runtime, reg, live, action, step, total, text = f
             progress = None
             if action != "-":
                 progress = {"action": action, "step": step, "total": num_or(total, 0), "text": "" if text == "-" else text}
             manifest = manifests.get(mid, {})
-            item = {"id": mid, "runtime": runtime, "installed": reg in ("calisiyor", "durduruldu"),
+            item = {"id": mid, "installed": reg in ("calisiyor", "durduruldu"),
                     "state": reg if reg in ("calisiyor", "durduruldu") else "", "live": live,
                     "busy": self.module_busy(mid, busy), "progress": progress,
                     "durdurulabilir": manifest.get("PAKET_DURDURULABILIR") == "1",
@@ -1001,7 +906,7 @@ class Panel:
 
     # -- sistem
     def sample_system(self):
-        """İşlemci ve bellek kullanımı; grafiğe son SYS_POINTS örnek girer."""
+        """İşlemci kullanımı: son iki /proc/stat okuması arasındaki yüzde."""
         try:
             with open("/proc/stat", "rb") as fh:
                 # guest/guest_nice are already included in user/nice.
@@ -1019,11 +924,8 @@ class Panel:
         if span <= 0:
             return
         cpu = max(0.0, min(100.0, 100.0 * (span - span_idle) / span))
-        mem_total, mem_used = self.meminfo()
-        mem = round(100.0 * mem_used / mem_total, 1) if mem_total else 0.0
         with self.sys_lock:
-            self.samples.append({"t": int(time.time()), "cpu": round(cpu, 1), "mem": mem})
-            del self.samples[:-SYS_POINTS]
+            self.cpu_sample = {"t": int(time.time()), "cpu": round(cpu, 1)}
 
     # -- ağ (DD-206)
     @staticmethod
@@ -1036,50 +938,45 @@ class Panel:
         return values
 
     def net_sample(self, env):
-        """Adds a rate point (bytes/s) when at least NET_STEP_SECONDS passed since the last reading;
-        returns the measured interface name ("" when state.env names none)."""
+        """Measures the WAN rate (bytes/s) again when at least NET_STEP_SECONDS passed since the last reading."""
         iface = env.get("WAN_INTERFACE", "")
         if not IFACE_RE.fullmatch(iface) or iface in (".", ".."):
-            return ""
+            return
         try:
             rx, tx = self.net_counters(iface)
         except (OSError, ValueError):
-            return iface
+            return
         mono = time.monotonic()
         with self.net_lock:
             prev = self.net_prev
             if prev is not None and prev[0] == iface:
                 span = mono - prev[1]
                 if span < NET_STEP_SECONDS:
-                    return iface
-                # A baseline older than three background samples (a stalled sampler) gives no point.
+                    return
+                # A baseline older than three background samples (a stalled sampler) gives no rate.
                 if span <= 3 * max(SAMPLE_SECONDS, NET_STEP_SECONDS):
-                    self.net_points.append({"t": int(time.time()), "rx": int(max(0, rx - prev[2]) / span),
-                                            "tx": int(max(0, tx - prev[3]) / span)})
-                    del self.net_points[:-NET_POINTS]
+                    self.net_last = {"t": int(time.time()), "rx": int(max(0, rx - prev[2]) / span),
+                                     "tx": int(max(0, tx - prev[3]) / span)}
             elif prev is not None:
-                self.net_points = []  # another interface: its history does not belong here
+                self.net_last = None  # another interface: its rate does not belong here
             self.net_prev = (iface, mono, rx, tx)
-        return iface
 
     def network(self):
-        """GET /api/konsol/ag: WAN rate history (last NET_WINDOW_SECONDS) and the packages' totals."""
+        """GET /api/konsol/ag: the WAN rate (none older than NET_WINDOW_SECONDS) and the packages' totals."""
         env = read_env(self.args.state)
-        iface = self.net_sample(env)
+        self.net_sample(env)
         now = int(time.time())
         with self.net_lock:
-            points = [p for p in self.net_points if p["t"] >= now - NET_WINDOW_SECONDS]
-        last = points[-1] if points else None
-        return {"read_at": now, "iface": iface, "window": NET_WINDOW_SECONDS,
-                "sampled_at": last["t"] if last else None, "rx": last["rx"] if last else None,
-                "tx": last["tx"] if last else None, "points": [[p["t"], p["rx"], p["tx"]] for p in points],
-                "apps": self.traffic(env)}
+            last = self.net_last
+        if last and last["t"] < now - NET_WINDOW_SECONDS:
+            last = None
+        return {"read_at": now, "sampled_at": last["t"] if last else None, "rx": last["rx"] if last else None,
+                "tx": last["tx"] if last else None, "apps": self.traffic(env)}
 
     def traffic(self, env):
         """DD-206: per installed package that declares PAKET_TRAFIK, its own module's totals:
-        {"down", "up"} as the application's users see them, "since" (counting start) or "at" (when
-        the application last saved all-time figures), epoch seconds. A failing module leaves only
-        its own numbers empty; the error is printed once per package and kind."""
+        {"down", "up"} as the application's users see them (a stopped package's are empty). A failing
+        module leaves only its own numbers empty; the error is printed once per package and kind."""
         now = time.monotonic()
         with self.traffic_lock:
             at, cached = self.traffic_cache
@@ -1091,14 +988,14 @@ class Panel:
                 if not name or not state or manifest.get("PAKET_YERLESIK") == "1":
                     continue
                 label = (manifest.get("PAKET_AD") or mid) + " trafik ölçümü"
-                item = {"id": mid, "name": manifest.get("PAKET_AD") or mid, "state": state, "down": None, "up": None, "since": None, "at": None}
+                item = {"id": mid, "name": manifest.get("PAKET_AD") or mid, "down": None, "up": None}
                 if state == "calisiyor":
                     try:
                         module = master_settings.load_package_module(env, mid, name, "trafik", label)
                         value = module.trafik(dict(env))
                         if value is not None and not isinstance(value, dict):
                             raise TypeError("trafik() sözlük döndürmeli")
-                        for key in ("down", "up", "since", "at"):
+                        for key in ("down", "up"):
                             v = (value or {}).get(key)
                             if type(v) is int and v >= 0:
                                 item[key] = v
@@ -1196,7 +1093,7 @@ class Panel:
     def system(self):
         env = read_env(self.args.state)
         with self.sys_lock:
-            samples = list(self.samples)
+            sample = self.cpu_sample
         mem_total, mem_used = self.meminfo()
         try:
             with open("/proc/uptime", "rb") as fh:
@@ -1213,60 +1110,24 @@ class Panel:
             "kernel": platform.release(),
             "uptime": uptime,
             "cores": os.cpu_count() or 1,
-            "interval": int(SAMPLE_SECONDS),
             "read_at": int(time.time()),
-            "sampled_at": samples[-1]["t"] if samples else None,
-            "cpu": [s["cpu"] for s in samples],
-            "mem": {"total": mem_total, "used": mem_used, "graph": [s["mem"] for s in samples]},
+            "sampled_at": sample["t"] if sample else None,
+            "cpu": sample["cpu"] if sample else None,
+            "mem": {"total": mem_total, "used": mem_used},
             "net": {
                 "wan": env.get("WAN_IPV4", ""), "wan6": env.get("WAN_IPV6", ""),
                 "iface": env.get("WAN_INTERFACE", ""), "tailscale": env.get("TAILSCALE_IPV4", ""),
                 "tailscale6": env.get("TAILSCALE_IPV6", ""),
             },
-            # DD-150: disk kartı Dosya yöneticisi kurulu değilken de dolsun (kullanıcı alanının diski).
+            # DD-150: Genel Bakış'ın disk ölçüsü: kullanıcı alanının diski.
             "root": env.get("SERVER_ROOT", ""),
             "disk": self.disk(env.get("SERVER_ROOT", "")),
         }
 
-    # -- ayarlar (DD-155): salt okunur; hiçbir şeyi değiştirmez, yalnız istenince okur
-    def iptables_chain(self, binary, chain, table=None):
-        """Projenin bir zinciri, sayaçlarıyla: (kurallar, ham -S metni); okunamazsa (None, "")."""
-        cmd = [binary, "-w", "5"] + (["-t", table] if table else []) + ["-v", "-S", chain]
-        try:
-            proc = subprocess.run(cmd, capture_output=True, timeout=15, env=self.env(), stdin=subprocess.DEVNULL)
-        except (OSError, subprocess.TimeoutExpired):
-            return None, ""
-        if proc.returncode != 0:
-            return None, ""
-        rules, raw = [], []
-        for line in proc.stdout.decode("utf-8", "replace").splitlines():
-            m = IPT_COUNTER_RE.search(line)
-            plain = IPT_COUNTER_RE.sub("", line)
-            raw.append(plain)
-            prefix = "-A %s " % chain
-            if plain.startswith(prefix):
-                rules.append({"spec": plain[len(prefix):], "pkts": int(m.group(1)) if m else 0})
-        return rules, "\n".join(raw)
-
-    def firewall_view(self, env, networks):
-        chains = (("input", env.get("CHAIN_INPUT", ""), None), ("forward", env.get("CHAIN_FORWARD", ""), None),
-                  ("nat", env.get("CHAIN_NAT", ""), "nat"))
+    # -- the settings view (DD-155): read-only; changes nothing, reads only when asked
+    def firewall_check(self):
+        """master-firewall --check: whether the project's chains are as written, and its last line."""
         view = {}
-        for fam, binary in (("v4", "iptables"), ("v6", "ip6tables")):
-            entries, raws, readable = [], [], True
-            for kind, chain, table in chains:
-                if not chain:
-                    continue
-                rules, raw = self.iptables_chain(binary, chain, table)
-                if rules is None:
-                    # No registered networks: DD-175 deliberately omits our WG
-                    # forwarding/NAT chains. --check still detects real drift.
-                    if kind == "input" or networks:
-                        readable = False
-                    continue
-                entries += classify_rules(kind, rules, env, networks)
-                raws.append("# %s%s -S %s\n%s" % (binary, " -t nat" if table else "", chain, raw))
-            view[fam] = {"readable": readable, "entries": entries, "raw": "\n\n".join(raws)}
         try:
             proc = subprocess.run(["master-firewall", "--check"], capture_output=True, timeout=30,
                                   env=self.env(), stdin=subprocess.DEVNULL)
@@ -1486,7 +1347,7 @@ class Panel:
             if pending is None:
                 add("settings", "Ayar işlemi", "ok", "Bekleyen işlem yok")
             elif pending["phase"] == "stuck":
-                add("settings", "Ayar işlemi", "bad", "Geri alma takıldı; Ayarlar'da yeniden deneyin ya da bırakın")
+                add("settings", "Ayar işlemi", "bad", "Geri alma takıldı; bekleyen değişiklik şeridinde yeniden deneyin ya da bırakın")
             else:
                 add("settings", "Ayar işlemi", "warn", "Onay ya da geri alma bekleniyor")
         except (master_settings.SettingsError, OSError, KeyError, ValueError, TypeError, AttributeError, RecursionError):
@@ -1539,7 +1400,7 @@ class Panel:
         worst = max((c["status"] for c in checks), key=order.get, default="ok")
         return {"status": worst, "checks": checks, "read_at": int(time.time())}
 
-    def web_view(self, env, networks):
+    def web_view(self, env):
         ts_ip = env.get("TAILSCALE_IPV4", "")
         files = [(env.get("CADDYFILE", ""), "base")]
         mod_dir = env.get("CADDY_MODULES_DIR", "")
@@ -1589,7 +1450,7 @@ class Panel:
         return view
 
     def settings(self, fresh=False):
-        """DD-155: Ayarlar sayfası. Salt okunur: kurallar canlı (sayaçlarıyla), yapılandırma dosyaları
+        """DD-155: Erişim'in ve Gelişmiş'in okuduğu ayar görünümü. Salt okunur: kurallar canlı (sayaçlarıyla), yapılandırma dosyaları
         olduğu gibi; hesap, parola ya da anahtar taşıyan hiçbir dosya okunmaz. "Yenile" önbelleği atlar."""
         # DD-181: aynı anda gelen yenilemeler tek hesaplamayı paylaşır (iptables/ss/firewall --check).
         # "Yenile" önbelleği atlar; yalnız beklerken biten bir hesaplama varsa onu kullanır.
@@ -1609,19 +1470,14 @@ class Panel:
         networks = self.package_networks(env)
         vpn_apps = self.vpn_apps(env)
         data = {
-            "read_at": int(now), "version": env.get("V2_VERSION", ""), "domain": env.get("LOCAL_DOMAIN", ""),
-            "tailscale": env.get("TAILSCALE_IPV4", ""), "tailscale6": env.get("TAILSCALE_IPV6", ""),
-            "ts_if": env.get("TAILSCALE_IF", ""),
-            "wan": {"iface": env.get("WAN_INTERFACE", ""), "ipv4": env.get("WAN_IPV4", ""), "ipv6": env.get("WAN_IPV6", "")},
-            "firewall": self.firewall_view(env, networks),
-            "web": self.web_view(env, networks),
+            "read_at": int(now),
+            "firewall": self.firewall_check(),
+            "web": self.web_view(env),
             "dns": self.dns_view(env),
         }
         # Presentation metadata only; no peer identities or firewall mutations.
-        data["firewall"]["vpn_installed"] = bool(vpn_apps)
         data["firewall"]["vpn_name"] = vpn_apps[0] if vpn_apps else ""
-        data["firewall"]["networks"] = [{k: net.get(k, "") for k in ("app", "iface", "label", "active", "server4", "server6")}
-                                        for net in networks]
+        data["firewall"]["networks"] = [{k: net.get(k, "") for k in ("app", "iface", "label", "active")} for net in networks]
         if env.get("SETTINGS_FILE"):
             try:
                 data["manage"] = master_settings.Manager(self.args.state).status()
@@ -1798,11 +1654,11 @@ class Panel:
     def settings_run(self, action, data, shares=False):
         helper = os.path.join(os.path.dirname(self.args.master_modul), "master_shares.py" if shares else "master_settings.py")
         failure = ("İşlem sonucu alınamadı. Tekrar kaydetmeden önce WebDAV listesini yenileyip durumu kontrol edin." if shares
-                   else "İşlem sonucu alınamadı. Ayarlar sayfasını yenileyin; onaysız işlem sunucuda geri alınır.")
+                   else "İşlem sonucu alınamadı. Sayfayı yenileyin; onaysız işlem sunucuda geri alınır.")
         return self.run_worker(["/usr/bin/python3", helper, "--state", self.args.state, action], data, failure)
 
     def actions(self):
-        """Son işlemler: arka uçların audit satırları (journald), yeniden eskiye."""
+        """Sistem → Günlük: arka uçların audit satırları (journald), yeniden eskiye."""
         now = time.time()
         stamp, rows = self.actions_cache
         if now - stamp < ACTIONS_CACHE_SECONDS:
@@ -1840,10 +1696,10 @@ class Panel:
         self.actions_cache = (now, rows)
         return rows
 
-    # -- DD-259: the new interface's read models
+    # -- DD-259: Konsol's read models
     def erisim(self):
-        """GET /api/konsol/erisim: who reaches which service from where, in one view. Reads what the
-        Settings page and the share list already read; a source that fails adds an error line."""
+        """GET /api/konsol/erisim: who reaches which service from where, in one view. Reads the settings
+        view and the share list; a source that fails adds an error line."""
         env = read_env(self.args.state)
         errors = []
         try:
@@ -1872,8 +1728,8 @@ class Panel:
 
     # -- DD-265: Erişim's sections and the Yayınla flow
     def guvenlik_duvari(self, fresh=False):
-        """GET /api/konsol/guvenlik-duvari: the firewall as the Erişim page edits it, from the same view the
-        Settings page reads (rules with counters, the port catalogue, listeners, the check)."""
+        """GET /api/konsol/guvenlik-duvari: the firewall as the Erişim page edits it, from the settings view
+        (rules with counters, the port catalogue, listeners, the check)."""
         data = self.settings(fresh=fresh)
         fw = data.get("firewall") or {}
         manage = data.get("manage") or {}
@@ -1902,7 +1758,7 @@ class Panel:
 
     def adlar(self):
         """GET /api/konsol/adlar: the local names (base, packages, manual addresses) with their on/off state,
-        the operator's own records and the forwarding of other names, as Settings → DNS edits them."""
+        the operator's own records and the forwarding of other names, as Erişim → Adresler edits them."""
         env = read_env(self.args.state)
         domain = env.get("LOCAL_DOMAIN", "")
         try:
@@ -1990,9 +1846,9 @@ class Panel:
         return master_uygulamalar.build(modules, containers, erisim, time.time(), errors)
 
     def update_check_soon(self):
-        """DD-261: the read model shows image updates from the cached check (DD-214), which only the Podman
-        page asked for. A cache older than its lifetime is refreshed in a background thread, at most once a
-        minute; a request never waits for a registry."""
+        """DD-261: the read model shows image updates from the cached check (DD-214). A cache older than its
+        lifetime is refreshed in a background thread, at most once a minute; a request never waits for a
+        registry."""
         service = self.containers
         with self.update_kick_lock:
             now = time.monotonic()
@@ -2006,7 +1862,7 @@ class Panel:
         try:
             self.containers.updates()
         except (master_containers.ContainerError, OSError, ValueError, KeyError):
-            pass  # the Podman page shows the error; the next listing after a minute tries again
+            pass  # the check keeps its own error; the next listing after a minute tries again
 
     def package_container(self, mid):
         """The container an App Store package runs (DD-209), or None."""
@@ -2279,7 +2135,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         # DD-181: istek satırı yazılmaz (dosya arka ucu gibi). Açık bir Konsol sekmesi her
-        # 10 sn istek atar; bu satırlar "Son işlemler"in okuduğu audit satırlarını itiyordu.
+        # 10 sn istek atar; bu satırlar Sistem → Günlük'ün okuduğu audit satırlarını itiyordu.
         pass
 
     def audit(self, user, action, detail, ok):
@@ -2599,7 +2455,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.audit(user, "konteyner-" + result["action"], result["name"], True)
         self.json(202, result)
 
-    # DD-266 (phase 4a): the Podman reads, unchanged from the current Konsol's routes.
+    # DD-266 (phase 4a): the Podman reads.
     def container_read(self, read):
         try:
             self.json(200, read())
@@ -2607,11 +2463,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.error(err.status, str(err))
 
     def container_view(self):
-        # Older state files retain their read-only view until the installer provisions the manager's
-        # private store and workers.
-        if read_env(self.panel.args.state).get("KONTEYNER_STATE_DIR"):
-            return self.panel.containers.view()
-        return master_containers.Containers(lambda argv, timeout: self.panel.run_tool(argv, timeout=timeout))
+        return self.panel.containers.view()
 
     def api_konteyner_listesi(self, query):
         self.container_read(lambda: self.container_view().liste())
@@ -2619,17 +2471,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def api_konteyner_ayrintisi(self, query):
         self.container_read(lambda: self.container_view().ayrinti(master_containers.name_of(query.get("ad", [""])[0])))
 
-    def api_konteyner_gunlugu(self, query):
-        self.container_read(lambda: self.container_view().gunluk(master_containers.name_of(query.get("ad", [""])[0]),
-                                                                 query.get("satir", ["200"])[0]))
-
     def api_konteyner_guncellemeleri(self, query):
         # DD-214: image update status from registry manifests; cached, ?yenile=1 asks again.
-        def read():
-            if not read_env(self.panel.args.state).get("KONTEYNER_STATE_DIR"):
-                raise master_containers.ContainerError(503, "Konteyner yönetimi henüz hazır değil; kurulumu yeniden çalıştırın.")
-            return self.panel.containers.updates(force="yenile" in query)
-        self.container_read(read)
+        self.container_read(lambda: self.panel.containers.updates(force="yenile" in query))
 
     def api_konteyner_isi(self, query):
         self.container_read(lambda: self.panel.containers.operation(query.get("id", [""])[0]))

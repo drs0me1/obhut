@@ -5,7 +5,6 @@ import contextlib
 import importlib.util
 import io
 import json
-import os
 from pathlib import Path
 import sys
 import tempfile
@@ -124,43 +123,41 @@ class NetworkSamplerTests(Fixture):
 
     def test_rates_come_from_counter_deltas_with_a_minimum_step(self):
         clock = Clock()
-        self.assertEqual(self.sample(clock, 1000, 500), "eth0")
-        self.assertEqual(self.p.net_points, [], "the first reading is only a baseline")
+        self.sample(clock, 1000, 500)
+        self.assertIsNone(self.p.net_last, "the first reading is only a baseline")
         clock.step(2)
         self.sample(clock, 1000 + 4 * 1024 * 1024, 500 + 2048)
-        self.assertEqual(self.p.net_points[-1], {"t": int(clock.wall), "rx": 2 * 1024 * 1024, "tx": 1024})
+        self.assertEqual(self.p.net_last, {"t": int(clock.wall), "rx": 2 * 1024 * 1024, "tx": 1024})
         clock.step(0.5)
         self.sample(clock, 10 ** 9, 10 ** 9)
-        self.assertEqual(len(self.p.net_points), 1, "readings closer than NET_STEP_SECONDS add no point")
+        self.assertEqual(self.p.net_last["rx"], 2 * 1024 * 1024, "readings closer than NET_STEP_SECONDS measure nothing")
         clock.step(2)
         self.sample(clock, 0, 0)
-        self.assertEqual(self.p.net_points[-1]["rx"], 0, "a counter reset is not a negative rate")
+        self.assertEqual(self.p.net_last["rx"], 0, "a counter reset is not a negative rate")
+        before = self.p.net_last
         clock.step(10 * panel.SAMPLE_SECONDS)
         self.sample(clock, 100, 100)
-        self.assertEqual(len(self.p.net_points), 2, "a stale baseline gives no point")
-        for _ in range(panel.NET_POINTS + 5):
-            clock.step(2)
-            self.sample(clock, 0, 0)
-        self.assertEqual(len(self.p.net_points), panel.NET_POINTS)
+        self.assertEqual(self.p.net_last, before, "a stale baseline gives no rate")
 
-    def test_interface_names_are_checked_and_a_new_interface_starts_a_new_history(self):
+    def test_interface_names_are_checked_and_a_new_interface_drops_the_rate(self):
         clock = Clock()
         for bad in ("", "../x", ".", "..", "a" * 16, "eth 0", "eth/0"):
             with self.subTest(iface=bad):
-                self.assertEqual(self.sample(clock, 1, 1, {"WAN_INTERFACE": bad}), "")
+                self.sample(clock, 1, 1, {"WAN_INTERFACE": bad})
+                self.assertIsNone(self.p.net_prev)
         self.sample(clock, 0, 0)
         clock.step(2)
         self.sample(clock, 2048, 2048)
-        self.assertEqual(len(self.p.net_points), 1)
+        self.assertIsNotNone(self.p.net_last)
         clock.step(2)
-        self.assertEqual(self.sample(clock, 0, 0, {"WAN_INTERFACE": "ens3"}), "ens3")
-        self.assertEqual(self.p.net_points, [])
+        self.sample(clock, 0, 0, {"WAN_INTERFACE": "ens3"})
+        self.assertIsNone(self.p.net_last)
 
-    def test_unreadable_counters_leave_the_history_alone(self):
+    def test_unreadable_counters_leave_the_rate_alone(self):
         def broken(_iface):
             raise OSError("no such device")
         with patch.object(panel.Panel, "net_counters", staticmethod(broken)):
-            self.assertEqual(self.p.net_sample({"WAN_INTERFACE": "eth0"}), "eth0")
+            self.p.net_sample({"WAN_INTERFACE": "eth0"})
         self.assertIsNone(self.p.net_prev)
 
 
@@ -176,11 +173,10 @@ class TrafficEndpointTests(Fixture):
         self.package("sessiz", None, manifest_extra="")
         self.package("ozel", "def trafik(env):\n    return {'down': 1, 'up': 1}\n", manifest_extra='PAKET_TRAFIK="trafik.py"\nPAKET_YERLESIK=1\n')
         answer = self.network()
-        self.assertEqual(answer["iface"], "eth0")
-        self.assertEqual(answer["window"], panel.NET_WINDOW_SECONDS)
+        self.assertEqual(set(answer), {"read_at", "sampled_at", "rx", "tx", "apps"})
         self.assertEqual(answer["apps"], [
-            {"id": "deneme", "name": "Deneme deneme", "state": "calisiyor", "down": 5, "up": 7, "since": 1700000000, "at": None},
-            {"id": "durmus", "name": "Deneme durmus", "state": "durduruldu", "down": None, "up": None, "since": None, "at": None}])
+            {"id": "deneme", "name": "Deneme deneme", "down": 5, "up": 7},
+            {"id": "durmus", "name": "Deneme durmus", "down": None, "up": None}], "only the totals; other keys are left out")
 
     def test_a_broken_module_empties_only_its_own_row_and_is_reported_once(self):
         self.package("bozuk", "def trafik(env):\n    raise RuntimeError('x')\n")
@@ -192,9 +188,8 @@ class TrafficEndpointTests(Fixture):
             first = self.network()["apps"]
             self.p.traffic_cache = (-panel.TRAFFIC_CACHE_SECONDS, None)
             self.network()
-        rows = {a["id"]: (a["down"], a["up"], a["since"], a["at"]) for a in first}
-        self.assertEqual(rows, {"bozuk": (None, None, None, None), "tuhaf": (None, None, None, None), "liste": (None, None, None, None),
-                                "iyi": (0, 3, None, 1700000000)})
+        rows = {a["id"]: (a["down"], a["up"]) for a in first}
+        self.assertEqual(rows, {"bozuk": (None, None), "tuhaf": (None, None), "liste": (None, None), "iyi": (0, 3)})
         self.assertEqual(printed.getvalue().count("Deneme bozuk trafik ölçümü okunamadı (RuntimeError)"), 1)
         self.assertEqual(printed.getvalue().count("Deneme liste trafik ölçümü okunamadı (TypeError)"), 1)
 
@@ -207,13 +202,15 @@ class TrafficEndpointTests(Fixture):
         self.assertTrue((folder / "trafik.py").exists())
         self.assertEqual([p.name for p in folder.iterdir() if p.name == "__pycache__"], [], "no bytecode next to the package")
 
-    def test_points_outside_the_window_are_not_returned(self):
+    def test_a_rate_older_than_the_window_is_not_shown(self):
         now = 2_000_000_000
-        self.p.net_points = [{"t": now - panel.NET_WINDOW_SECONDS - 1, "rx": 1, "tx": 1}, {"t": now - 10, "rx": 2, "tx": 3}]
         with patch.object(panel.time, "time", lambda: now), patch.object(panel.Panel, "net_counters", staticmethod(lambda iface: [0, 0])):
+            self.p.net_last = {"t": now - 10, "rx": 2, "tx": 3}
             answer = self.p.network()
-        self.assertEqual(answer["points"], [[now - 10, 2, 3]])
-        self.assertEqual((answer["rx"], answer["tx"], answer["sampled_at"], answer["read_at"]), (2, 3, now - 10, now))
+            self.assertEqual((answer["rx"], answer["tx"], answer["sampled_at"], answer["read_at"]), (2, 3, now - 10, now))
+            self.p.net_last = {"t": now - panel.NET_WINDOW_SECONDS - 1, "rx": 1, "tx": 1}
+            answer = self.p.network()
+        self.assertEqual((answer["rx"], answer["tx"], answer["sampled_at"]), (None, None, None))
 
 
 # The AllStats line qBittorrent 5.1 wrote on nrm (2026-10-02): a QVariantHash in QSettings' Qt 4.0
@@ -262,8 +259,7 @@ class TorrentTrafficTests(unittest.TestCase):
 
     def test_the_real_file_from_qbittorrent_5_1(self):
         self.data.write_text("[Stats]\nAllStats=%s\n" % REAL_ALLSTATS)
-        os.utime(self.data, (1790962380, 1790962380))
-        self.assertEqual(self.mod.trafik({}), {"down": 12576, "up": 18968, "since": None, "at": 1790962380})
+        self.assertEqual(self.mod.trafik({}), {"down": 12576, "up": 18968})
 
     def test_large_totals_survive_the_escaping(self):
         for down, up in ((0, 0), (5 * 1024 ** 4 + 0x1c0d0a, 0x7F00A1B2C3D4), (0xA0A0A0A0A0, 0x3031323334), (1, 2 ** 62)):
@@ -273,7 +269,7 @@ class TorrentTrafficTests(unittest.TestCase):
                 self.assertEqual((value["down"], value["up"]), (down, up))
 
     def test_nothing_saved_yet_and_damaged_records(self):
-        self.assertEqual(self.mod.trafik({}), {"down": 0, "up": 0, "since": None, "at": None}, "no file before the first save")
+        self.assertEqual(self.mod.trafik({}), {"down": 0, "up": 0}, "no file before the first save")
         self.data.write_text("[Stats]\n")
         self.assertEqual(self.mod.trafik({})["down"], 0)
         for bad in ("AllStats=12", "AllStats=@Variant(\\0\\0\\0\\x9\\0\\0\\0\\0)", "AllStats=@Variant(\\0\\0\\0\\x1c\\0\\0\\0\\x5)",
@@ -305,27 +301,17 @@ class WireguardTrafficTests(unittest.TestCase):
         self.mod.PACKAGE_DIR = root / "pkg"
         self.mod.SYS_NET = self.sys
 
-    def run_trafik(self, stdout="ActiveEnterTimestampMonotonic=4000000000\nActiveEnterTimestampMonotonic=4500000000\n"):
-        calls = []
-
-        def fake(cmd, **kwargs):
-            calls.append(cmd)
-            return types.SimpleNamespace(returncode=0, stdout=stdout)
-        with patch.object(self.mod.subprocess, "run", fake), patch.object(self.mod.time, "time", lambda: 2_000_000_000.0), \
-                patch.object(self.mod.time, "monotonic", lambda: 5000.0):
-            return self.mod.trafik({}), calls
-
     def test_down_is_what_the_peers_received_and_up_what_they_sent(self):
+        # wg2 is down (no counters) and eth0 is not a network.
         self.networks.write_text("wg0\t61001\tx\nwg1\t61002\tx\nwg2\t61003\tx\n# yorum\neth0\t1\n")
-        value, calls = self.run_trafik()
-        self.assertEqual(value, {"down": 1300, "up": 120, "since": 2_000_000_000 - 1000})
-        self.assertEqual(calls[0][-2:], ["wg-quick@wg0.service", "wg-quick@wg1.service"], "wg2 is down and eth0 is not a network")
+        self.assertEqual(self.mod.trafik({}), {"down": 1300, "up": 120})
+        source = (ROOT / "magaza/wireguard/trafik.py").read_text()
+        self.assertNotIn("subprocess", source, "the kernel's counters only; no command")
 
     def test_no_registry_or_no_network_up(self):
-        value, calls = self.run_trafik()
-        self.assertEqual((value, calls), ({"down": 0, "up": 0, "since": None}, []))
+        self.assertEqual(self.mod.trafik({}), {"down": 0, "up": 0})
         self.networks.write_text("wg5\t61005\tx\n")
-        self.assertEqual(self.run_trafik()[0], {"down": 0, "up": 0, "since": None})
+        self.assertEqual(self.mod.trafik({}), {"down": 0, "up": 0})
 
 
 if __name__ == "__main__":

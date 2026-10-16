@@ -2,7 +2,6 @@
   "ad": "qBittorrent",
   "alt": "Torrent indirmelerini yönetin.",
   "simge": "download",
-  "ton": "t-video",
   "aciklama": "Sunucudaki Podman'da konteyner olarak çalışır. Kurulumda seçtiğiniz hesap ve indirme klasörüyle başlar; diğer ayarlarına dokunmaz.",
   "neler": [
     ["box", "linuxserver/qbittorrent imajı __TORRENT_SURUM__, özetiyle sabit; Konsol yeni sürümü denetler, siz onaylayınca günceller"],
@@ -11,7 +10,6 @@
     ["info", "Eş portu (TCP+UDP) yalnız sunucunun WAN IPv4 adresinde internete açılır; Tailscale'de ve başka adreste port yok. Numarası uygulamanın Ayarlar sekmesinde görünür ve orada değiştirilebilir"]
   ],
   "notlar": ["Podman konteyneri · __TORRENT_CONTAINER__", "arayüz yalnız sunucu"],
-  "gunluk_kaynak": "journalctl -u __TORRENT_CONTAINER__.service",
   "kaldir": {
     "neler": [
       ["box", "Konteyner durur ve açılışta başlamaz; imaj sunucuda kalır."],
@@ -38,7 +36,6 @@
     ]
   },
   "gunluk": {
-    "hesap": "qBittorrent hesabı kaydedildi ({detail})",
-    "dizin": "qBittorrent indirme dizini: {detail}"
+    "ayar": "qBittorrent ayarları kaydedildi ({detail})"
   }
 }

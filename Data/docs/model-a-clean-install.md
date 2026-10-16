@@ -53,8 +53,8 @@ same-origin gates and CSP remain in force.
 For agent-driven tests on `nrm`, type a scratch domain on a first install. Historical acceptance: v131 and v132 were deployed as in-place updates on the user's
 v130 Debian installation. Portable validation, live read-only Store/firewall checks and
 local regression suites passed; no reset/reboot or fresh Ubuntu run was performed.
-Those results do not certify a fresh install of later releases. See `SESSION.md`
-for exact scope and results.
+Those results do not certify a fresh install of later releases. See
+`archive/SESSION-history.md` for exact scope and results.
 
 ## Fresh-host acceptance checklist (pending)
 

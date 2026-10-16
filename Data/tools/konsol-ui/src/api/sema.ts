@@ -15,14 +15,12 @@ export interface Kaynaklar {
   kernel: string;
   uptime: number;
   cores: number;
-  interval: number;
   read_at: number;
   sampled_at: number | null;
-  cpu: number[];
+  cpu: number | null;
   mem: {
     total: number;
     used: number;
-    graph: number[];
   };
   net: {
     wan: string;
@@ -219,20 +217,14 @@ export interface UygulamaIslemiBasladi {
 
 export interface Ag {
   read_at: number;
-  iface: string;
-  window: number;
   sampled_at: number | null;
   rx: number | null;
   tx: number | null;
-  points: number[][];
   apps: ({
     id: string;
     name: string;
-    state: string;
     down: number | null;
     up: number | null;
-    since: number | null;
-    at: number | null;
   })[];
 }
 
@@ -295,7 +287,6 @@ export interface KonsolBildirimi {
 
 export interface Modul {
   id: string;
-  runtime: string;
   installed: boolean;
   state: "calisiyor" | "durduruldu" | "";
   live: string;
@@ -755,13 +746,6 @@ export interface KonteynerAyrintisi {
   [key: string]: unknown;
 }
 
-export interface KonteynerGunlugu {
-  name?: string;
-  lines?: string[];
-  truncated?: boolean;
-  [key: string]: unknown;
-}
-
 export interface KonteynerGuncellemeleri {
   checked_at: number;
   items: {
@@ -991,7 +975,6 @@ export const YOLLAR = {
   konteyner_islemi: "/api/konsol/konteynerler/islem",
   konteyner_listesi: "/api/konsol/konteynerler/liste",
   konteyner_ayrintisi: "/api/konsol/konteynerler/ayrinti",
-  konteyner_gunlugu: "/api/konsol/konteynerler/gunluk",
   konteyner_guncellemeleri: "/api/konsol/konteynerler/guncellemeler",
   konteyner_isi: "/api/konsol/konteynerler/islem",
   uygulama_hesabi: "/api/konsol/uygulamalar/hesap",

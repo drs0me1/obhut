@@ -1,6 +1,9 @@
-# Session Notes
+# Session notes to v2-206 (archived)
 
-Cross-session continuity for this repository.
+The working notes `Data/SESSION.md` kept until 2026-10-05 (v2-154 to v2-206), moved here verbatim on
+2026-10-16 (DD-269) when they had fallen 46 builds behind. They describe past states, not current
+behaviour; `Data/CHANGELOG.md`, `Data/docs/contract.md` and `Data/docs/design-decisions.md` take
+precedence. Older notes are in `SESSION-history.md`.
 
 ## Current Task
 

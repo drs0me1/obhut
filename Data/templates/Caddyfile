@@ -75,7 +75,7 @@
 			}
 		}
 	}
-	# DD-235: Dosyalar'ın "Sistem (/)" görünümü (root). Yalnız Tailscale sitesinde eşleşir; internet
+	# DD-235: Dosyalar'ın "Sistem dosyaları" görünümü (root). Yalnız Tailscale sitesinde eşleşir; internet
 	# sitesinde bu yol dosya arka ucuna düşer ve 404 alır. Servis de kanalı ve istemciyi denetler.
 	@sistem {
 		path /api/sistem/*
@@ -108,7 +108,7 @@
 		file_server
 	}
 }
-# Tailnet adresi her zaman açıktır (yönetimin güvenli yolu). İnternet adresini Ayarlar → Caddy
+# Tailnet adresi her zaman açıktır (yönetimin güvenli yolu). İnternet adresini Erişim → Adresler
 # yazar (moduller/panel-wan.caddy, DD-195).
 http://panel.__LOCAL_DOMAIN__ {
 	import konsol tailscale

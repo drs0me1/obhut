@@ -531,7 +531,7 @@
     "/api/konsol/ag": {
       "get": {
         "operationId": "ag",
-        "summary": "WAN hız noktaları ve uygulamaların trafik toplamları (DD-206)",
+        "summary": "WAN'ın son hızı ve uygulamaların trafik toplamları (DD-206)",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -1464,63 +1464,6 @@
         }
       }
     },
-    "/api/konsol/konteynerler/gunluk": {
-      "get": {
-        "operationId": "konteyner_gunlugu",
-        "summary": "Bir konteynerin günlüğü (100, 200, 500 ya da 1000 satır)",
-        "parameters": [
-          {
-            "name": "X-Konsol",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          },
-          {
-            "name": "ad",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "satir",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Başarılı",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KonteynerGunlugu"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Host, köken ya da X-Konsol denetimi",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/konsol/konteynerler/guncellemeler": {
       "get": {
         "operationId": "konteyner_guncellemeleri",
@@ -2349,9 +2292,6 @@
           "cores": {
             "type": "integer"
           },
-          "interval": {
-            "type": "integer"
-          },
           "read_at": {
             "type": "integer"
           },
@@ -2366,10 +2306,14 @@
             ]
           },
           "cpu": {
-            "type": "array",
-            "items": {
-              "type": "number"
-            }
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "mem": {
             "type": "object",
@@ -2379,18 +2323,11 @@
               },
               "used": {
                 "type": "integer"
-              },
-              "graph": {
-                "type": "array",
-                "items": {
-                  "type": "number"
-                }
               }
             },
             "required": [
               "total",
-              "used",
-              "graph"
+              "used"
             ],
             "additionalProperties": false
           },
@@ -2458,7 +2395,6 @@
           "kernel",
           "uptime",
           "cores",
-          "interval",
           "read_at",
           "sampled_at",
           "cpu",
@@ -3370,12 +3306,6 @@
           "read_at": {
             "type": "integer"
           },
-          "iface": {
-            "type": "string"
-          },
-          "window": {
-            "type": "integer"
-          },
           "sampled_at": {
             "anyOf": [
               {
@@ -3406,15 +3336,6 @@
               }
             ]
           },
-          "points": {
-            "type": "array",
-            "items": {
-              "type": "array",
-              "items": {
-                "type": "integer"
-              }
-            }
-          },
           "apps": {
             "type": "array",
             "items": {
@@ -3424,9 +3345,6 @@
                   "type": "string"
                 },
                 "name": {
-                  "type": "string"
-                },
-                "state": {
                   "type": "string"
                 },
                 "down": {
@@ -3448,36 +3366,13 @@
                       "type": "null"
                     }
                   ]
-                },
-                "since": {
-                  "anyOf": [
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "at": {
-                  "anyOf": [
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
                 }
               },
               "required": [
                 "id",
                 "name",
-                "state",
                 "down",
-                "up",
-                "since",
-                "at"
+                "up"
               ],
               "additionalProperties": false
             }
@@ -3485,12 +3380,9 @@
         },
         "required": [
           "read_at",
-          "iface",
-          "window",
           "sampled_at",
           "rx",
           "tx",
-          "points",
           "apps"
         ],
         "additionalProperties": false
@@ -3751,9 +3643,6 @@
           "id": {
             "type": "string"
           },
-          "runtime": {
-            "type": "string"
-          },
           "installed": {
             "type": "boolean"
           },
@@ -3844,7 +3733,6 @@
         },
         "required": [
           "id",
-          "runtime",
           "installed",
           "state",
           "live",
@@ -5770,25 +5658,6 @@
           },
           "command": {
             "type": "string"
-          }
-        },
-        "required": [],
-        "additionalProperties": true
-      },
-      "KonteynerGunlugu": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "lines": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "truncated": {
-            "type": "boolean"
           }
         },
         "required": [],

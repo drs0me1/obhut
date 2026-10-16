@@ -1,7 +1,6 @@
-// The audit log's words (GET /api/konsol/islemler, DD-196/200), as the current Konsol writes them
-// (console/konsol.js ACTION_TEXT, evKind, evText): the root backend's own actions, the file backend's
-// ("dosya") and a package API's, which arrive as "<id>:<verb>" and take their words from the package's
-// konsol.json `gunluk` templates ({detail} is the whole detail, {0}, {1} … its words).
+// The audit log's words (GET /api/konsol/islemler, DD-196/200): the root backend's own actions, the file
+// backend's ("dosya") and a package API's, which arrive as "<id>:<verb>" and take their words from the
+// package's konsol.json `gunluk` templates ({detail} is the whole detail, {0}, {1} … its words).
 import type { KayitSatiri, Modul } from "../../api/sema";
 
 export interface Packages {

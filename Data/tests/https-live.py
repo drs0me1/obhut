@@ -58,12 +58,14 @@ def api(path, data=None):
 
 
 if args.configure:
-    status = api("/api/konsol/ayarlar/durum")
-    result = api("/api/konsol/ayarlar/uygula", {"revision": status["revision"], "https": {"domain": args.domain}})
+    revision = api("/api/konsol/yayinlar")["revizyon"]
+    result = api("/api/konsol/ayarlar/uygula", {"revision": revision, "https": {"domain": args.domain}})
     assert result.get("committed") is True and result.get("pending") is None
     print("PASS: real Settings API saved and verified HTTPS", flush=True)
-status = api("/api/konsol/ayarlar/durum")["https"]
-assert status["domain"] == args.domain and status["status"] == "ready", status
+# The shares' WAN mode and domain (Dosyalar → Paylaşımlar) and the certificate state (Erişim's WebDAV row).
+wan = api("/api/konsol/paylasim")["wan"]
+row = next(r for r in api("/api/konsol/yayinlar")["adaylar"] if r["id"] == "paylasim")
+assert wan["mode"] == "https" and wan["domain"] == args.domain and row["durum"] == "ready", (wan, row["durum"])
 
 
 def request(method, path, item=None, password=None, headers=None, data=None, tail=False):
@@ -81,8 +83,8 @@ def request(method, path, item=None, password=None, headers=None, data=None, tai
 
 
 assert request("GET", "/")[0] == 404
-assert request("GET", "/api/konsol/ayarlar")[0] == 404
-assert request("GET", "/api/konsol/ayarlar", headers={"Host": "panel." + meta["host"].split(".", 1)[1], "X-Konsol": "1"})[0] == 421
+assert request("GET", "/api/konsol/kaynaklar")[0] == 404
+assert request("GET", "/api/konsol/kaynaklar", headers={"Host": "panel." + meta["host"].split(".", 1)[1], "X-Konsol": "1"})[0] == 421
 try:
     with socket.create_connection((meta["wan"], meta["port"]), timeout=3):
         raise AssertionError("Old HTTP WAN socket remains reachable")

@@ -170,7 +170,7 @@ class Acceptance:
         env = dict(KONTEYNER_STATE_DIR=str(self.root / 'state'), KONTEYNER_BIRIM_DIR=str(quadlet_root),
                    KONTEYNER_LOCK=str(self.root / 'run/containers.lock'), RUNTIME_DIR=str(self.root / 'run'),
                    SBIN_DIR=str(self.root / 'helpers'), MODULES_DIR=str(self.root / 'mods'),
-                   SERVER_ROOT=str(self.root / 'srv'), FILES_PANEL_TRASH='.cop', SHARE_DIR='.pay',
+                   SERVER_ROOT=str(self.root / 'srv'), FILES_PANEL_TRASH='.cop',
                    KONTEYNER_NETWORK=self.network, KONTEYNER_BRIDGE_PREFIX=self.prefix,
                    KONTEYNER_NFT_TABLE=self.table, TAILSCALE_IF='tailscale0', VPN_BLOCK_DEST4=block_list(self.source),
                    KONTEYNER_BAGLAMA_DIR=str(self.root / 'run/konteyner-baglama'), **ids)

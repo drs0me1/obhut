@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Konsol's API description (DD-259): the routes of the new interface and the shape of each reply.
+"""Konsol's API description (DD-259): Konsol's routes and the shape of each reply.
 
 The root backend dispatches these routes from this table. Tests check real replies against the
 shapes, and generate from them the OpenAPI description (docs/konsol-api.json) and the interface's
@@ -52,8 +52,8 @@ SCHEMAS = {
     "Hata": obj({"error": STR, "giris": BOOL}, optional=("giris",)),
     "Kaynaklar": obj({
         "host": STR, "version": STR, "surum": STR, "domain": STR, "os": STR, "kernel": STR, "uptime": INT, "cores": INT,
-        "interval": INT, "read_at": INT, "sampled_at": null(INT), "cpu": arr(NUM),
-        "mem": obj({"total": INT, "used": INT, "graph": arr(NUM)}),
+        "read_at": INT, "sampled_at": null(INT), "cpu": null(NUM),
+        "mem": obj({"total": INT, "used": INT}),
         "net": obj({"wan": STR, "wan6": STR, "iface": STR, "tailscale": STR, "tailscale6": STR}),
         "root": STR, "disk": null(obj({"total": INT, "free": INT})),
     }),
@@ -110,10 +110,8 @@ SCHEMAS = {
     "UygulamaIslemi": obj({"id": STR, "eylem": enum("kur", "baslat", "durdur", "yeniden-baslat", "guncelle", "kaldir"),
                            "revizyon": STR, "veri": BOOL, "form": open_obj({})}, optional=("revizyon", "veri", "form")),
     "UygulamaIslemiBasladi": obj({"id": STR, "eylem": STR, "is": null(STR)}),
-    "Ag": obj({"read_at": INT, "iface": STR, "window": INT, "sampled_at": null(INT), "rx": null(INT), "tx": null(INT),
-               "points": arr(arr(INT)),
-               "apps": arr(obj({"id": STR, "name": STR, "state": STR, "down": null(INT), "up": null(INT),
-                                "since": null(INT), "at": null(INT)}))}),
+    "Ag": obj({"read_at": INT, "sampled_at": null(INT), "rx": null(INT), "tx": null(INT),
+               "apps": arr(obj({"id": STR, "name": STR, "down": null(INT), "up": null(INT)}))}),
     "OnarimAdimi": obj({"id": STR, "ad": STR, "durum": enum("ok", "onarildi", "sorun", "hata", "atlandi", "calisiyor"),
                         "detay": STR}),
     "Onarim": obj({"calisiyor": BOOL, "kurulu": BOOL, "baslatilabilir": BOOL,
@@ -129,7 +127,7 @@ SCHEMAS = {
         "hatalar": arr(STR),
     }),
     "KonsolBildirimi": open_obj({"ad": STR, "alt": STR, "simge": STR}),
-    "Modul": obj({"id": STR, "runtime": STR, "installed": BOOL, "state": enum("calisiyor", "durduruldu", ""), "live": STR,
+    "Modul": obj({"id": STR, "installed": BOOL, "state": enum("calisiyor", "durduruldu", ""), "live": STR,
                   "busy": BOOL, "progress": null(obj({"action": STR, "step": STR, "total": INT, "text": STR})),
                   "durdurulabilir": BOOL, "hesap": BOOL, "konsol": ref("KonsolBildirimi"),
                   "urls": obj({"tailscale": null(STR), "internet": null(STR)})},
@@ -205,7 +203,7 @@ SCHEMAS = {
     "YayinPlani": obj({"hedef": ref("YayinAdayi"), "adimlar": arr(ref("YayinAdimi")), "plan": null(ref("AyarPlani")),
                        "engel": STR, "dns": null(obj({"ad": STR, "tur": STR, "deger": STR})),
                        "uyarilar": arr(ref("PlanUyarisi"))}),
-    # The Podman page's own requests pass unchanged (a revision may be null, an image action names the image).
+    # Container requests (DD-211): a revision may be null, an image action names the image.
     "KonteynerIstegi": open_obj({"action": STR, "name": STR, "image": STR, "revision": null(STR), "config": open_obj({})}),
     "KonteynerIsi": open_obj({"id": STR, "action": STR, "name": STR, "state": STR, "step": STR}),
     # DD-266 (phase 4a): the Podman reads, moved into the table unchanged (docs/design/container-manager-api.md).
@@ -239,7 +237,6 @@ SCHEMAS = {
         "config": open_obj({}), "editable": arr(STR), "protected_mounts": arr(STR), "effective_autostart": BOOL,
         "user": STR, "command": STR,
     }),
-    "KonteynerGunlugu": open_obj({"name": STR, "lines": arr(STR), "truncated": BOOL}),
     "KonteynerGuncellemeleri": obj({"checked_at": INT, "items": open_obj({}), "cached": BOOL}),
     # DD-266: Sistem.
     "Oturum": obj({"durum": enum("kurulum", "acik", "giris"), "kullanici": STR, "oturum_gun": INT,
@@ -321,7 +318,7 @@ ROUTES = (
     Route("POST", "/api/konsol/uygulamalar/islem", "uygulama_islemi",
           "Bir uygulamayı başlat, durdur, yeniden başlat, güncelle ya da kaldır; ilerleme olay akışında (islemler)",
           ref("UygulamaIslemiBasladi"), request=ref("UygulamaIslemi"), status=202),
-    Route("GET", "/api/konsol/ag", "ag", "WAN hız noktaları ve uygulamaların trafik toplamları (DD-206)", ref("Ag")),
+    Route("GET", "/api/konsol/ag", "ag", "WAN'ın son hızı ve uygulamaların trafik toplamları (DD-206)", ref("Ag")),
     Route("GET", "/api/konsol/onarim", "onarim", "Son denetim ve onarım raporu (DD-239)", ref("Onarim")),
     Route("POST", "/api/konsol/onarim", "onarim_baslat", "Denetimi ya da onarımı başlatır; yalnız Tailscale'den",
           ref("OnarimBasladi"), request=ref("OnarimIstegi"), status=202),
@@ -350,14 +347,11 @@ ROUTES = (
     Route("POST", "/api/konsol/konteynerler/islem", "konteyner_islemi",
           "Konteyner işlemi (DD-211); iş arka planda sürer, ilerleme olay akışında", ref("KonteynerIsi"),
           request=ref("KonteynerIstegi"), status=202),
-    # DD-266 (phase 4a): the Podman reads, the Sistem routes and Gelişmiş. Routes the current Konsol also
-    # uses keep their paths and answers.
+    # DD-266 (phase 4a): the Podman reads, the Sistem routes and Gelişmiş.
     Route("GET", "/api/konsol/konteynerler/liste", "konteyner_listesi",
           "Konteynerler, imajlar, birimler ve ağlar (DD-211)", ref("KonteynerListesi")),
     Route("GET", "/api/konsol/konteynerler/ayrinti", "konteyner_ayrintisi",
           "Bir konteynerin ayrıntısı ve düzenlenebilir tanımı", ref("KonteynerAyrintisi"), query={"ad": STR}),
-    Route("GET", "/api/konsol/konteynerler/gunluk", "konteyner_gunlugu",
-          "Bir konteynerin günlüğü (100, 200, 500 ya da 1000 satır)", ref("KonteynerGunlugu"), query={"ad": STR, "satir": INT}),
     Route("GET", "/api/konsol/konteynerler/guncellemeler", "konteyner_guncellemeleri",
           "İmaj güncelleme durumu (DD-214); ?yenile en çok dakikada bir yeniden sorar", ref("KonteynerGuncellemeleri"),
           query={"yenile": STR}),

@@ -1,5 +1,5 @@
 // Leaving with an unsaved draft (DD-266): while a page holds a draft, closing or reloading the browser
-// tab asks first, as the current Konsol's Settings did. A draft is never saved by leaving; moving to
+// tab asks first. A draft is never saved by leaving; moving to
 // another section inside Konsol keeps today's behaviour (the draft is dropped with its page).
 import { onBeforeUnmount, watch, type WatchSource } from "vue";
 

@@ -111,11 +111,11 @@ class RouteReplyTests(Fixture):
         with patch.object(self.p, "busy_units", return_value=set()):
             self.assertEqual(self.get("etkinlik"), {"items": []})
         self.assertEqual(self.get("bekleyen"), {"bekleyen": None})
-        modules = [{"id": "torrent", "runtime": "konteyner", "installed": True, "state": "calisiyor", "live": "running", "busy": False,
+        modules = [{"id": "torrent", "installed": True, "state": "calisiyor", "live": "running", "busy": False,
                     "progress": None, "durdurulabilir": True,
                     "konsol": {"ad": "qBittorrent", "neler": [["box", "x"]]},
                     "urls": {"tailscale": "http://torrent.test", "internet": None}},
-                   {"id": "wireguard", "runtime": "servis", "installed": False, "state": "", "live": "-", "busy": True,
+                   {"id": "wireguard", "installed": False, "state": "", "live": "-", "busy": True,
                     "progress": {"action": "kur", "step": "1", "total": 4, "text": "Paketler"}, "durdurulabilir": False}]
         with patch.object(self.p, "modules", return_value=modules):
             self.assertEqual(self.get("moduller"), {"items": modules})
@@ -167,12 +167,9 @@ class RouteReplyTests(Fixture):
                       user="", command="nginx")
         fake = unittest.mock.Mock()
         fake.liste.return_value, fake.ayrinti.return_value = listing, detail
-        fake.gunluk.return_value = {"name": "notlar", "lines": ["a"], "truncated": False}
         with patch.object(panel.Handler, "container_view", return_value=fake):
             self.assertEqual(self.get("konteyner_listesi"), listing)
             self.assertEqual(self.get("konteyner_ayrintisi", "?ad=notlar")["command"], "nginx")
-            self.assertEqual(self.get("konteyner_gunlugu", "?ad=notlar&satir=500")["lines"], ["a"])
-        fake.gunluk.assert_called_once_with("notlar", "500")
         status, _headers, body = test_resources.unix_get(self.sock, "/api/konsol/konteynerler/ayrinti?ad=../x", {"X-Konsol": "1"})
         self.assertEqual(status, 400, body)
 

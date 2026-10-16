@@ -77,8 +77,9 @@ curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo ba
 3. Open `http://panel.<domain>` from any device on your tailnet.
 
 **Update:** Konsol shows *Güncelle* when `main` carries a newer version; running the line again
-works too. **Repair:** Konsol → Sistem → Sağlık, `sudo master-onar` on the server, or
-`onar.command` from a Mac when Konsol cannot be reached.
+works too. **Repair:** Konsol → Sistem → Sağlık, `sudo obhut onar` (or `sudo master-onar`) on the
+server, or `onar.command` from a Mac when Konsol cannot be reached; `sudo obhut durum` shows the
+server's state over SSH. Konsol can be installed as an app from the browser.
 
 ## Konsol at a glance
 
@@ -92,7 +93,7 @@ to the new places.
 | **Erişim** (Access) | Who reaches what from where; addresses and public HTTPS names, local names and the domain, Tailscale, WireGuard networks and devices, the firewall; *Yayınla* to publish |
 | **Dosyalar** (Files) | Storage, the server folders, the trash, **Paylaşımlar** (one WebDAV account per folder, Tailscale and internet access, read-only/read-write, expiry) and, on the tailnet, the whole server as root |
 | **Sistem** (System) | Health and repair, updates, the Konsol account, the server and reboot, appearance, the log |
-| **Gelişmiş** (Advanced) | Effective Caddy and DNS configuration; Podman images, volumes and networks |
+| **Gelişmiş** (Advanced) | Effective Caddy and DNS configuration, the technical firewall rules; Podman images, volumes and networks |
 
 ## Repository structure
 
@@ -103,7 +104,7 @@ to the new places.
 | `Data/install.sh`, `Data/common.sh` | The installer (packages, Tailscale, firewall, Caddy and dnsmasq, Konsol, verification) and its helpers |
 | `Data/config/defaults.env` | Ports, paths and chain names, defined once |
 | `Data/templates/`, `Data/systemd/` | Caddy and dnsmasq templates; units, timers and drop-ins |
-| `Data/scripts/` | Server tools: firewall, App Store engine, repair, update, Konsol account |
+| `Data/scripts/` | Server tools: firewall, App Store engine, repair, update, Konsol account, `obhut` |
 | `Data/panel/` | Konsol's root backend (Python standard library) and its workers: settings, shares, publications, containers, health; the WebDAV server |
 | `Data/files-panel/` | The unprivileged file backend |
 | `Data/console/` | The sign-in page, the editor bundle and the marks; `console/yeni/` holds Konsol's committed build, placed at the console's root |

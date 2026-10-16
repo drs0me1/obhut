@@ -50,10 +50,20 @@ def request(path, data=None, host=None, port=None):
         conn.close()
 
 
-def status():
-    code, body = request("/api/konsol/ayarlar/durum")
-    assert code == 200, code
+def read(path):
+    code, body = request(path)
+    assert code == 200, (path, code)
     return json.loads(body)
+
+
+def status():
+    """The settings revision, the publication rows and the pending change in the shape this test checks,
+    read from Erişim's routes (GET yayinlar, GET bekleyen; DD-265). Only installed packages are listed."""
+    view = read("/api/konsol/yayinlar")
+    rows = [{"service": c["servis"], "tail": c["tailscale"], "enabled": c["internet"], "domain": c["alan_adi"],
+             "status": c["durum"], "installed": True, "account": "Konsol hesabı" not in c["internet_engel"]}
+            for c in view["adaylar"] if c.get("servis")]
+    return {"revision": view["revizyon"], "publications": rows, "pending": read("/api/konsol/bekleyen")["bekleyen"]}
 
 
 def save(row, **updates):
@@ -76,7 +86,7 @@ rows = {r["service"]: r for r in before["publications"]}
 assert rows["panel"]["tail"] and rows["panel"]["status"] in ("disabled", "ready", "error")
 panel_before = {k: rows["panel"][k] for k in ("tail", "enabled", "domain")}
 assert rows["paylasim"]["enabled"] and rows["paylasim"]["status"] == "ready", "Requires existing verified DAV HTTPS"
-assert rows["torrent"]["installed"], "Requires installed qBittorrent"
+assert "torrent" in rows, "Requires installed qBittorrent"
 torrent_public = rows["torrent"]["enabled"]
 # Names come from the host. example.net is reserved and never resolves below its apex.
 probe_name = rows["torrent"]["domain"] or rows["paylasim"]["domain"]

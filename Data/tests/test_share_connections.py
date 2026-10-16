@@ -46,7 +46,7 @@ class ShareConnectionTests(unittest.TestCase):
             "SERVER_ROOT": str(self.root / "srv"),
             "DOWNLOADS_PATH": str(self.root / "srv/downloads"),
             "FILES_PANEL_TRASH": ".cop",
-            "SHARE_DIR": ".pay", "SETTINGS_FILE": str(self.root / "settings.json"),
+            "SETTINGS_FILE": str(self.root / "settings.json"),
             "SETTINGS_PENDING_FILE": str(self.root / "settings-pending"),
             "SHARE_PORT": "61010", "SHARE_HTTPS_PORT": "443",
             "TAILSCALE_IPV4": "100.64.0.2", "WAN_IPV4": "8.8.8.8",
@@ -77,7 +77,7 @@ class ShareConnectionTests(unittest.TestCase):
         self.data = {
             "schema": 4, "root": self.env["SERVER_ROOT"],
             "limits": dict(shares.DEFAULT_LIMITS), "items": [self.item],
-            "blocked": [".cop", ".pay"], "protected": [],
+            "blocked": [".cop"], "protected": [],
         }
         self.write(self.data)
 
@@ -211,7 +211,8 @@ class ShareConnectionTests(unittest.TestCase):
                     if mixed:
                         request["connections"] = {"tailscale": {"enabled": False}}
                     self.assert_rejected(request, reload=True)
-        self.assert_rejected({"paused": True}, action="pause", reload=True)
+        # The pause request itself is gone (DD-267); an unknown action changes nothing.
+        self.assert_rejected({}, action="pause")
 
     def test_new_account_defaults_to_tail_ro_seven_days_and_disabled_wan(self):
         self.manager.change("save", {"path": "beta", "username": "new-reader", "password": PASSWORD})

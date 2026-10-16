@@ -58,7 +58,7 @@ function staticHeaders(file) {
 function create({ name, url, data, expected = () => [] }) {
   const base = new URL(url);
   const h = {
-    root, tools, csp, base, data,
+    base, data,
     shots: fs.mkdtempSync(path.join(os.tmpdir(), name + "-")),
     status: {},
     handlers: {},
@@ -98,11 +98,6 @@ function create({ name, url, data, expected = () => [] }) {
     if (u.pathname.startsWith("/api/")) {
       h.errors.push("API request reached the static server: " + u.pathname);
       res.writeHead(404);
-      return res.end();
-    }
-    // DD-267: Konsol left /yeni/ for /; Caddy sends an old link there (the #view stays in the browser).
-    if (u.pathname === "/yeni" || u.pathname.startsWith("/yeni/")) {
-      res.writeHead(308, { Location: "/" });
       return res.end();
     }
     const file = staticFile(u.pathname);

@@ -59,7 +59,9 @@ WireGuard — kurulum ağ yaratmaz (v2-109) ve v2-117'den beri WireGuard'ın ken
 Gezgin (v2-245, DD-262): dosya yöneticisi; Uygulamalar'daki katalogdan kurulur (Podman konteyneri).
   Kurulum penceresi ilk yöneticiyi sorar (parola en az 12 karakter); adres http://gezgin.<alan adı>.
   Giriş Gezgin hesabıyla yapılır; Konsol'un oturumu onu açmaz. /srv'nin tamamını görür; Konsol'un çöpü
-  orada boş görünür. Arşivleri (ZIP/RAR) Gezgin açar ve oluşturur. Kaldırırken veriler silinmezse
+  orada boş görünür. Arşivleri (ZIP/RAR) Gezgin açar ve oluşturur. Kendi içeriğini kendi bağlantılarıyla
+  ve Tailscale'deki WebDAV paylaşımlarıyla (http://gezgin.<alan adı>:62984/…, DD-264) paylaşır; Konsol'un
+  klasör paylaşımları (Dosyalar → Paylaşımlar) bunların yanında durur. Kaldırırken veriler silinmezse
   kullanıcılar, ayarlar ve bağlantı paylaşımları /var/lib/gezgin'de kalır, yeniden kurulunca geri gelir
   (formdaki hesap o zaman açılmaz).
 
@@ -75,7 +77,8 @@ Konsol (tarayıcıdan; DD-258, v2-250'den beri DD-267):
     Erişim        kim neye nereden ulaşır; Adresler, Tailscale, WireGuard, Güvenlik duvarı; Yayınla
     Dosyalar      Depolama, Sunucu klasörleri, Çöp kutusu, Paylaşımlar, Sistem dosyaları (yalnız Tailscale)
     Sistem        Sağlık ve onarım, Güncellemeler, Hesap, Sunucu (yeniden başlat), Görünüm, Günlük
-    Gelişmiş      Caddy ve DNS yapılandırması (salt okunur), Podman imajları, birimleri ve ağları
+    Gelişmiş      Caddy ve DNS yapılandırması (salt okunur), teknik güvenlik duvarı kuralları, Podman imajları,
+                  birimleri ve ağları
   Eski /yeni/ adresi ve eski yer imleri (App Store, Podman, Ayarlar, Dosyalar) yeni yerlerine gider;
   eski arayüz v2-250'de kaldırıldı. Ana Menü düzenleme kipi ve favori klasörler de yoktur.
   Ctrl+K (Mac'te Cmd+K) bölümleri, sekmeleri, uygulamaları ve işlemleri arar.
@@ -233,8 +236,8 @@ korunur. Diğer portlar yalnız açık bir kullanıcı kuralıyla açılır. İn
 çıkışı ve kurulmuş bağlantılar değişmez; port tablosu aynı politikayı gösterir.
 
 v2-145: Kullanılmayan eski paylaşım/modül kodları ve arayüz kalıntıları temizlendi.
-Yeni kurulum .pay/w veya durum işareti oluşturmaz. Var olan eski veriler silinmez,
-izinleri değiştirilmez ve erişime açılmaz. Güncel klasör hesapları aynen korunur.
+v2-253 (DD-269): o eski paylaşım ağacı (/srv/.pay) artık gizlenmez; varken kurulum durur ve
+içeriğinin incelenip kaldırılmasını ister. Güncel klasör hesapları aynen korunur.
 Mac WireGuard menüsü otomatik yedek/eşitleme yapmaz; indirilmiş profil kopyaları ayrıdır.
 
 v2-144: Dock, seçilen ikinci taslaktaki simgeli görünümdedir: eşit aralıklı simgeler

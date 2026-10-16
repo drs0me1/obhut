@@ -5,8 +5,6 @@ The Konsol root backend never edits the profile itself: its API module (api.py) 
 file through ctx.worker() as a separate transient unit (outside the backend's sandbox, like
 the base settings worker), JSON on stdin, JSON on stdout, exit 1 with {"error"} on refusal.
 
-    ayar.py --state STATE hesap    {"username"?: str, "password"?: str}
-    ayar.py --state STATE dizin    {"save": "/abs/dir"}
     ayar.py --state STATE ayar     {"username"?, "password"?, "save"?}  one stop/start for all
     ayar.py --state STATE kur-hazirla --tohum SEED   {"username", "password", "save"}
     ayar.py --state STATE kur-uygula --tohum SEED    (the engine, before the first start)
@@ -180,24 +178,15 @@ def read_conf(path, limit=LIMIT):
 
 
 def durum(env):
-    """Read-only view for the page: paths, interface, account name; never the password hash."""
+    """Read-only view for the settings form (konsol.json `oku`): the account name and the download
+    folder; never the password hash."""
     profile = env.get("TORRENT_PROFILE_DIR", "")
     text = read_conf(conf_path(env)) if profile else None
     if text is None:
-        return {"error": "qBittorrent'in ayar dosyası okunamadı", "profile": profile}
+        return {"error": "qBittorrent'in ayar dosyası okunamadı"}
     q = ini_values(text)
-    downloads = env.get("DOWNLOADS_PATH", "")
     save = q.get(("BitTorrent", "Session\\DefaultSavePath")) or q.get(("Preferences", "Downloads\\SavePath"), "")
-    temp = q.get(("BitTorrent", "Session\\TempPath")) or q.get(("Preferences", "Downloads\\TempPath"), "")
-    port = q.get(("BitTorrent", "Session\\Port"), "")
-    return {"profile": profile, "downloads": downloads, "save": save, "save_inside": inside(save, downloads),
-            "temp": temp, "temp_on": q.get(("BitTorrent", "Session\\TempPathEnabled"), "").lower() == "true",
-            "temp_inside": inside(temp, downloads),
-            # DD-217: inside its bridge the interface listens on the container's address; the server
-            # publishes it on loopback only, which is where it is reached.
-            "ui": "127.0.0.1:%s" % q.get(("Preferences", "WebUI\\Port"), ""),
-            "peer_port": int(port) if port.isdigit() else 0,
-            "username": q.get(("Preferences", "WebUI\\Username"), "admin")}
+    return {"username": q.get(("Preferences", "WebUI\\Username"), "admin"), "save": save}
 
 
 def snapshot(path):
@@ -287,27 +276,9 @@ def save_updates(env, path):
     return updates, "# Konsol: qBittorrent indirme dizini (DD-209)\n[Container]\nVolume=" + folder + ":" + folder + "\n"
 
 
-def hesap(env, data):
-    settings.require(isinstance(data, dict) and set(data) <= {"username", "password"} and bool(data), "Hesap alanı geçersiz.")
-    updates = {}
-    if "username" in data:
-        updates[("Preferences", "WebUI\\Username")] = check_username(data["username"])
-    if "password" in data:
-        updates[("Preferences", "WebUI\\Password_PBKDF2")] = password_hash(check_password(data["password"]))
-    change(env, updates)
-    return {"ok": True, "username": durum(env).get("username", "")}
-
-
-def dizin(env, data, state):
-    settings.require(isinstance(data, dict) and set(data) == {"save"}, "Dizin alanı geçersiz.")
-    path, updates, drop_in = save_choice(env, data["save"], state)
-    change(env, updates, drop_in)
-    return {"ok": True, "save": path}
-
-
 def ayar(env, data, state):
-    """DD-210: the overview's settings dialog. Every field is checked first, then one stop/write/start;
-    an omitted (blank) password keeps the stored hash."""
+    """DD-210: the settings form on the application's page (Uygulamalar → qBittorrent → Ayarlar). Every
+    field is checked first, then one stop/write/start; an omitted (blank) password keeps the stored hash."""
     settings.require(isinstance(data, dict) and bool(data) and set(data) <= {"username", "password", "save"}, "Ayar alanı geçersiz.")
     updates, drop_in, path = {}, None, None
     if "username" in data:
@@ -812,7 +783,7 @@ def main():
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
     parser.add_argument("--lib", default=None, help=argparse.SUPPRESS)  # consumed above, before the import
     parser.add_argument("--tohum", default=None, help="DD-210: the engine's seed file for the install form")
-    parser.add_argument("action", choices=("hesap", "dizin", "ayar", "durum", "konteyner-ayar", "konteyner-guncelle",
+    parser.add_argument("action", choices=("ayar", "durum", "konteyner-ayar", "konteyner-guncelle",
                                            "kur-hazirla", "kur-uygula", "kur-geri"))
     args = parser.parse_args()
     if args.action.startswith("kur-") and not args.tohum:
@@ -840,10 +811,8 @@ def main():
                 result = ayar(env, data, args.state)
             elif args.action == "konteyner-ayar":
                 result = konteyner_ayar(env, data, args.state)
-            elif args.action == "konteyner-guncelle":
-                result = konteyner_guncelle(env, data, args.state)
             else:
-                result = hesap(env, data) if args.action == "hesap" else dizin(env, data, args.state)
+                result = konteyner_guncelle(env, data, args.state)
         print(json.dumps(result, ensure_ascii=False))
     except (settings.SettingsError, ValueError, KeyError, TypeError, OSError, RecursionError) as err:
         message = str(err) if isinstance(err, settings.SettingsError) else "qBittorrent ayarı uygulanamadı; önceki ayar geri yüklendi."

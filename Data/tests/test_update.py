@@ -212,7 +212,7 @@ class PanelStartTests(unittest.TestCase):
 
     def test_refuses_beside_a_running_update_a_package_operation_or_a_pending_setting(self):
         for active, pending, word in [("master-guncelle.service", False, "zaten"), ("master-modul-torrent.service", False, "uygulama"),
-                                      ("", True, "Ayarlar")]:
+                                      ("", True, "bekleyen bir ayar")]:
             self.active.write_text(active)
             if pending:
                 self.pending.write_text("{}")

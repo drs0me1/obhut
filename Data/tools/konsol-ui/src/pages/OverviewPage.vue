@@ -147,9 +147,8 @@ const cards = computed(() =>
 // ---- resources (each value checked: an event may carry only part of the object)
 const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const cpu = computed(() => {
-  const list = live.kaynaklar?.cpu;
-  const last = Array.isArray(list) && list.length ? list[list.length - 1] : undefined;
-  return num(last) ? last : null;
+  const v = live.kaynaklar?.cpu;
+  return num(v) ? v : null;
 });
 const cores = computed(() => (num(live.kaynaklar?.cores) ? `${live.kaynaklar.cores} çekirdek` : UNKNOWN));
 const memory = computed(() => {

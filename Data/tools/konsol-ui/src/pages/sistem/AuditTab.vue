@@ -1,5 +1,5 @@
 <!-- Sistem → Günlük: what was done from Konsol in the last seven days (GET /api/konsol/islemler; the root and
-     the file backends' audit lines), newest first, worded as the current Konsol words them (audit.ts, with
+     the file backends' audit lines), newest first, worded by audit.ts (with
      the packages' own templates from GET /api/konsol/moduller). Filter chips for the kinds present (?tur=)
      and a search (?ara=, Turkish case rules) over the line, the kind, the user and the address. A table on
      wide screens, cards on narrow ones. -->

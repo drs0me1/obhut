@@ -17,6 +17,76 @@ Konsol's old interface was removed in DD-267 (v2-250). Live entries written
 before it still name its places (Ayarlar → Caddy, Ayarlar → Sistem, App Store,
 the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 
+### DD-269: After the redesign: what only the old interface used is removed (v2-253)
+
+- **Request (user, 2026-10-16):** "Tamamlanan yol haritasına göre tekrar kontrol et. Ölü kod işlevsiz alan
+  kalıntı alanları temizle." The redesign is complete (DD-268); the backend, the packages, the installer,
+  the tests and the documents still carried code, reply fields and wording only the old interface read.
+- **How it was found:** a read-only survey per area (backend, installer and scripts, packages, the Vue
+  sources, tests, documents), every claim checked by searching the whole tree for a reader: the Vue
+  sources, `obhut`, the packages, the other backends and the tests. A field read only by tests counts as
+  unread.
+- **Removed from the backend:** the old Settings page's firewall rule groups (`classify_rules`, per-chain
+  `iptables -S` reads, six commands on every settings refresh; Erişim's technical rows come from
+  `iptables-save`, the check from `master-firewall --check`, DD-155); unread settings-view fields
+  (version, domain, addresses, `vpn_installed`, the networks' `server4/6`, the networks' subnets from
+  packages); the 12-sample CPU history and the memory graph (`kaynaklar` sends the last CPU sample, `cpu`
+  is a number or null); the WAN rate history (`ag` sends the last rate, none older than 120 s, and the
+  packages' `{down, up}` only, DD-206); `Modul.runtime`; `GET /api/konsol/konteynerler/gunluk` (an
+  application's log is `uygulamalar/gunluk`, DD-266); `master_settings` status `names`/`folders`;
+  `master_https` status `wan_ip`/`https_port` (DD-193); the WebDAV row's `mode`/`wan_active` (a share
+  walk on every read); the share manager's `pause` action (DD-192); a job label for `uygula`, which never
+  runs as a job.
+- **Removed from the packages:** qBittorrent's `POST /hesap` and `/dizin` and their worker actions (the
+  Ayarlar tab saves through `/ayar`, DD-210), `/durum` down to the form's `username` and `save` (no
+  `systemctl` call), `APP_NAME`; the audit template is now `ayar`'s. WireGuard's masked profile preview
+  (`?masked=1`, DD-133; the profile is a download or a QR only). The traffic modules' `since`/`at` (one
+  `systemctl show` per read for WireGuard). `konsol.json` `ton` (the old tiles' colours) and
+  `gunluk_kaynak`.
+- **Removed from the installer and scripts:** the always-true full-upgrade switch (DD-228 made it
+  unconditional), `master-modul`'s unread `ARACLAR_DEGISTI`, `master-firewall`'s `DEFAULTS_FILE` hook
+  nobody sets. Operator messages that named Ayarlar, App Store, Ana Menü, the WireGuard page or the
+  archive tool now name Erişim, Uygulamalar, the application's page and the pending-change bar.
+- **Documents:** `Data/SESSION.md`, 46 builds behind (it stopped at v2-206), moved verbatim to
+  `docs/archive/SESSION-to-v2-206.md`; runs are recorded in CHANGELOG and each DD entry's live check.
+  DD-119, superseded by DD-228, moved to the retired entries; DD-154 has a note on what changed since.
+- **Removed from the interface:** two functions and two style rules nothing used, comments naming the
+  old files. Tests: always-true checks (a `legacy` placeholder, links to `/#/`), the `/yeni` branch and
+  unused exports of the harness, the `sayfa` fixture field, a fixture folder nothing read. Four live
+  scripts that still asked for `ayarlar/durum` or `/konsol.js` read the current routes and files.
+- **Old installs (user, the same day: "Eski kurulumları kaldıralım"):** code kept only for installs from
+  before v2-190 goes. The reserved `.pay` name (DD-171, the share tree before v2-145) is no longer hidden in
+  Files, WebDAV, qBittorrent, container binds or the permission repair; since that tree may hold old
+  account data, stage 0 refuses to install while `SERVER_ROOT/.pay` exists, before anything is written
+  (fail closed rather than expose it). The check for the native `qbittorrent-nox@` unit (DD-209), the
+  `/data` user area (DD-144), the firewall's default bridge prefix for a state file without
+  `KONTEYNER_BRIDGE_PREFIX` (it now stops), the read-only container view and the update-check refusal for
+  a state file without `KONTEYNER_STATE_DIR` (DD-211) and the permission helper's private-mode path (only
+  the retired archive workspace used it) are removed. The files backend still accepts `--share` for one
+  release beside `--archive-dir`, for a unit rendered before the upgrade.
+- **Kept on purpose:** the old hash addresses and `/yeni` redirects (bookmarks, DD-267); the one-release
+  `--archive-dir` and `--share` shims and the re-run removals of DD-267's leftovers; the files backend's
+  `--version`/`--downloads-dir` options and their state fields (removing them needs the script and both
+  units to change in one step; a separate change); the schema-3 share registry migration, which the
+  current contract still names (DD-192); the three read models' skip of the container inventory when the
+  manager's store is not provisioned (they also keep a broken install readable).
+- **Amends:** DD-133 (no masked preview), DD-144 (no `/data`), DD-155 (no rule groups), DD-171 (no reserved
+  name, an install gate instead), DD-192 (no pause action), DD-193 (no `https_port`), DD-202 (one settings
+  route), DD-206 (last rate, totals only), DD-209 (no native-unit check), DD-211 (no view without the
+  store), DD-266 (no `konteynerler/gunluk`).
+- **Live check (test host, 2026-10-16, v2-253):** the installer with its defaults ran every stage, the
+  system upgrade unconditionally; the replies of `kaynaklar`, `ag`, `guvenlik-duvari` (the check and
+  111 technical rows), `gelismis`, `erisim`, `yayinlar`, `moduller` and `saglik` had the trimmed shapes,
+  `konteynerler/gunluk` answered 404 and an application's log still read. qBittorrent installed from the
+  catalogue: `/durum` gave the user name and folder, `/hesap` and `/dizin` 404, `/ayar` saved and wrote the
+  `torrent:ayar` journal line, Genel Bakış listed its totals; it was removed with its data afterwards. A
+  browser tour of twelve pages had no console error and no 4xx/5xx reply; the backend journal had no
+  traceback.
+  After the old-install removal, a second run: with an empty `/srv/.pay` stage 0 stopped before any
+  write (`state.env` unchanged); without it every stage ran, the files unit passed no `--share`, the
+  WebDAV unit hid only the trash and the private state, `master-firewall --check` passed, the container
+  routes read the manager's view, and the same route checks and browser tour were clean.
+
 ### DD-268: The redesign's phase 5: Konsol as an installable app and the `obhut` recovery tool (v2-252)
 
 - **Request (user, 2026-10-16):** "Faz 5 e geçelim" (phase 5 of DD-258). Choices: the app is a manifest
@@ -149,7 +219,7 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   stays lean and leans on Gezgin; folder shares move under Dosyalar; the old interface goes at the end
   of phase 4; phase 4 lands in two parts. 4a (this entry) builds everything except Dosyalar beside the
   current Konsol; 4b builds Dosyalar with Paylaşımlar, makes `/yeni/` the address `/` and removes the
-  old shell.
+  old shell (done in DD-267).
 - **Routes moved into the table, same paths and answers** (the current Konsol keeps using them): the
   Podman reads (`konteynerler/liste|ayrinti|gunluk|guncellemeler|islem`), `ayarlar/klasorler`, `oturum`
   with `oturum/kur|cikis` and `hesap/parola`, `POST guncelleme`, `POST yeniden-baslat`,
@@ -207,6 +277,8 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Rejected:** loading package scripts into the new shell (code from a package in the page's own
   origin, against goal 5's one implementation per component); a second firewall page in Gelişmiş;
   creating a missing volume silently on container creation (a removed volume would come back empty).
+- **Amended by DD-269 (v2-253):** `GET /api/konsol/konteynerler/gunluk` is gone; an application's log is
+  `uygulamalar/gunluk`.
 
 ### DD-265: The redesign's third phase: Erişim, the Yayınla flow and the settings plan (v2-248)
 
@@ -381,7 +453,8 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   answers and an anonymous API call is refused.
 - **No Konsol page or API:** Gezgin is managed in its own interface, opened in a new tab; Konsol's
   session does not open it. Gezgin's WebDAV shares stay off (no `GEZGIN_WEBDAV_PORT`); Konsol's folder
-  WebDAV keeps sharing until DD-258's phase 5.
+  WebDAV keeps sharing until DD-258's phase 5. (DD-264 turned Gezgin's WebDAV on, on the Tailscale
+  address; DD-268 keeps Konsol's folder shares for good.)
 - **Removal:** `kaldir` keeps `/var/lib/gezgin` and the image; with data it removes both (users,
   settings, link shares). The user area and Gezgin's folders in it are never touched.
 - **Live check on the test host:** install through the API with the form and sign-in with its account;
@@ -1595,6 +1668,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   adopting one are Uygulamalar' add flows, and images, volumes and networks are Gelişmiş → Podman
   (DD-266). Ownership, the brokered writes, persistence, networking and the resource rules above are
   unchanged.
+- **Amended by DD-269 (v2-253):** the read-only container view for a state file without
+  `KONTEYNER_STATE_DIR` is gone; the routes always read the manager's view.
 
 ### DD-210: App Store install form, direct app launch and the tile action row (v2-187…v2-189)
 
@@ -1743,6 +1818,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   bump in the repository. Not done: rootless/user-namespace mapping, image signature checks,
   automatic updates, a container log view on the app's own page (it links to Settings →
   Konteynerler instead).
+- **Amended by DD-269 (v2-253):** the check for an active native `qbittorrent-nox@` unit is gone
+  (installs before v2-186 are not supported).
 
 ### DD-208: Podman is base infrastructure; Settings → Konteynerler is its read-only view (v2-185, v2-186)
 
@@ -1880,6 +1957,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   deletes `duzen.json`) and the old home cards went with the old interface. The network card's data
   stays: the WAN sampler, `GET /api/konsol/ag` (in the route table since DD-261) and the packages'
   `PAKET_TRAFIK` modules feed Genel Bakış's Ağ card, read every 5 s while it is shown.
+- **Amended by DD-269 (v2-253):** `ag` gives the last WAN rate (none older than 120 s) instead of a
+  history, and each package's `{down, up}` only; the traffic modules no longer report `since`/`at`.
 
 ### DD-205: No sign-in on the tailnet; the account is the public name's credential (v2-181)
 
@@ -2047,6 +2126,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   place none. qBittorrent's account and download folder are its settings form on the application's
   Ayarlar tab (`konsol.json` `form` with `oku: /durum` and `yaz: /ayar`, DD-266), and its first-login
   account is that tab's account card. The worker, `api.py` and the direct apply are unchanged.
+- **Amended by DD-269 (v2-253):** the `/hesap` and `/dizin` routes and worker actions are gone (the
+  Ayarlar tab saves through `/ayar`, DD-210); `/durum` gives the form's `username` and `save` only,
+  without a `systemctl` call; the audit word is `torrent:ayar`.
 
 ### DD-201: A neutral backend, package-owned settings and self-checking packages, phase 2b (v2-175)
 
@@ -2498,6 +2580,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
 - **Unchanged on purpose:** TCP/HTTP budgets (DD-188), restart on share save
   (DD-158/192), the refresh-page refusal of `durum`/`pause` (DD-192) and the
   schema-3 migration.
+- **Amended by DD-269 (v2-253):** `master_https.status()` no longer adds `https_port` or `wan_ip`;
+  nothing read them after DD-267.
 
 ### DD-192: Per-connection WebDAV policies and dual-card Shares (v2-164)
 
@@ -2549,6 +2633,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   connections with these controls. The backend has no `paylasim/durum` route any more (an unknown route,
   404); the manager still refuses old global-policy fields and its own `pause` action with the
   refresh-page message.
+- **Amended by DD-269 (v2-253):** the share manager's `pause` action is gone (an unknown action is
+  refused); old fields still ask for a reload.
 
 ### DD-191: Fixed publication table with independent private and public gates (v2-162)
 
@@ -4780,135 +4866,6 @@ failure with an early, named one.
   `tests/README.md`). Ubuntu: not re-run; the files match what the Ubuntu
   image already carries, and the package is present there by default.
 
-### DD-119: Installer inputs come from one git-ignored file, and that file is the truth (2026-09-14)
-
-- **Decision:**
-  - **Where the inputs live:**
-    - Every operator input is in `kurulum/kurulum.env` at the repository root:
-      SSH host, local domain, downloads path, WireGuard and WebDAV ports, the
-      four service accounts and the optional Tailscale auth key.
-    - The file is git-ignored and must have mode `600` (or `400`).
-    - The template `config/kurulum.env.example` lists every key with no value.
-      A test keeps its keys equal to `INPUT_KEYS`.
-  - **The launcher:**
-    - It stops locally if the file is missing or has a wider mode.
-    - It reads `SSH_HOST` and nothing else; no host prompt remains.
-    - It sends the file over SSH to `INPUT_FILE`
-      (`/run/master-stack/kurulum.env`, declared in `defaults.env`). It
-      refuses when that directory is not `tmpfs`.
-    - It removes any leftover when it exits.
-  - **Stage 0 reads the file right after the root check and deletes it before
-    any other gate**, whether or not the file validates. `read_input_file`
-    (`common.sh`) never sources it:
-    - One `KEY=value` per line, with the value taken literally.
-    - An unknown key, a duplicate, a missing key, CRLF, surrounding quotes,
-      surrounding whitespace or a malformed line stops the install. The
-      message gives the line number and key name, never a value.
-    - Every key must be present, and the account keys must be non-empty. An
-      empty domain, path or port takes the `defaults.env` value; an empty
-      `TS_AUTH_KEY` means the browser login.
-  - **Validation and confirmation:**
-    - The old prompt rules still apply: user-name character sets, minimum
-      password lengths, port conflicts and the `tskey-` shape.
-    - The `INPUT_*` variables are unset once mapped.
-    - Stage 0 prints a summary without passwords and asks for one `E` before
-      `config.env` is written. The re-run questions (full-upgrade, image pull)
-      remain.
-  - **The file is the single source of truth.** Every run compares each
-    account with the file, rewrites only what differs and restarts only that
-    container:
-    - **WebDAV:** kept when the htpasswd has one line and `htpasswd -vi`
-      accepts the password. A rewrite restarts `webdav`, because the secret is
-      a bind mount and still points at the replaced file.
-    - **Dozzle:** kept when `users.yml` holds exactly one user with that name
-      and `htpasswd -vi` accepts the stored hash.
-    - **Transmission:** kept when both root-only files hold the file's values.
-    - **FileBrowser:** users are exported from a copy of the database. When
-      the account differs:
-      - the container is stopped;
-      - `users import --overwrite` writes the name and hash into a fresh copy,
-        keeping the same id;
-      - the result is verified and moved in with one `mv`, then the container
-        is started.
-
-      Any failure starts the container again on the untouched database. The
-      target is the user with the file's name, else the lowest-id admin. Other
-      users are left alone.
-- **Why:**
-  - The user runs a fixed setup and wants a reinstall to need no typed
-    answers. Until now the reinstall runbook depended on repeating the same
-    answers by hand.
-  - This reverses DD-118's choice of the prompt over "a git-ignored local
-    secrets file sent over SSH". The two costs recorded there are accepted and
-    bounded:
-    - Plaintext on the workstation: git-ignored and `600`.
-    - A new transfer path: a `tmpfs`-only target, deleted by the installer as
-      its first read.
-- **Why the file wins over changes made in a UI:** a password changed in
-  FileBrowser's UI returns to the file's value on the next run. The user
-  agreed to this. The alternative, applying a file change only when the file
-  itself changes, would need a stored fingerprint of every password.
-- **Measured on `nrm` (2026-09-14, apache2-utils 2.4.68-1~deb13u1, FileBrowser
-  v2):**
-  - `htpasswd -vi` verifies both a `$2y$` hash (htpasswd) and Dozzle's `$2a$`
-    hash from stdin. It returns 0 on a match, 3 on a mismatch and 6 for an
-    unknown user.
-  - A running FileBrowser holds the Bolt lock: the CLI on the live database
-    fails with `Error: timeout`, while `users export` on a copy works.
-  - `users import --replace` fails with "the sole admin can't be deleted".
-    `users import --overwrite` updates the same id, including a rename, and
-    leaves every other field byte-identical.
-- **Not doing:**
-  - A prompt fallback when the file is absent: two input paths to test and
-    document.
-  - Validating fields on the Mac: Finder's bash 3.2 would need a second
-    validator.
-  - Encrypting the file: a password at every run for a file that leaves the
-    workstation only as RAM on the server.
-- **Consequences:**
-  - "No unattended mode" now means one confirmation. The Tailscale login URL
-    still needs a browser when no key is given.
-  - DD-115's hidden prompt is gone. Its `--auth-key=file:` login and the
-    fallback to the browser are unchanged.
-- **Verified (2026-09-14):**
-  - bats 116 ok, with `bash -n` and `shellcheck` clean.
-  - New functional tests: the parser (literal values, eight rejection cases
-    and a wrong mode, all deleting the file and never echoing a value),
-    `bcrypt_matches`, the WebDAV keep/rewrite, the Dozzle match, the
-    Transmission keep, and the FileBrowser sync (match, overwrite that keeps
-    other fields and users, failed import that restarts the container on the
-    untouched database).
-  - Three deliberate code mutations each failed their test.
-  - A mid-test `! cmd` or `[[ ]]` does not fail a bats test under macOS bash
-    3.2, so the new negative checks use `run !`, `[ ]` or `case`.
-  - Live on `nrm`, driving the exported v2-85 `.command` from the Mac under
-    `expect`:
-    - **Mode 644:** refused on the Mac, before SSH.
-    - **Answering `h` at the confirmation:** exit 1; the summary showed no
-      password, `config.env` was unchanged, `/run/master-stack` held only the
-      lock and the log had no password.
-    - **v2-84 → v2-85:** exit 0 in 15 s. The operator's real WebDAV hash was
-      saved beforehand and differed from the test file, so the htpasswd was
-      rewritten and only `webdav` restarted. Dozzle, Transmission and
-      FileBrowser were logged unchanged, and the six container ids plus the
-      other five start times were identical. WebDAV answered 401 without
-      credentials and 207 with them; the FileBrowser login returned 200.
-    - **Same file again:** a full no-op, with every restart skipped.
-    - **Three passwords changed in the file:** Dozzle regenerated and
-      restarted, Transmission rewritten and restarted, FileBrowser stopped,
-      overwritten and started. New passwords: 200, 200, 409 (Transmission's
-      RPC session handshake, authenticated). Old passwords: 403, 401, 401.
-      `webdav`, `wg-easy` and `unpackerr` were untouched, and there was no
-      password in the log or `docker inspect`.
-    - **An unknown key (`WEBDAV_PAS`) and an 11-character FileBrowser
-      password:** both stopped stage 0 with the line and key named.
-      `config.env` and the database were unchanged, and the values were absent
-      from the log.
-    - **The test passwords restored:** all three services updated and logged
-      in again.
-    - **Cleanup:** the operator's original WebDAV htpasswd was put back
-      byte-identical, `webdav` was restarted, and the saved copy was removed.
-
 ### DD-120: WireGuard runs in the host kernel from kurulum/wireguard; wg-easy is removed (2026-09-14)
 
 - **Decision:**
@@ -5719,6 +5676,8 @@ failure with an early, named one.
     replaced the rows. The refresh now updates status, age, traffic and
     totals in place while the peer set is unchanged; the same button element
     survived a refresh, and the click then worked.
+- **Amended by DD-269 (v2-253):** the masked profile preview (`?masked=1`) is gone; a profile is a
+  download or a QR only.
 
 ### DD-134: Regenerating wg0 is confirmed with "onayla"; the panel layout is tightened (2026-09-15)
 
@@ -6246,6 +6205,8 @@ failure with an early, named one.
 - Regression coverage exercises absent legacy directories, preserved metadata
   and private modes, marker symlinks, explicit retired-route errors/gates,
   built-in idempotency, current module lifecycle and temporary-login secrecy.
+- **Amended by DD-269 (v2-253):** the reserved `.pay` name and its exclusions are gone; stage 0 refuses
+  to install while `SERVER_ROOT/.pay` exists, so an old tree is never exposed.
 
 ### DD-169: Compact trash confirmation and inline share controls (2026-09-28)
 
@@ -6617,6 +6578,8 @@ failure with an early, named one.
 - **Amended by DD-267 (v2-250):** `GET /api/konsol/ayarlar` and its Ayarlar page are gone with the old
   interface. The same settings view (the live firewall classification, the Caddy and dnsmasq parser)
   feeds Erişim's reads (`erisim`, `guvenlik-duvari`) and Gelişmiş (`gelismis`, DD-259, DD-265, DD-266).
+- **Amended by DD-269 (v2-253):** the old Settings page's rule groups are gone; the view keeps the
+  `master-firewall --check` result, and Erişim's technical rows come from `iptables-save`.
 
 ### DD-154: One console name, one current export (2026-09-19)
 
@@ -6631,6 +6594,8 @@ failure with an early, named one.
     The backends already accepted only `panel.<domain>` as Host.
   - The exporter keeps only the current version in `Data/app/`, as it already
     did in the repository root; older exports live in Git history.
+- **Amended by DD-269 (v2-253):** `SERVICE_NAMES` is `panel` only since the health name went (v2-127,
+  DD-157), and there is no `Data/app/` or exporter since DD-228; the one-console-name rule stands.
 
 ### DD-153: The base installs only what the base uses (2026-09-19)
 
@@ -7115,6 +7080,7 @@ failure with an early, named one.
 - **Cost:** a rebuild starts with an empty `/srv`; data under an old
   `/downloads` is moved by hand (fresh-install rule). The operator must delete
   the `DOWNLOADS_PATH` line from `kurulum/kurulum.env`.
+- **Amended by DD-269 (v2-253):** the `/data` allowance is gone; the user area is `/srv` only.
 
 ### DD-143: The installer prepares WireGuard; Konsol creates it (2026-09-16)
 

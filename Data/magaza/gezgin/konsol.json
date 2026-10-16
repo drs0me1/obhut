@@ -2,7 +2,6 @@
   "ad": "Gezgin",
   "alt": "Sunucudaki dosyalarınızı tarayıcıdan yönetin.",
   "simge": "folder",
-  "ton": "t-files",
   "aciklama": "Dosya yöneticisi: klasörler, yükleme, çöp, sık kullanılanlar, bağlantı ve WebDAV paylaşımları ve arşivler. Sunucudaki Podman'da konteyner olarak, Dosyalar hesabıyla çalışır; kendi kullanıcıları ve girişi vardır.",
   "neler": [
     [
@@ -31,7 +30,6 @@
     "arayüz yalnız sunucu",
     "WebDAV · tailnet :__GEZGIN_WEBDAV_PORT__"
   ],
-  "gunluk_kaynak": "journalctl -u __GEZGIN_CONTAINER__.service",
   "kaldir": {
     "neler": [
       [

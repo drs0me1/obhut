@@ -296,10 +296,9 @@ Paths are resolved from directory descriptors with O_NOFOLLOW. Root identity
 includes device, inode and birth time (Linux statx); unsupported filesystems
 fail closed. Root/internal/hidden directories, the folders packages declare or
 report they write into (DD-203), symlinks, multiply linked regular files,
-cross-device children and overlapping share roots are refused. `SHARE_DIR` (`.pay`) below `SERVER_ROOT` is a reserved
-internal name (DD-171): the installer never creates, reads or deletes it, Files
-hides it and refuses to create it, and WebDAV and the packages' services cannot
-access it when it exists. If an application's temporary folder is later pointed
+cross-device children and overlapping share roots are refused. The pre-v2-145 share tree
+`SERVER_ROOT/.pay` is no longer a reserved name; the installer refuses to run while one exists
+(DD-269). If an application's temporary folder is later pointed
 into an existing shared subtree, WebDAV keeps serving it until the registry's
 derived folder list is rewritten and WebDAV restarts. A Konsol share save or
 removal does both (and cuts running transfers). An installer run rewrites the
@@ -342,13 +341,14 @@ client security settings to claim compatibility.
 ## Verification
 
 `tests/test_shares.py` tests real HTTP requests and descriptor boundaries;
-`tests/files-ui.cjs` checks production-page forms and ten viewport widths in both themes.
+`tests/yeni-paylasim-ui.cjs` checks Dosyalar → Paylaşımlar (cards, sheets, both connections) at phone
+and desktop widths in both themes.
 `tests/shares-live.py prepare` runs through the installed Caddy and systemd
 workers on an explicitly authorized disposable host; it prints a private
 manifest path (not credentials). Use `verify <manifest>` after rerun/reboot,
 then `cleanup <manifest>` to remove only its own test accounts and files.
 HTTPS-specific coverage is in `test_https_settings.py`, `test_https_panel.py`
-and `settings-https-ui.cjs`; opt-in `https-live.py` creates three temporary
+and, for the WebDAV row's name in Erişim → Adresler, `yeni-erisim-ui.cjs`; opt-in `https-live.py` creates three temporary
 shares, tests both networks and connection disabling, then removes its fixtures and checks the
 original registry digest. Its `--configure` option deliberately leaves the real
 domain saved. See [the test runbook](../tests/README.md) for commands and limits;
@@ -357,9 +357,7 @@ these descriptions do not imply a completed live run. DD-192 acceptance uses
 `python3 Data/tests/share-connections-live.py --host nrm` from the repository
 root. The latter creates one temporary folder/account to test independent
 RO/RW, switches and WAN-only expiry, then checks byte-identical registry
-cleanup. It restarts WebDAV and interrupts transfers. The optional read-only
-`share-connections-browser.cjs` requires an existing share, creates none and
-rejects every API mutation while checking installed cards at three widths in
-both themes. Main reports both live checks passed after the v2-164 `nrm`
-deployment; see [SESSION.md](../SESSION.md) for exact results and host health.
+cleanup. It restarts WebDAV and interrupts transfers. Main reported the live
+checks passed after the v2-164 `nrm` deployment (the read-only browser check of
+installed cards then was retired with the old interface, DD-267).
 Native clients and a fresh Ubuntu install require separate acceptance.
