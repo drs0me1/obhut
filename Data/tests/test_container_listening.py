@@ -186,11 +186,9 @@ class ManagerListeningTests(unittest.TestCase):
         fake = lambda pid, wan=(), tailscale=(): calls.append((pid, set(wan), set(tailscale))) or [{"address": "127.0.0.1", "port": 61006, "protocol": "tcp", "scope": "local"}]
         with patch.object(manager, "listening", fake):
             rows = {r["name"]: r for r in self.service.view().liste()["containers"]}
-            detail = self.service.view().ayrinti("hostapp")
-        self.assertEqual(calls[0], (4242, {"192.0.2.1", "2001:db8::1"}, {"100.64.0.2"}))
-        self.assertEqual(len(calls), 2, "the list row and the detail; never the bridged or stopped container")
+        self.assertEqual(calls, [(4242, {"192.0.2.1", "2001:db8::1"}, {"100.64.0.2"})],
+                         "the running host-network row only; never the bridged or stopped container")
         self.assertEqual(rows["hostapp"]["listening"][0]["port"], 61006)
-        self.assertEqual(detail["listening"][0]["port"], 61006)
         self.assertIsNone(rows["bridged"]["listening"])
         self.assertIsNone(rows["parked"]["listening"])
 
@@ -205,13 +203,6 @@ class PublishedScopeTests(unittest.TestCase):
         for ip, scope in cases.items():
             with self.subTest(ip=ip):
                 self.assertEqual(manager.port_scope(ip, env), scope)
-
-    def test_detail_names_the_bridge_networks(self):
-        inspect = [{"Id": "f" * 64, "Name": "app", "State": {"Status": "running"}, "Config": {"Labels": {}},
-                    "HostConfig": {"NetworkMode": "bridge", "PortBindings": {}},
-                    "NetworkSettings": {"Ports": {}, "Networks": {"medya": {}}}}]
-        reader = containers.Containers(lambda argv, timeout: (0, json.dumps(inspect), ""))
-        self.assertEqual(reader.ayrinti("app")["network"], "medya")
 
 
 if __name__ == "__main__":

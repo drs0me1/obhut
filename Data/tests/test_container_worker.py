@@ -1,10 +1,11 @@
 """The root worker (rebuild DD-271, phases 3 and 4): an application's lifecycle with its access rows, the
 settings worker's row change and its restore, the address refresh (--adres-yenile) and Gelişmiş's Podman
-resources. Podman, systemctl, Quadlet, the guard and the publication projection are fakes; every rollback path
+cleanup (K8). Podman, systemctl, Quadlet, the guard and the publication projection are fakes; every rollback path
 is driven to its end and checked for what it left behind. No secret value may reach an argument, a file other
 than Podman's standard input, an operation record, a log line or a reply."""
 import contextlib
 import fcntl
+import hashlib
 import io
 import json
 import os
@@ -87,6 +88,17 @@ class FakeHost:
         self.version = '5.4.2'
         self.volumes = {}
         self.reloads = 0
+        # The cleanup's view: images by ID, the containers Podman's filters find ("ancestor=<id>", "network=<name>",
+        # "volume=<name>") and the images another one depends on (their last tag cannot take them).
+        self.images = {}
+        self.users = {}
+        self.children = set()
+
+    def container(self, key):
+        """A container by its name or its ID."""
+        if key in self.containers:
+            return self.containers[key]
+        return next((c for c in self.containers.values() if c.get('Id') == key), None)
 
     def fails(self, *parts):
         self.fail.append(' '.join(parts))
@@ -115,7 +127,7 @@ class FakeHost:
         if argv[:2] == ['podman', 'version']:
             out = self.version + '\n'
         elif argv[:3] == ['podman', 'container', 'exists']:
-            code = 0 if argv[-1] in self.containers else 1
+            code = 0 if self.container(argv[-1]) is not None else 1
             if code == 0 and argv[-1] in self.vanish:
                 self.vanish.discard(argv[-1])
                 self.containers.pop(argv[-1])
@@ -125,10 +137,31 @@ class FakeHost:
         elif argv[:3] == ['podman', 'pod', 'exists']:
             code = 0 if argv[-1] in self.pods else 1
         elif argv[:3] == ['podman', 'inspect', '--type']:
-            if argv[-1] in self.containers:
-                out = json.dumps([self.containers[argv[-1]]])
+            if self.container(argv[-1]) is not None:
+                out = json.dumps([self.container(argv[-1])])
             else:
                 code = 125
+        elif argv[:3] == ['podman', 'image', 'exists']:
+            code = 0 if argv[-1] in self.images else 1
+        elif argv[:3] == ['podman', 'image', 'inspect'] and argv[-1] in self.images:
+            out = json.dumps([self.images[argv[-1]]])
+        elif argv[:3] == ['podman', 'image', 'rm']:
+            for target in argv[3:]:
+                if target in self.images and target not in self.children:
+                    del self.images[target]
+                for ident, info in list(self.images.items()):
+                    if target in info['RepoTags']:
+                        info['RepoTags'].remove(target)
+                        if not info['RepoTags'] and ident not in self.children:
+                            del self.images[ident]
+        elif argv[:3] == ['podman', 'ps', '-a'] and '--filter' in argv:
+            out = json.dumps(self.users.get(argv[argv.index('--filter') + 1], []))
+        elif argv[:3] == ['podman', 'ps', '-a']:
+            out = json.dumps([{'Id': c['Id'], 'Names': [name]} for name, c in sorted(self.containers.items())])
+        elif argv[:3] == ['podman', 'volume', 'exists']:
+            code = 0 if argv[-1] in self.volumes else 1
+        elif argv[:3] == ['podman', 'volume', 'rm']:
+            self.volumes.pop(argv[-1], None)
         elif argv[:2] == ['podman', 'pull']:
             pass
         elif argv[:3] == ['podman', 'image', 'inspect']:
@@ -203,7 +236,7 @@ class FakeHost:
         user = re.search(r'^User=(.*)$', text, re.M)
         caps = None if 'DropCapability=all' in text else ['CAP_CHOWN', 'CAP_KILL']
         health = 'unhealthy' if name in self.unhealthy else 'healthy'
-        self.containers[name] = {'Id': 'f' * 64, 'Name': name, 'State': {'Running': True, 'Status': 'running',
+        self.containers[name] = {'Id': hashlib.sha256(name.encode()).hexdigest(), 'Name': name, 'State': {'Running': True, 'Status': 'running',
                                                                          'Health': {'Status': health}},
                                  'EffectiveCaps': caps, 'BoundingCaps': caps,
                                  'Config': {'Labels': labels, 'User': user.group(1) if user else ''}}
@@ -690,7 +723,7 @@ class LifecycleTests(WorkerCase):
         self.assert_nothing_left()
 
 
-class DraftAndResourceTests(WorkerCase):
+class DraftAndJobTests(WorkerCase):
     def test_an_image_draft_is_a_compose_file_the_inspector_reads(self):
         result = self.execute('uygulama-taslak', {'name': 'registry.example/sayac:2', 'imaj': 'registry.example/sayac:2'})
         self.assertEqual(result['kaynak'], {'tur': 'imaj', 'imaj': 'registry.example/sayac:2'})
@@ -701,30 +734,6 @@ class DraftAndResourceTests(WorkerCase):
         self.assertFalse(os.path.exists(self.env['UYGULAMA_STATE_DIR']))
         with self.assertRaises(cfg.ContainerConfigError):
             self.execute('uygulama-taslak', {'name': 'x', 'imaj': 'Kötü İmaj'})
-
-    def test_an_image_or_network_an_application_uses_is_not_removed(self):
-        self.install()
-        pinned = self.record()['places']['images']['web']
-        original = self.host.__call__
-
-        def run(argv, timeout=60, input=None, **kwargs):
-            if list(argv[:3]) == ['podman', 'image', 'inspect'] and argv[-1] == pinned:
-                return subprocess.CompletedProcess(argv, 0, json.dumps([{'Id': 'sha256:' + 'e' * 64, 'RepoDigests': [pinned]}]), '')
-            if list(argv[:3]) == ['podman', 'ps', '-a']:
-                return subprocess.CompletedProcess(argv, 0, '[]', '')
-            if list(argv[:3]) == ['podman', 'network', 'inspect']:
-                return subprocess.CompletedProcess(argv, 0, json.dumps([{'driver': 'bridge', 'labels': {
-                    'io.master-stack.managed': 'uygulama', 'io.master-stack.uygulama': 'notlar'}}]), '')
-            return original(argv, timeout=timeout, input=input, **kwargs)
-        self.manager.run = run
-        with self.assertRaises(cfg.ContainerConfigError) as err:
-            self.execute('image-remove', {'image': pinned})
-        self.assertIn('uygulamanın kaydında', str(err.exception))
-        with self.assertRaises(cfg.ContainerConfigError) as err:
-            self.execute('network-remove', {'name': 'ksl-notlar'})
-        self.assertIn('uygulamayla birlikte', str(err.exception))
-        with self.assertRaises(cfg.ContainerConfigError):
-            self.execute('network-create', {'name': 'ksl-baska'})
 
     def test_an_operation_id_runs_once_and_its_record_never_holds_the_request(self):
         ident = uuid.uuid4().hex
@@ -745,15 +754,16 @@ class DraftAndResourceTests(WorkerCase):
             fcntl.flock(held.fileno(), fcntl.LOCK_EX)
             timer = threading.Timer(0.5, lambda: fcntl.flock(held.fileno(), fcntl.LOCK_UN))
             timer.start()
+            self.host.volumes.update(yedek={}, ikinci={})
             try:
-                self.execute('volume-create', {'name': 'yedek'})
+                self.execute('temizlik', {'birimler': ['yedek']})
             finally:
                 timer.cancel()
-        self.assertIn(['podman', 'volume', 'create', '--label', 'io.master-stack.managed=konsol', 'yedek'], self.host.calls)
+        self.assertIn(['podman', 'volume', 'rm', 'yedek'], self.host.calls)
         with open(lock, 'a') as held:
             fcntl.flock(held.fileno(), fcntl.LOCK_EX)
             with patch.object(worker, 'LOCK_WAIT', 0.2), self.assertRaises(cfg.ContainerConfigError) as err:
-                self.execute('volume-create', {'name': 'ikinci'})
+                self.execute('temizlik', {'birimler': ['ikinci']})
         self.assertEqual(err.exception.status, 409)
 
     def test_a_pending_settings_change_blocks_every_job(self):
@@ -766,6 +776,83 @@ class DraftAndResourceTests(WorkerCase):
             manager.execute('uygulama-kur', {'name': 'notlar', 'metin': app_fixtures.TEXT, 'yanitlar': app_fixtures.answers(),
                                              'kaynak': {'tur': 'dosya'}}, uuid.uuid4().hex)
         self.assertIn('Onay bekleyen', str(err.exception))
+
+
+class CleanupTests(WorkerCase):
+    """K8: Gelişmiş's cleanup. Every item is checked again right before it goes; what is in use or gone stays and is
+    named, the rest goes; nothing is removed with --force."""
+    P, U, N, C = ('%064x' % n for n in (0x1, 0x2, 0x3, 0x4))
+
+    def setUp(self):
+        super().setUp()
+        self.install()
+        pinned = self.record()['places']['images']['web']
+        self.host.images.update({
+            self.P: {'Id': self.P, 'RepoTags': ['registry.example/notlar/web:9'], 'RepoDigests': [pinned]},
+            self.U: {'Id': self.U, 'RepoTags': ['registry.example/artik:2', 'registry.example/artik:latest'], 'RepoDigests': []},
+            self.N: {'Id': self.N, 'RepoTags': [], 'RepoDigests': ['registry.example/eski@sha256:' + '5' * 64]},
+            self.C: {'Id': self.C, 'RepoTags': ['registry.example/kullanilan:1'], 'RepoDigests': []}})
+        self.host.users.update({'ancestor=' + self.C: [{'Id': 'c' * 64}], 'network=ozel': [{'Id': 'c' * 64}],
+                                'volume=eski-veri': [{'Id': 'c' * 64}]})
+        self.host.networks.update({'bos-ag', 'ozel'})
+        self.host.volumes.update({'yetim': {}, 'eski-veri': {}})
+        self.veri = Path(self.env['UYGULAMA_VERI_DIR'])
+        (self.veri / 'eskiuygulama' / 'veri').mkdir(parents=True)
+        (self.veri / 'eskiuygulama' / 'veri' / 'dosya').write_text('x')
+        (self.veri / 'baglanmis' / 'alt').mkdir(parents=True)
+        self.host.containers['bagli'] = {'Id': 'b' * 64, 'Name': 'bagli', 'State': {'Running': False},
+                                         'Mounts': [{'Type': 'bind', 'Source': str(self.veri / 'baglanmis' / 'alt')}]}
+        self.host.calls.clear()
+
+    def test_each_item_is_checked_again_and_only_what_nothing_uses_goes(self):
+        request = {'imajlar': [self.U, self.N, self.P, self.C], 'aglar': ['bos-ag', 'ozel', 'ksl-notlar'],
+                   'birimler': ['yetim', 'eski-veri'], 'klasorler': ['eskiuygulama', 'baglanmis', 'notlar']}
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('temizlik', dict(request, name='Podman'))
+        text = str(err.exception)
+        self.assertEqual(err.exception.status, 409)
+        self.assertTrue(text.startswith('7 öge kaldırılmadı (5 kaldırıldı): '), text)
+        for reason in ('İmaj bir uygulamanın kaydında kullanılıyor.', 'İmaj bir konteynerde kullanılıyor.',
+                       'ozel: Ağ bir konteynerde kullanılıyor.', 'ksl-notlar: Ağ bir uygulamanın',
+                       'eski-veri: Birim bir konteynerde kullanılıyor.', 'baglanmis: Klasör bir konteynerde bağlı.',
+                       'notlar: Bu klasörün uygulaması var'):
+            self.assertIn(reason, text)
+        self.assertEqual(sorted(self.host.images), sorted([self.P, self.C]))
+        self.assertIn(['podman', 'image', 'rm', 'registry.example/artik:2', 'registry.example/artik:latest'], self.host.calls,
+                      'a tagged image goes by its tags')
+        self.assertIn(['podman', 'image', 'rm', self.N], self.host.calls, 'an untagged one by its ID')
+        self.assertEqual((self.host.networks >= {'ozel', 'ksl-notlar'}, 'bos-ag' in self.host.networks), (True, False))
+        self.assertEqual(sorted(self.host.volumes), ['eski-veri'])
+        self.assertEqual(sorted(p.name for p in self.veri.iterdir()), ['baglanmis', 'notlar'])
+        self.assertFalse([c for c in self.host.calls if '--force' in c or '-f' in c], 'never forced')
+        record = self.operation()
+        self.assertEqual((record['state'], record['action'], record['name']), ('failed', 'temizlik', 'Podman'))
+        self.assertNotIn('imajlar', json.dumps(record), 'the record never holds the request')
+        self.assertEqual(self.record()['name'], 'notlar', 'the application is untouched')
+
+    def test_a_cleanup_of_unused_items_succeeds_and_a_gone_or_held_item_is_named(self):
+        result = self.execute('temizlik', {'birimler': ['yetim'], 'aglar': ['bos-ag']})
+        self.assertEqual(result, {'ok': True, 'kaldirilan': [{'tur': 'ag', 'ad': 'bos-ag'}, {'tur': 'birim', 'ad': 'yetim'}]})
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('temizlik', {'birimler': ['yetim']})
+        self.assertIn('yetim: Birim artık yok.', str(err.exception))
+        self.host.children.add(self.U)
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('temizlik', {'imajlar': [self.U]})
+        self.assertIn('başka bir imaj ona dayanıyor', str(err.exception))
+        for bad in ({'aglar': ['podman']}, {'imajlar': ['registry.example/artik:2']}, {}, {'birimler': ['yetim'], 'x': []}):
+            with self.subTest(bad=bad), self.assertRaises(cfg.ContainerConfigError) as err:
+                self.execute('temizlik', bad)
+            self.assertEqual(err.exception.status, 400)
+
+    def test_a_folder_an_application_takes_meanwhile_stays(self):
+        app_fixtures.record(self.env, text=app_fixtures.SIMPLE, given=app_fixtures.SIMPLE_ANSWERS, app='sayac',
+                            ports={'app:9000/tcp': 62105})
+        (self.veri / 'sayac').mkdir()
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('temizlik', {'klasorler': ['sayac', 'eskiuygulama']})
+        self.assertIn('sayac: Bu klasörün uygulaması var', str(err.exception))
+        self.assertEqual(sorted(p.name for p in self.veri.iterdir()), ['baglanmis', 'notlar', 'sayac'])
 
 
 # Rebuild phase 4: a database with a raw port and a web service that depends on it, with an address and a UDP port.

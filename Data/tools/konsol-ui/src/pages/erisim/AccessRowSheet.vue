@@ -1,11 +1,14 @@
-<!-- One access row's sheet (rebuild phase 4, Erişim → Adresler): the form, then the settings plan and its apply
-     (SettingsPlanSheet's form step). Konsol's and Paylaşımlar' rows change through `web` (Konsol's Tailscale name
-     always on; its internet name needs the typed word and an existing account, DD-195). An application's address
-     row: its Tailscale name, its Tailscale port (off or a number) and its internet name; "Adresi kaldır" turns it
-     into a closed raw port. A raw row: closed, Tailscale or internet with its host port (the container port by
-     default); opening it to the internet needs the consent (A2: internet_onayi). "Adres aç" (a raw TCP row) gives
-     it a Tailscale name. An opening waits for the 60 s confirmation in the pending banner; a closing commits at
-     once (decision 1); the plan says which. -->
+<!-- One access row's sheet (rebuild phase 4; Erişim → Adresler, phase 5): what the row is (its service, where it
+     listens on this server, its Caddy row) and the form, then the settings plan and its apply (SettingsPlanSheet's
+     form step). Konsol's and Paylaşımlar' rows change through `web` (Konsol's Tailscale name always on; its internet
+     name needs the typed word and an existing account, DD-195). An application's address row: its Tailscale name,
+     its Tailscale port (off or a number) and its internet name; "Adresi kaldır" turns it into a closed raw port. A
+     raw row: closed, Tailscale or internet with its host port (the container port by default); opening it to the
+     internet needs the consent (A2: internet_onayi). "Adres aç" (a raw TCP row, another one chosen from the list)
+     gives it a Tailscale name and optionally a Tailscale port and an internet name. A control of Adresler' table
+     opens the sheet with its change made (`intent`): a closing goes straight to the plan, an opening that needs a
+     value (a port, a name, the consent) shows the form with that field first. An opening waits for the 60 s
+     confirmation in the pending banner; a closing commits at once (decision 1); the plan says which. -->
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
@@ -14,18 +17,29 @@ import ConfirmWord from "../../components/ui/ConfirmWord.vue";
 import Field from "../../components/ui/Field.vue";
 import Switch from "../../components/ui/Switch.vue";
 import SettingsPlanSheet from "./SettingsPlanSheet.vue";
-import { SCOPE_TEXT, cleanHost, hostProblem, nameProblem, portKey, portProblem } from "../../access";
+import { SCOPE_CHOICES, cleanHost, hostProblem, nameProblem, portKey, portProblem, rowOwner } from "../../access";
 import { filesRoute } from "../../sections";
 import type { Adlar, AyarIstegi, AyarSonucu, ErisimSatiri, Hizmet } from "../../api/sema";
 
 export type RowMode = "duzenle" | "adres-ac";
 export type RowOutcome = "kaydedildi" | "kaldirildi" | "acildi";
+type Scope = Extract<ErisimSatiri, { tur: "ham" }>["kapsam"];
+/** A change made from Adresler' table, applied to the form when the sheet opens. */
+export type RowIntent =
+  | { kind: "tail"; on: boolean }
+  | { kind: "ts-port"; on: boolean }
+  | { kind: "internet"; on: boolean }
+  | { kind: "kapsam"; kapsam: Scope }
+  | { kind: "kaldir" };
 
 const props = defineProps<{
   row: Hizmet | null;
   mode: RowMode;
+  intent: RowIntent | null;
   /** Every access row (names and internet names must be unique among them). */
   rows: readonly Hizmet[];
+  /** The raw TCP ports "Adres aç" may choose from. */
+  candidates: readonly Hizmet[];
   names: Adlar | null;
   revision: string;
   domain: string;
@@ -33,14 +47,7 @@ const props = defineProps<{
   tailscaleIp: string;
   locked: boolean;
 }>();
-const emit = defineEmits<{ close: []; applied: [result: AyarSonucu, outcome: RowOutcome]; mode: [mode: RowMode] }>();
-
-type Scope = Extract<ErisimSatiri, { tur: "ham" }>["kapsam"];
-const SCOPES: readonly { id: Scope; text: string }[] = [
-  { id: "kapali", text: SCOPE_TEXT.kapali },
-  { id: "tailscale", text: SCOPE_TEXT.tailscale },
-  { id: "internet", text: SCOPE_TEXT.internet },
-];
+const emit = defineEmits<{ close: []; applied: [result: AyarSonucu, outcome: RowOutcome]; mode: [mode: RowMode]; pick: [id: string] }>();
 
 // ---- the form
 const fTail = ref(true);
@@ -56,6 +63,8 @@ const typed = ref(false);
 const tried = ref(false);
 const request = ref<AyarIstegi | null>(null);
 const removing = ref(false);
+/** The field that takes the focus when the form opens. */
+const focus = ref<"name" | "ts-port" | "host" | "consent" | "">("name");
 
 const row = computed(() => props.row);
 const key = computed(() => (row.value?.anahtar ? portKey(row.value.anahtar) : null));
@@ -111,6 +120,7 @@ function reset(): void {
   request.value = null;
   removing.value = false;
   fConsent.value = false;
+  focus.value = "name";
   if (!h) return;
   const port = key.value ? String(key.value.port) : "";
   if (web.value) {
@@ -129,20 +139,61 @@ function reset(): void {
     fScope.value = a.kapsam;
     fPort.value = String(a.port);
     fName.value = suggestName(h);
+    fTsOn.value = false;
+    fTsPort.value = port;
+    fInternet.value = false;
+    fHost.value = "";
   }
 }
-// A new row or another mode starts from what the server holds (a refresh of the same row keeps the form).
-watch([() => row.value?.id ?? "", () => props.mode], reset, { immediate: true });
+
+/** A change made from the table: closings and switches that need no value go to the plan at once. */
+function applyIntent(intent: RowIntent | null): void {
+  if (!intent || !row.value || kind.value === null) return;
+  switch (intent.kind) {
+    case "tail":
+      fTail.value = intent.on;
+      review();
+      return;
+    case "ts-port":
+      fTsOn.value = intent.on;
+      if (intent.on) focus.value = "ts-port";
+      else review();
+      return;
+    case "internet":
+      fInternet.value = intent.on;
+      if (intent.on) focus.value = "host";
+      else review();
+      return;
+    case "kapsam":
+      fScope.value = intent.kapsam;
+      if (consentNeeded.value) focus.value = "consent";
+      else review();
+      return;
+    case "kaldir":
+      removeAddress();
+  }
+}
+// A new row, another mode or a change from the table starts from what the server holds (a refresh of the same
+// row keeps the form).
+watch(
+  [() => row.value?.id ?? "", () => props.mode, () => props.intent],
+  () => {
+    reset();
+    applyIntent(props.intent);
+  },
+  { immediate: true },
+);
 
 // ---- checks
 const host = computed(() => cleanHost(fHost.value));
 const label = computed(() => fName.value.trim().toLowerCase());
+const hasAddress = computed(() => kind.value === "adres" || kind.value === "adres-ac");
 const errors = computed(() => {
   const out = { name: "", tsPort: "", host: "", port: "", consent: "" };
   const k = kind.value;
-  if (k === "adres" || k === "adres-ac") out.name = nameProblem(label.value, takenNames.value);
-  if (k === "adres" && fTsOn.value) out.tsPort = portProblem(fTsPort.value);
-  if ((k === "adres" || k === "web") && fInternet.value) {
+  if (hasAddress.value) out.name = nameProblem(label.value, takenNames.value);
+  if (hasAddress.value && fTsOn.value) out.tsPort = portProblem(fTsPort.value);
+  if ((hasAddress.value || k === "web") && fInternet.value) {
     out.host = hostProblem(fHost.value);
     if (!out.host && takenHosts.value.includes(host.value)) out.host = "Bu internet adı başka bir satırda kullanılıyor.";
   }
@@ -154,12 +205,10 @@ const valid = computed(() => !Object.values(errors.value).some(Boolean));
 
 /** The row as it would be saved (an application's), or null for a fixed row. */
 const nextRow = computed<ErisimSatiri | null>(() => {
-  const k = kind.value;
-  if (k === "adres") {
+  if (hasAddress.value) {
     return { tur: "adres", ad: label.value, tailscale_portu: fTsOn.value ? Number(fTsPort.value.trim()) : null, internet: fInternet.value ? host.value : "" };
   }
-  if (k === "adres-ac") return { tur: "adres", ad: label.value, tailscale_portu: null, internet: "" };
-  if (k === "ham") return { tur: "ham", kapsam: fScope.value, port: Number(fPort.value.trim()) };
+  if (kind.value === "ham") return { tur: "ham", kapsam: fScope.value, port: Number(fPort.value.trim()) };
   return null;
 });
 /** A2: the raw port opens to the internet (newly, or on another port). */
@@ -212,7 +261,7 @@ function review(): void {
 
 /** "Adresi kaldır": the address goes, the port becomes a closed raw port on its container port (a closing). */
 function removeAddress(): void {
-  if (props.locked || !key.value) return;
+  if (props.locked || !key.value || access.value?.tur !== "adres") return;
   removing.value = true;
   request.value = erisimRequest({ tur: "ham", kapsam: "kapali", port: key.value.port });
 }
@@ -239,9 +288,33 @@ const description = computed(() => {
   if (h.tur === "paylasim") return "Paylaşımlar · WebDAV adresi";
   return h.aciklama;
 });
-const containerPort = computed(() => key.value?.port ?? 0);
 const proto = computed(() => (key.value?.protokol ?? "tcp").toUpperCase());
+const containerPort = computed(() => key.value?.port ?? 0);
 const fixedName = computed(() => `${isPanel.value ? "panel" : "paylas"}.${props.domain}`);
+/** What the row is: its service, where it listens on this server and its Caddy row. */
+const facts = computed(() => {
+  const h = row.value;
+  if (!h) return [];
+  const out: { dt: string; dd: string; mono?: boolean }[] = [];
+  if (h.tur === "uygulama" && key.value) {
+    out.push({ dt: "Hizmet", dd: `${rowOwner(h)} · ${h.servis ?? ""} · ${key.value.port}/${proto.value}` });
+    const local = h.yerel.adresler[0];
+    if (access.value?.tur === "adres" && local) out.push({ dt: "Yalnız bu sunucu", dd: `${local} → ${key.value.port}`, mono: true });
+    if (access.value?.tur === "adres") out.push({ dt: "Caddy satırı", dd: `${access.value.ad}.${props.domain}`, mono: true });
+  } else if (web.value) {
+    out.push({ dt: "Hizmet", dd: h.aciklama || h.ad });
+    if (isPanel.value) out.push({ dt: "Yalnız bu sunucu", dd: "Konsol soketi" });
+    out.push({ dt: "Caddy satırı", dd: fixedName.value, mono: true });
+  }
+  return out;
+});
+/** The internet cell's problem (a name whose certificate is not ready, an unencrypted connection). */
+const internetProblem = computed(() => {
+  const c = row.value?.internet;
+  if (!c) return "";
+  if (c.durum === "hata") return [c.adresler[0], c.not].filter(Boolean).join(": ");
+  return c.uyari;
+});
 const dnsLine = (name: string) =>
   `Alan adı sağlayıcınızda bir A kaydı gerekir: ${name || "ad"} → ${props.wan || "sunucunun internet IPv4 adresi"}, proxy kapalı (DNS only), AAAA kaydı yok.`;
 const scopeHint = computed(() => {
@@ -255,6 +328,7 @@ const scopeHint = computed(() => {
       return "Hiçbir ağdan ulaşılmaz; port numarası açılınca kullanılır.";
   }
 });
+const auto = (field: typeof focus.value) => (focus.value === field ? "" : undefined);
 const open = computed(() => row.value !== null && kind.value !== null);
 const formId = "erisim-satiri";
 </script>
@@ -279,6 +353,15 @@ const formId = "erisim-satiri";
           <Icon name="clock" class="notice-icon" />
           <span>Bekleyen bir ayar değişikliği var; onaylanana ya da geri alınana kadar yeni değişiklik uygulanamaz.</span>
         </p>
+        <dl v-if="facts.length && kind !== 'adres-ac'" class="facts" data-testid="row-facts">
+          <template v-for="f in facts" :key="f.dt">
+            <dt>{{ f.dt }}</dt>
+            <dd :class="{ mono: f.mono }">{{ f.dd }}</dd>
+          </template>
+        </dl>
+        <p v-if="internetProblem && kind !== 'ham'" class="notice notice-warning" role="note" data-testid="row-problem">
+          <Icon name="alert" class="notice-icon" /><span>{{ internetProblem }}</span>
+        </p>
 
         <!-- Konsol and Paylaşımlar -->
         <template v-if="kind === 'web'">
@@ -291,7 +374,8 @@ const formId = "erisim-satiri";
             <template v-if="fInternet">
               <Field v-slot="{ id, describedby, invalid }" label="İnternet adı" hint="Tam alan adı; HTTPS ile paylaşılan 443 portunda açılır." :error="tried ? errors.host : ''">
                 <input :id="id" v-model="fHost" class="input" type="text" maxlength="253" autocapitalize="none" autocomplete="off" spellcheck="false"
-                  :placeholder="(isPanel ? 'konsol' : 'paylas') + '.example.org'" :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-testid="row-host" />
+                  :placeholder="(isPanel ? 'konsol' : 'paylas') + '.example.org'" :aria-describedby="describedby" :aria-invalid="invalid || undefined"
+                  :data-autofocus="auto('host')" data-testid="row-host" />
               </Field>
               <p class="meter-note" data-testid="row-dns">{{ dnsLine(host) }}</p>
             </template>
@@ -310,18 +394,24 @@ const formId = "erisim-satiri";
           <RouterLink v-if="!isPanel" :to="filesRoute('paylasimlar')" class="section-link fit" data-testid="row-shares">Klasör izinleri ve süreler: Dosyalar → Paylaşımlar</RouterLink>
         </template>
 
-        <!-- an application's address row -->
-        <template v-else-if="kind === 'adres'">
-          <Field v-slot="{ id, describedby, invalid }" label="Tailscale adı" :suffix="'.' + domain" hint="Adı değiştirmek eski adı kapatır; yer imlerini güncelleyin." :error="tried ? errors.name : ''">
+        <!-- an application's address row, or "Adres aç" for a raw TCP port -->
+        <template v-else-if="kind === 'adres' || kind === 'adres-ac'">
+          <Field v-if="kind === 'adres-ac' && candidates.length > 1" v-slot="{ id }" label="Ne açılacak?">
+            <select :id="id" class="input" :value="row?.id" data-testid="row-pick" @change="emit('pick', ($event.target as HTMLSelectElement).value)">
+              <option v-for="c in candidates" :key="c.id" :value="c.id">{{ c.ad }} · {{ portKey(c.anahtar ?? "")?.port }}/TCP</option>
+            </select>
+          </Field>
+          <Field v-slot="{ id, describedby, invalid }" label="Tailscale adı" :suffix="'.' + domain"
+            :hint="kind === 'adres' ? 'Adı değiştirmek eski adı kapatır; yer imlerini güncelleyin.' : ''" :error="tried ? errors.name : ''">
             <input :id="id" v-model="fName" class="input" type="text" maxlength="63" autocapitalize="none" autocomplete="off" spellcheck="false"
-              :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-testid="row-name" data-autofocus />
+              :aria-describedby="describedby" :aria-invalid="invalid || undefined" :data-autofocus="auto('name')" data-testid="row-name" />
           </Field>
           <div class="row-part">
             <Switch v-model="fTsOn" label="Tailscale portu" data-testid="row-ts-port-switch" />
-            <p class="meter-note">Adın yanında Tailscale adresinde bir port da açılır ({{ tailscaleIp || "Tailscale IP" }}:port); Caddy üzerinden.</p>
+            <p class="meter-note">Adı çözemeyen cihazlar için Tailscale adresinde bir port da açılır ({{ tailscaleIp || "Tailscale IP" }}:port); Caddy üzerinden.</p>
             <Field v-if="fTsOn" v-slot="{ id, describedby, invalid }" label="Port" :error="tried ? errors.tsPort : ''">
               <input :id="id" v-model="fTsPort" class="input row-port" type="text" inputmode="numeric" maxlength="5" autocomplete="off"
-                :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-testid="row-ts-port" />
+                :aria-describedby="describedby" :aria-invalid="invalid || undefined" :data-autofocus="auto('ts-port')" data-testid="row-ts-port" />
             </Field>
           </div>
           <div class="row-part">
@@ -329,12 +419,18 @@ const formId = "erisim-satiri";
             <template v-if="fInternet">
               <Field v-slot="{ id, describedby, invalid }" label="İnternet adı" hint="Tam alan adı; HTTPS ile paylaşılan 443 portunda açılır. Giriş uygulamanın kendisindedir." :error="tried ? errors.host : ''">
                 <input :id="id" v-model="fHost" class="input" type="text" maxlength="253" autocapitalize="none" autocomplete="off" spellcheck="false"
-                  :placeholder="(label || 'uygulama') + '.example.org'" :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-testid="row-host" />
+                  :placeholder="(label || 'uygulama') + '.example.org'" :aria-describedby="describedby" :aria-invalid="invalid || undefined"
+                  :data-autofocus="auto('host')" data-testid="row-host" />
               </Field>
               <p class="meter-note" data-testid="row-dns">{{ dnsLine(host) }}</p>
             </template>
           </div>
-          <div class="danger-zone">
+          <ul v-if="kind === 'adres-ac'" class="modal-list">
+            <li><Icon name="tailnet" :size="18" /><span>Tailscale cihazlarınız <span class="mono">{{ label || "…" }}.{{ domain }}</span> adıyla açar; Caddy adı konteynere bağlar.</span></li>
+            <li><Icon name="lock" :size="18" /><span>Konteyner yalnız bu sunucuda (127.0.0.1) bir porta yayımlanır; ham port kapanır.</span></li>
+            <li><Icon name="refresh" :size="18" /><span>Servis yeniden başlar; birkaç saniye yanıt vermez.</span></li>
+          </ul>
+          <div v-else class="danger-zone">
             <p class="meter-note">Adresi kaldırınca Tailscale adı, Tailscale portu ve internet adı kapanır; port kapalı bir ham port olur ve servis yeniden başlar.</p>
             <button type="button" class="btn btn-danger-quiet btn-sm fit" :disabled="locked" data-testid="row-remove" @click="removeAddress">
               <Icon name="trash" :size="16" />Adresi kaldır
@@ -346,7 +442,7 @@ const formId = "erisim-satiri";
         <template v-else-if="kind === 'ham'">
           <Field label="Kim ulaşır" group>
             <div class="choice-list" role="presentation">
-              <label v-for="s in SCOPES" :key="s.id" class="choice-item" :data-kapsam="s.id">
+              <label v-for="s in SCOPE_CHOICES" :key="s.id" class="choice-item" :data-kapsam="s.id">
                 <input v-model="fScope" type="radio" name="ham-kapsam" :value="s.id" />
                 <span class="choice-text"><span class="choice-head"><strong>{{ s.text }}</strong></span></span>
               </label>
@@ -362,7 +458,7 @@ const formId = "erisim-satiri";
             <Icon name="alert" class="notice-icon" />
             <div class="form-stack">
               <p>Ham port internete doğrudan açılır: arada Caddy, HTTPS ve Konsol girişi olmaz; şifreleme ve giriş uygulamanın kendisindedir.</p>
-              <label class="check-row"><input v-model="fConsent" type="checkbox" data-testid="row-consent-box" /><span>Anladım; bu portu internete açın.</span></label>
+              <label class="check-row"><input v-model="fConsent" type="checkbox" :data-autofocus="auto('consent')" data-testid="row-consent-box" /><span>Anladım; bu portu internete açın.</span></label>
               <p v-if="tried && errors.consent" class="field-error">{{ errors.consent }}</p>
             </div>
           </div>
@@ -374,21 +470,6 @@ const formId = "erisim-satiri";
           </div>
           <p v-else class="meter-note">UDP portu yalnız ham port olabilir; adres açılamaz.</p>
         </template>
-
-        <!-- "Adres aç" -->
-        <template v-else-if="kind === 'adres-ac'">
-          <Field v-slot="{ id, describedby, invalid }" label="Tailscale adı" :suffix="'.' + domain" :error="tried ? errors.name : ''">
-            <input :id="id" v-model="fName" class="input" type="text" maxlength="63" autocapitalize="none" autocomplete="off" spellcheck="false"
-              :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-testid="row-name" data-autofocus />
-          </Field>
-          <ul class="modal-list">
-            <li><Icon name="tailnet" :size="18" /><span>Tailscale cihazlarınız <span class="mono">{{ label || "…" }}.{{ domain }}</span> adıyla açar; Caddy adı konteynere bağlar.</span></li>
-            <li><Icon name="lock" :size="18" /><span>Konteyner yalnız bu sunucuda (127.0.0.1) bir porta yayımlanır; ham port kapanır.</span></li>
-            <li><Icon name="refresh" :size="18" /><span>Servis yeniden başlar; birkaç saniye yanıt vermez.</span></li>
-          </ul>
-          <p class="meter-note">Tailscale portu ve internet adı sonra bu satırın Düzenle'sinden açılır.</p>
-        </template>
-
       </form>
     </template>
   </SettingsPlanSheet>

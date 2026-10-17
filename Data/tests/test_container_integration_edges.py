@@ -55,9 +55,9 @@ class IntegrationEdges(unittest.TestCase):
 
     def test_a_paused_container_offers_nothing(self):
         self.container(status="paused")
-        detail = self.service.view().ayrinti("outside")
-        self.assertEqual(detail["state"], "paused")
-        self.assertNotIn("actions", detail, "no lifecycle action lives on a container row")
+        row = self.service.view().liste()["containers"][0]
+        self.assertEqual(row["state"], "paused")
+        self.assertNotIn("actions", row, "no lifecycle action lives on a container row")
 
     def test_application_labels_with_a_foreign_unit_are_not_an_application(self):
         labels = {"io.master-stack.managed": "uygulama", "io.master-stack.uygulama": "notlar"}
@@ -82,7 +82,9 @@ class IntegrationEdges(unittest.TestCase):
 
     def test_runtime_environment_values_are_not_returned_from_inspect(self):
         self.container()
-        self.assertNotIn("native-secret-value", json.dumps(self.service.view().ayrinti("outside")))
+        listing = self.service.view().liste()
+        self.assertTrue(any(c[:2] == ["podman", "inspect"] for c in self.calls), "the list inspects the container")
+        self.assertNotIn("native-secret-value", json.dumps(listing))
 
 
 if __name__ == "__main__":

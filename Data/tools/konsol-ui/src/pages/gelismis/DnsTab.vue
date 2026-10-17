@@ -61,7 +61,7 @@ const fileCount = computed(() => `${dns.value.raw.length} dosya`);
       </div>
       <EmptyState v-else title="Kayıt yok" text="dnsmasq'ın dosyalarında bir ad bulunamadı." icon="globe" />
       <p class="meter-note">DNS önbellekleri hemen silinmez. Yeni bir ad eklemek Caddy sitesi oluşturmaz.</p>
-      <RouterLink :to="accessRoute('adresler')" class="section-link">Yerel adları Erişim'de değiştir</RouterLink>
+      <RouterLink :to="accessRoute('adlar')" class="section-link">Yerel adları Erişim'de değiştir</RouterLink>
     </section>
     <RawFiles :files="dns.raw" :summary="`dnsmasq · ${fileCount}`" />
   </div>

@@ -331,12 +331,15 @@ or opened) are plans with the timer, its closings commit at once, key regenerati
 
 ### Phase 5: Konsol
 
-- [ ] Uygulamalar: list, "Uygulama ekle" (four sources, inspector, plan), application page
-- [ ] Erişim: Adresler, Yerel adlar (A7), WireGuard, Güvenlik duvarı as in the prototype
-- [ ] Genel Bakış access summary; the problem chip goes where the problem is
-- [ ] Dosyalar (K7), Sistem (A7 names, no Görünüm), Gelişmiş read-only with cleanup (K8)
-- [ ] Command palette, İşlemler, the pending banner for every timed change
-- [ ] Old components removed; UI suites rewritten; layout audit clean at every width
+Done in v2-259 (DD-276), live-verified on the test host on 2026-10-17. The phase-5 open question is settled:
+each application's live rate comes from its own bridge's counters (the operator's decision).
+
+- [x] Uygulamalar: list, "Uygulama ekle" (four sources, inspector, plan), application page
+- [x] Erişim: Adresler, Yerel adlar (A7), WireGuard, Güvenlik duvarı as in the prototype
+- [x] Genel Bakış access summary; the problem chip goes where the problem is
+- [x] Dosyalar (K7), Sistem (A7 names, no Görünüm), Gelişmiş read-only with cleanup (K8)
+- [x] Command palette, İşlemler, the pending banner for every timed change
+- [x] Old components removed; UI suites rewritten; layout audit clean at every width
 
 ### Phase 6: documents, sweep and the clean-server test
 
@@ -376,7 +379,5 @@ or opened) are plans with the timer, its closings commit at once, key regenerati
 
 To be settled when the named phase starts:
 
-- **Phase 5:** Genel Bakış's per-application traffic totals: read generically from each container's
-  own network counters, or drop the per-application split.
 - **Phase 6:** the release numbers: the merge as 2.0.0 and the last 1.x as 1.2.0 are proposed
   (DD-260: a release only when the operator asks).

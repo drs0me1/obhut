@@ -138,6 +138,11 @@ export interface Ag {
   sampled_at: number | null;
   rx: number | null;
   tx: number | null;
+  uygulamalar: {
+    ad: string;
+    indirme: number;
+    yukleme: number;
+  }[];
 }
 
 export interface OnarimAdimi {
@@ -189,6 +194,11 @@ export interface Guncelleme {
   hata: string;
   is: GuncellemeIsi;
   baslatilabilir: boolean;
+  uygulamalar: {
+    sayi: number;
+    adlar: string[];
+    denetlendi: number | null;
+  };
 }
 
 export interface Erisim {
@@ -404,14 +414,6 @@ export interface Adlar {
   hatalar: string[];
 }
 
-export interface KonteynerIstegi {
-  action: "image-pull" | "image-remove" | "volume-create" | "volume-remove" | "network-create" | "network-remove";
-  name?: string;
-  image?: string;
-  subnet?: string;
-  internal?: boolean;
-}
-
 export interface KonteynerIsi {
   id?: string;
   action?: string;
@@ -506,23 +508,6 @@ export interface KonteynerListesi {
   [key: string]: unknown;
 }
 
-export interface KonteynerAyrintisi {
-  name?: string;
-  state?: string;
-  image?: string;
-  mounts?: {
-    type?: string;
-    source?: string;
-    destination?: string;
-    rw?: boolean;
-    name?: string;
-    [key: string]: unknown;
-  }[];
-  user?: string;
-  command?: string;
-  [key: string]: unknown;
-}
-
 export interface Oturum {
   durum: "kurulum" | "acik" | "giris";
   kullanici?: string;
@@ -572,13 +557,6 @@ export interface KayitSatiri {
 
 export interface Kayitlar {
   items: KayitSatiri[];
-}
-
-export interface Klasorler {
-  items: {
-    path: string;
-    free: number;
-  }[];
 }
 
 export interface PaylasimBaglantisi {
@@ -648,6 +626,23 @@ export interface PaylasimKimligi {
   id: string;
 }
 
+export interface VeriKlasoru {
+  ad: string;
+  yol: string;
+  boyut: number | null;
+  neden: string;
+  hedefler: string[];
+}
+
+export interface UygulamaVerisi {
+  ad: string;
+  yol: string;
+  boyut: number | null;
+  neden: string;
+  olculdu: number | null;
+  klasorler: VeriKlasoru[];
+}
+
 export interface Depolama {
   read_at: number;
   kok: string;
@@ -659,6 +654,7 @@ export interface Depolama {
     hedef: string;
     yazilabilir: boolean;
   })[];
+  uygulamalar: UygulamaVerisi[];
   hatalar: string[];
 }
 
@@ -697,6 +693,50 @@ export interface Gelismis {
     })[];
     raw: YapilandirmaDosyasi[];
   };
+}
+
+export interface Temizlik {
+  read_at: number;
+  imajlar: ({
+    id: string;
+    etiketler: string[];
+    boyut: number | null;
+    olusturuldu: number | null;
+  })[];
+  aglar: {
+    ad: string;
+    surucu: string;
+    arayuz: string;
+  }[];
+  birimler: ({
+    ad: string;
+    surucu: string;
+    olusturuldu: number | null;
+  })[];
+  klasorler: ({
+    ad: string;
+    yol: string;
+    boyut: number | null;
+    neden: string;
+  })[];
+  konteynerler: ({
+    ad: string;
+    imaj: string;
+    durum: string;
+    yonetici: "podman" | "kayitsiz" | "baska";
+  })[];
+  hatalar: string[];
+}
+
+export interface TemizlikIstegi {
+  imajlar?: string[];
+  aglar?: string[];
+  birimler?: string[];
+  klasorler?: string[];
+}
+
+export interface TemizlikIsi {
+  is: string;
 }
 
 export interface WireGuardCihazi {
@@ -1155,6 +1195,11 @@ export interface Uygulama {
   koken: KaynakTuru;
   durduruldu: boolean;
   uyari: number;
+  ag: {
+    indirme: number;
+    yukleme: number;
+  } | null;
+  adres: string | null;
 }
 
 export interface UygulamaKaynagi {
@@ -1167,14 +1212,6 @@ export interface Uygulamalar {
   read_at: number;
   items: Uygulama[];
   kaynaklar: UygulamaKaynagi[];
-  altyapi: {
-    podman: string;
-    calisiyor: boolean;
-    imaj: number;
-    kullanilmayan_imaj: number;
-    birim: number;
-    ag: number;
-  };
   hatalar: string[];
 }
 
@@ -1219,6 +1256,7 @@ export interface UygulamaBaglamasi {
   tur: "app" | "srv" | "tmpfs";
   yol: string | null;
   salt_okunur: boolean;
+  boyut: number | null;
 }
 
 export interface UygulamaServisAyrintisi {
@@ -1267,6 +1305,7 @@ export interface UygulamaAyrinti {
   veri: string;
   ag: string;
   pod: string | null;
+  guncelleme_denetlendi: number | null;
 }
 
 export interface UygulamaGunlugu {
@@ -1310,6 +1349,48 @@ export interface KurIstegi {
   metin: string;
   yanitlar: Yanitlar;
   kaynak: KaynakDosya | KaynakAdres | KaynakImaj | KaynakKonteyner;
+  plan?: boolean;
+}
+
+export interface KurOzeti {
+  ad: string;
+  veri: string;
+  ag: string;
+  pod: string | null;
+  birimler: string[];
+  servisler: ({
+    ad: string;
+    baslangic: "direct" | "root";
+    kullanici: string | null;
+    imaj: string;
+    baglamalar: UygulamaBaglamasi[];
+    gizliler: string[];
+  })[];
+  erisim: ({
+    id: string;
+    anahtar: string;
+    servis: string;
+    port: number;
+    protokol: "tcp" | "udp";
+    satir: ErisimSatiri;
+    adres: string | null;
+  })[];
+  klasorler: string[];
+  gizliler: {
+    ad: string;
+    servisler: string[];
+  }[];
+  uyarilar: UygulamaUyarisi[];
+  imajlar: string[];
+}
+
+export interface KurPlani {
+  inceleme: Inceleme;
+  hatalar?: {
+    [key: string]: string;
+  };
+  tanim?: Tanim;
+  ozet?: KurOzeti;
 }
 
 export interface UygulamaIsi {
@@ -1429,11 +1510,8 @@ export const YOLLAR = {
   ayarlar_birak: "/api/konsol/ayarlar/birak",
   guvenlik_duvari: "/api/konsol/guvenlik-duvari",
   adlar: "/api/konsol/adlar",
-  konteyner_islemi: "/api/konsol/konteynerler/islem",
   konteyner_listesi: "/api/konsol/konteynerler/liste",
-  konteyner_ayrintisi: "/api/konsol/konteynerler/ayrinti",
   konteyner_isi: "/api/konsol/konteynerler/islem",
-  klasorler: "/api/konsol/ayarlar/klasorler",
   oturum: "/api/konsol/oturum",
   oturum_kur: "/api/konsol/oturum/kur",
   oturum_cikis: "/api/konsol/oturum/cikis",
@@ -1447,6 +1525,8 @@ export const YOLLAR = {
   paylasim_kaldir: "/api/konsol/paylasim/kaldir",
   depolama: "/api/konsol/depolama",
   gelismis: "/api/konsol/gelismis",
+  temizlik: "/api/konsol/gelismis/temizlik",
+  temizle: "/api/konsol/gelismis/temizlik",
   wireguard: "/api/konsol/wireguard/state",
   wireguard_cihaz_ekle: "/api/konsol/wireguard/nets/{iface}/peers",
   wireguard_ag_ayarlar: "/api/konsol/wireguard/nets/{iface}/ayarlar",

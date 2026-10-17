@@ -402,6 +402,79 @@ class ReadModelTests(Case):
         self.assertEqual(apps.service_state("active", False, None), "hata", "an active unit without its container")
 
 
+class SizeTests(Case):
+    """Folder sizes for Depolama and the cleanup: a bounded walk (allocated blocks, no link followed, a hard link
+    once) with a time limit and a cache."""
+
+    class Clock:
+        def __init__(self):
+            self.now = 100.0
+
+        def __call__(self):
+            return self.now
+
+    def tree(self):
+        top = self.root / "veri" / "notlar"
+        (top / "uploads" / "alt").mkdir(parents=True)
+        (top / "db-data").mkdir()
+        (top / "uploads" / "a").write_bytes(b"a" * 50000)
+        (top / "uploads" / "alt" / "b").write_bytes(b"b" * 20000)
+        (top / "db-data" / "c").write_bytes(b"c" * 8000)
+        import os
+        os.link(top / "uploads" / "a", top / "db-data" / "a-link")
+        (top / "db-data" / "dis").symlink_to(self.root)  # never followed
+        return top
+
+    def test_a_tree_is_measured_by_its_blocks_with_each_entrys_share(self):
+        top = self.tree()
+        value, reason = apps.tree_size(top, deadline=float("inf"))
+        self.assertEqual(reason, "")
+        self.assertEqual(set(value["alt"]), {"uploads", "db-data"})
+        shares = value["alt"]["uploads"] + value["alt"]["db-data"]
+        self.assertGreaterEqual(shares, 78000)
+        self.assertLess(shares, 120000, "a hard-linked file counts once (where it is met first), a link is not followed")
+        self.assertEqual(value["boyut"], sum(value["alt"].values()) + top.lstat().st_blocks * 512)
+        for path, why in ((self.root / "yok", "Klasör yok."), (top / "uploads" / "a", "Klasör değil.")):
+            self.assertEqual(apps.tree_size(path, float("inf")), (None, why))
+
+    def test_a_walk_that_runs_out_of_time_says_so_and_is_kept_briefly(self):
+        top = self.tree()
+        clock = self.Clock()
+        ticks = iter(range(1000))
+        late = lambda: clock.now + next(ticks)  # every reading is a second later
+        self.assertEqual(apps.tree_size(top, deadline=late() + 1.5, clock=late)[0], None)
+        sizes = apps.Sizes(clock=clock, wall=lambda: 1_800_000_000)
+        with unittest.mock.patch.object(apps, "tree_size", side_effect=lambda p, d, c: (None, "Ölçüm süreye sığmadı; klasörde çok fazla öge var.")) as walk:
+            first = sizes.measure([top], seconds=1)[str(top)]
+            self.assertEqual((first["boyut"], first["olculdu"]), (None, 1_800_000_000))
+            sizes.measure([top], seconds=1)
+            self.assertEqual(walk.call_count, 1, "a failed walk is kept SIZE_FAIL_TTL")
+            clock.now += apps.SIZE_FAIL_TTL
+            sizes.measure([top], seconds=1)
+            self.assertEqual(walk.call_count, 2)
+        # Once the time is spent the other folders are not walked at all.
+        def slow(path, deadline, c):
+            clock.now += 10
+            return {"boyut": 1, "alt": {}}, ""
+        with unittest.mock.patch.object(apps, "tree_size", side_effect=slow) as walk:
+            out = apps.Sizes(clock=clock).measure([top / "uploads", top / "db-data"], seconds=5)
+        self.assertEqual(walk.call_count, 1)
+        self.assertEqual(out[str(top / "db-data")]["neden"], "Ölçüm süreye sığmadı; sonra yeniden denenecek.")
+
+    def test_a_measurement_is_cached_and_fresh_measures_again(self):
+        top = self.tree()
+        clock = self.Clock()
+        sizes = apps.Sizes(clock=clock)
+        first = sizes.measure([top])[str(top)]
+        (top / "uploads" / "yeni").write_bytes(b"y" * 40000)
+        self.assertEqual(sizes.measure([top])[str(top)], first, "kept SIZE_TTL")
+        self.assertGreater(sizes.measure([top], fresh=True)[str(top)]["boyut"], first["boyut"])
+        clock.now += apps.SIZE_TTL
+        self.assertEqual(sizes.measure([self.root / "yok"])[str(self.root / "yok")]["neden"], "Klasör yok.")
+        self.assertNotIn(str(self.root / "yok"), sizes.cache, "a missing folder is not kept")
+        self.assertNotIn(str(top), sizes.cache, "an old measurement is dropped")
+
+
 class EmitterTests(unittest.TestCase):
     def test_every_value_survives_the_reader_and_compose_reads_no_variable_in_it(self):
         values = ["plain", "", "with space", "quote \" and \\ back", "tab\tnew\nline", "$HOME and ${X} and $$",

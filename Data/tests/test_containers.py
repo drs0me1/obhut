@@ -29,17 +29,7 @@ PS = [{"Id": "2073a1b2c3d4e5f6", "Names": ["deneme-medya"], "Image": "ghcr.io/ex
        "Ports": [{"host_ip": "", "host_port": 8081, "container_port": 80, "protocol": "tcp", "range": 1}], "Mounts": []}]
 IMAGES = [{"Names": ["ghcr.io/example/medya:latest"], "Size": 228000000, "Created": 1790667122}, {"Names": None, "Size": 5, "Created": 1}]
 DF = [{"Type": "Images", "RawSize": 228000000}, {"Type": "Containers", "RawSize": 1000}, {"Type": "Local Volumes", "RawSize": 0}]
-INSPECT = [{"Id": "2073a1b2c3d4e5f6", "Name": "deneme-medya", "ImageName": "ghcr.io/example/medya:latest", "ImageDigest": "sha256:abcdef0123456789",
-            "Created": "2026-10-02T22:24:18.9+02:00", "RestartCount": 1,
-            "State": {"Status": "running", "StartedAt": "2026-10-02T22:24:19.081055326+02:00", "FinishedAt": "0001-01-01T00:00:00Z", "ExitCode": 0,
-                      "Health": {"Status": "healthy"}},
-            "Mounts": [{"Type": "bind", "Source": "/srv/downloads/deneme-podman", "Destination": "/downloads", "RW": True, "Name": None},
-                       {"Type": "bind", "Source": "/var/lib/master-stack/deneme-medya/config", "Destination": "/config", "RW": False, "Name": None}],
-            "HostConfig": {"NetworkMode": "host", "PortBindings": {}}, "NetworkSettings": {"Ports": {}},
-            "Config": {"Cmd": ["/init"], "Env": ["WEBUI_PASSWORD=verysecret", "PUID=1000"],
-                       "Labels": {"PODMAN_SYSTEMD_UNIT": "deneme-medya.service", "org.opencontainers.image.version": "5.2.4", "org.opencontainers.image.source": "https://github.com/x/y", "org.opencontainers.image.title": "Medya"}}}]
-INSPECT_BRIDGE = [dict(INSPECT[0], Name="web", HostConfig={"NetworkMode": "bridge", "PortBindings": {"80/tcp": [{"HostIp": "", "HostPort": "8081"}], "53/udp": [{"HostIp": "127.0.0.1", "HostPort": "5353"}]}},
-                       NetworkSettings={"Ports": {}}, Mounts=[], Config={"Cmd": ["nginx", "-g", "daemon off;"], "Labels": {}})]
+
 
 class Ctx:
     def __init__(self):
@@ -58,13 +48,6 @@ class Ctx:
             return 0, json.dumps(IMAGES), ""
         if key == "system":
             return 0, json.dumps(DF), ""
-        if key == "inspect":
-            name = argv[-1]
-            if name == "deneme-medya":
-                return 0, json.dumps(INSPECT), ""
-            if name == "web":
-                return 0, json.dumps(INSPECT_BRIDGE), ""
-            return 125, "", 'Error: no such object: "%s"' % name
         raise AssertionError(argv)
 
 
@@ -73,14 +56,12 @@ class ContainerViewTests(unittest.TestCase):
         self.ctx = Ctx()
         self.view = containers.Containers(self.ctx.run)
 
-    def call(self, sub, method="GET", **query):
-        """The backend route's logic: GET only, two read paths, a ContainerError becomes its status."""
-        if method != "GET" or sub not in ("liste", "ayrinti"):
+    def call(self, sub, method="GET"):
+        """The backend route's logic: GET only, one read path, a ContainerError becomes its status."""
+        if method != "GET" or sub != "liste":
             raise RuntimeError("404 bulunamadı")
         try:
-            if sub == "liste":
-                return 200, self.view.liste()
-            return 200, self.view.ayrinti(containers.name_of(query.get("ad", "")))
+            return 200, self.view.liste()
         except containers.ContainerError as err:
             raise RuntimeError("%d %s" % (err.status, err))
 
@@ -114,31 +95,12 @@ class ContainerViewTests(unittest.TestCase):
         self.ctx.version = "weird; rm -rf"
         self.assertFalse(self.call("liste")[1]["runtime"]["ok"])
 
-    def test_inspect_maps_mounts_ports_labels_and_never_the_environment(self):
-        code, c = self.call("ayrinti", ad="deneme-medya")
-        self.assertEqual(code, 200)
-        self.assertEqual((c["name"], c["id"], c["image_digest"], c["state"], c["health"], c["restarts"], c["unit"], c["network"], c["command"]),
-                         ("deneme-medya", "2073a1b2c3d4", "abcdef012345", "running", "healthy", 1, "deneme-medya.service", "host", "/init"))
-        self.assertEqual((c["created"], c["started"], c["finished"]), (1790972658, 1790972659, None))
-        self.assertEqual([m["destination"] for m in c["mounts"]], ["/config", "/downloads"], "sorted by container path")
-        self.assertEqual(c["mounts"][0], {"type": "bind", "source": "/var/lib/master-stack/deneme-medya/config", "destination": "/config", "rw": False, "name": ""})
-        self.assertEqual(c["labels"], {"version": "5.2.4", "source": "https://github.com/x/y", "title": "Medya"})
-        self.assertEqual(c["ports"], [])
-        self.assertNotIn("verysecret", json.dumps(c))
-        self.assertNotIn("PUID", json.dumps(c))
-        code, w = self.call("ayrinti", ad="web")
-        self.assertEqual(w["ports"], [{"host_ip": "127.0.0.1", "host_port": 5353, "container_port": 53, "protocol": "udp"},
-                                      {"host_ip": "0.0.0.0", "host_port": 8081, "container_port": 80, "protocol": "tcp"}])
-        self.assertEqual((w["network"], w["labels"], w["command"]), ("bridge", {"version": "", "source": "", "title": ""}, "nginx -g daemon off;"))
-
-    def test_gates_names_methods_and_paths(self):
+    def test_names_methods_and_paths(self):
         for bad in ("", "-x", "a b", "x" * 129, "../etc", "a;b"):
-            with self.subTest(bad=bad), self.assertRaises(RuntimeError) as err:
-                self.call("ayrinti", ad=bad)
-            self.assertIn("400", str(err.exception))
-        with self.assertRaises(RuntimeError) as err:
-            self.call("ayrinti", ad="yok")
-        self.assertIn("404", str(err.exception))
+            with self.subTest(bad=bad), self.assertRaises(containers.ContainerError) as err:
+                containers.name_of(bad)
+            self.assertEqual(err.exception.status, 400)
+        self.assertEqual(containers.name_of("deneme-medya"), "deneme-medya")
         with self.assertRaises(RuntimeError) as err:
             self.call("liste", method="POST")
         self.assertIn("404", str(err.exception), "the backend has no write route for containers")
@@ -180,10 +142,7 @@ class ContainerRouteTests(unittest.TestCase):
             self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/liste", {"X-Konsol": "1", "Host": "evil.test"})[0], 403)
             status, _h, body = unix_get(sock, "/api/konsol/konteynerler/liste", {"X-Konsol": "1"})
             self.assertEqual((status, [c["name"] for c in json.loads(body)["containers"]]), (200, ["deneme-medya", "web"]))
-            status, _h, body = unix_get(sock, "/api/konsol/konteynerler/ayrinti?ad=deneme-medya", {"X-Konsol": "1"})
-            self.assertEqual((status, json.loads(body)["unit"]), (200, "deneme-medya.service"))
-            self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/ayrinti?ad=a%3Bb", {"X-Konsol": "1"})[0], 400)
-            self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/ayrinti?ad=yok", {"X-Konsol": "1"})[0], 404)
+            self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/ayrinti?ad=deneme-medya", {"X-Konsol": "1"})[0], 404)
             self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/baslat", {"X-Konsol": "1"})[0], 404)
             for path in ("/api/konsol/konteynerler/liste", "/api/konsol/konteynerler/durdur"):
                 self.assertEqual(unix_get(sock, path, {"X-Konsol": "1", "Content-Type": "application/json"}, "POST", b"{}")[0], 404)

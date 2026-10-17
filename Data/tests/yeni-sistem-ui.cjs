@@ -1,9 +1,10 @@
-/* Konsol's new interface, phase 4a (DD-258, DD-266): Sistem (Sağlık with "Denetle ve onar" and its log,
-   Güncellemeler, Hesap, Sunucu with the reboot, Görünüm, Günlük) and Gelişmiş (Caddy, DNS, the way to the
-   firewall's technical rules, Podman's images, volumes and networks) in the committed build under
+/* Konsol's Sistem and Gelişmiş (DD-258, DD-266; rebuild phase 5, A7 and K8): Sistem (Sağlık with "Denetle ve onar"
+   and its Onarım kaydı, Güncellemeler with the applications' image updates, Hesap, Sunucu with the reboot, İşlem
+   geçmişi with every audit kind in words; no Görünüm) and Gelişmiş (Caddy, DNS, the firewall's technical rules and
+   listeners, Podman's inventory read-only and its cleanup as a job) in the committed build under
    Data/console/yeni, with the production CSP and fixture replies for every endpoint they read or post to
    (yeni-harness.cjs), on the tailnet and on the internet channel. Also the shell's "Çıkış yap" and the
-   palette's new entries. Fails on any console error, CSP violation or page error. Never contacts a server.
+   palette's entries. Fails on any console error, CSP violation or page error. Never contacts a server.
    PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-sistem-ui.cjs */
 const assert = require("node:assert/strict");
 
@@ -28,25 +29,55 @@ const STEPS = [
 const REPORT = { durum: "tamam", kip: "onar", kaynak: "terminal", baslangic: NOW - 3 * 3600, bitis: NOW - 3 * 3600 + 40, adimlar: STEPS };
 const repairState = (o = {}) => ({ calisiyor: false, kurulu: true, baslatilabilir: true, rapor: JSON.parse(JSON.stringify(REPORT)), ...o });
 const update = (o = {}) => ({ kurulu: "2026.08.06-v2-248", kurulu_surum: "1.1.0", son: "2026.10.12-v2-252", son_surum: "1.2.0", commit: "abcdef1" + "0".repeat(33),
-  yeni: true, denetlendi: NOW - 3600, hata: "", is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true, ...o });
+  yeni: true, denetlendi: NOW - 3600, hata: "", is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true,
+  uygulamalar: { sayi: 1, adlar: ["notlar"], denetlendi: NOW - 600 }, ...o });
 const LOG72 = Array.from({ length: 80 }, (_, i) => `2026-10-13T0${Math.floor(i / 20)}:${String(i % 60).padStart(2, "0")}:00+03:00 master-onar[9${i}]: adım ${i + 1} tamam`).join("\n") + "\n";
 const LOG7 = "2026-10-07T03:10:00+03:00 refresh-tailnet-config[401]: adres değişmedi\n2026-10-08T03:12:00+03:00 master-onar[402]: güvenlik duvarı denetlendi\n";
 
-// WireGuard's lines carry master_wireguard's details ("wg0/telefon", "wg0/telefon 25", "wg0 açıldı", …).
+// Every kind the backends write (master-panel, master_wireguard, master_settings.audit_detail, the file backends), with
+// their real details: WireGuard's device lines ("wg0/telefon", "wg0/telefon 25"), the settings actions naming an access
+// row or a WireGuard action, an application's verbs, the cleanup's kinds, the files' paths.
+const ROW = "uygulama:notlar:web:8080/tcp";
 const AUDIT = [
   { at: NOW - 60, source: "panel", user: "konsol", client: "100.64.0.5", action: "onarim", detail: "onar", ok: true },
-  { at: NOW - 300, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-durdur", detail: "WireGuard", ok: true },
+  { at: NOW - 300, source: "panel", user: "konsol", client: "100.64.0.5", action: "ayar-apply", detail: "wireguard durdur", ok: true },
+  { at: NOW - 400, source: "panel", user: "konsol", client: "100.64.0.5", action: "ayar-confirm", detail: "wireguard ag-ac wg0", ok: true },
+  { at: NOW - 500, source: "panel", user: "konsol", client: "100.64.0.5", action: "ayar-apply", detail: "wireguard ag-ekle UDP 51821", ok: true },
   { at: NOW - 600, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-ekle", detail: "wg0/telefon", ok: true },
   { at: NOW - 750, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-keepalive", detail: "wg0/telefon 25", ok: true },
   { at: NOW - 900, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-peer-durum", detail: "wg0/telefon kapatıldı", ok: true },
-  { at: NOW - 1050, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-ag-durum", detail: "wg0 açıldı", ok: true },
-  { at: NOW - 1500, source: "panel", user: "konsol", client: "100.64.0.5", action: "konteyner-image-pull", detail: "docker.io/library/redis:7.4", ok: true },
+  { at: NOW - 950, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-ag-ayarlar", detail: "wg0", ok: true },
+  { at: NOW - 1000, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-qr", detail: "wg0/telefon", ok: true },
+  { at: NOW - 1050, source: "panel", user: "konsol", client: "100.64.0.5", action: "ayar-apply", detail: `erisim ${ROW} adres notlar tailscale-portu kapali internet notlar.example.org`, ok: true },
+  { at: NOW - 1100, source: "panel", user: "konsol", client: "100.64.0.5", action: "ayar-rollback", detail: `erisim ${ROW}`, ok: true },
+  { at: NOW - 1150, source: "panel", user: "konsol", client: "100.64.0.5", action: "ayar-apply", detail: "erisim uygulama:ornek:app:9000/udp ham internet 9001", ok: true },
+  { at: NOW - 1200, source: "panel", user: "konsol", client: "100.64.0.5", action: "temizlik", detail: "imaj cccccccccccc; ağ eski-ag; klasör eskiuygulama", ok: true },
+  { at: NOW - 1300, source: "panel", user: "konsol", client: "100.64.0.5", action: "uygulama-taslak", detail: "imaj registry.example/ornek:1", ok: true },
+  { at: NOW - 1400, source: "panel", user: "konsol", client: "100.64.0.5", action: "uygulama-kur", detail: "ornek", ok: true },
+  { at: NOW - 1500, source: "panel", user: "konsol", client: "100.64.0.5", action: "uygulama-guncelle", detail: "ornek", ok: true },
   { at: NOW - 1600, source: "panel", user: "konsol", client: "100.64.0.5", action: "uygulama-kaldir", detail: "notlar (veri: sakla)", ok: true },
+  { at: NOW - 1700, source: "dosya", user: "dosyalar", client: "100.64.0.6", action: "yükle", detail: "Filmler/kayit.mkv", ok: true },
   { at: NOW - 1800, source: "dosya", user: "dosyalar", client: "100.64.0.6", action: "klasor", detail: "Filmler", ok: true },
+  { at: NOW - 1900, source: "dosya", user: "root", client: "100.64.0.6", action: "sil", detail: "etc ['eski.conf']", ok: true },
+  { at: NOW - 2000, source: "panel", user: "konsol", client: "100.64.0.5", action: "giris", detail: "-", ok: true },
   { at: NOW - 2100, source: "panel", user: "konsol", client: "203.0.113.50", action: "parola-degis", detail: "-", ok: false },
-  { at: NOW - 2400, source: "panel", user: "konsol", client: "100.64.0.5", action: "ayar-apply", detail: "ayarlar", ok: true },
+  { at: NOW - 2400, source: "panel", user: "konsol", client: "100.64.0.5", action: "ayar-confirm", detail: "ayarlar", ok: true },
+  { at: NOW - 2500, source: "panel", user: "konsol", client: "100.64.0.5", action: "guncelleme", detail: "2026.10.12-v2-252", ok: true },
   { at: NOW - 2700, source: "panel", user: "konsol", client: "100.64.0.5", action: "yeniden-baslat", detail: "5 sn", ok: true },
-  { at: NOW - 2 * DAY, source: "panel", user: "konsol", client: "100.64.0.5", action: "paylasim-save", detail: "Filmler", ok: true },
+  { at: NOW - 2 * DAY, source: "panel", user: "konsol", client: "100.64.0.5", action: "paylasim-save", detail: "klasör paylaşımı", ok: true },
+];
+const AUDIT_LINES = [
+  "Denetim ve onarım başlatıldı", "WireGuard'ı kapat · uygulandı", "wg0 ağını aç · onaylandı", "WireGuard ağı ekle (UDP 51821) · uygulandı",
+  "wg0/telefon cihazı eklendi", "wg0/telefon cihazının canlı tutma süresi: 25 sn", "wg0/telefon cihazı kapatıldı",
+  "wg0 ağının adı ve varsayılan DNS'i güncellendi", "wg0/telefon QR kodu görüntülendi",
+  "Erişim değişikliği · notlar · web 8080/TCP (Tailscale adı notlar, Tailscale portu kapalı, internet adı notlar.example.org) · uygulandı",
+  "Erişim değişikliği · notlar · web 8080/TCP · geri alındı",
+  "Erişim değişikliği · ornek · app 9000/UDP (ham port, internet, sunucu portu 9001) · uygulandı",
+  "Podman temizliği istendi (imaj cccccccccccc; ağ eski-ag; klasör eskiuygulama)", "Taslak dosya istendi: imaj registry.example/ornek:1",
+  "Uygulama kurulumu istendi: ornek", "Uygulama imaj güncellemesi istendi: ornek", "Uygulama kaldırma istendi: notlar (veriler saklanır)",
+  "Yüklendi: Filmler/kayit.mkv", "Yeni klasör: Filmler", "Kalıcı silindi (Sistem dosyaları): etc ['eski.conf']", "Konsol girişi",
+  "Konsol parolası değiştirildi — başarısız", "Güvenlik duvarı, yerel adlar ya da alan adı değişikliği · onaylandı",
+  "Obhut güncellemesi başlatıldı: 2026.10.12-v2-252", "Sunucunun yeniden başlatılması istendi (5 sn)", "Klasör paylaşımı kaydedildi",
 ];
 
 const CADDYFILE = "{\n\tadmin off\n}\nhttp://panel.ev {\n\treverse_proxy 127.0.0.1:62000\n}\n";
@@ -94,6 +125,35 @@ const resources = (o = {}) => ({
   storage: { images: 3, containers: 2, size: 452984832 }, resource_errors: {}, ...o,
 });
 
+// Gelişmiş → Güvenlik duvarı: the technical rules and the listeners (GET /api/konsol/guvenlik-duvari).
+const FIREWALL = {
+  revizyon: "rev-1", denetim: { ok: true, metin: "Güvenlik duvarı kuralları beklendiği gibi." }, kurallar: [], portlar: [], aglar: [], hatalar: [],
+  dinleyiciler: [
+    { proto: "tcp", aile: 4, port: 22, adres: "0.0.0.0", kapsam: "any" },
+    { proto: "tcp", aile: 4, port: 80, adres: "100.64.0.2", kapsam: "tail" },
+    { proto: "tcp", aile: 4, port: 62001, adres: "127.0.0.1", kapsam: "lo" },
+    { proto: "tcp", aile: 6, port: 80, adres: "fd7a:115c:a1e0::2", kapsam: "tail" }],
+  teknik: [
+    { aile: 4, tablo: "filter", zincir: "MASTER-INPUT", sira: "1", paket: 12345, bayt: 6789012, kural: "-A MASTER-INPUT -i lo -j ACCEPT", sahip: "Obhut" },
+    { aile: 4, tablo: "filter", zincir: "ts-input", sira: "1", paket: 10, bayt: 900, kural: "-A ts-input -j RETURN", sahip: "Tailscale" },
+    { aile: 6, tablo: "filter", zincir: "MASTER-INPUT", sira: "1", paket: 7, bayt: 560, kural: "-A MASTER-INPUT -i lo -j ACCEPT", sahip: "Obhut" }],
+};
+// Gelişmiş → Podman's cleanup (GET /api/konsol/gelismis/temizlik): what nothing uses and the unmanaged containers.
+const DATA_DIR = "/var/lib/master-stack/uygulamalar";
+const cleanupView = (o = {}) => ({
+  read_at: NOW,
+  imajlar: [{ id: ID("c"), etiketler: ["docker.io/library/redis:7.4"], boyut: 41943040, olusturuldu: NOW - 2 * DAY },
+    { id: ID("a"), etiketler: [], boyut: 214958080, olusturuldu: NOW - 30 * DAY }],
+  aglar: [{ ad: "eski-ag", surucu: "bridge", arayuz: "podman3" }],
+  birimler: [{ ad: "eski", surucu: "local", olusturuldu: NOW - 5 * DAY }],
+  klasorler: [{ ad: "eskiuygulama", yol: DATA_DIR + "/eskiuygulama", boyut: 1288490188, neden: "" },
+    { ad: "buyuk", yol: DATA_DIR + "/buyuk", boyut: null, neden: "Ölçüm süreye sığmadı; klasörde çok fazla öge var." }],
+  konteynerler: [{ ad: "deneme", imaj: "registry.example/deneme:1", durum: "running", yonetici: "podman" },
+    { ad: "yetim", imaj: "registry.example/yetim:2", durum: "exited", yonetici: "kayitsiz" },
+    { ad: "baskasi", imaj: "registry.example/baskasi:3", durum: "running", yonetici: "baska" }],
+  hatalar: [], ...o,
+});
+
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.08.06-v2-248", surum: "1.1.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0-1-amd64", uptime: 5 * DAY + 3600,
     cores: 4, read_at: NOW, sampled_at: NOW, cpu: 2.0, mem: { total: 8375186227, used: 696254464 },
@@ -105,12 +165,14 @@ const data = {
   erisim: { read_at: NOW, alan: "ev", hizmetler: [], uyarilar: [], hatalar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "", surum: "", adresler: [], cikis_dugumu: null },
       internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
-  uygulamalar: uygulamalar([uygulama("notlar")], { altyapi: { podman: "5.4.2", calisiyor: true, imaj: 3, kullanilmayan_imaj: 1, birim: 3, ag: 3 } }),
+  uygulamalar: uygulamalar([uygulama("notlar", { guncelleme: "yeni", servisler: [{ ad: "web", durum: "calisiyor", imaj: "registry.example/notlar:1", guncelleme: "yeni" }] })]),
   onarim: repairState(),
   ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048 },
   islemler: { items: AUDIT },
   gelismis: ADVANCED,
   "konteynerler/liste": resources(),
+  "guvenlik-duvari": FIREWALL,
+  "gelismis/temizlik": cleanupView(),
 };
 
 let expectedFailures = [];
@@ -145,15 +207,10 @@ const updateReplies = [];
 h.handlers["/api/konsol/guncelleme"] = ({ method, body }) => (method === "POST" ? updateReplies.shift() ?? { status: 202, body: { surum: body.surum } } : undefined);
 const rebootReplies = [];
 h.handlers["/api/konsol/yeniden-baslat"] = ({ method }) => (method === "POST" ? rebootReplies.shift() ?? { status: 202, body: { sure: 5 } } : undefined);
-const jobReplies = [];
-let jobSeq = 0;
-h.handlers["/api/konsol/konteynerler/islem"] = ({ method, body }) => {
-  if (method !== "POST") return undefined;
-  const forced = jobReplies.shift();
-  if (forced) return forced;
-  const id = String(++jobSeq).padStart(32, "0");
-  return { status: 202, body: { id, action: body.action, name: body.image ?? body.name, state: "running" } };
-};
+const cleanupReplies = [];
+h.handlers["/api/konsol/gelismis/temizlik"] = ({ method }) => (method === "POST" ? cleanupReplies.shift() ?? { status: 202, body: { is: HEX("7") } } : undefined);
+let jobRecord = null;
+h.handlers["/api/konsol/konteynerler/islem"] = ({ query }) => (jobRecord && query.get("id") === jobRecord.id ? { body: jobRecord } : { status: 404, body: { error: "İşlem bulunamadı." } });
 
 // ---- helpers
 const url = (hash) => new URL("/" + hash, base).href;
@@ -189,7 +246,8 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     await page.goto(url("#/sistem"));
     assert.equal(await page.locator("main h1").innerText(), "Sistem");
     const tabs = page.getByRole("tablist", { name: "Sistem bölümleri" }).getByRole("tab");
-    assert.deepEqual(await tabs.allInnerTexts(), ["Sağlık", "Güncellemeler", "Hesap", "Sunucu", "Görünüm", "Günlük"]);
+    assert.deepEqual(await tabs.allInnerTexts(), ["Sağlık", "Güncellemeler", "Hesap", "Sunucu", "İşlem geçmişi"], "no Görünüm: the theme is the top bar's");
+    assert.equal(await page.getByTestId("page-desc").innerText(), "Obhut'un kendisi: sağlık, sürüm, hesap ve sunucu.");
     assert.deepEqual(await page.locator('.sidebar .nav-item[aria-current="page"] .nav-label').allInnerTexts(), ["Sistem"]);
     const checks = page.getByTestId("checks");
     await checks.locator("tbody tr").first().waitFor();
@@ -258,11 +316,12 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     await page.getByTestId("repair-head").filter({ hasText: "Son onarım:" }).waitFor();
     expectedFailures = [];
 
-    // The repair log: plain text in a sheet, at its newest line, copyable; the span is in the address.
+    // Onarım kaydı (A7): plain text in a sheet, at its newest line, copyable; the span is in the address.
+    assert.equal(await page.getByTestId("repair-log").innerText(), "Onarım kaydı");
     await page.getByTestId("repair-log").click();
-    let sheet = page.getByRole("dialog", { name: "Denetim ve onarım günlüğü" });
+    let sheet = page.getByRole("dialog", { name: "Onarım kaydı" });
     await sheet.waitFor();
-    assert.equal((await queryOf(page)).get("gunluk"), "72s");
+    assert.equal((await queryOf(page)).get("kayit"), "72s");
     assert.equal(await sheet.locator(".modal-desc").innerText(), "Son 72 saat");
     const logText = sheet.getByTestId("repair-log-text");
     await logText.waitFor();
@@ -270,12 +329,12 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.equal(gets("onarim/gunluk").at(-1).query, "?sure=72s");
     assert(await logText.evaluate((el) => el.scrollHeight > el.clientHeight && el.scrollTop + el.clientHeight >= el.scrollHeight - 2), "scrolled to the newest line");
     assert.equal(await sheet.locator('[data-sure="72s"]').getAttribute("aria-pressed"), "true");
-    await sheet.getByRole("button", { name: "Günlük kopyala" }).click();
-    await sheet.getByRole("status").filter({ hasText: "Günlük kopyalandı." }).waitFor();
+    await sheet.getByRole("button", { name: "Onarım kaydı kopyala" }).click();
+    await sheet.getByRole("status").filter({ hasText: "Onarım kaydı kopyalandı." }).waitFor();
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), LOG72.trim(), "the whole text is copied");
     await shot(page, "1440-light-onarim-gunlugu.png");
     await sheet.locator('[data-sure="7g"]').click();
-    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("gunluk") === "7g");
+    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("kayit") === "7g");
     await logText.filter({ hasText: "refresh-tailnet-config" }).waitFor();
     assert.equal(await sheet.locator(".modal-desc").innerText(), "Son 1 hafta");
     assert.equal(gets("onarim/gunluk").at(-1).query, "?sure=7g");
@@ -283,7 +342,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     expectedFailures = ["/api/konsol/onarim/gunluk"];
     logReplies.push({ status: 502, body: { error: "Günlük okunamadı." } });
     await page.reload();
-    sheet = page.getByRole("dialog", { name: "Denetim ve onarım günlüğü" });
+    sheet = page.getByRole("dialog", { name: "Onarım kaydı" });
     await sheet.getByTestId("repair-log-error").filter({ hasText: "Günlük okunamadı." }).waitFor();
     expectedFailures = [];
     logReplies.push({ contentType: "text/plain; charset=utf-8", body: "\n" });
@@ -298,7 +357,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     await page.waitForURL((u) => u.hash === "#/sistem?sekme=guncellemeler");
     assert.equal(await activeText(page), "Güncellemeler");
     await page.keyboard.press("End");
-    await page.waitForURL((u) => u.hash === "#/sistem?sekme=gunluk");
+    await page.waitForURL((u) => u.hash === "#/sistem?sekme=gecmis");
     await page.keyboard.press("Home");
     await page.waitForURL((u) => u.hash === "#/sistem");
     await page.context().close();
@@ -311,10 +370,21 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.deepEqual(await facts.locator("dd").allInnerTexts(), ["1.1.0 yapı 2026.08.06-v2-248", "1.2.0 yapı 2026.10.12-v2-252 · abcdef1",
       `${dateTime(NOW - 3600)} (60 dakika önce)`]);
     assert.equal(await page.getByTestId("update-state").innerText(), "Yeni sürüm var");
-    data.guncelleme = update({ denetlendi: NOW });
+    assert.equal(await page.locator("#surum-baslik").innerText(), "Obhut");
+    // The applications' image updates: counted here, each confirmed on its own page.
+    const appUpdates = page.getByTestId("app-updates");
+    assert.equal(await appUpdates.getByTestId("app-updates-count").innerText(), "1 bekliyor");
+    assert.deepEqual(await appUpdates.locator(".update-app .cell-stack").allInnerTexts(), ["notlar\nregistry.example/notlar:1 · yeni yapı"]);
+    assert.equal(await appUpdates.getByRole("link", { name: "notlar: uygulamaya git" }).getAttribute("href"), "#/uygulamalar/notlar");
+    assert.equal(await appUpdates.getByTestId("app-updates-note").innerText(), `Son denetim ${dateTime(NOW - 600)} (10 dakika önce). Güncelleme uygulamanın sayfasında onaylanır.`);
+    await shot(page, "1440-light-guncellemeler.png", true);
+    data.guncelleme = update({ denetlendi: NOW, uygulamalar: { sayi: 0, adlar: [], denetlendi: NOW - 60 } });
     await page.getByTestId("update-check").click();
     await page.getByTestId("update-note").filter({ hasText: "Yeni sürüm var: 1.2.0" }).waitFor();
     assert.equal(gets("guncelleme").at(-1).query, "?yenile=1", "past the server's cache");
+    await appUpdates.getByText("Bütün uygulamalar güncel.").waitFor();
+    assert.equal(await appUpdates.getByTestId("app-updates-count").innerText(), "Yok");
+    await appUpdates.getByRole("link", { name: "notlar: uygulamaya git" }).waitFor({ state: "detached" });
     // The confirmation says what happens; a refusal stays in it.
     await page.getByTestId("update-start").click();
     dialog = page.getByRole("dialog", { name: "Sunucu 1.2.0 sürümüne güncellensin mi?" });
@@ -374,6 +444,13 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.equal(await page.getByTestId("update-error").innerText(), "Sürüm denetlenemedi: GitHub'a ulaşılamadı.");
     assert.equal(await page.getByTestId("update-last-failure").innerText(), "Son deneme başarısız: imza doğrulanamadı");
     assert.equal(await page.getByTestId("update-start").count(), 0, "nothing to update to");
+    await page.context().close();
+    // Applications never checked yet.
+    data.guncelleme = update({ uygulamalar: { sayi: 0, adlar: [], denetlendi: null } });
+    page = await newPage();
+    await page.goto(url("#/sistem?sekme=guncellemeler"));
+    await page.getByTestId("app-updates").getByText("İmajlar henüz denetlenmedi.").waitFor();
+    assert.equal(await page.getByTestId("app-updates-note").innerText(), "Güncelleme uygulamanın sayfasında onaylanır.");
     await page.context().close();
     data.guncelleme = update();
 
@@ -490,28 +567,25 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     data.kaynaklar = { ...data.kaynaklar, uptime: 5 * DAY + 3600 };
     await page.context().close();
 
-    // ================= Görünüm: the theme
+    // ================= no Görünüm: an old tab address shows Sağlık; the theme is the top bar's (yeni-ui.cjs)
     page = await newPage();
     await page.goto(url("#/sistem?sekme=gorunum"));
-    await page.getByRole("radio", { name: "Koyu" }).click();
-    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "dark");
-    await page.getByRole("radio", { name: "Sistem" }).click();
-    assert.equal(await page.evaluate(() => document.documentElement.hasAttribute("data-theme")), false);
+    await page.getByTestId("checks").waitFor();
+    assert.equal(await page.getByRole("tab", { selected: true }).innerText(), "Sağlık");
+    assert.equal(await page.getByRole("radio", { name: "Koyu" }).count(), 0);
 
-    // ================= Günlük: newest first, in words (WireGuard's lines from their own table), kinds and search
-    await page.goto(url("#/sistem?sekme=gunluk"));
+    // ================= İşlem geçmişi: newest first, every kind in words, kinds and search
+    await page.goto(url("#/sistem?sekme=gecmis"));
     const audit = page.getByTestId("audit");
     await audit.locator("tbody tr").first().waitFor();
-    assert.deepEqual(await audit.getByTestId("audit-line").allInnerTexts(), [
-      "Denetim ve onarım başlatıldı", "WireGuard durduruldu", "wg0/telefon eklendi", "wg0/telefon için keepalive 25 sn", "wg0/telefon kapatıldı",
-      "wg0 ağı açıldı", "İmaj indirme istendi: docker.io/library/redis:7.4", "Uygulama kaldırma istendi: notlar (veri: sakla)", "Yeni klasör: Filmler",
-      "Konsol parolası değiştirildi — başarısız",
-      "Ayarlar uygulandı", "Sunucunun yeniden başlatılması istendi (5 sn)", "Klasör paylaşımı kaydedildi"]);
-    assert.deepEqual(await audit.locator('td[data-label="Tür"]').allInnerTexts(),
-      ["Konsol", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "Uygulamalar", "Uygulamalar", "Dosyalar", "Konsol", "Ayarlar", "Konsol",
-        "Paylaşımlar"]);
+    assert.equal(await audit.locator(".card-title").innerText(), "İşlem geçmişi");
+    assert.deepEqual(await audit.getByTestId("audit-line").allInnerTexts(), AUDIT_LINES);
+    assert.deepEqual(await audit.locator('td[data-label="Tür"]').allInnerTexts(), [
+      "Konsol", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "Erişim", "Erişim", "Erişim",
+      "Gelişmiş", "Uygulamalar", "Uygulamalar", "Uygulamalar", "Uygulamalar", "Dosyalar", "Dosyalar", "Dosyalar", "Konsol", "Konsol", "Erişim", "Konsol",
+      "Konsol", "Paylaşımlar"]);
     assert.deepEqual(await audit.locator('tr[data-tur="wireguard"]').evaluateAll((rows) => rows.map((r) => r.dataset.eylem)),
-      ["wireguard-durdur", "wireguard-ekle", "wireguard-keepalive", "wireguard-peer-durum", "wireguard-ag-durum"]);
+      ["ayar-apply", "ayar-confirm", "ayar-apply", "wireguard-ekle", "wireguard-keepalive", "wireguard-peer-durum", "wireguard-ag-ayarlar", "wireguard-qr"]);
     const failed = audit.locator('tr[data-eylem="parola-degis"]');
     assert.match(await failed.getAttribute("class"), /audit-failed/);
     assert.equal(await failed.locator('td[data-label="Kim"]').innerText(), "konsol\n203.0.113.50");
@@ -519,29 +593,29 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     const chips = audit.getByRole("group", { name: "Türe göre süz" }).locator(".filter-chip");
     // The fixed kinds in their own order, whatever order the lines come in.
     assert.deepEqual((await chips.allInnerTexts()).map((t) => t.replace(/\s+/g, " ")),
-      ["Tümü 13", "Konsol 3", "Ayarlar 1", "Paylaşımlar 1", "WireGuard 5", "Dosyalar 1", "Uygulamalar 2"]);
+      ["Tümü 26", "Konsol 5", "Uygulamalar 4", "Erişim 4", "WireGuard 8", "Paylaşımlar 1", "Dosyalar 3", "Gelişmiş 1"]);
     await chips.filter({ hasText: "WireGuard" }).click();
     await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("tur") === "wireguard");
     assert.equal(await chips.filter({ hasText: "WireGuard" }).getAttribute("aria-pressed"), "true");
-    assert.deepEqual(await audit.getByTestId("audit-line").allInnerTexts(),
-      ["WireGuard durduruldu", "wg0/telefon eklendi", "wg0/telefon için keepalive 25 sn", "wg0/telefon kapatıldı", "wg0 ağı açıldı"]);
+    assert.deepEqual(await audit.getByTestId("audit-line").allInnerTexts(), AUDIT_LINES.slice(1, 9));
     await chips.filter({ hasText: "Tümü" }).click();
     const search = audit.getByTestId("audit-search");
-    await search.fill("İMAJ");
-    assert.deepEqual(await audit.getByTestId("audit-line").allInnerTexts(), ["İmaj indirme istendi: docker.io/library/redis:7.4"], "İ folds to i");
-    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("ara") === "İMAJ");
+    assert.equal(await search.getAttribute("placeholder"), "Geçmişte ara");
+    await search.fill("İMAJ GÜNCELLEME");
+    assert.deepEqual(await audit.getByTestId("audit-line").allInnerTexts(), ["Uygulama imaj güncellemesi istendi: ornek"], "İ folds to i");
+    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("ara") === "İMAJ GÜNCELLEME");
     await search.fill("ımaj");
     await audit.getByText("Eşleşen kayıt yok").waitFor();
     await search.fill("203.0.113.50");
     assert.deepEqual(await audit.getByTestId("audit-line").allInnerTexts(), ["Konsol parolası değiştirildi — başarısız"], "the address is searched too");
     // A shared link opens the same view; "Süzgeci temizle" empties both.
-    await page.goto(url("#/sistem?sekme=gunluk&tur=dosya&ara=yok-boyle"));
+    await page.goto(url("#/sistem?sekme=gecmis&tur=dosya&ara=yok-boyle"));
     await audit.getByText("Eşleşen kayıt yok").waitFor();
     assert.equal(await search.inputValue(), "yok-boyle");
     assert.equal(await chips.filter({ hasText: "Dosyalar" }).getAttribute("aria-pressed"), "true");
     await audit.getByRole("button", { name: "Süzgeci temizle" }).click();
-    await page.waitForURL((u) => u.hash === "#/sistem?sekme=gunluk");
-    assert.equal(await audit.getByTestId("audit-line").count(), 13);
+    await page.waitForURL((u) => u.hash === "#/sistem?sekme=gecmis");
+    assert.equal(await audit.getByTestId("audit-line").count(), AUDIT.length);
     await page.context().close();
 
     // ================= the internet channel: locks, the account with the current password, sign-out
@@ -672,18 +746,36 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.deepEqual(await dns.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.ad)), ["panel.ev", "notlar.ev", "yazici.ev"]);
     assert.deepEqual(await dns.locator('tbody td[data-label="Kaynak"]').allInnerTexts(), ["Temel", "uygulama", "Temel"], "base is Temel, any other source as it is");
     assert.deepEqual(await dns.locator('tr[data-ad="notlar.ev"] td').allInnerTexts(), ["100.64.0.2, fd7a:115c:a1e0::2", "IPv4 + IPv6", "uygulama"]);
-    assert.equal(await dns.getByRole("link", { name: "Yerel adları Erişim'de değiştir" }).getAttribute("href"), "#/erisim?sekme=adresler");
+    assert.equal(await dns.getByRole("link", { name: "Yerel adları Erişim'de değiştir" }).getAttribute("href"), "#/erisim?sekme=adlar");
     assert.equal(await dns.getByTestId("raw").evaluate((d) => d.open), true, "?ham=1 stays in the address");
     assert.deepEqual(await dns.locator(".raw-path").allInnerTexts(), ["/etc/dnsmasq.d/master-stack.conf", "/etc/dnsmasq.d/modul-uygulama.conf"]);
-    // The firewall's technical rules are Erişim's: a way there, no copy.
+    // Güvenlik duvarı: the technical rules and the listeners per family, read-only, with the way to Erişim.
     await page.getByRole("tab", { name: "Güvenlik duvarı" }).click();
     const fw = page.getByTestId("advanced-firewall");
-    assert.equal(await fw.getByTestId("firewall-rules").getAttribute("href"), "#/erisim?sekme=guvenlik-duvari&kurallar=1");
-    assert.equal(await fw.getByTestId("firewall-ports").getAttribute("href"), "#/erisim?sekme=guvenlik-duvari");
-    assert.equal(await fw.locator("table").count(), 0);
+    const technical = fw.getByTestId("fw-technical");
+    await technical.locator("tbody tr").first().waitFor();
+    assert.equal(await technical.getByTestId("fw-manage").getAttribute("href"), "#/erisim?sekme=guvenlik-duvari");
+    assert.deepEqual(await technical.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.zincir)), ["MASTER-INPUT", "ts-input"], "IPv4 first");
+    assert.deepEqual(await technical.locator('tr[data-zincir="MASTER-INPUT"] td').allInnerTexts(),
+      ["1", "-A MASTER-INPUT -i lo -j ACCEPT", "12.345 paket · 6.789.012 bayt", "Obhut"]);
+    const listeners = fw.getByTestId("fw-listeners");
+    assert.deepEqual(await listeners.locator('td[data-label="Ağ"]').allInnerTexts(), ["Tüm arayüzler", "Tailscale", "Yalnız bu sunucu"]);
+    assert.equal(await fw.getByRole("button", { name: /Uygula|Kaydet|Ekle/ }).count(), 0, "nothing is changed here");
+    await shot(page, "1440-light-gelismis-duvar.png", true);
+    await fw.locator('[data-aile="6"]').click();
+    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("aile") === "6");
+    assert.deepEqual(await technical.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.zincir)), ["MASTER-INPUT"]);
+    assert.equal(await technical.locator(".cell-sub").innerText(), "filter · IPv6");
+    assert.deepEqual(await listeners.locator("tbody .mono").allInnerTexts(), ["80", "fd7a:115c:a1e0::2"]);
+    // "Yenile" asks past the cache; a listener read that failed says so.
+    data["guvenlik-duvari"] = { ...FIREWALL, dinleyiciler: null };
+    await fw.getByTestId("fw-refresh").click();
+    await listeners.getByTestId("fw-listeners-error").filter({ hasText: "Dinleyiciler okunamadı." }).waitFor();
+    assert.equal(gets("guvenlik-duvari").at(-1).query, "?yenile=1");
+    data["guvenlik-duvari"] = FIREWALL;
     await page.context().close();
 
-    // ================= Gelişmiş → Podman: images, volumes, networks and their jobs
+    // ================= Gelişmiş → Podman: the inventory read-only, the cleanup its only write
     page = await newPage();
     await page.goto(url("#/gelismis?sekme=podman"));
     const podman = page.getByTestId("podman");
@@ -691,171 +783,155 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.match(await page.getByTestId("podman-runtime").innerText(), /Podman 5\.4\.2 · bu sunucu, rootful, systemd ile yönetilir/);
     const resTabs = podman.getByRole("tablist", { name: "Podman kaynakları" }).getByRole("tab");
     assert.deepEqual(await resTabs.allInnerTexts(), ["İmajlar\n3", "Birimler\n3", "Ağlar\n3"]);
+    assert.deepEqual(await podman.getByRole("button").allInnerTexts(), ["Yenile", "Yenile", "Temizle…"], "nothing to pull, create, start or adopt");
     const images = podman.getByTestId("images");
     const image = (name) => images.locator(`tr[data-imaj="${name}"]`);
-    assert.equal(await images.locator(".resource-head .meter-note").innerText(), "Yalnız Konsol'un yönettiği ve hiçbir konteynerin kullanmadığı imajlar silinir.");
-    const external = image("quay.io/example/yedekci@sha256:" + ID("1"));
-    assert(await external.getByRole("button", { name: /imajını sil$/ }).isDisabled(), "an image Konsol does not manage stays");
-    assert.equal(await external.locator(".col-main .cell-note").innerText(), "Konsol bu imajı yönetmiyor.");
-    assert(await image("docker.io/library/nginx:1.27").getByRole("button").isDisabled(), "an image in use stays");
-    assert.equal(await image("docker.io/library/nginx:1.27").locator(".col-main .cell-note").innerText(), "Kullanımda: notlar. Önce konteyneri kaldırın.");
     const redis = image("docker.io/library/redis:7.4");
-    assert.deepEqual(await redis.locator("td").allInnerTexts().then((l) => l.slice(0, 4)), ["cccccccccccc", "40 MB", new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long", year: "numeric" }).format(new Date((NOW - 2 * DAY) * 1000)), "kullanılmıyor"]);
-    await shot(page, "1440-light-podman-imajlar.png", true);
-    // İmaj çek: a fully qualified reference only; the job is followed to its end in the sheet.
-    await podman.getByTestId("image-pull").click();
-    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("yeni") === "imaj");
-    sheet = page.getByRole("dialog", { name: "İmaj çek" });
-    const imageField = sheet.getByLabel("İmaj");
-    assert(await imageField.evaluate((el) => el === document.activeElement));
-    await imageField.fill("redis:7");
-    await sheet.getByTestId("form-go").click();
-    await sheet.locator(".field-error").filter({ hasText: "İmajın tam adını yazın: kayıt adresi, depo ve etiket (ör. docker.io/library/redis:7.4-alpine)." }).waitFor();
-    assert.equal(posts("konteynerler/islem").length, 0);
-    assert.equal(await guarded(page), true, "a typed reference asks before leaving");
-    expectedFailures = ["/api/konsol/konteynerler/islem"];
-    jobReplies.push({ status: 400, body: { error: "İmaj kayıt adresi izinli değil." } });
-    await imageField.fill("docker.io/library/redis:7.4-alpine");
-    await sheet.getByTestId("form-go").click();
-    await sheet.getByTestId("form-error").filter({ hasText: "İmaj kayıt adresi izinli değil." }).waitFor();
-    expectedFailures = [];
-    await sheet.getByTestId("form-go").click();
-    await sheet.getByTestId("form-progress").filter({ hasText: "İmaj çekiliyor…" }).waitFor();
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "image-pull", image: "docker.io/library/redis:7.4-alpine" });
-    const pullId = String(jobSeq).padStart(32, "0");
-    push("islemler", { items: [job({ id: pullId, ad: "docker.io/library/redis:7.4-alpine · İmaj indirme", adim: "Katmanlar indiriliyor" })] });
-    await sheet.getByTestId("form-progress").filter({ hasText: "Katmanlar indiriliyor" }).waitFor();
-    await shot(page, "1440-light-imaj-cekiliyor.png");
-    const listReads = gets("konteynerler/liste").length;
-    data["konteynerler/liste"] = resources();
-    data["konteynerler/liste"].images.push({ id: ID("9"), name: "docker.io/library/redis:7.4-alpine", size: 31457280, created: NOW, used_by: [], managed: true });
-    push("islemler", { items: [job({ id: pullId, durum: "tamam", bitis: NOW + 10 })] });
-    await sheet.waitFor({ state: "detached" });
-    await page.getByTestId("podman-done").filter({ hasText: "docker.io/library/redis:7.4-alpine: imaj çekildi." }).waitFor();
-    await image("docker.io/library/redis:7.4-alpine").waitFor();
-    assert(gets("konteynerler/liste").length > listReads, "the list is read again");
-    assert.equal((await queryOf(page)).get("yeni"), null);
-    // A pull that fails: its reason in the sheet.
-    await podman.getByTestId("image-pull").click();
-    await sheet.getByLabel("İmaj").fill("ghcr.io/example/yok:1.0");
-    await sheet.getByTestId("form-go").click();
-    await sheet.getByTestId("form-progress").waitFor();
-    push("islemler", { items: [job({ id: String(jobSeq).padStart(32, "0"), durum: "hata", adim: "manifest unknown", bitis: NOW + 20 })] });
-    await sheet.getByTestId("form-error").filter({ hasText: "ghcr.io/example/yok:1.0: İmaj çekilemedi: manifest unknown" }).waitFor();
-    await page.keyboard.press("Escape");
-    await sheet.waitFor({ state: "detached" });
-    // Removing an unused image: the typed word, the row's step, the end.
-    await redis.getByRole("button", { name: "docker.io/library/redis:7.4 imajını sil" }).click();
-    dialog = page.getByRole("dialog", { name: "docker.io/library/redis:7.4 silinsin mi?" });
-    await dialog.waitFor();
-    assert(await dialog.getByTestId("remove-go").isDisabled());
-    await dialog.getByLabel("Onaylamak için onayla yazın").fill("onayla");
-    await dialog.getByTestId("remove-go").click();
-    await dialog.waitFor({ state: "detached" });
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "image-remove", image: ID("c") });
-    await redis.getByTestId("row-busy").filter({ hasText: "İmaj siliniyor…" }).waitFor();
-    data["konteynerler/liste"] = resources();
-    data["konteynerler/liste"].images.pop();
-    push("islemler", { items: [job({ id: String(jobSeq).padStart(32, "0"), durum: "tamam", bitis: NOW + 30 })] });
-    await page.getByTestId("podman-done").filter({ hasText: "docker.io/library/redis:7.4: imaj silindi." }).waitFor();
-    await redis.waitFor({ state: "detached" });
-
-    // Volumes: create one, remove an unused one (a failed job says why).
+    assert.deepEqual(await redis.locator("td").allInnerTexts(), ["cccccccccccc", "40 MB", new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long", year: "numeric" }).format(new Date((NOW - 2 * DAY) * 1000)), "kullanılmıyor"]);
+    // An application's name in "Kullanan" leads to its page.
+    assert.equal(await image("docker.io/library/nginx:1.27").getByRole("link", { name: "notlar" }).getAttribute("href"), "#/uygulamalar/notlar");
     await resTabs.filter({ hasText: "Birimler" }).click();
     await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("kaynak") === "birimler");
     const volumes = podman.getByTestId("volumes");
-    const volume = (name) => volumes.locator(`tr[data-birim="${name}"]`);
-    assert.deepEqual(await volumes.locator("tbody th .pill").allInnerTexts(), ["Dışarıda", "Konsol", "Dışarıda"]);
-    assert(await volume("notlar-veri").getByRole("button").isDisabled(), "a volume in use stays");
-    await podman.getByTestId("volume-create").click();
-    sheet = page.getByRole("dialog", { name: "Yeni birim" });
-    await sheet.getByLabel("Birim adı").fill("Ornek!");
-    await sheet.getByTestId("form-go").click();
-    await sheet.locator(".field-error").filter({ hasText: "Birim adı küçük harf ya da rakamla başlar; küçük harf, rakam ve - _ . içerir." }).waitFor();
-    await sheet.getByLabel("Birim adı").fill("yedek-veri");
-    await sheet.getByTestId("form-go").click();
-    await sheet.getByTestId("form-progress").waitFor();
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "volume-create", name: "yedek-veri" });
-    push("islemler", { items: [job({ id: String(jobSeq).padStart(32, "0"), durum: "tamam", bitis: NOW + 40 })] });
-    await page.getByTestId("podman-done").filter({ hasText: "yedek-veri: birim oluşturuldu." }).waitFor();
-    await volume("eski").getByRole("button", { name: "eski birimini sil" }).click();
-    dialog = page.getByRole("dialog", { name: "eski silinsin mi?" });
-    assert.equal(await dialog.locator(".modal-list").innerText(), "Birimdeki bütün veri kalıcı olarak silinir; geri alınamaz.");
-    await dialog.getByLabel("Onaylamak için onayla yazın").fill("onayla");
-    await shot(page, "1440-light-birim-sil.png");
-    await dialog.getByTestId("remove-go").click();
-    await dialog.waitFor({ state: "detached" });
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "volume-remove", name: "eski" });
-    push("islemler", { items: [job({ id: String(jobSeq).padStart(32, "0"), durum: "hata", adim: "Kaynak bir konteynerde veya kayıtlı tanımda kullanılıyor.", bitis: NOW + 50 })] });
-    await page.getByTestId("podman-failed").filter({ hasText: "eski: Birim silinemedi: Kaynak bir konteynerde veya kayıtlı tanımda kullanılıyor." }).waitFor();
-
-    // Networks: the system's stay, an internal one with a subnet is created, an unused one removed.
+    assert.deepEqual(await volumes.locator("tbody th .pill").allInnerTexts(), ["Dışarıda", "Obhut", "Dışarıda"]);
     await resTabs.filter({ hasText: "Ağlar" }).click();
     const networks = podman.getByTestId("networks");
     const network = (name) => networks.locator(`tr[data-ag="${name}"]`);
-    assert.deepEqual(await network("kapali-ag").locator(".pill").allInnerTexts(), ["Konsol", "İç ağ"]);
+    assert.deepEqual(await network("kapali-ag").locator(".pill").allInnerTexts(), ["Obhut", "İç ağ"]);
     assert.equal(await network("podman").locator(".pill").innerText(), "Sistem");
-    assert(await network("podman").getByRole("button").isDisabled());
-    assert.equal(await network("podman").locator(".col-main .cell-note").innerText(), "Konsol yönetmiyor; silinemez.");
     assert.equal(await network("konsol").locator('td[data-label="Alt ağ"]').innerText(), "10.89.0.0/24");
-    assert(await network("konsol").getByRole("button").isDisabled(), "in use");
-    await podman.getByTestId("network-create").click();
-    sheet = page.getByRole("dialog", { name: "Yeni ağ" });
-    await sheet.getByLabel("Ağ adı").fill("medya-ag");
-    await sheet.getByLabel("Alt ağ").fill("10.89.9.0");
-    await sheet.getByTestId("form-go").click();
-    await sheet.locator(".field-error").filter({ hasText: "Alt ağı CIDR olarak yazın (ör. 10.89.5.0/24)." }).waitFor();
-    await sheet.getByLabel("Alt ağ").fill("10.89.9.0/24");
-    await sheet.getByLabel("İç ağ").check();
-    await shot(page, "1440-light-yeni-ag.png");
-    await sheet.getByTestId("form-go").click();
-    await sheet.getByTestId("form-progress").waitFor();
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "network-create", name: "medya-ag", subnet: "10.89.9.0/24", internal: true });
-    // Closing the sheet leaves the job running; its end is reported on the page.
-    await sheet.getByRole("button", { name: "Kapat", exact: true }).last().click();
-    await sheet.waitFor({ state: "detached" });
-    push("islemler", { items: [job({ id: String(jobSeq).padStart(32, "0"), durum: "tamam", bitis: NOW + 60 })] });
-    await page.getByTestId("podman-done").filter({ hasText: "medya-ag: ağ oluşturuldu." }).waitFor();
-    await network("kapali-ag").getByRole("button", { name: "kapali-ag ağını sil" }).click();
-    dialog = page.getByRole("dialog", { name: "kapali-ag ağı silinsin mi?" });
-    await dialog.getByLabel("Onaylamak için onayla yazın").fill("onayla");
-    await dialog.getByTestId("remove-go").click();
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "network-remove", name: "kapali-ag" });
-    push("islemler", { items: [job({ id: String(jobSeq).padStart(32, "0"), durum: "tamam", bitis: NOW + 70 })] });
-    await page.getByTestId("podman-done").filter({ hasText: "kapali-ag: ağ silindi." }).waitFor();
+    // The containers Obhut does not manage: read-only, each with who runs it.
+    const unmanaged = podman.getByTestId("unmanaged");
+    assert.deepEqual(await unmanaged.locator("[data-konteyner]").evaluateAll((rows) => rows.map((r) => r.dataset.konteyner)), ["deneme", "yetim", "baskasi"]);
+    assert.match(await unmanaged.locator('[data-konteyner="deneme"]').innerText(), /registry\.example\/deneme:1\nYalnız Podman; Uygulama ekle'de var olan konteyner olarak seçilebilir/);
+    assert.match(await unmanaged.locator('[data-konteyner="yetim"]').innerText(), /Bir uygulamanın etiketini taşıyor ama kaydı yok/);
+    assert.equal(await unmanaged.locator("button, a").count(), 0, "no action on them");
+
+    // The cleanup: what nothing uses, in groups; nothing goes before it is ticked, named and the word typed.
+    const cleanup = podman.getByTestId("cleanup");
+    assert.deepEqual(await cleanup.locator("fieldset").evaluateAll((g) => g.map((x) => x.dataset.tur)), ["imajlar", "aglar", "birimler", "klasorler"]);
+    assert.deepEqual(await cleanup.locator("legend").allInnerTexts(), ["Kullanılmayan imajlar (2)", "Kullanılmayan ağlar (1)", "Kullanılmayan birimler (1)",
+      "Kaldırılmış uygulamaların klasörleri (2)"]);
+    const item = (kind, value) => cleanup.locator(`fieldset[data-tur="${kind}"] [data-oge="${value}"]`);
+    assert.equal(await item("imajlar", ID("a")).locator("strong").innerText(), "<etiketsiz> aaaaaaaaaaaa");
+    assert.match(await item("klasorler", "eskiuygulama").locator(".cell-note").innerText(), /^Uygulama eskiuygulama kaldırılmış · 1,2 GB$/);
+    assert.equal(await item("klasorler", "buyuk").locator(".cell-note").innerText(), "Uygulama buyuk kaldırılmış · Ölçüm süreye sığmadı; klasörde çok fazla öge var.");
+    const start = cleanup.getByTestId("cleanup-start");
+    assert(await start.isDisabled(), "nothing ticked");
+    assert.equal(await cleanup.getByTestId("cleanup-chosen").innerText(), "Kaldırılacakları seçin.");
+    await item("imajlar", ID("c")).getByRole("checkbox").check();
+    await item("klasorler", "eskiuygulama").getByRole("checkbox").check();
+    await cleanup.locator('[data-hepsi="aglar"]').check();
+    assert.equal(await cleanup.getByTestId("cleanup-chosen").innerText(), "3 öge seçili · 1,2 GB");
+    assert.equal(await cleanup.locator('[data-hepsi="imajlar"]').evaluate((el) => el.indeterminate), true, "some of a group");
+    await shot(page, "1440-light-temizlik.png", true);
+    await start.click();
+    dialog = page.getByRole("dialog", { name: "Temizlensin mi?" });
+    await dialog.waitFor();
+    assert.equal(await dialog.locator(".modal-desc").innerText(), "3 öge kalıcı olarak kaldırılır.");
+    assert.deepEqual(await dialog.getByTestId("cleanup-dialog-list").locator("li").allInnerTexts(), [
+      "docker.io/library/redis:7.4\nKullanılmayan imaj · 40 MB", "eski-ag\nKullanılmayan ağ", `${DATA_DIR}/eskiuygulama\nKaldırılmış uygulamanın klasörü · 1,2 GB`]);
+    const goClean = dialog.getByTestId("cleanup-go");
+    assert(await goClean.isDisabled(), "the typed word first");
+    await dialog.getByLabel("Onaylamak için temizle yazın").fill("TEMIZLE");
+    assert(await goClean.isDisabled(), "Turkish case rules: I folds to ı");
+    await dialog.getByLabel("Onaylamak için temizle yazın").fill(" TEMİZLE ");
+    assert(await goClean.isEnabled(), "İ folds to i, spaces ignored");
+    await shot(page, "1440-light-temizlik-sor.png");
+    // A refusal stays in the dialog with the backend's words.
+    expectedFailures = ["/api/konsol/gelismis/temizlik"];
+    cleanupReplies.push({ status: 409, body: { error: "Bir uygulama işlemi sürüyor; bitince yeniden deneyin." } });
+    await goClean.click();
+    await dialog.getByTestId("cleanup-dialog-error").filter({ hasText: "Bir uygulama işlemi sürüyor; bitince yeniden deneyin." }).waitFor();
+    expectedFailures = [];
+    await goClean.click();
+    await dialog.waitFor({ state: "detached" });
+    assert.deepEqual(posts("gelismis/temizlik"), [{ imajlar: [ID("c")], aglar: ["eski-ag"], klasorler: ["eskiuygulama"] }, { imajlar: [ID("c")], aglar: ["eski-ag"], klasorler: ["eskiuygulama"] }]);
+    // The job runs in İşlemler; its end says what went.
+    await cleanup.getByTestId("cleanup-running").waitFor();
+    assert(await cleanup.getByTestId("cleanup-start").isDisabled(), "one cleanup at a time");
+    push("islemler", { items: [job({ id: HEX("7"), ad: "Podman · Temizlik", adim: "Kaldırılıyor: eski-ag" })] });
+    await cleanup.getByTestId("cleanup-running").filter({ hasText: "Temizlik sürüyor · Kaldırılıyor: eski-ag" }).waitFor();
+    await cleanup.getByTestId("cleanup-jobs").click();
+    const drawer = page.getByRole("dialog", { name: "İşlemler" });
+    await drawer.locator(".job").filter({ hasText: "Podman · Temizlik" }).filter({ hasText: "Gelişmiş · Kaldırılıyor: eski-ag" }).waitFor();
+    await page.keyboard.press("Escape");
+    jobRecord = { id: HEX("7"), action: "temizlik", name: "Podman", state: "done", step: "",
+      result: { ok: true, kaldirilan: [{ tur: "imaj", ad: ID("c") }, { tur: "ag", ad: "eski-ag" }, { tur: "klasor", ad: "eskiuygulama" }] } };
+    data["gelismis/temizlik"] = cleanupView({ imajlar: [cleanupView().imajlar[1]], aglar: [], klasorler: [cleanupView().klasorler[1]] });
+    const cleanupReads = gets("gelismis/temizlik").length;
+    push("islemler", { items: [job({ id: HEX("7"), ad: "Podman · Temizlik", durum: "tamam", bitis: NOW + 60 })] });
+    await cleanup.getByTestId("cleanup-result").filter({ hasText: "Temizlendi: 3 öge kaldırıldı (imaj cccccccccccc, ağ eski-ag, klasör eskiuygulama)." }).waitFor();
+    await waitFor(() => gets("gelismis/temizlik").length > cleanupReads, "the list read again");
+    await cleanup.locator('fieldset[data-tur="aglar"]').waitFor({ state: "detached" });
+    // A job that left items names them and why.
+    await item("birimler", "eski").getByRole("checkbox").check();
+    await cleanup.getByTestId("cleanup-start").click();
+    await dialog.getByLabel("Onaylamak için temizle yazın").fill("temizle");
+    cleanupReplies.push({ status: 202, body: { is: HEX("8") } });
+    await dialog.getByTestId("cleanup-go").click();
+    await dialog.waitFor({ state: "detached" });
+    push("islemler", { items: [job({ id: HEX("8"), ad: "Podman · Temizlik", durum: "hata", bitis: NOW + 90,
+      adim: "1 öge kaldırılmadı (0 kaldırıldı): eski: Birim bir konteynerde kullanılıyor." })] });
+    await cleanup.getByTestId("cleanup-result").filter({ hasText: "Temizlik tamamlanamadı: 1 öge kaldırılmadı (0 kaldırıldı): eski: Birim bir konteynerde kullanılıyor." }).waitFor();
+    assert.match(await cleanup.getByTestId("cleanup-result").getAttribute("class"), /notice-warning/);
+    // "Yenile" measures the folders again.
+    await cleanup.getByTestId("cleanup-refresh").click();
+    await waitFor(() => gets("gelismis/temizlik").some((r) => r.query === "?yenile=1"), "measured again");
+    assert.equal(posts("konteynerler/islem").length, 0);
     await page.context().close();
 
-    // A collection that could not be read says so; a runtime that does not answer locks the forms.
+    // Nothing to clean; a cleanup read that failed; a collection that could not be read; a runtime that does not answer.
+    data["gelismis/temizlik"] = cleanupView({ imajlar: [], aglar: [], birimler: [], klasorler: [], konteynerler: [], hatalar: ["notlar: tanım okunamadı."] });
+    page = await newPage();
+    await page.goto(url("#/gelismis?sekme=podman"));
+    await page.getByTestId("cleanup").getByText("Temizlenecek bir şey yok").waitFor();
+    assert.equal(await page.getByTestId("cleanup-warning").innerText(), "notlar: tanım okunamadı.");
+    assert.equal(await page.getByTestId("cleanup-start").count(), 0);
+    assert.equal(await page.getByTestId("unmanaged").locator(".card-text").innerText(), "Yok: bütün konteynerler bir uygulamanın.");
+    await page.context().close();
+    expectedFailures = ["/api/konsol/gelismis/temizlik"];
+    h.status["/api/konsol/gelismis/temizlik"] = 503;
     data["konteynerler/liste"] = resources({ volumes: undefined, resource_errors: { volumes: "Birimler okunamadı: podman volume ls 125" } });
     delete data["konteynerler/liste"].volumes;
     page = await newPage();
     await page.goto(url("#/gelismis?sekme=podman&kaynak=birimler"));
+    await page.getByTestId("cleanup-error").filter({ hasText: "fixture" }).waitFor();
+    assert.equal(await page.getByTestId("unmanaged").count(), 0, "not shown as empty");
     await page.getByTestId("volumes-error").filter({ hasText: "Birimler okunamadı: podman volume ls 125" }).waitFor();
     assert.equal(await page.getByRole("tab", { name: /Birimler/ }).innerText(), "Birimler\nokunamadı");
     data["konteynerler/liste"] = resources({ runtime: { version: "", ok: false, error: "Podman yanıt vermedi (podman info 125)." } });
     await page.getByTestId("podman-refresh").click();
     await page.getByTestId("podman-runtime-error").filter({ hasText: "Podman yanıt vermedi (podman info 125)." }).waitFor();
-    assert(await page.getByTestId("volume-create").isDisabled(), "nothing to create with");
     await page.getByTestId("volumes-error").filter({ hasText: "Podman yanıt vermedi (podman info 125)." }).waitFor();
     await page.context().close();
+    delete h.status["/api/konsol/gelismis/temizlik"];
+    expectedFailures = [];
     data["konteynerler/liste"] = resources();
+    data["gelismis/temizlik"] = cleanupView();
 
     // ================= the shell: Genel Bakış leads here, the palette knows the new tabs
     page = await newPage();
     await page.goto(url("#/genel"));
-    assert.equal(await page.getByRole("link", { name: "Tüm denetimler" }).getAttribute("href"), "#/sistem?sekme=saglik");
+    assert.equal(await page.getByRole("link", { name: "Tüm denetimler" }).getAttribute("href"), "#/sistem");
     await page.getByRole("link", { name: "Tüm denetimler" }).click();
-    await page.waitForURL((u) => u.hash === "#/sistem?sekme=saglik");
+    await page.waitForURL((u) => u.hash === "#/sistem");
     await page.getByTestId("checks").waitFor();
     await page.keyboard.press("Control+K");
     const palette = page.getByRole("dialog", { name: "Komut paleti" });
     const input = palette.getByRole("combobox");
-    await input.fill("günlük");
-    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Sistem", "Sistem → Günlük"], "the first tab is the section itself");
     await input.fill("işlem geçmişi");
-    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Sistem → Günlük"]);
+    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Sistem", "Sistem → İşlem geçmişi"], "the first tab is the section itself");
+    await input.fill("onarım kaydı");
+    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Sistem"], "Sağlık is the section's own page");
+    await input.fill("görünüm");
+    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Tema: sistem", "Tema: açık", "Tema: koyu"], "no Görünüm tab");
+    await input.fill("temizlik");
+    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Gelişmiş", "Gelişmiş → Podman", "İşlemleri göster"]);
+    await input.fill("geçmiş");
+    await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    await page.waitForURL((u) => u.hash === "#/sistem?sekme=gunluk");
+    await page.waitForURL((u) => u.hash === "#/sistem?sekme=gecmis");
     await page.keyboard.press("Control+K");
     await input.fill("imaj");
     const found = await palette.locator(".palette-option .palette-label").allInnerTexts();
@@ -871,16 +947,15 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
       ["guncellemeler", "#/sistem?sekme=guncellemeler", "[data-testid=update-facts]"],
       ["hesap", "#/sistem?sekme=hesap&parola=1", "[data-testid=password]"],
       ["sunucu", "#/sistem?sekme=sunucu", "[data-bilgi=root]"],
-      ["gorunum", "#/sistem?sekme=gorunum", "[data-testid=appearance]"],
-      ["gunluk", "#/sistem?sekme=gunluk", "[data-testid=audit] tbody tr"],
+      ["gecmis", "#/sistem?sekme=gecmis", "[data-testid=audit] tbody tr"],
       ["caddy", "#/gelismis?ham=1", "[data-testid=caddy] tbody tr"],
       ["dns", "#/gelismis?sekme=dns&ham=1", "[data-testid=dns] tbody tr"],
-      ["guvenlik", "#/gelismis?sekme=guvenlik-duvari", "[data-testid=advanced-firewall]"],
-      ["imajlar", "#/gelismis?sekme=podman", "[data-testid=images] tbody tr"],
+      ["guvenlik", "#/gelismis?sekme=guvenlik-duvari", "[data-testid=fw-technical] tbody tr"],
+      ["imajlar", "#/gelismis?sekme=podman", "[data-testid=cleanup] fieldset"],
       ["birimler", "#/gelismis?sekme=podman&kaynak=birimler", "[data-testid=volumes] tbody tr"],
       ["aglar", "#/gelismis?sekme=podman&kaynak=aglar", "[data-testid=networks] tbody tr"],
     ];
-    const SHEETS = [["gunluk-sayfasi", "#/sistem?gunluk=72s", "[data-testid=repair-log-text]"], ["yeni-ag", "#/gelismis?sekme=podman&kaynak=aglar&yeni=ag", "#podman-formu"]];
+    const SHEETS = [["onarim-kaydi", "#/sistem?kayit=72s", "[data-testid=repair-log-text]"]];
     for (const colorScheme of ["light", "dark"]) {
       for (const [width, height, mobile] of [[1440, 900, false], [390, 844, true], [320, 640, true]]) {
         page = await newPage({ colorScheme, viewport: { width, height }, ...(mobile ? { isMobile: true, hasTouch: true, reducedMotion: "reduce" } : {}) });
@@ -895,8 +970,8 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
         if (width === 390) {
           await page.goto(url("#/sistem"));
           assert.equal(await page.locator(".check-table tbody tr").first().evaluate((el) => getComputedStyle(el).display), "grid", "cards on a phone");
-          await page.goto(url("#/sistem?gunluk=72s"));
-          const box = await page.getByRole("dialog", { name: "Denetim ve onarım günlüğü" }).boundingBox();
+          await page.goto(url("#/sistem?kayit=72s"));
+          const box = await page.getByRole("dialog", { name: "Onarım kaydı" }).boundingBox();
           assert(Math.abs(box.y + box.height - height) <= 1 && box.width === width, "a bottom sheet on a phone");
         }
         await page.context().close();
@@ -904,21 +979,21 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     }
 
     assert.deepEqual(h.errors, []);
-    console.log("PASS: Konsol phase 4a Sistem and Gelişmiş under the production CSP — Sağlık (every check with problems first, the last " +
+    console.log("PASS: Konsol's Sistem and Gelişmiş under the production CSP — Sağlık (every check with problems first, the last " +
       "repair report with its source and steps, Denetle at once, Onar after a confirmation, a refusal, the report read every 2 s while a run " +
-      "goes on, its end through islemler, the repair log as plain text in a sheet: 72 h / 1 week in the address, newest line, copy, a failed " +
-      "read, an empty log), Güncellemeler (versions and builds, Yeniden denetle with ?yenile=1, the confirmation's words, a refusal, the run's " +
-      "stage through islemler, an earlier run ignored, the reload after success, a failed run without reload, a failed check), Hesap (create " +
-      "on the tailnet with master_auth's rules, a refusal, the tailnet password without the current one, the internet password with it, a " +
-      "wrong current password shown on the form, an ended session's 401 to sign-in, the leave guard), Sunucu (facts, the reboot's typed word, " +
-      "a refusal, the wait, the server going away and coming back, the reload), Görünüm, Günlük (newest first, WireGuard's lines in " +
-      "their own words, the fixed kinds in their order, Turkish search, the address), the internet channel's locks and sign-out (sidebar " +
-      "and phone menu), Gelişmiş (Caddy's sites with routes, owners as their sources, access and scheme, raw files in the address with " +
-      "copy, Yenile, a failed read; DNS from the same read with raw sources; the firewall's way to Erişim; Podman's images, volumes and " +
-      "networks: the blocks, İmaj çek with the reference check, a " +
-      "refusal, the job's steps and end, a failed job, removal with the typed word, creating volumes and networks, a closed sheet's job, an " +
-      "unreadable collection, a runtime that does not answer), Tüm denetimler, the palette, keyboard and focus, 1440/390/320 in light and " +
-      "dark. Screenshots: " + h.shots);
+      "goes on, its end through islemler, Onarım kaydı as plain text in a sheet: 72 h / 1 week in the address, newest line, copy, a failed " +
+      "read, an empty log), Güncellemeler (Obhut's versions and builds, Yeniden denetle with ?yenile=1, the confirmation's words, a refusal, " +
+      "the run's stage through islemler, an earlier run ignored, the reload after success, a failed run without reload, a failed check; the " +
+      "applications' image updates with their links, none, never checked), Hesap (create on the tailnet with master_auth's rules, a refusal, " +
+      "the tailnet password without the current one, the internet password with it, a wrong current password shown on the form, an ended " +
+      "session's 401 to sign-in, the leave guard), Sunucu (facts, the reboot's typed word, a refusal, the wait, the server going away and " +
+      "coming back, the reload), no Görünüm, İşlem geçmişi (newest first, every audit kind in words, the fixed kinds in their order, Turkish " +
+      "search, the address), the internet channel's locks and sign-out (sidebar and phone menu), Gelişmiş (Caddy's sites with routes, owners " +
+      "as their sources, access and scheme, raw files in the address with copy, Yenile, a failed read; DNS from the same read with raw " +
+      "sources; the firewall's technical rules and listeners per family, Yenile, an unreadable listener list; Podman's inventory read-only " +
+      "with application links, the unmanaged containers read-only, the cleanup: groups, ticks, the dialog naming what goes, the typed word, " +
+      "a refusal, the exact body, the job in İşlemler, what went, what stayed and why, nothing to clean, a failed read), Tüm denetimler, the " +
+      "palette, keyboard and focus, 1440/390/320 in light and dark. Screenshots: " + h.shots);
   } finally {
     await h.stop();
   }

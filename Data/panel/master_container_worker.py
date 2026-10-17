@@ -2,8 +2,8 @@
 """Explicit rootful container operations, run outside the panel sandbox.
 
 The broker (master_container_manager) runs every job as its own transient unit and hands it here with
-the request on standard input only. This module owns every container write: Gelişmiş's Podman resources
-(until phase 5) and the application lifecycle (rebuild DD-271, phase 3). Each action is a job with steps
+the request on standard input only. This module owns every container write: the application lifecycle (rebuild
+DD-271, phase 3) and Gelişmiş's cleanup of what nothing uses (K8). Each action is a job with steps
 and a durable record (KONTEYNER_STATE_DIR/operations/<id>.json) that never holds the request; a failure
 undoes what the job did, in reverse, and names the failed step. Secret values reach Podman on standard
 input only: never an argument, a file of Obhut's, a record, a log line or a reply.
@@ -23,8 +23,6 @@ import argparse
 import contextlib
 import copy
 import fcntl
-import hashlib
-import ipaddress
 import json
 import os
 from pathlib import Path
@@ -42,10 +40,10 @@ import master_container_binds as binds
 import master_container_config as cfg
 import master_settings as settings
 
-RESOURCE_ACTIONS = ('image-pull', 'image-remove', 'volume-create', 'volume-remove', 'network-create', 'network-remove')
+CLEANUP_ACTION = 'temizlik'
 APP_ACTIONS = ('uygulama-kur', 'uygulama-baslat', 'uygulama-durdur', 'uygulama-yeniden-baslat', 'uygulama-guncelle',
                'uygulama-tanim', 'uygulama-kaldir', 'uygulama-taslak')
-ACTIONS = RESOURCE_ACTIONS + APP_ACTIONS
+ACTIONS = APP_ACTIONS + (CLEANUP_ACTION,)
 # DD-266: the share guard (every 30 s) and the settings worker hold install.lock for a moment;
 # a container job waits for them (5 s) instead of failing at once.
 LOCK_WAIT = 5.0
@@ -221,8 +219,8 @@ class Manager:
             raise err
 
     def dispatch(self, action, request):
-        if action in RESOURCE_ACTIONS:
-            return self.resource(action, request)
+        if action == CLEANUP_ACTION:
+            return self.cleanup(request)
         return {'uygulama-kur': self.app_install, 'uygulama-baslat': self.app_start, 'uygulama-durdur': self.app_stop,
                 'uygulama-yeniden-baslat': self.app_restart, 'uygulama-guncelle': self.app_update,
                 'uygulama-tanim': self.app_define, 'uygulama-kaldir': self.app_remove,
@@ -263,118 +261,79 @@ class Manager:
         cfg.require(p.returncode in (0, 1), 'Podman envanteri okunamadı.', 502)
         return p.returncode == 0
 
-    # -- Gelişmiş's resources (until phase 5)
-    def image(self, reference):
-        reference = cfg.image_of(reference)
-        self.step('İmaj indiriliyor')
-        self.call(['podman', 'pull', '--quiet', reference], timeout=PULL_SECONDS)
-        info = self.json_call(['podman', 'image', 'inspect', reference])
-        cfg.require(isinstance(info, list) and len(info) == 1 and isinstance(info[0], dict), 'İmaj okunamadı.', 502)
-        return apps.pinned(info[0], reference)
-
-    def app_images(self):
-        """Every image an application's record pins or names (an image a record uses is never removed)."""
-        used = set()
-        records = self.records
-        for app in records.names():
-            record = records.load(app)
-            used |= set(record['places']['images'].values())
-            used |= {apps.reference(s['image'])[1] for s in record['definition']['services']}
-        return used
-
+    # -- Gelişmiş's cleanup (K8): unused images, networks, volumes and the data folders of removed applications
     def resource_users(self, kind, target):
+        """Whether any container, in any state, uses an image (ancestor), a network or a volume (Podman's filters)."""
         rows = self.json_call(['podman', 'ps', '-a', '--filter', ('ancestor' if kind == 'image' else kind) + '=' + target,
                                '--format', 'json'])
         cfg.require(isinstance(rows, list), 'Kaynak kullanımı okunamadı.', 502)
         return bool(rows)
 
-    def managed_network(self, name):
-        """A network Gelişmiş made: label konsol and the interface its name gives. An application's network goes
-        with the application."""
-        info = self.json_call(['podman', 'network', 'inspect', name])
-        cfg.require(isinstance(info, list) and len(info) == 1 and isinstance(info[0], dict), 'Ağ bilgisi okunamadı.', 502)
-        labels = info[0].get('labels') or {}
-        cfg.require(labels.get(cfg.MANAGED_LABEL) != apps.MANAGED, 'Bu ağ bir uygulamanın; uygulamayla birlikte kaldırılır.', 409)
-        prefix = self.env.get('KONTEYNER_BRIDGE_PREFIX', '')
-        interface = prefix + hashlib.sha256(name.encode()).hexdigest()[:10]
-        cfg.require(info[0].get('driver') == 'bridge' and info[0].get('network_interface') == interface and
-                    labels.get(cfg.MANAGED_LABEL) == 'konsol', 'Bu ağ Konsol tarafından yönetilmiyor.', 409)
+    def mount_sources(self):
+        """Every host path a container (in any state) mounts, resolved."""
+        rows = self.json_call(['podman', 'ps', '-a', '--format', 'json'])
+        cfg.require(isinstance(rows, list), 'Konteynerler okunamadı.', 502)
+        sources = set()
+        for row in rows:
+            ident = row.get('Id') if isinstance(row, dict) else None
+            cfg.require(isinstance(ident, str) and re.fullmatch(r'[0-9a-f]{64}', ident), 'Konteynerler okunamadı.', 502)
+            info = self.inspect(ident)
+            for mount in (info or {}).get('Mounts') or []:
+                if isinstance(mount, dict) and isinstance(mount.get('Source'), str) and mount['Source'].startswith('/'):
+                    sources.add(os.path.realpath(mount['Source']))
+        return sources
 
-    def create_network(self, request):
-        name = cfg.name_of(request.get('name'))
-        cfg.require(name not in ('bridge', 'host', 'none', 'podman') and not name.startswith('ksl-'), 'Bu ağ adı ayrılmıştır.')
-        cfg.require(type(request.get('internal', False)) is bool, 'Ağ seçeneği geçersiz.')
-        prefix = self.env.get('KONTEYNER_BRIDGE_PREFIX', 'ksl')
-        cfg.require(prefix.isalnum() and 1 <= len(prefix) <= 5, 'Konteyner köprü öneki geçersiz.', 503)
-        interface = prefix + hashlib.sha256(name.encode()).hexdigest()[:10]
-        argv = ['podman', 'network', 'create', '--driver', 'bridge', '--interface-name', interface,
-                '--label', cfg.MANAGED_LABEL + '=konsol']
-        if request.get('internal'):
-            argv.append('--internal')
-        if request.get('subnet'):
+    def cleanup(self, request):
+        """The selected items, each checked again as unused right before it is removed (cleanup_one). An item that is
+        in use or gone stays and is named; the others are removed, and then the job fails naming what stayed."""
+        removed, left = [], []
+        # The broker names the job (name); everything else is the selection.
+        for kind, target in apps.cleanup_items({k: v for k, v in request.items() if k != 'name'}):
+            self.step('Kaldırılıyor: %s' % target[:80])
             try:
-                subnet = ipaddress.ip_network(request['subnet'], strict=True)
-            except (ValueError, TypeError) as err:
-                raise cfg.ContainerConfigError(400, 'Ağ alt adresi geçersiz.') from err
-            private_ranges = [ipaddress.ip_network(s) for s in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')]
-            cfg.require(subnet.version == 4 and subnet.prefixlen >= 16 and any(subnet.subnet_of(s) for s in private_ranges),
-                        'Özel bir IPv4 alt ağı seçin (/16 veya daha dar).')
-            self.validate_subnet(subnet)
-            argv += ['--subnet', str(subnet)]
-        self.call(argv + [name])
-        return {'ok': True, 'name': name}
+                self.cleanup_one(kind, target)
+                removed.append({'tur': kind, 'ad': target})
+            except cfg.ContainerConfigError as err:
+                left.append('%s: %s' % (target[:80], err))
+        if left:
+            raise cfg.ContainerConfigError(409, ('%d öge kaldırılmadı (%d kaldırıldı): %s' % (len(left), len(removed), '; '.join(left)))[:900])
+        return {'ok': True, 'kaldirilan': removed}
 
-    def validate_subnet(self, subnet):
-        """A custom bridge route must not steal traffic from a host, VPN or stopped network."""
-        routes = self.json_call(['ip', '-j', '-4', 'route', 'show', 'table', 'all'])
-        networks = self.json_call(['podman', 'network', 'ls', '--format', 'json'])
-        cfg.require(isinstance(routes, list) and isinstance(networks, list), 'Mevcut ağ adresleri okunamadı.', 502)
-        candidates = [r.get('dst') for r in routes if isinstance(r, dict) and r.get('dst') not in (None, 'default')]
-        names = [n.get('name') or n.get('Name') for n in networks if isinstance(n, dict)]
-        cfg.require(len(names) == len(networks) and all(isinstance(n, str) and cfg.NAME_RE.fullmatch(n) for n in names),
-                    'Mevcut ağ adları okunamadı.', 502)
-        if names:
-            details = self.json_call(['podman', 'network', 'inspect', *names])
-            cfg.require(isinstance(details, list) and len(details) == len(names), 'Mevcut ağlar okunamadı.', 502)
-            for network in details:
-                candidates.extend(s.get('subnet') for s in network.get('subnets', []))
-        for value in candidates:
-            try:
-                current = ipaddress.ip_network(value, strict=False)
-            except (ValueError, TypeError) as err:
-                raise cfg.ContainerConfigError(502, 'Mevcut ağ adresi çözümlenemedi.') from err
-            cfg.require(current.version != subnet.version or not subnet.overlaps(current),
-                        'Alt ağ sunucu, VPN veya başka bir konteyner ağıyla çakışıyor.', 409)
-
-    def resource(self, action, request):
-        self.step('Kaynak işlemi uygulanıyor')
-        if action == 'image-pull':
-            return {'ok': True, 'image': self.image(request.get('image'))}
-        if action == 'image-remove':
-            target = request.get('image')
-            cfg.require(isinstance(target, str) and (cfg.IMAGE_RE.fullmatch(target) or re.fullmatch(r'sha256:[0-9a-f]{64}', target)), 'İmaj kimliği geçersiz.')
-            data = self.json_call(['podman', 'image', 'inspect', target])
-            cfg.require(isinstance(data, list) and len(data) == 1, 'İmaj bulunamadı.', 404)
-            info = data[0]
-            aliases = {target, info.get('Id', ''), *(info.get('RepoDigests') or []), *(info.get('RepoTags') or [])}
-            cfg.require(not aliases & self.app_images(), 'İmaj bir uygulamanın kaydında kullanılıyor.', 409)
+    def cleanup_one(self, kind, target):
+        """One item. An image: no application record names it and no container comes from it; it goes by its tags (the
+        last one takes the image) or, untagged, by its ID, never with --force. A network: not Podman's default, not an
+        application's, no container on it. A volume: no container mounts it. A data folder: its application has no
+        record and no container mounts anything inside it."""
+        uses = apps.resource_uses(self.records)
+        if kind == 'imaj':
+            cfg.require(self.exists('image', target), 'İmaj artık yok.', 404)
+            info = self.json_call(['podman', 'image', 'inspect', target])
+            cfg.require(isinstance(info, list) and len(info) == 1 and isinstance(info[0], dict), 'İmaj okunamadı.', 502)
+            tags = [t for t in info[0].get('RepoTags') or [] if isinstance(t, str)]
+            known = {target, info[0].get('Id', ''), *tags, *(d for d in info[0].get('RepoDigests') or [] if isinstance(d, str))}
+            cfg.require(not known & set(uses['image']), 'İmaj bir uygulamanın kaydında kullanılıyor.', 409)
             cfg.require(not self.resource_users('image', target), 'İmaj bir konteynerde kullanılıyor.', 409)
-            self.call(['podman', 'image', 'rm', target])
-            return {'ok': True, 'image': target, 'removed': True}
-        name = cfg.name_of(request.get('name'))
-        if action == 'volume-create':
-            self.call(['podman', 'volume', 'create', '--label', cfg.MANAGED_LABEL + '=konsol', name])
-        elif action in ('volume-remove', 'network-remove'):
-            kind = action.split('-')[0]
-            cfg.require(not self.resource_users(kind, name), 'Kaynak bir konteynerde kullanılıyor.', 409)
-            if kind == 'network':
-                self.managed_network(name)
-            self.call(['podman', kind, 'rm', name])
-        elif action == 'network-create':
-            return self.create_network(request)
+            cfg.require(all(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,511}', t) for t in tags), 'İmajın etiketi okunamadı.', 502)
+            self.call(['podman', 'image', 'rm', *(tags or [target])], timeout=120)
+            cfg.require(not self.exists('image', target), 'İmaj kaldırılamadı; başka bir imaj ona dayanıyor olabilir.', 409)
+        elif kind == 'ag':
+            cfg.require(target != apps.DEFAULT_NETWORK, "Podman'ın varsayılan ağı kaldırılmaz.", 409)
+            cfg.require(self.exists('network', target), 'Ağ artık yok.', 404)
+            cfg.require(target not in uses['network'], 'Ağ bir uygulamanın; uygulamayla birlikte kaldırılır.', 409)
+            cfg.require(not self.resource_users('network', target), 'Ağ bir konteynerde kullanılıyor.', 409)
+            self.call(['podman', 'network', 'rm', target])
+        elif kind == 'birim':
+            cfg.require(self.exists('volume', target), 'Birim artık yok.', 404)
+            cfg.require(not self.resource_users('volume', target), 'Birim bir konteynerde kullanılıyor.', 409)
+            self.call(['podman', 'volume', 'rm', target], timeout=300)
         else:
-            raise cfg.ContainerConfigError(400, 'Kaynak işlemi geçersiz.')
-        return {'ok': True, 'name': name, 'removed': action.endswith('-remove')}
+            cfg.require(not self.records.exists(target), 'Bu klasörün uygulaması var; verileri uygulamayla birlikte silinir.', 409)
+            path = apps.data_dir(self.env, target)
+            cfg.require(os.path.lexists(path), 'Klasör artık yok.', 404)
+            inside = os.path.realpath(path)
+            cfg.require(not any(s == inside or s.startswith(inside + '/') for s in self.mount_sources()),
+                        'Klasör bir konteynerde bağlı.', 409)
+            apps.remove_tree(path)
 
     # -- applications: the parts every action shares
     def generator_module(self):
@@ -412,11 +371,15 @@ class Manager:
                 raise cfg.ContainerConfigError(502, 'Adresler yayımlanamadı; yayın kaydı okunamadı.') from err
         return None
 
-    def names_free(self, app, definition, rows=None):
-        """The Tailscale names of the definition's new address ports are free (apps.name_errors), by question."""
-        errors = apps.name_errors(self.env, app, definition, rows, self.records)
-        if errors:
-            text = '; '.join('%s: %s' % (k, v) for k, v in sorted(errors.items())[:3])
+    def names_free(self, app, definition, rows=None, errors=None):
+        """The Tailscale names of the definition's new address ports are free (apps.name_errors), by question: a taken
+        one raises, or with errors (an install plan) is added to them under its question."""
+        taken = apps.name_errors(self.env, app, definition, rows, self.records)
+        if errors is not None:
+            for key, text in taken.items():
+                errors.setdefault(key, text)
+        elif taken:
+            text = '; '.join('%s: %s' % (k, v) for k, v in sorted(taken.items())[:3])
             raise cfg.ContainerConfigError(409, ('Yanıtlar geçersiz: ' + text)[:600])
 
     def podman5(self, plan, version):
@@ -480,11 +443,19 @@ class Manager:
         os.close(fd)
         return source
 
-    def srv_paths(self, definition):
+    def srv_paths(self, definition, errors=None):
+        """Every /srv folder of the definition passes DD-226 now: a refused one raises, or with errors (an install
+        plan) is added to them under its mount question."""
         for svc in definition['services']:
             for mount in svc.get('mounts', []):
-                if mount.get('to') == 'srv':
+                if mount.get('to') != 'srv':
+                    continue
+                try:
                     self.srv_folder(mount['path'])
+                except cfg.ContainerConfigError as err:
+                    if errors is None:
+                        raise
+                    errors.setdefault('mount:%s:%s' % (svc['name'], mount['target']), str(err))
 
     def make_folders(self, app, folders):
         """The application's data folder (0700 root) and its sub-folders (made 0700 root; an existing one keeps
@@ -688,7 +659,22 @@ class Manager:
             self.call(['cp', '-a', '--', point.rstrip('/') + '/.', str(target) + '/'], timeout=COPY_SECONDS)
 
     # -- uygulama-kur
-    def app_install(self, request):
+    def install_checks(self, request, errors=None):
+        """Every check an install makes before its first write, in its order: the file and the answers again on the
+        server, the name free everywhere (record, units, containers, network, pod), the Tailscale names free, the /srv
+        folders (DD-226), a takeover's source container, the pool ports, and a preliminary render (what the generator
+        cannot express, and what needs Podman 5). Nothing is written, pulled or created. The install (errors None)
+        stops at the first refusal; the install plan (POST …/kur with plan, run in the backend with read-only commands)
+        passes a dict that collects every refusal under its question id or part (podman, name, kaynak, portlar, dosya)
+        and gets None back when there was one. Otherwise the install's context."""
+        def attempt(key, check):
+            if errors is None:
+                return check()
+            try:
+                return check()
+            except cfg.ContainerConfigError as err:
+                errors.setdefault(key, str(err))
+                return None
         text = apps.checked_text(request.get('metin'))
         answers = request.get('yanitlar')
         source = apps.request_source(request.get('kaynak'))
@@ -696,21 +682,38 @@ class Manager:
         inspection, definition, values = self.checked(text, answers)
         app = apps.app_name(definition['name'])
         cfg.require(request.get('name') == app, 'Uygulama adı istekteki adla uyuşmuyor.')
-        version = self.podman()
+        version = attempt('podman', self.podman)
         objects = self.objects(app, definition)
         self.step('Ad, klasörler ve portlar denetleniyor')
-        self.name_free(app, objects)
-        self.names_free(app, definition)
-        self.srv_paths(definition)
-        old = self.takeover(source['konteyner'], app, inspection, answers) if source['tur'] == 'konteyner' else None
+        attempt('name', lambda: self.name_free(app, objects))
+        self.names_free(app, definition, errors=errors)
+        self.srv_paths(definition, errors=errors)
+        old = attempt('kaynak', lambda: self.takeover(source['konteyner'], app, inspection, answers)) \
+            if source['tur'] == 'konteyner' else None
         # The rows are the home of how each port is reached; the stored definition keeps the ports' numbers only.
         rows, stored = apps.next_rows(definition), apps.stored_definition(definition)
-        places = {'revision': uuid.uuid4().hex, 'stopped': False,
-                  'ports': apps.allocate(self.env, app, apps.address_keys(rows), {}, self.records), 'secrets': {}, 'images': {}}
+        ports = attempt('portlar', lambda: apps.allocate(self.env, app, apps.address_keys(rows), {}, self.records))
+        places = {'revision': uuid.uuid4().hex, 'stopped': False, 'ports': ports or {}, 'secrets': {}, 'images': {}}
         # Everything the generator cannot express, and what needs Podman 5, stops here, before any write.
-        draft = self.render(app, stored, dict(places, images=apps.placeholders(definition),
-                                              secrets=apps.placeholder_secrets(app, definition)), version, rows)
-        self.podman5(draft, version)
+        draft = None
+        if version is not None and ports is not None:
+            draft = attempt('dosya', lambda: self.render(app, stored, dict(places, images=apps.placeholders(definition),
+                                                                           secrets=apps.placeholder_secrets(app, definition)),
+                                                         version, rows))
+            if draft is not None:
+                attempt('podman', lambda: self.podman5(draft, version))
+        if errors:
+            return None
+        return {'text': text, 'answers': answers, 'source': source, 'inspection': inspection, 'definition': definition,
+                'values': values, 'app': app, 'version': version, 'objects': objects, 'old': old, 'rows': rows,
+                'stored': stored, 'places': places, 'draft': draft}
+
+    def app_install(self, request):
+        checks = self.install_checks(request)
+        text, answers, source, inspection = checks['text'], checks['answers'], checks['source'], checks['inspection']
+        definition, values, app, version = checks['definition'], checks['values'], checks['app'], checks['version']
+        objects, old, rows, stored, places = checks['objects'], checks['old'], checks['rows'], checks['stored'], checks['places']
+        draft = checks['draft']
         undo, plan = Undo(), draft
         try:
             self.step('Kayıt yazılıyor')

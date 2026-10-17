@@ -20,12 +20,14 @@ import uuid
 import master_applications as apps
 import master_settings as settings
 import master_container_config as config
-from master_containers import Containers, ContainerError, epoch, listening, name_of, update_status
+from master_containers import NAME_RE, Containers, ContainerError, epoch, listening, name_of, update_status
 
-RESOURCE_ACTIONS = frozenset(('image-pull', 'image-remove', 'volume-create', 'volume-remove', 'network-create', 'network-remove'))
 APP_ACTIONS = frozenset(('uygulama-kur', 'uygulama-baslat', 'uygulama-durdur', 'uygulama-yeniden-baslat', 'uygulama-guncelle',
                          'uygulama-tanim', 'uygulama-kaldir', 'uygulama-taslak'))
-ACTIONS = RESOURCE_ACTIONS | APP_ACTIONS
+# Gelişmiş's cleanup (K8); its job names no application (no application name has a capital letter).
+CLEANUP_ACTION = 'temizlik'
+CLEANUP_TARGET = 'Podman'
+ACTIONS = APP_ACTIONS | {CLEANUP_ACTION}
 JOB_RE = re.compile(r'[0-9a-f]{32}\Z')
 # A whole file of up to 256 KiB arrives JSON-escaped in an application's request: at most about 2 MiB.
 STDIN_LIMIT = 65536
@@ -45,6 +47,9 @@ CGROUP_ROOT = '/sys/fs/cgroup'
 CGROUP_PART_RE = re.compile(r'[A-Za-z0-9_.:@\\-]{1,255}\Z')
 CPU_MIN_INTERVAL = 2.0
 CPU_SAMPLES = 256
+# The install plan runs the worker's checks in this process: only these read-only commands (prefixes) may run.
+PLAN_COMMANDS = (('podman', 'version'), ('podman', 'container', 'exists'), ('podman', 'network', 'exists'),
+                 ('podman', 'pod', 'exists'), ('podman', 'inspect'), ('podman', 'volume', 'inspect'))
 
 
 def port_scope(ip, env):
@@ -83,6 +88,37 @@ def flat_keyed(text):
 
 def app_error(err):
     return ContainerError(err.status, str(err))
+
+
+def image_id(row):
+    """A `podman images` row's 64-hex ID ("" when it has none); Podman's JSON spells its keys more than one way."""
+    value = row.get('Id') or row.get('ID') or row.get('id') or ''
+    value = value[7:] if isinstance(value, str) and value.startswith('sha256:') else value
+    return value if isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) else ''
+
+
+def image_names(row):
+    """Every name a `podman images` row is known by: its ID, its names and its digests (repo@sha256:…)."""
+    refs = [r for r in (row.get('Names') or row.get('names') or row.get('RepoTags') or []) if isinstance(r, str)]
+    names = set(refs) | {d for d in row.get('RepoDigests') or row.get('repoDigests') or [] if isinstance(d, str)}
+    digest = row.get('Digest') or row.get('digest') or ''
+    if isinstance(digest, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
+        for ref in refs:
+            repo = ref.split('@')[0]
+            if ':' in repo.rsplit('/', 1)[-1]:
+                repo = repo.rsplit(':', 1)[0]
+            names.add(repo + '@' + digest)
+    ident = image_id(row)
+    return names | ({ident} if ident else set())
+
+
+def image_unused(row, container_images, recorded):
+    """An image nothing uses: no container (in any state) comes from it (container_images: their image IDs), Podman
+    counts no container on it, no application record names it (recorded: references) and Podman may remove it."""
+    ident = image_id(row)
+    count = row.get('Containers')
+    return bool(ident) and ident not in container_images and not (isinstance(count, int) and count > 0) \
+        and not row.get('ReadOnly') and not image_names(row) & set(recorded)
 
 
 class Inventory(Containers):
@@ -158,20 +194,14 @@ class Inventory(Containers):
         return row
 
     def app_uses(self):
-        """Images and networks the application records name (a stopped application still uses them)."""
-        uses = {'image': {}, 'network': {}}
+        """What the application records use (apps.resource_uses; a stopped application still uses it)."""
         records = self.records()
         if records is None:
-            return uses
+            return {'image': {}, 'network': {}, 'container': {}}
         try:
-            for app in records.names():
-                record = records.load(app)
-                for image in record['places']['images'].values():
-                    uses['image'].setdefault(image, set()).add(app)
-                uses['network'].setdefault(apps.names(app, record['definition'])['network'], set()).add(app)
+            return apps.resource_uses(records)
         except config.ContainerConfigError as err:
             raise app_error(err) from err
-        return uses
 
     def liste(self):
         answer = super().liste()
@@ -241,7 +271,7 @@ class Inventory(Containers):
                 labels = r.get('Labels') or r.get('labels') or {}
                 row = {'name': name, 'driver': r.get('Driver') or r.get('driver') or '',
                        'used_by': sorted(uses['volume' if kind == 'volumes' else 'network'].get(name, [])),
-                       'managed': labels.get(config.MANAGED_LABEL) in ('konsol', apps.MANAGED)}
+                       'managed': labels.get(config.MANAGED_LABEL) == apps.MANAGED}
                 if kind == 'volumes':
                     row['size'] = None
                 else:
@@ -269,10 +299,6 @@ class Inventory(Containers):
                           'state': row['state'], 'live': True,
                           'ports': [dict(p, scope=port_scope(p.get('host_ip', ''), self.env)) for p in row['ports']]})
         return {'runtime': runtime, 'containers': items}
-
-    def ayrinti(self, name):
-        name_of(name)
-        return self.decorate(super().ayrinti(name))
 
     # -- applications (rebuild DD-271, phase 3)
     def units(self, names):
@@ -321,7 +347,7 @@ class Inventory(Containers):
             for container in objects['containers'].values():
                 if rows.get(container, {}).get('state') == 'running':
                     usage[container] = self.usage(container, self.inspect(container))
-        return {'containers': rows, 'units': units, 'usage': usage}
+        return {'containers': rows, 'units': units, 'usage': usage, 'ag': self.service.rates()}
 
     def sources(self):
         """Standalone containers an application can be made from (K2): nothing but Podman manages them."""
@@ -345,24 +371,12 @@ class Inventory(Containers):
             errors.append(runtime['error'])
         loaded = self.app_records(errors)
         live = self.live(loaded)
-        items = [apps.summary(record, objects, live, self.service.busy(record['name']), self.service.update_of(record['name']))
-                 for record, objects in loaded]
+        domain = apps.known_domain(self.env)
+        items = [apps.summary(record, objects, live, self.service.busy(record['name']), self.service.update_of(record['name']),
+                              domain) for record, objects in loaded]
         if self.unread:
             errors.append('Kaynak kullanımı okunamadı: ' + ', '.join(sorted(self.unread)) + '.')
-        images, volumes, networks = [], [], []
-        if runtime['ok']:
-            listed = [self.podman(*args) for args in (('images', '--format', 'json'), ('volume', 'ls', '--format', 'json'),
-                                                      ('network', 'ls', '--format', 'json'))]
-            images, volumes, networks = [value if ok and isinstance(value, list) else [] for ok, value, _ in listed]
-        # An image is used when a container runs from it or an application's record pins it.
-        used = {i for record, _o in loaded for i in record['places']['images'].values()}
-        used |= {str(row.get('image') or '') for row in live['containers'].values()}
-        images = [i for i in images if isinstance(i, dict)]
-        unused = sum(1 for i in images if not (set(i.get('Names') or []) | set(i.get('RepoDigests') or [])) & used)
-        return {'read_at': int(time.time()), 'items': items, 'kaynaklar': self.sources(),
-                'altyapi': {'podman': runtime['version'], 'calisiyor': runtime['ok'], 'imaj': len(images),
-                            'kullanilmayan_imaj': unused, 'birim': len(volumes), 'ag': len(networks)},
-                'hatalar': errors}
+        return {'read_at': int(time.time()), 'items': items, 'kaynaklar': self.sources(), 'hatalar': errors}
 
     def application(self, app):
         """GET /api/konsol/uygulamalar/{app}."""
@@ -373,7 +387,11 @@ class Inventory(Containers):
             raise app_error(err) from err
         live = self.live([(record, objects)])
         inspected = {c: self.inspect(c) for c in objects['containers'].values() if c in live['containers']}
-        return apps.detail(self.env, record, objects, live, self.service.busy(app), self.service.update_of(app), inspected)
+        # Its folders' sizes: the same cached measurement Dosyalar → Depolama shows (a bounded walk when stale).
+        folder = str(apps.data_dir(self.env, app))
+        size = self.service.sizes.measure([folder])[folder]
+        return apps.detail(self.env, record, objects, live, self.service.busy(app), self.service.update_of(app), inspected,
+                           size, self.service.update_checked(app))
 
     def journal(self, app, service, lines):
         """An application service's log: its unit's journal (DD-251), as written."""
@@ -441,6 +459,147 @@ class Inventory(Containers):
             raise app_error(err) from err
         return {'inceleme': inspection, 'fark': fark}
 
+    def install_plan(self, text, answers, source):
+        """POST …/kur with plan: the inspection, the answers' errors by question, or — after every check the install
+        job makes before its first write (the worker's install_checks, run here with read-only commands) — the checked
+        definition and what the install creates (apps.install_summary). Nothing is written, pulled or created; secret
+        values are checked and dropped."""
+        import master_inspector
+        inspection = master_inspector.inspect(text)
+        if inspection.get('refusals') or inspection.get('format') is None:
+            return {'inceleme': inspection}
+        definition, _values, errors = master_inspector.check(inspection, answers)
+        if errors:
+            return {'inceleme': inspection, 'hatalar': errors}
+        errors = {}
+        try:
+            checks = self.service.worker().install_checks(
+                {'name': definition['name'], 'metin': text, 'yanitlar': answers, 'kaynak': source}, errors)
+            if errors:
+                return {'inceleme': inspection, 'hatalar': errors}
+            summary = apps.install_summary(self.env, checks['app'], definition, checks['rows'], checks['objects'],
+                                           checks['draft'], checks['old'])
+        except config.ContainerConfigError as err:
+            raise app_error(err) from err
+        return {'inceleme': inspection, 'tanim': definition, 'ozet': summary}
+
+    # -- Gelişmiş's cleanup (K8)
+    def cleanup(self, fresh=False):
+        """GET /api/konsol/gelismis/temizlik: what nothing uses, read-only. Images no container (in any state) comes
+        from and no application record names; networks no container is on (never Podman's default network, never an
+        application's); volumes no container mounts; the data folders under UYGULAMA_VERI_DIR whose application has no
+        record and inside which no container mounts anything (with their sizes; fresh measures again); and the
+        containers no application owns. Only what is proven unused is offered: a source that cannot be read leaves
+        what depends on it empty and adds an error line. The cleanup job checks every item again."""
+        errors = []
+        answer = {'read_at': int(time.time()), 'imajlar': [], 'aglar': [], 'birimler': [], 'klasorler': [],
+                  'konteynerler': [], 'hatalar': errors}
+        try:
+            uses = self.app_uses()
+        except ContainerError as err:
+            errors.append(str(err))
+            return answer
+        runtime = self.runtime()
+        if not runtime['ok']:
+            errors.append(runtime['error'])
+            return answer
+        ok, rows, message = self.podman('ps', '-a', '--format', 'json')
+        if not ok or not isinstance(rows, list):
+            errors.append('Konteynerler okunamadı: %s' % message)
+            return answer
+        from_containers, networks, volumes, sources, complete = set(), set(), set(), set(), True
+        for row in (r for r in rows if isinstance(r, dict)):
+            ident = str(row.get('Id') or '')
+            listed = row.get('Names') or []
+            name = listed[0] if isinstance(listed, list) and listed and isinstance(listed[0], str) else ident[:12]
+            from_containers.add(str(row.get('ImageID') or '').removeprefix('sha256:'))
+            networks.update(n for n in row.get('Networks') or [] if isinstance(n, str))
+            raw = self.inspect(ident) if re.fullmatch(r'[0-9a-f]{64}', ident) else None
+            if raw is None:
+                complete = False
+                errors.append('Konteyner okunamadı: %s; birimler ve klasörler gösterilmiyor.' % name)
+                continue
+            from_containers.add(str(raw.get('Image') or '').removeprefix('sha256:'))
+            networks.update(k for k in ((raw.get('NetworkSettings') or {}).get('Networks') or {}) if isinstance(k, str))
+            for mount in raw.get('Mounts') or []:
+                if not isinstance(mount, dict):
+                    continue
+                if mount.get('Type') == 'volume' and isinstance(mount.get('Name'), str):
+                    volumes.add(mount['Name'])
+                if isinstance(mount.get('Source'), str) and mount['Source'].startswith('/'):
+                    sources.add(os.path.realpath(mount['Source']))
+            if name not in uses['container']:
+                owner = config.ownership(raw)
+                answer['konteynerler'].append({'ad': name, 'imaj': str(row.get('Image') or raw.get('ImageName') or ''),
+                                               'durum': str(row.get('State') or ''),
+                                               'yonetici': {'standalone': 'podman', apps.MANAGED: 'kayitsiz'}.get(owner, 'baska')})
+        answer['konteynerler'].sort(key=lambda c: c['ad'])
+        ok, images, message = self.podman('images', '--format', 'json')
+        if ok and isinstance(images, list):
+            seen = set()
+            for i in (i for i in images if isinstance(i, dict) and image_unused(i, from_containers, uses['image'])):
+                # `podman images --format json` lists an image once for each of its tags; one row per image.
+                if image_id(i) in seen:
+                    continue
+                seen.add(image_id(i))
+                size = i.get('Size', i.get('size'))
+                tags = i.get('Names') or i.get('names') or i.get('RepoTags') or []
+                answer['imajlar'].append({'id': image_id(i), 'etiketler': sorted(t for t in tags if isinstance(t, str)),
+                                          'boyut': size if type(size) is int else None,
+                                          'olusturuldu': epoch(i.get('Created', i.get('created')))})
+            answer['imajlar'].sort(key=lambda i: (i['etiketler'][:1], i['id']))
+        else:
+            errors.append('İmajlar okunamadı: %s' % message)
+        ok, found, message = self.podman('network', 'ls', '--format', 'json')
+        if ok and isinstance(found, list):
+            for n in (n for n in found if isinstance(n, dict)):
+                name = n.get('name') or n.get('Name') or ''
+                if not isinstance(name, str) or not NAME_RE.fullmatch(name) or name == apps.DEFAULT_NETWORK \
+                        or name in networks or name in uses['network']:
+                    continue
+                answer['aglar'].append({'ad': name, 'surucu': str(n.get('driver') or n.get('Driver') or ''),
+                                        'arayuz': str(n.get('network_interface') or '')})
+            answer['aglar'].sort(key=lambda n: n['ad'])
+        else:
+            errors.append('Ağlar okunamadı: %s' % message)
+        if not complete:
+            return answer
+        ok, found, message = self.podman('volume', 'ls', '--format', 'json')
+        if ok and isinstance(found, list):
+            for v in (v for v in found if isinstance(v, dict)):
+                name = v.get('Name') or v.get('name') or ''
+                if isinstance(name, str) and NAME_RE.fullmatch(name) and name not in volumes:
+                    answer['birimler'].append({'ad': name, 'surucu': str(v.get('Driver') or v.get('driver') or ''),
+                                               'olusturuldu': epoch(v.get('CreatedAt'))})
+            answer['birimler'].sort(key=lambda v: v['ad'])
+        else:
+            errors.append('Birimler okunamadı: %s' % message)
+        try:
+            answer['klasorler'] = self.orphan_folders(sources, fresh)
+        except (config.ContainerConfigError, OSError):
+            errors.append('Uygulama veri klasörü okunamadı.')
+        return answer
+
+    def orphan_folders(self, sources, fresh=False):
+        """The folders under UYGULAMA_VERI_DIR named like an application that has no record, are real folders and
+        inside which no container mounts anything (sources: every mount's resolved host path), with their sizes."""
+        root = apps.data_root(self.env)
+        records = self.records()
+        try:
+            entries = sorted(os.scandir(root), key=lambda e: e.name)
+        except FileNotFoundError:
+            return []
+        found = []
+        for entry in entries:
+            if not apps.APP_NAME_RE.fullmatch(entry.name) or not entry.is_dir(follow_symlinks=False) or \
+                    (records is not None and records.exists(entry.name)):
+                continue
+            inside = os.path.realpath(entry.path)
+            if not any(s == inside or s.startswith(inside + '/') for s in sources):
+                found.append(entry)
+        sizes = self.service.sizes.measure([e.path for e in found], fresh=fresh)
+        return [{'ad': e.name, 'yol': e.path, 'boyut': sizes[e.path]['boyut'], 'neden': sizes[e.path]['neden']} for e in found]
+
     def container_draft(self, name):
         """POST …/kaynak {"tur": "konteyner"}: the draft of a standalone container; nothing is written."""
         raw = self.inspect(name_of(name))
@@ -457,8 +616,11 @@ class Inventory(Containers):
 
 
 class Service:
-    def __init__(self, panel):
+    def __init__(self, panel, rates=None):
+        """rates: {app: {"indirme", "yukleme"}} of the backend's bridge sampler (none without one)."""
         self.panel = panel
+        self.rates = rates or (lambda: {})
+        self.sizes = apps.Sizes()
         self.lock = threading.Lock()
         self.jobs = {}
         self.update_lock = threading.Lock()
@@ -486,6 +648,11 @@ class Service:
         with self.lock:
             value = self.update_items.get(app)
             return copy.deepcopy(value) if value else None
+
+    def update_checked(self, app):
+        """When the cached check last asked about the application (Unix seconds), or None."""
+        with self.lock:
+            return int(self.update_at) if self.update_at and self.update_items.get(app) else None
 
     def updates(self, force=False):
         """DD-214: per application and service, cached; registry manifests only, never a pull."""
@@ -564,26 +731,27 @@ class Service:
             return value
         raise ContainerError(404, 'İşlem bulunamadı; konteyner durumunu yenileyin.')
 
-    def submit(self, data):
-        """Gelişmiş's Podman resource jobs (until phase 5)."""
-        if not isinstance(data, dict) or data.get('action') not in RESOURCE_ACTIONS:
-            raise ContainerError(400, 'Konteyner işlemi geçersiz.')
-        action = data['action']
-        request = {k: v for k, v in data.items() if k != 'action'}
-        name = request.get('name') or request.get('image') or ''
-        if not isinstance(name, str) or not name or len(name) > 512:
-            raise ContainerError(400, 'İşlem hedefi gerekli.')
-        if action in ('image-pull', 'image-remove'):
-            try:
-                if action == 'image-remove' and re.fullmatch(r'[0-9a-f]{64}', name):
-                    request['image'] = 'sha256:' + name
-                elif not (action == 'image-remove' and re.fullmatch(r'sha256:[0-9a-f]{64}', name)):
-                    config.image_of(name)
-            except config.ContainerConfigError as err:
-                raise ContainerError(err.status, str(err)) from err
-        else:
-            name_of(name)
-        return self.launch(action, name, request)
+    def submit_cleanup(self, data):
+        """Gelişmiş's cleanup job (K8): the selected items (apps.cleanup_items) on the worker's standard input."""
+        try:
+            items = apps.cleanup_items(data)
+        except config.ContainerConfigError as err:
+            raise app_error(err) from err
+        request = {}
+        for kind, target in items:
+            request.setdefault(next(k for k, v in apps.CLEANUP_KINDS.items() if v == kind), []).append(target)
+        return self.launch(CLEANUP_ACTION, CLEANUP_TARGET, dict(request, name=CLEANUP_TARGET))
+
+    def worker(self):
+        """The root worker in this process for its checks alone (the install plan): its commands go through the
+        backend's run_tool and only PLAN_COMMANDS may run; with no job record it writes no step."""
+        from master_container_worker import Manager
+
+        def run(argv, timeout=60, input=None, **_kwargs):
+            if input is not None or not any(tuple(argv[:len(p)]) == p for p in PLAN_COMMANDS):
+                raise config.ContainerConfigError(500, 'Kurulum planı yalnız okuyan komutlar çalıştırır.')
+            return self.panel.run_tool(list(argv), timeout=timeout)
+        return Manager(self.panel.args.state, run=run)
 
     def submit_app(self, action, name, request):
         """An application job: the request (a file, answers, secret values) goes to the worker's standard

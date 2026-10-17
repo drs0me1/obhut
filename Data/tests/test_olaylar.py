@@ -114,8 +114,8 @@ class JobsTests(Fixture):
     def test_application_and_resource_jobs_from_the_dispatch_records(self):
         now = int(time.time())
         self.p.containers.jobs.update({
-            "a" * 32: {"id": "a" * 32, "action": "image-pull", "name": "docker.io/library/nginx:alpine", "state": "running",
-                       "step": "İndiriliyor", "updated_at": now - 5},
+            "a" * 32: {"id": "a" * 32, "action": "temizlik", "name": "Podman", "state": "running",
+                       "step": "Kaldırılıyor: ornek-veri", "updated_at": now - 5},
             "b" * 32: {"id": "b" * 32, "action": "uygulama-yeniden-baslat", "name": "notlar", "state": "done", "updated_at": now - 10},
             "c" * 32: {"id": "c" * 32, "action": "uygulama-kaldir", "name": "eski", "state": "failed", "error": "Kaldırma başarısız.",
                        "updated_at": now - 20},
@@ -124,7 +124,7 @@ class JobsTests(Fixture):
         self.assertEqual([(i["tur"], i["ad"], i["durum"], i["adim"], i["bitis"]) for i in items], [
             ("uygulama", "eski · Kaldırma", "hata", "Kaldırma başarısız.", now - 20),
             ("uygulama", "notlar · Yeniden başlatma", "tamam", "", now - 10),
-            ("konteyner", "docker.io/library/nginx:alpine · İmaj indirme", "calisiyor", "İndiriliyor", None)])
+            ("konteyner", "Podman · Temizlik", "calisiyor", "Kaldırılıyor: ornek-veri", None)])
         self.assertEqual([i["durum"] for i in self.jobs(now=now + panel.JOB_KEEP_SECONDS)], ["calisiyor"],
                          "a finished operation is dropped in time; a running one stays")
 

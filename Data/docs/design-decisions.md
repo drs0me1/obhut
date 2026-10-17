@@ -17,6 +17,60 @@ Konsol's old interface was removed in DD-267 (v2-250). Live entries written
 before it still name its places (Ayarlar → Caddy, Ayarlar → Sistem, App Store,
 the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 
+### DD-276: The rebuild's phase 5: Konsol (v2-259)
+
+- **Scope (`rebuild.md` phase 5):** Konsol's screens follow the prototype the operator approved (sections,
+  tabs, flows, wording), built in the existing Vue code; the prototype's annotations and its mock data (which
+  named real applications) were not copied: the interface and every suite use neutral names.
+- **The operator's decision (2026-10-17):** each application's live download and upload rate comes from its
+  own bridge's counters (`/sys/class/net/<interface>/statistics`, the interface from the generator), sampled
+  by the WAN sampler's loop; rates only, no totals (the counters restart with the bridge). Shown in the list,
+  on the application page and under the WAN rate in Genel Bakış (the busiest five).
+- **Uygulamalar (K2, K3):** the list (state, reach, resources, live rate, update state); "Uygulama ekle"
+  (`#/uygulamalar?ekle=1`) in three steps: Kaynak (a pasted or uploaded file of at most 256 KiB, an `https`
+  address, an image name as a job, a standalone container), Denetçi (the file with line numbers and the
+  inspector's marks, refusals stopping the flow with their lines, every question; answers re-checked as they
+  change) and Plan (`kur` with `plan: true`: every check the install makes before its first write, nothing
+  written; a refusal leads back to its question), then the install job. The application page: Özet, Erişim
+  (read-only rows linking to Adresler), Depolama (with sizes), Tanım (the file and the answers; staying ports
+  read-only, their home is Erişim; secrets kept unless renewed; "Kaynaktan yenile" for an address; the
+  difference as a plan; apply as a job) and Günlük. Secret values never reach an address, browser storage or
+  a GET. "Güncelle" is on Özet's update card only (one name, one place).
+- **Erişim (A7):** Genel, Adresler, Yerel adlar (its own tab), Tailscale, WireGuard, Güvenlik duvarı (the
+  operator's rules and the locked application rows; the technical rules moved to Gelişmiş).
+- **Genel Bakış:** Dikkat (the problems, most serious first, each with its place), Uygulamalar (Aç opens the
+  first address of a running application), Erişim özeti (Tailscale addresses, internet names (a name must
+  exist: WebDAV's switch without a name is not one), raw ports on the internet and on Tailscale, WireGuard,
+  a chip per thing open to the internet), Kaynaklar, Ağ, Sunucu. The top bar's problem chip goes to the
+  problem.
+- **Dosyalar (K7):** Depolama with an "Uygulama verileri" card (each application's data folders with sizes
+  from a bounded, cached walk, "Yeniden ölç"); no file-manager card.
+- **Sistem (A7):** Sağlık ("Onarım kaydı"), Güncellemeler (Obhut and the count of application image updates,
+  each confirmed on its application's page), Hesap, Sunucu, İşlem geçmişi (every audit kind the backends
+  write, in the interface's words). The Görünüm tab is gone: the theme switch is in the top bar and the
+  palette.
+- **Gelişmiş (K8):** Caddy, DNS, Güvenlik duvarı (technical rules and listeners), Podman: read-only, and one
+  write, the cleanup (`GET/POST /api/konsol/gelismis/temizlik`) of unused images, networks and volumes and
+  of removed applications' data folders, each re-checked right before it goes; containers Obhut does not
+  manage are listed read-only. Pulling images and creating or removing Podman resources by hand are gone
+  (with `POST /api/konsol/konteynerler/islem`); so are `GET /api/konsol/konteynerler/ayrinti` and
+  `GET /api/konsol/ayarlar/klasorler`, which no screen used.
+- **The frame:** the command palette (sections, tabs, applications, access rows by name, Uygulama ekle,
+  Adres aç, the themes, İşlemler), İşlemler (application jobs, the cleanup, the pending change), and the
+  pending banner naming every timed change.
+- **Found live and fixed:** `podman images --format json` lists an image once per tag, so the cleanup list
+  and the unused-image count showed a twice-tagged image twice.
+- **Tests:** Python 871 with only the eight known macOS failures; `bats` 181/181; nine browser suites
+  (`yeni-uygulama-ekle-ui` new) and the sign-in suite pass with the layout audit, and the seven-width sweep on
+  every suite changed.
+- **Live check (test host, 2026-10-17):** the bridge counters' directions (a download inside a container is
+  `indirme`, a page served to the Mac is `yukleme`); the install plan refusing a taken application name and
+  a taken Tailscale name on their questions and writing nothing; "Uygulama ekle" through the real Konsol in a
+  browser with a two-service file (questions, plan, install, the application's page; its address answered);
+  33 screen states of every section at 390 px and at 1440 px in both themes with no layout finding and no
+  console error; the cleanup through the interface removing an unused image with the typed word, its audit
+  line written.
+
 ### DD-275: The rebuild's phase 4: access rows (v2-258)
 
 - **Scope (`rebuild.md` phase 4):** every exposed container port of an application has one access row, and

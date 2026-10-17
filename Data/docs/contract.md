@@ -607,8 +607,8 @@ Contract in §5–§7 and `folder-shares.md`.
     publication goes through the settings transaction; a Konsol container with no loopback
     port first gets one through the container save job, on a free port in
     `YAYIN_PORT_ILK`–`YAYIN_PORT_SON` (62100–62899); the two run in order, not as one
-    transaction, and when the second fails the loopback port stays); the Podman reads and
-    `konteynerler/islem`; `ayarlar/klasorler`; `oturum`, `oturum/kur|cikis`,
+    transaction, and when the second fails the loopback port stays); `konteynerler/liste` and
+    `konteynerler/islem`; `oturum`, `oturum/kur|cikis`,
     `hesap/parola`; `POST guncelleme`, `POST yeniden-baslat`, `onarim/gunluk` (plain text),
     `islemler`; `gelismis`; and Dosyalar' `paylasim`, `POST paylasim/kaydet|kaldir` and
     `depolama`. Outside the table the root backend keeps only the session check Caddy
@@ -724,8 +724,7 @@ Contract in §5–§7 and `folder-shares.md`.
     Sistem, Erişim and Gelişmiş (**DD-265**, **DD-266**); the old page's
     `GET /api/konsol/ayarlar` and `/ayarlar/durum` are gone (**DD-267**). The settings
     view behind Erişim's and Gelişmiş's reads keeps the same gates and 5 s cache
-    (`?yenile=1` bypasses it); `ayarlar/klasorler` lists allowed existing folders for the
-    folder picker. No password/hash is returned.
+    (`?yenile=1` bypasses it). No password/hash is returned.
     - Sistem → Sağlık: the health card (`GET
       /api/konsol/saglik`, cached 30 s, **DD-182**) with every check, "Denetle" and "Onar"
       (after a question; tailnet only), the last report with its steps and the repair log:

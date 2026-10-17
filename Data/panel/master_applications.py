@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Applications (rebuild DD-271, phase 3): an application installed from its own Compose or Kubernetes
 file. This module holds what the root backend and the root worker share: the record, the loopback pool,
-the container guard's input, the read model and the drafts. The worker (master_container_worker) runs the
-lifecycle; the backend only reads (master-panel.service keeps its sandbox).
+the container guard's input, the read model, an install's summary, what the records use and the cleanup's items
+(Gelişmiş, K8), folder sizes and the drafts. The worker (master_container_worker) runs the lifecycle; the backend
+only reads (master-panel.service keeps its sandbox).
 
 Record, UYGULAMA_STATE_DIR/<app>/ (0700 root; every file 0600, written atomically, read without following
 a link, its owner, mode and size checked):
@@ -48,6 +49,7 @@ import re
 import socket
 import ssl
 import stat
+import threading
 import time
 import urllib.parse
 
@@ -88,6 +90,16 @@ TAILS = (100, 200, 500, 1000)
 FETCH_SECONDS = 10.0
 FETCH_REDIRECTS = 3
 UPDATE_ORDER = ("yeni", "denetlenemedi", "bilinmiyor", "guncel", "sabit")
+# Folder sizes (Dosyalar → Depolama, Gelişmiş's cleanup): one read spends at most SIZE_SECONDS walking the folders it
+# has not measured; a measurement is kept SIZE_TTL seconds, a walk that ran out of time or could not read SIZE_FAIL_TTL.
+SIZE_SECONDS = 5.0
+SIZE_TTL = 300
+SIZE_FAIL_TTL = 60
+# Gelişmiş's cleanup (K8): at most this many items in one job; Podman's default network is never offered.
+CLEANUP_LIMIT = 200
+CLEANUP_KINDS = {"imajlar": "imaj", "aglar": "ag", "birimler": "birim", "klasorler": "klasor"}
+DEFAULT_NETWORK = "podman"
+IMAGE_ID_RE = re.compile(r"[0-9a-f]{64}\Z")
 
 require = cfg.require
 AppError = cfg.ContainerConfigError
@@ -557,6 +569,170 @@ def access_rows(env, records=None):
     return out
 
 
+def known_domain(env):
+    """The local domain, or None when state.env has none that is valid (a read model then shows no address)."""
+    try:
+        return local_domain(env)
+    except AppError:
+        return None
+
+
+def address_url(domain, row):
+    """An address row's Tailscale URL, http://<name>.<domain>; None for a raw row or without a domain."""
+    if not domain or row.get("tur") != "adres":
+        return None
+    return "http://%s.%s" % (row["ad"], domain)
+
+
+def first_address(record, domain):
+    """The URL of an application's first address row, in its file's order (services, then their ports), or None."""
+    for svc in record["definition"]["services"]:
+        for port in svc.get("ports", []):
+            url = address_url(domain, record["rows"].get(port_key(svc["name"], port)) or {})
+            if url:
+                return url
+    return None
+
+
+def record_images(record):
+    """The images an application's record names: its pinned digests and the references its file gives."""
+    return set(record["places"]["images"].values()) | {reference(s["image"])[1] for s in record["definition"]["services"]}
+
+
+def resource_uses(records):
+    """What the application records use, whether their applications run or not (Gelişmiş's cleanup and the
+    inventory): {"image": {reference: {apps}}, "network": {name: {apps}}, "container": {name: app}}. An image is
+    named by its pinned digest and by the reference its file gives; the containers are every service's and a pod's
+    infra container. A folder without yerler.json is an install that has not written its record yet and is left out
+    (the cleanup job holds the install lock and checks again); any other record that cannot be read raises."""
+    uses = {"image": {}, "network": {}, "container": {}}
+    for app in records.names():
+        if not os.path.lexists(records.dir(app) / "yerler.json"):
+            continue
+        record = records.load(app)
+        objects = names(app, record["definition"])
+        for image in record_images(record):
+            uses["image"].setdefault(image, set()).add(app)
+        uses["network"].setdefault(objects["network"], set()).add(app)
+        for container in objects["containers"].values():
+            uses["container"][container] = app
+        if objects["pod"]:
+            uses["container"][_names(generator.pod_infra_name, app)] = app
+    return uses
+
+
+def cleanup_items(request):
+    """The items of a cleanup request (POST /api/konsol/gelismis/temizlik): [(kind, target)] in a fixed order, each
+    target checked for its kind (an image by its ID, a network or volume by its name, a data folder by its
+    application's name), duplicates dropped; at least one and at most CLEANUP_LIMIT."""
+    require(isinstance(request, dict) and set(request) <= set(CLEANUP_KINDS), "Temizlik isteği geçersiz.")
+    items = []
+    for field, kind in CLEANUP_KINDS.items():
+        values = request.get(field, [])
+        require(isinstance(values, list), "Temizlik isteği geçersiz.")
+        for value in values:
+            if kind == "imaj":
+                require(isinstance(value, str) and IMAGE_ID_RE.fullmatch(value) is not None, "İmaj kimliği geçersiz.")
+            elif kind == "klasor":
+                app_name(value)
+            else:
+                require(isinstance(value, str) and master_containers.NAME_RE.fullmatch(value) is not None,
+                        "%s adı geçersiz." % ("Ağ" if kind == "ag" else "Birim"))
+                require(kind != "ag" or value != DEFAULT_NETWORK, "Podman'ın varsayılan ağı kaldırılmaz.")
+            if (kind, value) not in items:
+                items.append((kind, value))
+    require(bool(items), "Kaldırılacak bir şey seçin.")
+    require(len(items) <= CLEANUP_LIMIT, "Bir temizlikte en çok %d öge kaldırılır." % CLEANUP_LIMIT)
+    return items
+
+
+# -- folder sizes (a bounded walk; Dosyalar → Depolama and Gelişmiş's cleanup)
+def tree_size(path, deadline, clock=time.monotonic):
+    """The disk use of a folder tree in bytes (allocated blocks, as du counts them), walked without following a
+    link and without leaving the folder's file system, a hard-linked file counted once: ({"boyut": bytes, "alt":
+    {entry: bytes}}, "") with the share of each entry directly in it, or (None, Turkish reason) when the folder is
+    missing or not a folder, cannot be read, or the walk is still going at `deadline` (clock's time)."""
+    late = "Ölçüm süreye sığmadı; klasörde çok fazla öge var."
+    try:
+        top = os.lstat(path)
+    except FileNotFoundError:
+        return None, "Klasör yok."
+    except OSError:
+        return None, "Klasör okunamadı."
+    if not stat.S_ISDIR(top.st_mode):
+        return None, "Klasör değil."
+    total, children, seen, count = top.st_blocks * 512, {}, set(), 0
+    stack = [(str(path), None)]
+    while stack:
+        if clock() > deadline:
+            return None, late
+        folder, child = stack.pop()
+        try:
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    count += 1
+                    if count % 512 == 0 and clock() > deadline:
+                        return None, late
+                    try:
+                        info = entry.stat(follow_symlinks=False)
+                    except FileNotFoundError:
+                        continue
+                    if not stat.S_ISDIR(info.st_mode) and info.st_nlink > 1:
+                        if (info.st_dev, info.st_ino) in seen:
+                            continue
+                        seen.add((info.st_dev, info.st_ino))
+                    name = entry.name if child is None else child
+                    total += info.st_blocks * 512
+                    children[name] = children.get(name, 0) + info.st_blocks * 512
+                    if stat.S_ISDIR(info.st_mode) and info.st_dev == top.st_dev:
+                        stack.append((entry.path, name))
+        except FileNotFoundError:
+            continue  # removed while it was walked
+        except OSError:
+            return None, "Klasör okunamadı."
+    return {"boyut": total, "alt": children}, ""
+
+
+class Sizes:
+    """Folder sizes (tree_size), cached: a measurement is kept SIZE_TTL seconds, a walk that ran out of time or could
+    not read SIZE_FAIL_TTL (a missing folder is not kept). One walk at a time; a call spends at most `seconds` on the
+    folders it has to walk, the rest of them answer that time ran out."""
+
+    def __init__(self, clock=time.monotonic, wall=time.time):
+        self.lock = threading.Lock()
+        self.cache = {}
+        self.clock, self.wall = clock, wall
+
+    def measure(self, paths, seconds=SIZE_SECONDS, fresh=False):
+        """{path: {"boyut": bytes | None, "alt": {entry: bytes}, "neden": "" | reason, "olculdu": epoch | None}}."""
+        out = {}
+        with self.lock:
+            start = self.clock()
+            deadline = start + seconds
+            for path in (str(p) for p in paths):
+                if path in out:
+                    continue
+                hit = self.cache.get(path)
+                if hit and not fresh and start - hit[0] < (SIZE_TTL if hit[1]["boyut"] is not None else SIZE_FAIL_TTL):
+                    out[path] = hit[1]
+                    continue
+                if self.clock() > deadline:
+                    out[path] = {"boyut": None, "alt": {}, "neden": "Ölçüm süreye sığmadı; sonra yeniden denenecek.",
+                                 "olculdu": None}
+                    continue
+                value, reason = tree_size(path, deadline, self.clock)
+                out[path] = {"boyut": value["boyut"] if value else None, "alt": value["alt"] if value else {},
+                             "neden": reason, "olculdu": int(self.wall())}
+                if value is not None or reason != "Klasör yok.":
+                    self.cache[path] = (self.clock(), out[path])
+                else:
+                    self.cache.pop(path, None)
+            now = self.clock()
+            for path in [p for p, (at, _v) in self.cache.items() if now - at >= SIZE_TTL]:
+                del self.cache[path]
+        return out
+
+
 class Records:
     """UYGULAMA_STATE_DIR: one folder per application."""
 
@@ -940,10 +1116,17 @@ def service_update(definition_service, item):
     return {"guncel": "guncel", "var": "yeni", "denetlenemedi": "denetlenemedi", "sabit": "sabit"}.get(state, "bilinmiyor")
 
 
-def summary(record, objects, live, busy, updates):
-    """An application of the list: live state per service, resources summed, update state, actions."""
+def app_update(definition, updates):
+    """An application's update state: its services' (service_update) summed as UPDATE_ORDER ranks them. The list,
+    the detail and Sistem → Güncellemeler read it from the same cached check (DD-214)."""
+    return update_summary([service_update(svc, (updates or {}).get(svc["name"])) for svc in definition["services"]])
+
+
+def summary(record, objects, live, busy, updates, domain=None):
+    """An application of the list: live state per service, resources summed, its bridge's rate (live["ag"], the
+    backend's sampler), its first address (domain: the local domain), update state, actions."""
     definition, places = record["definition"], record["places"]
-    services, states, cpu, memory, update_states = [], [], [], [], []
+    services, states, cpu, memory = [], [], [], []
     for svc in definition["services"]:
         name = svc["name"]
         container = objects["containers"][name]
@@ -955,7 +1138,6 @@ def summary(record, objects, live, busy, updates):
         if use[1] is not None:
             memory.append(use[1])
         update = service_update(svc, (updates or {}).get(name))
-        update_states.append(update)
         states.append(state)
         services.append({"ad": name, "durum": state, "imaj": svc["image"], "guncelleme": update})
     state = app_state(states)
@@ -971,28 +1153,37 @@ def summary(record, objects, live, busy, updates):
             actions.append("guncelle")
     return {"ad": record["name"], "durum": state, "bicim": definition["format"], "servisler": services,
             "kaynak": {"cpu": round(sum(cpu), 2) if cpu else None, "bellek": sum(memory) if memory else None},
-            "guncelleme": update_summary(update_states), "eylemler": actions, "revizyon": places["revision"],
+            "guncelleme": app_update(definition, updates), "eylemler": actions, "revizyon": places["revision"],
             "is": busy or None, "koken": record["source"]["tur"], "durduruldu": places["stopped"],
-            "uyari": len(definition.get("warnings") or [])}
+            "uyari": len(definition.get("warnings") or []),
+            "ag": copy.deepcopy((live.get("ag") or {}).get(record["name"])), "adres": first_address(record, domain)}
 
 
-def mount_rows(env, app, svc):
+def mount_rows(env, app, svc, size=None):
+    """A service's mounts as Konsol shows them. size: the application's data folder as Sizes.measure gives it (or
+    None): an application folder's boyut is its share of that measurement, null when it was not measured."""
     rows = []
     for m in svc.get("mounts", []):
+        boyut = None
         if m.get("to") == "app":
             path = str(data_dir(env, app) / m["folder"])
+            if size and size.get("boyut") is not None:
+                boyut = (size.get("alt") or {}).get(m["folder"])
         elif m.get("to") == "srv":
             path = m["path"]
         else:
             path = None
-        rows.append({"hedef": m["target"], "tur": m["to"], "yol": path, "salt_okunur": bool(m.get("read_only"))})
+        rows.append({"hedef": m["target"], "tur": m["to"], "yol": path, "salt_okunur": bool(m.get("read_only")),
+                     "boyut": boyut})
     return rows
 
 
-def detail(env, record, objects, live, busy, updates, inspected):
+def detail(env, record, objects, live, busy, updates, inspected, size=None, checked=None):
     """GET /api/konsol/uygulamalar/{app}: the application with every service, its ports with their access rows,
-    folders, secrets by name only, warnings, source, file, answers (no secret value, no port answer) and units."""
-    item = summary(record, objects, live, busy, updates)
+    folders (an application folder with its size from size, the data folder's measurement), secrets by name only,
+    warnings, source, file, answers (no secret value, no port answer), units and when its image update was last
+    checked (checked)."""
+    item = summary(record, objects, live, busy, updates, known_domain(env))
     definition, places = record["definition"], record["places"]
     services = []
     for svc, row in zip(definition["services"], item["servisler"]):
@@ -1016,7 +1207,7 @@ def detail(env, record, objects, live, busy, updates, inspected):
             "guncelleme": row["guncelleme"], "konteyner": container, "birim": objects["units"][name],
             "calisma": started, "saglik": str(health.get("Status") or "") if isinstance(health, dict) else "",
             "yeniden_baslama": info.get("RestartCount") if type(info.get("RestartCount")) is int else 0,
-            "portlar": ports, "baglamalar": mount_rows(env, record["name"], svc),
+            "portlar": ports, "baglamalar": mount_rows(env, record["name"], svc, size),
             "gizliler": sorted({e["secret"] for e in svc.get("environment", []) if "secret" in e}),
         })
     source = record["source"]
@@ -1028,7 +1219,40 @@ def detail(env, record, objects, live, busy, updates, inspected):
                   "konteyner": source.get("konteyner"), "alindi": source["alindi"], "sha256": source["sha256"]},
         "metin": record["text"], "yanitlar": record["answers"], "birimler": list(objects["files"]),
         "veri": str(data_dir(env, record["name"])), "ag": objects["network"], "pod": objects["pod"],
+        "guncelleme_denetlendi": checked,
     }
+
+
+# -- an install's plan (POST …/kur with plan): what it creates, nothing written
+def install_summary(env, app, definition, rows, objects, plan, takeover=None):
+    """KurOzeti: what installing a checked definition creates: each service with its start mode, user, image, folders
+    and secret names; the access rows it seeds (an address with its URL); the data folders it makes; its secrets by
+    name; the definition's warnings (and the takeover of a standalone container); the images it pulls; its unit files,
+    network and pod. plan: the install's preliminary render (its folders); takeover: the worker's takeover() result.
+    No secret value."""
+    domain = known_domain(env)
+    services, access = [], []
+    for svc in definition["services"]:
+        services.append({"ad": svc["name"], "baslangic": svc["start"], "kullanici": svc.get("user"), "imaj": svc["image"],
+                         "baglamalar": mount_rows(env, app, svc),
+                         "gizliler": sorted({e["secret"] for e in svc.get("environment", []) if "secret" in e})})
+        for port in svc.get("ports", []):
+            key = port_key(svc["name"], port)
+            access.append({"id": row_id(app, key), "anahtar": key, "servis": svc["name"], "port": port["port"],
+                           "protokol": port["protocol"], "satir": copy.deepcopy(rows[key]),
+                           "adres": address_url(domain, rows[key])})
+    warnings = [{"servis": w.get("service", ""), "metin": w.get("text", "")} for w in definition.get("warnings") or []]
+    if takeover:
+        text = "%s konteyneri uygulama hazır olunca kaldırılır; birimleri silinmez." % takeover["name"]
+        if takeover["running"]:
+            text += " Kurulum sırasında durdurulur."
+        if takeover["copies"]:
+            text += " Kopyalanacak klasörler: %s." % ", ".join(sorted(Path(target).name for _point, target in takeover["copies"]))
+        warnings.append({"servis": "", "metin": text})
+    return {"ad": app, "veri": str(data_dir(env, app)), "ag": objects["network"], "pod": objects["pod"],
+            "birimler": list(objects["files"]), "servisler": services, "erisim": access, "klasorler": list(plan["folders"]),
+            "gizliler": [{"ad": s["name"], "servisler": list(s.get("services") or [])} for s in definition["secrets"]],
+            "uyarilar": warnings, "imajlar": sorted({reference(s["image"])[1] for s in definition["services"]})}
 
 
 # -- an edit's plan (Tanım, K3): what changes, nothing written

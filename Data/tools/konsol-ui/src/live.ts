@@ -113,7 +113,6 @@ const apply: Record<Key, (data: unknown) => void> = {
       ...value,
       items: value.items.filter(isApp).map(cleanApp),
       kaynaklar: Array.isArray(value.kaynaklar) ? value.kaynaklar.filter((k) => isObject(k) && isText(k.ad)) : [],
-      altyapi: isObject(value.altyapi) ? value.altyapi : { podman: "", calisiyor: false, imaj: 0, kullanilmayan_imaj: 0, birim: 0, ag: 0 },
       hatalar: Array.isArray(value.hatalar) ? value.hatalar.filter(isText) : [],
     };
   },
@@ -278,17 +277,6 @@ export const health = computed(() => {
     else if (level === "warning") warning += 1;
   }
   return { danger, warning };
-});
-
-/** Health problems plus Erişim's warnings (the top bar's chip); null while health is unknown. */
-export const problems = computed(() => {
-  const h = health.value;
-  if (!h) return null;
-  const warnings = live.uyarilar ?? [];
-  const bad = warnings.filter((u) => u.seviye === "bad").length;
-  const count = h.danger + h.warning + warnings.length;
-  const level: Level = h.danger + bad > 0 ? "danger" : count > 0 ? "warning" : "ok";
-  return { count, level };
 });
 
 /** The applications the operator manages; null while unknown. */

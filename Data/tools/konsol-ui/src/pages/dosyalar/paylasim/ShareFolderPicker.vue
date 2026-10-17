@@ -3,7 +3,8 @@
      hidden ones are never listed), the ones already shared marked. "İçine gir" goes down, "Bir üst" back,
      "Seç" or "Bu klasörü seç" take a folder; the top of the user area itself cannot be shared. Esc closes
      the panel, not the sheet around it, also from "Klasör seç"; paths are relative to the user area, as a
-     share keeps them. -->
+     share keeps them. An application's /srv folder (Uygulama ekle, Tanım) uses the same picker with its own
+     `pickLabel`. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, useId } from "vue";
 import { Icon } from "../../../components/icons";
@@ -11,8 +12,8 @@ import { readUserFolders, type UserFolder } from "../../../api/paylasim";
 import { fullPath } from "./share";
 
 const props = withDefaults(
-  defineProps<{ id?: string; describedby?: string; invalid?: boolean; disabled?: boolean; root: string; shared?: readonly string[] }>(),
-  { id: undefined, describedby: undefined, invalid: false, disabled: false, shared: () => [] },
+  defineProps<{ id?: string; describedby?: string; invalid?: boolean; disabled?: boolean; root: string; shared?: readonly string[]; pickLabel?: string }>(),
+  { id: undefined, describedby: undefined, invalid: false, disabled: false, shared: () => [], pickLabel: "Paylaşılacak klasörü seç" },
 );
 const value = defineModel<string>({ default: "" });
 
@@ -108,7 +109,7 @@ function onKeydown(event: KeyboardEvent): void {
         :disabled="disabled"
         :aria-expanded="open"
         :aria-controls="panelId"
-        aria-label="Paylaşılacak klasörü seç"
+        :aria-label="pickLabel"
         data-testid="share-folder-toggle"
         @click="show"
       >

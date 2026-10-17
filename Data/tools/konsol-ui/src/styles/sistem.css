@@ -1,6 +1,6 @@
-/* Phase 4a pages (DD-258, DD-266): Sistem (health and repair, updates, the account, the server, the theme, the
-   audit log) and Gelişmiş (Caddy, DNS, the firewall's way to Erişim, Podman's resources), and the shell's
-   "Çıkış yap". Shared pieces are in ui.css and pages.css; colours only from tokens.css. */
+/* Sistem (DD-258, DD-266; A7: health and repair, updates with the applications' image updates, the account, the
+   server, İşlem geçmişi) and Gelişmiş (K8: Caddy, DNS, the firewall's technical rules, Podman's inventory and its
+   cleanup), and the shell's "Çıkış yap". Shared pieces are in ui.css and pages.css; colours only from tokens.css. */
 
 /* ---- the pages */
 .system-page,
@@ -44,7 +44,6 @@
   }
 }
 
-.job-progress,
 .update-stage,
 .reboot-wait {
   display: flex;
@@ -133,7 +132,34 @@
   max-width: 440px;
 }
 
-/* ---- Günlük */
+/* ---- Güncellemeler: Obhut and the applications' image updates side by side, stretched; the applications whose image
+   has an update */
+.updates-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+}
+
+.update-apps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.update-app {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.update-app .cell-stack {
+  min-width: 0;
+}
+
+/* ---- İşlem geçmişi */
 .audit-table .audit-line {
   overflow-wrap: anywhere;
 }
@@ -187,6 +213,30 @@
   color: var(--muted);
 }
 
+.technical-card {
+  gap: 10px;
+  padding: 14px 20px;
+  border-radius: var(--r-lg);
+}
+
+.technical-card summary {
+  padding: 12px 0;
+  color: var(--ink-2);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.technical-card:not([open]) {
+  gap: 0;
+}
+
+.rule-spec {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .raw-files {
   min-width: 0;
 }
@@ -233,16 +283,67 @@
   gap: 12px;
 }
 
-.resource-head {
+/* the cleanup (K8): groups of ticked items, the bar with the count and "Temizle…", the run and its result */
+.cleanup-group {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px 16px;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
-.resource-head .meter-note {
-  flex: 1 1 280px;
+.cleanup-legend {
+  padding: 0;
+  font-weight: 600;
+}
+
+.cleanup-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cleanup-item {
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.cleanup-item .check-row {
+  align-items: flex-start;
+  min-height: 0;
+}
+
+.cleanup-item .check-row input {
+  margin-top: 2px;
+}
+
+.cleanup-item .cell-stack,
+.cleanup-list .cell-stack {
+  min-width: 0;
+}
+
+.cleanup-bar,
+.cleanup-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cleanup-run {
+  justify-content: flex-start;
+  font-size: 14.5px;
+}
+
+.cleanup-list {
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 .badges {
@@ -252,17 +353,8 @@
   margin-top: 4px;
 }
 
-.busy-note {
-  color: var(--accent-strong);
-  font-weight: 600;
-}
-
 .nowrap {
   white-space: nowrap;
-}
-
-.check-option-calm input {
-  accent-color: var(--accent);
 }
 
 @media (max-width: 760px) {

@@ -3057,12 +3057,16 @@ PY
         "$V2_ROOT/templates/dnsmasq.conf" "$V2_ROOT/scripts/firewall.sh" "$V2_ROOT/scripts/master-wg" "$V2_ROOT/../kur.sh"
 }
 
-@test "network card data (DD-206): WAN counters from sysfs; no stored layout (DD-267)" {
+@test "network card data (DD-206): WAN and application bridge counters from sysfs; no stored layout (DD-267)" {
     local backend="$V2_ROOT/panel/master-panel"
     # DD-267: the root backend no longer stores the layout (no route, record or audit kind).
     run ! grep -qE 'LAYOUT_|/api/konsol/duzen|"duzen"' "$backend"
-    # Network: WAN counters from sysfs (no command in the sampler).
-    grep -qF 'open("/sys/class/net/%s/statistics/%s" % (iface, name), "rb")' "$backend"
+    # Network: WAN counters from sysfs (no command in the sampler); each application's own bridge is read the same way,
+    # its interface named by the generator.
+    grep -qx 'SYS_NET = "/sys/class/net"' "$backend"
+    grep -qF 'open("%s/%s/statistics/%s" % (SYS_NET, iface, name), "rb")' "$backend"
+    grep -qF 'wanted[app] = master_applications.interface(env, app)' "$backend"
+    grep -qF 'return _names(generator.interface_name, env, app)' "$V2_ROOT/panel/master_applications.py"
 }
 
 @test "Podman is base infrastructure (DD-211): integrated manager uses private root workers" {
@@ -3080,17 +3084,22 @@ PY
     # The base read mapper stays read-only; manager writes have one gated route and an external worker.
     grep -qF 'atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"' "$V2_ROOT/install.sh"
     # DD-266: the reads are table routes too, on the same view; no Podman path is matched by hand. DD-271
-    # (phase 3): image updates are read per application (GET /api/konsol/uygulamalar).
-    for read in liste ayrinti islem; do
+    # (phase 3): image updates are read per application (GET /api/konsol/uygulamalar). No screen read a
+    # container's detail; that route is gone.
+    for read in liste islem; do
         grep -qF "Route(\"GET\", \"/api/konsol/konteynerler/$read\"," "$V2_ROOT/panel/master_api.py"
     done
-    run ! grep -qF '/api/konsol/konteynerler/guncellemeler' "$V2_ROOT/panel/master_api.py"
+    run ! grep -qE '/api/konsol/konteynerler/(guncellemeler|ayrinti)' "$V2_ROOT/panel/master_api.py"
     grep -qF 'return self.panel.containers.view()' "$V2_ROOT/panel/master-panel"
     [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 0 ]
-    # DD-265: Gelişmiş's resource route is declared in the route table and goes to the same broker as every
-    # application job (DD-271): one transient unit per job, the request on its standard input.
-    grep -qF 'Route("POST", "/api/konsol/konteynerler/islem", "konteyner_islemi",' "$V2_ROOT/panel/master_api.py"
-    grep -qF 'self.panel.containers.submit(data)' "$V2_ROOT/panel/master-panel"
+    # K8: Gelişmiş's only write, the cleanup, is declared in the route table and goes to the same broker as every
+    # application job (DD-271): one transient unit per job, the request on its standard input. The Podman resource
+    # actions (pull, create, remove) and their route are gone.
+    grep -qF 'Route("POST", "/api/konsol/gelismis/temizlik", "temizle",' "$V2_ROOT/panel/master_api.py"
+    run ! grep -qE 'konteyner_islemi|KonteynerIstegi|image-pull|volume-create|network-create' \
+        "$V2_ROOT/panel/master_api.py" "$V2_ROOT/panel/master-panel" "$V2_ROOT/panel/master_container_manager.py" \
+        "$V2_ROOT/panel/master_container_worker.py"
+    grep -qF 'self.panel.containers.submit_cleanup(data)' "$V2_ROOT/panel/master-panel"
     grep -qF 'self.panel.containers.submit_app(action, app, request)' "$V2_ROOT/panel/master-panel"
     grep -qF "'--property=RuntimeMaxSec=%d' % seconds" "$V2_ROOT/panel/master_container_manager.py"
     grep -qF 'input=json.dumps(data)' "$V2_ROOT/panel/master_container_manager.py"
@@ -4370,7 +4379,7 @@ PY
 @test "settings API keeps its gates, hides hashes, lists all rules and passes mutations privately to a worker" {
     panel_start
     settings_fixture
-    mkdir -p "$TMP/srv/media" "$TMP/run" "$TMP/units"
+    mkdir -p "$TMP/run" "$TMP/units"
     cat >>"$TMP/state.env" <<EOF
 SETTINGS_FILE=$TMP/settings.json
 SETTINGS_PENDING_FILE=$TMP/pending.json
@@ -4378,7 +4387,6 @@ SETTINGS_DNS_FILE=$TMP/dnsmasq.d/konsol.conf
 DNSMASQ_CONF_FILE=$TMP/dnsmasq.d/local-services.conf
 UNIT_DIR=$TMP/units
 RUNTIME_DIR=$TMP/run
-MEDIA_SUBDIR=media
 SERVER_ROOT=$TMP/srv
 EOF
     cat >"$TMP/pbin/iptables-save" <<'EOF'
@@ -4426,9 +4434,7 @@ assert not any(r["port"] == 8081 and r["scope"] in ("wan", "tail") for r in d["f
 PY
     [ "$(pc /api/konsol/ayarlar/durum)" = 403 ]
     [ "$(pc /api/konsol/ayarlar/durum -H 'X-Konsol: 1')" = 404 ]
-    [ "$(pc /api/konsol/ayarlar/klasorler -H 'X-Konsol: 1')" = 200 ]
-    grep -q "$TMP/srv/media" "$TMP/body"
-    [ "$(pc '/api/konsol/ayarlar/klasorler?path=/etc' -H 'X-Konsol: 1')" = 400 ]
+    [ "$(pc /api/konsol/ayarlar/klasorler -H 'X-Konsol: 1')" = 404 ]
     [ "$(pc /api/konsol/ayarlar/uygula -H 'Content-Type: application/json' --data '{}')" = 403 ]
     [ "$(pc /api/konsol/ayarlar/uygula "${headers[@]}" -H 'Sec-Fetch-Site: cross-site' --data '{}')" = 403 ]
     [ ! -e "$TMP/sdrun-calls" ]

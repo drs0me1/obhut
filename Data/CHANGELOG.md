@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-17 — Konsol's new screens (v2-259, branch `yeni-yapi`)
+
+- Uygulamalar → "Uygulama ekle" (DD-276): paste or upload a Compose or Kubernetes file, or start from an
+  https address, an image name or a container already on the server; the inspector marks the file line by
+  line and asks its questions; the plan shows everything that will be created before anything is written;
+  the install runs as a job and opens the application's page.
+- An application's page has Özet, Erişim, Depolama, Tanım and Günlük. Tanım shows the file and the answers
+  and edits them: the change is shown as a plan first and applied as a job; secrets stay unless renewed; an
+  application added from an address can be refreshed from it.
+- Each application's live download and upload rate is shown in the list, on its page and in Genel Bakış'
+  network card (read from the application's own network).
+- Genel Bakış shows what needs attention, the applications with an "Aç" button, an access summary and what
+  is open to the internet. Erişim has its own Yerel adlar tab.
+- Dosyalar → Depolama shows each application's data folders with their sizes. Sistem: "Günlük" is now
+  "İşlem geçmişi", Güncellemeler counts application image updates, and the Görünüm tab is gone (the theme
+  switch is in the top bar and the command palette).
+- Gelişmiş is read-only; its only action is a cleanup of unused images, networks, volumes and the folders of
+  removed applications. Pulling images and creating Podman volumes or networks by hand are gone.
+
 ### 2026-10-17 — Each application port has its own access row (v2-258, branch `yeni-yapi`)
 
 - Erişim → Adresler lists Konsol, Paylaşımlar and every port of every application (DD-275). A port is

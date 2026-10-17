@@ -1,17 +1,19 @@
-<!-- Command palette (DD-258): ⌘K / Ctrl+K or the search field. Pages (with the tabs of Erişim, Dosyalar,
-     Sistem and Gelişmiş), the applications (each opens its own page) and actions (the theme, İşlemler),
-     matched with Turkish case rules ("İŞ" finds "iş", "ıs" does not find "is"). A combobox
-     over a listbox: focus stays in the field, ↑/↓ move, Enter opens, Esc closes. -->
+<!-- Command palette (DD-258; rebuild phase 5): ⌘K / Ctrl+K or the search field. Pages (with the tabs of Erişim,
+     Dosyalar, Sistem and Gelişmiş), the applications (each opens its own page), the access rows by name (each opens
+     its sheet in Erişim → Adresler) and actions ("Uygulama ekle", "Adres aç", the theme, İşlemler), matched with
+     Turkish case rules ("İŞ" finds "iş", "ıs" does not find "is"). A combobox over a listbox: focus stays in the
+     field, ↑/↓ move, Enter opens, Esc closes. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Icon, type IconName } from "./icons";
 import { trapTab } from "./focus";
-import { SECTIONS, SECTION_TABS } from "../sections";
-import { apps } from "../live";
+import { SECTIONS, SECTION_TABS, accessRoute } from "../sections";
+import { apps, live } from "../live";
 import { FORMAT_TEXT } from "../apps";
+import { addressCandidates, isAccessRow, rowName, rowOwner } from "../access";
 import { appRoute } from "../router";
-import { THEMES, setTheme, theme, type ThemeChoice } from "../theme";
+import { THEMES, setTheme, theme, themeText, type ThemeChoice } from "../theme";
 import { closeSurface, openSurface, ui } from "../ui";
 import { fold } from "../format";
 
@@ -27,7 +29,7 @@ interface Item {
   run: Run;
 }
 
-const GROUPS = ["Sayfalar", "Uygulamalar", "Eylemler"] as const;
+const GROUPS = ["Sayfalar", "Uygulamalar", "Adresler", "Eylemler"] as const;
 
 const router = useRouter();
 const query = ref("");
@@ -56,13 +58,50 @@ const items = computed<Item[]>(() => {
       run: { kind: "route", to: router.resolve(appRoute(app.ad)).path },
     });
   }
+  // Each access row by its name: an address by its Tailscale name, a raw port by its application and port.
+  const domain = live.erisim?.alan || live.kaynaklar?.domain || "";
+  for (const h of (live.erisim?.hizmetler ?? []).filter(isAccessRow)) {
+    const raw = h.satir?.tur === "ham";
+    const internet = h.satir?.tur === "adres" ? h.satir.internet : h.web?.enabled ? h.web.domain : "";
+    list.push({
+      key: "satir-" + h.id,
+      group: "Adresler",
+      label: rowName(h, domain),
+      hint: `${rowOwner(h)} · ${raw ? "Ham port" : "Adres"}`,
+      icon: raw ? "shield" : "globe",
+      words: `${h.ad} ${h.servis ?? ""} ${internet} ${raw ? "ham port" : "adres tailscale adı"} erişim`,
+      run: { kind: "route", to: accessRoute("adresler", h.id) },
+    });
+  }
+  list.push({
+    key: "uygulama-ekle",
+    group: "Eylemler",
+    label: "Uygulama ekle",
+    hint: "Uygulamalar",
+    icon: "plus",
+    words: "yeni kur compose kubernetes dosya imaj konteyner",
+    run: { kind: "route", to: "/uygulamalar?ekle=1" },
+  });
+  // "Adres aç" as Erişim offers it: the first raw TCP port without an address, while no change waits.
+  const candidate = live.bekleyen ? undefined : addressCandidates(live.erisim?.hizmetler ?? [])[0];
+  if (candidate) {
+    list.push({
+      key: "adres-ac",
+      group: "Eylemler",
+      label: "Adres aç",
+      hint: "Erişim",
+      icon: "globe",
+      words: "tailscale adı caddy satırı ham port",
+      run: { kind: "route", to: accessRoute("adresler", candidate.id, "adres-ac") },
+    });
+  }
   const themeWords: Record<ThemeChoice, string> = { sistem: "görünüm otomatik", acik: "görünüm aydınlık light", koyu: "görünüm karanlık dark" };
   for (const t of THEMES) {
     list.push({
       key: "tema-" + t.id,
       group: "Eylemler",
-      label: "Tema: " + t.label,
-      hint: theme.value === t.id ? "Seçili" : "Görünüm",
+      label: themeText(t.id),
+      hint: theme.value === t.id ? "Seçili" : "Tema",
       icon: "theme",
       words: themeWords[t.id],
       run: { kind: "theme", value: t.id },
@@ -71,10 +110,10 @@ const items = computed<Item[]>(() => {
   list.push({
     key: "islemler",
     group: "Eylemler",
-    label: "Çalışan işlemleri göster",
-    hint: "Etkinlik",
+    label: "İşlemleri göster",
+    hint: "İşlemler",
     icon: "pulse",
-    words: "işlemler etkinlik görev",
+    words: "etkinlik görev iş çalışan biten temizlik bekleyen değişiklik",
     run: { kind: "drawer" },
   });
   return list;

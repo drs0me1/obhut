@@ -507,40 +507,6 @@ class Manager:
         return {"%s.%s" % (r["satir"]["ad"], self.e["LOCAL_DOMAIN"]): r["id"]
                 for r in self.app_rows() if r["satir"]["tur"] == "adres"}
 
-    def safe_dir(self, value, writable=False):
-        require(isinstance(value, str) and len(value) <= 1024 and bool(re.fullmatch(r"/[A-Za-z0-9_./ -]+", value)),
-                "Dizin yolu geçersiz (harf/rakam, boşluk, . _ - / kullanılabilir).")
-        path = Path(value)
-        root = Path(self.e["SERVER_ROOT"])
-        require(path.is_absolute() and ".." not in path.parts and path.is_dir() and str(path.resolve()) == str(path), "Dizin mevcut ve gerçek bir klasör olmalı; sembolik bağlantı kullanılamaz.")
-        allowed = [Path(self.e["DOWNLOADS_PATH"]), root / self.e["MEDIA_SUBDIR"]]
-        require(any(path == a or a in path.parents for a in allowed), "Yalnız indirmeler veya kütüphane altı seçilebilir.")
-        require(not any(part.startswith(".") for part in path.relative_to(root).parts), "Gizli/paylaşım/çöp dizinleri kullanılamaz.")
-        if writable:
-            # Probe as the service user, never chown a user-selected tree as root.
-            probe = "import os,sys,tempfile; f,p=tempfile.mkstemp(prefix='.konsol-test-',dir=sys.argv[1]); os.close(f); os.unlink(p)"
-            run(["setpriv", "--reuid=" + self.e["DOWNLOADS_UID"], "--regid=" + self.e["DOWNLOADS_GID"],
-                 "--clear-groups", "python3", "-c", probe, str(path)])
-            s = os.statvfs(path)
-            require(s.f_bavail * s.f_frsize > 0, "Seçilen diskte boş alan yok.")
-        return path
-
-    def folders(self, path=None):
-        if path:
-            root = self.safe_dir(path)
-            dirs = [p for p in root.iterdir() if not p.is_symlink() and p.is_dir() and not p.name.startswith(".")]
-        else:
-            dirs = [Path(self.e["DOWNLOADS_PATH"]), Path(self.e["SERVER_ROOT"]) / self.e["MEDIA_SUBDIR"]]
-        result = []
-        for p in sorted(dirs)[:200]:
-            try:
-                self.safe_dir(str(p))
-                s = os.statvfs(p)
-                result.append({"path": str(p), "free": s.f_bavail * s.f_frsize})
-            except (SettingsError, OSError):
-                continue
-        return result
-
     def filter_dns(self, text, config=None):
         disabled = (config or self.current())["dns"]["disabled"]
         lines = []

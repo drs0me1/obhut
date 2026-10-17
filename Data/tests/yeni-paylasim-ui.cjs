@@ -673,9 +673,10 @@ async function openShares(page, extra = "") {
     await page.keyboard.press("Control+K");
     const palette = page.getByRole("dialog", { name: "Komut paleti" });
     await palette.waitFor();
-    assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Eylemler"]);
+    assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Adresler", "Eylemler"]);
     await palette.getByRole("combobox").fill("paylaşım");
-    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Dosyalar", "Dosyalar → Paylaşımlar"]);
+    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Dosyalar", "Dosyalar → Paylaşımlar", "paylas.ev"],
+      "the folders' tab, and Paylaşımlar' access row in Adresler");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
     await page.waitForURL((u) => u.hash === SHARES_URL);

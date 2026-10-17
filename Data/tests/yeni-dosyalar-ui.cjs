@@ -1,5 +1,6 @@
-/* Konsol's new interface, phase 4b (DD-258, DD-267): Dosyalar — Depolama (the disk, the trash in short, the
-   user area's folders with who uses them), Sunucu klasörleri (the folder browser over the files backend:
+/* Konsol's new interface, phase 4b (DD-258, DD-267; K7): Dosyalar — Depolama (the disk with the trash in short,
+   Uygulama verileri: each application's own folder with its folders' sizes, mounts and "Yeniden ölç", the user
+   area's folders with who uses them), Sunucu klasörleri (the folder browser over the files backend:
    breadcrumbs, Turkish order, sizes and times, the filter, ticks, uploads from the picker and a drop with the
    queue, progress and cancel, downloads, new folder, rename, move, trash, the share marks and the links to
    Paylaşımlar, the text editor with CodeMirror under the CSP), Çöp kutusu (restore, permanent delete, empty)
@@ -31,7 +32,23 @@ const STORAGE = { read_at: NOW, kok: "/srv", hatalar: ["notlar2: Uygulama kaydı
   { yol: "/srv/Filmler", id: "paylasim", ad: "Filmler", tur: "paylasim", hedef: "/s/f1lm/", yazilabilir: false },
   { yol: "/srv/eski", id: "eski", ad: "eski", tur: "uygulama", hedef: "isci: /old", yazilabilir: true },
   { yol: "/srv/indirilenler", id: "indirici", ad: "indirici", tur: "uygulama", hedef: "web: /downloads", yazilabilir: true },
-] };
+], uygulamalar: appData() };
+// K7: each application's own folder (A5) with its folders' sizes from the backend's bounded, cached walk; a folder the
+// definition no longer names has no mount; a walk that ran out of time has no size and says why.
+function appData(measured = false) {
+  const DATA = "/var/lib/master-stack/uygulamalar";
+  const LATE = "Ölçüm süreye sığmadı; klasörde çok fazla öge var.";
+  return [
+    { ad: "galeri", yol: DATA + "/galeri", boyut: 90 * MB, neden: "", olculdu: NOW - 120, klasorler: [
+      { ad: "eski-klasor", yol: DATA + "/galeri/eski-klasor", boyut: 4 * KB, neden: "", hedefler: [] },
+      { ad: "onbellek", yol: DATA + "/galeri/onbellek", boyut: 6 * MB, neden: "", hedefler: ["web: /cache", "isci: /cache"] },
+      { ad: "veri", yol: DATA + "/galeri/veri", boyut: 84 * MB, neden: "", hedefler: ["web: /data"] }] },
+    measured
+      ? { ad: "indirici", yol: DATA + "/indirici", boyut: 12 * MB, neden: "", olculdu: NOW, klasorler: [
+        { ad: "config", yol: DATA + "/indirici/config", boyut: 12 * MB, neden: "", hedefler: ["web: /config"] }] }
+      : { ad: "indirici", yol: DATA + "/indirici", boyut: null, neden: LATE, olculdu: NOW - 60, klasorler: [
+        { ad: "config", yol: DATA + "/indirici/config", boyut: null, neden: LATE, hedefler: ["web: /config"] }] }];
+}
 
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.10.16-v2-250", surum: "1.2.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 5 * DAY,
@@ -347,6 +364,34 @@ async function drop(page, files, type = "drop") {
     assert.equal(await disk.getByTestId("mount").innerText(), "Kendi diskinde (ayrı bir bağlama noktası)");
     assert.equal(await page.getByTestId("trash-count").innerText(), `3 öge · ${bytes(120 + 3 * MB)}`);
     assert.equal(await page.getByTestId("trash-link").getAttribute("href"), "#/dosyalar?sekme=cop");
+    assert.equal(await page.getByText("Dosya yöneticisi").count(), 0, "no file-manager card (K7)");
+    // Uygulama verileri: each application's own folder, its folders largest first with their mounts, when it was measured.
+    const appCard = page.getByTestId("app-data");
+    const appItem = (ad) => appCard.locator(`[data-uygulama="${ad}"]`);
+    await appItem("galeri").waitFor();
+    assert.equal(await appCard.locator(".card-title").innerText(), "Uygulama verileri");
+    assert.deepEqual(await appCard.locator(".appdata").evaluateAll((els) => els.map((e) => e.dataset.uygulama)), ["galeri", "indirici"]);
+    assert.equal(await appItem("galeri").getByRole("link", { name: "galeri", exact: true }).getAttribute("href"), "#/uygulamalar/galeri");
+    assert.equal(await appItem("galeri").getByTestId("app-data-size").innerText(), bytes(90 * MB));
+    assert.equal(await appItem("galeri").locator(".appdata-path").getAttribute("href"), "#/dosyalar?sekme=sistem&yol=var%2Flib%2Fmaster-stack%2Fuygulamalar%2Fgaleri",
+      "on the tailnet the folder opens in Sistem dosyaları");
+    const appFolders = (ad) => appItem(ad).locator(".appdata-folders li").evaluateAll((lis) => lis.map((li) => li.innerText.replace(/\s+/g, " ").trim()));
+    assert.deepEqual(await appFolders("galeri"), [`veri ${bytes(84 * MB)} web: /data`, `onbellek ${bytes(6 * MB)} web: /cache, isci: /cache`,
+      `eski-klasor ${bytes(4 * KB)} tanımda yok`], "largest first; a folder the definition dropped stays on disk");
+    assert.equal(await appItem("indirici").getByTestId("app-data-size").innerText(), "—");
+    assert.equal(await appItem("indirici").getByTestId("app-data-reason").innerText(), "Ölçüm süreye sığmadı; klasörde çok fazla öge var.");
+    assert.deepEqual(await appFolders("indirici"), ["config — web: /config"], "the reason once, for the whole folder");
+    const measuredAt = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }).format(new Date((NOW - 120) * 1000));
+    assert.equal(await appCard.getByTestId("app-data-measured").innerText(), `Ölçüldü ${measuredAt} (2 dakika önce).`, "the oldest measurement");
+    // "Yeniden ölç" measures past the server's cache; the rest of the page is not read again.
+    const listReads = gets("/api/list").length;
+    data.depolama = { ...STORAGE, uygulamalar: appData(true) };
+    await appCard.getByTestId("app-data-measure").click();
+    await appItem("indirici").getByTestId("app-data-size").filter({ hasText: bytes(12 * MB) }).waitFor();
+    assert.equal(gets("/api/konsol/depolama").at(-1).query, "?yenile=1");
+    assert.equal(await appItem("indirici").getByTestId("app-data-reason").count(), 0);
+    assert.equal(gets("/api/list").length, listReads, "only the measurement");
+    data.depolama = STORAGE;
     const folders = page.getByTestId("folders");
     await folders.locator("tbody tr").first().waitFor();
     assert.equal(await folders.locator(".meter-note").first().innerText(), "/srv altındaki klasörler, boyutları ve onları kullanan uygulamalar ve paylaşımlar.");
@@ -383,9 +428,19 @@ async function drop(page, files, type = "drop") {
     await page.goto(url("#/dosyalar"));
     await page.getByTestId("storage-error").filter({ hasText: "Kullananlar okunamadı: fixture" }).waitFor();
     assert.equal(await page.getByTestId("folders").locator('tr[data-klasor="Filmler"] td[data-label="Kullanan"]').innerText(), "okunamadı");
+    assert(await page.getByTestId("app-data-measure").isDisabled(), "nothing to measure again before a read");
+    assert.equal(await page.getByTestId("app-data-empty").count(), 0, "a failed read is not an empty list");
     await page.context().close();
     delete h.status["/api/konsol/depolama"];
     expectedFailures = [];
+    // No application yet.
+    data.depolama = { ...STORAGE, uygulamalar: [] };
+    page = await open();
+    await page.goto(url("#/dosyalar"));
+    await page.getByTestId("app-data-empty").filter({ hasText: "Kurulu uygulama yok." }).waitFor();
+    assert.equal(await page.getByTestId("app-data-measured").count(), 0);
+    await page.context().close();
+    data.depolama = STORAGE;
 
     // ================= Sunucu klasörleri: order, sizes, marks, the filter, ticks and the address
     page = await open();
@@ -920,6 +975,9 @@ async function drop(page, files, type = "drop") {
     page = await h.newHttpsPage("panel.example.org", { timezoneId: TZ });
     await page.goto("https://panel.example.org/#/dosyalar?sekme=sistem");
     await page.getByTestId("depolama").waitFor();
+    await page.getByTestId("app-data").locator('[data-uygulama="galeri"]').waitFor();
+    assert.equal(await page.getByTestId("app-data").locator('[data-uygulama="galeri"] .appdata-path').evaluate((el) => el.tagName), "SPAN",
+      "no way into Sistem dosyaları over the internet");
     assert.deepEqual(await page.getByRole("tablist", { name: "Dosyalar bölümleri" }).getByRole("tab").allInnerTexts(),
       ["Depolama", "Sunucu klasörleri", "Çöp kutusu", "Paylaşımlar"]);
     await page.context().close();
@@ -972,7 +1030,9 @@ async function drop(page, files, type = "drop") {
 
     assert.deepEqual(h.errors, []);
     console.log("PASS: Konsol phase 4b Dosyalar under the production CSP — Depolama (the disk with what the user area holds and its mount, " +
-      "the trash in short with its link, the top folders in Turkish order with size, count and who uses them: applications' /srv mounts with " +
+      "the trash in short with its link, Uygulama verileri (each application's folder with its size, its folders largest first with their " +
+      "mounts or none, a walk out of time with its reason, when it was measured, Yeniden ölç with ?yenile=1, the way into Sistem dosyaları on " +
+      "the tailnet only, no application, a failed read), the top folders in Turkish order with size, count and who uses them: applications' /srv mounts with " +
       "their access and service target, a bind of the whole user area for every folder, folder shares, binds outside the listed folders, a failed " +
       "read), Sunucu klasörleri (order with numbers, sizes and times, share marks, Paylaş / Paylaşımı yönet links with yeni= and paylasim=, " +
       "the filter with Turkish case rules in ara=, ticks on every row and Tümünü seç, folders as history entries, a folder that cannot be " +

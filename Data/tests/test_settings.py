@@ -325,17 +325,6 @@ class SettingsTests(Fixture):
         self.assertEqual(before, Path(self.env["DNSMASQ_CONF_FILE"]).read_bytes())
         self.assertIsNone(self.m.pending())
 
-    def test_directory_scope_and_symlinks(self):
-        for value in (str(self.root / "srv"), str(self.root / "srv/.cop"), "/etc", str(self.root / "srv/downloads/../media")):
-            with self.subTest(value=value), self.assertRaises(settings.SettingsError):
-                self.m.safe_dir(value)
-        link = self.root / "srv/downloads/link"
-        link.symlink_to(self.root / "srv/media", target_is_directory=True)
-        with self.assertRaises(settings.SettingsError):
-            self.m.safe_dir(str(link))
-        self.assertEqual(self.m.safe_dir(str(self.root / "srv/media")), self.root / "srv/media")
-        self.assertNotIn(str(link), [x["path"] for x in self.m.folders(str(link.parent))])
-
     def test_lock_blocks_mutation(self):
         with self.m.locked():
             with self.assertRaisesRegex(settings.SettingsBusy,

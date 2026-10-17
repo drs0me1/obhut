@@ -130,11 +130,6 @@ const ICONS = {
 
 export type IconName = keyof typeof ICONS;
 
-/** A name from outside the build (a package's konsol.json) as one of these icons, or the fallback. */
-export function iconOf(name: string, fallback: IconName = "box"): IconName {
-  return Object.prototype.hasOwnProperty.call(ICONS, name) ? (name as IconName) : fallback;
-}
-
 function shape(s: Shape) {
   if ("d" in s) return h("path", { d: s.d });
   if ("r" in s) return h("circle", { cx: s.cx, cy: s.cy, r: s.r });

@@ -240,12 +240,25 @@ export function sendFile(tree: Tree, folder: string, file: File, progress: (sent
   return { done, abort: () => xhr.abort() };
 }
 
-/** Who uses which folder of the user area: applications' bind mounts and the folder shares (DD-267). */
-export async function readStorage(): Promise<Depolama> {
-  const v = shaped<Depolama>(await getJson(YOLLAR.depolama), (d) => isText(d.kok) && Array.isArray(d.kullananlar));
+/** Who uses which folder of the user area (applications' bind mounts and the folder shares, DD-267) and each
+    application's data folders with their sizes (K7; `fresh` measures them again instead of the server's cache). */
+export async function readStorage(fresh = false): Promise<Depolama> {
+  const v = shaped<Depolama>(await getJson(YOLLAR.depolama + (fresh ? "?yenile=1" : "")), (d) => isText(d.kok) && Array.isArray(d.kullananlar));
+  const size = (n: unknown) => (isNumber(n) && n >= 0 ? n : null);
   return {
     ...v,
     kullananlar: v.kullananlar.filter((u) => isObject(u) && isText(u.yol) && isText(u.id) && isText(u.ad) && isText(u.tur)),
+    uygulamalar: (Array.isArray(v.uygulamalar) ? v.uygulamalar : [])
+      .filter((a) => isObject(a) && isText(a.ad) && isText(a.yol))
+      .map((a) => ({
+        ...a,
+        boyut: size(a.boyut),
+        neden: isText(a.neden) ? a.neden : "",
+        olculdu: isNumber(a.olculdu) ? a.olculdu : null,
+        klasorler: (Array.isArray(a.klasorler) ? a.klasorler : [])
+          .filter((k) => isObject(k) && isText(k.ad))
+          .map((k) => ({ ...k, yol: isText(k.yol) ? k.yol : "", boyut: size(k.boyut), neden: isText(k.neden) ? k.neden : "", hedefler: Array.isArray(k.hedefler) ? k.hedefler.filter(isText) : [] })),
+      })),
     hatalar: Array.isArray(v.hatalar) ? v.hatalar.filter(isText) : [],
   };
 }

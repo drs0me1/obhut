@@ -143,10 +143,6 @@ class RouteReplyTests(Fixture):
             status, headers, body = test_resources.unix_get(self.sock, "/api/konsol/onarim/gunluk?sure=7g", {"X-Konsol": "1"})
         self.assertEqual((status, headers["Content-Type"], body.decode()), (200, "text/plain; charset=utf-8", "satır 1\n"))
         log.assert_called_once_with("7g")
-        with patch.object(panel.master_settings, "Manager") as manager:
-            manager.return_value.folders.return_value = [{"path": "/srv/downloads", "free": 5}]
-            self.assertEqual(self.get("klasorler", "?path=/srv")["items"][0]["path"], "/srv/downloads")
-        manager.return_value.folders.assert_called_once_with("/srv")
         # Gelişmiş: the settings view's Caddy and dnsmasq parts.
         view = {"read_at": 3, "web": {"entries": [{"address": "panel.test:80", "routes": [{"path": "/", "kind": "proxy", "to": "x"}], "source": "base",
                                                     "access": "tailscale", "scheme": "http"}],
@@ -155,7 +151,7 @@ class RouteReplyTests(Fixture):
         with patch.object(self.p, "settings", return_value=view) as settings:
             self.assertEqual(self.get("gelismis", "?yenile=1"), {"read_at": 3, "caddy": view["web"], "dnsmasq": view["dns"]})
         settings.assert_called_once_with(fresh=True)
-        # Podman reads go to the same view as the current Konsol's.
+        # The Podman list reads the container manager's view.
         row = {"id": "abc", "name": "notlar_web", "image": "registry.example/notlar/web@sha256:" + "a" * 64, "state": "running",
                "status": "Up", "unit": "konsol-notlar_web.service", "network": "ksl-notlar", "created": 1, "started": 2, "exit_code": 0,
                "restarts": 0, "ports": [{"host_ip": "127.0.0.1", "host_port": 62100, "container_port": 80, "protocol": "tcp",
@@ -169,15 +165,10 @@ class RouteReplyTests(Fixture):
                    "networks": [{"name": "ksl-notlar", "id": "n1", "driver": "bridge", "subnets": ["10.89.1.0/24"], "used_by": ["notlar"],
                                  "managed": True, "internal": False}],
                    "storage": {"images": 1, "containers": 1, "size": None}, "resource_errors": {}}
-        detail = dict(row, mounts=[{"type": "volume", "source": "v", "destination": "/data", "rw": True, "name": "v"}],
-                      user="", command="nginx")
         fake = unittest.mock.Mock()
-        fake.liste.return_value, fake.ayrinti.return_value = listing, detail
+        fake.liste.return_value = listing
         with patch.object(panel.Handler, "container_view", return_value=fake):
             self.assertEqual(self.get("konteyner_listesi"), listing)
-            self.assertEqual(self.get("konteyner_ayrintisi", "?ad=notlar_web")["command"], "nginx")
-        status, _headers, body = test_resources.unix_get(self.sock, "/api/konsol/konteynerler/ayrinti?ad=../x", {"X-Konsol": "1"})
-        self.assertEqual(status, 400, body)
 
     def test_a_body_of_another_shape_is_refused_before_the_handler(self):
         self.assertEqual(self.post("oturum_cikis", {}), (200, {"durum": "cikis"}))
@@ -205,8 +196,9 @@ class RouteReplyTests(Fixture):
         # Depolama (K7): each application's /srv folders from its record, and each share.
         values = app_fixtures.env(self.root)
         with self.state.open("a") as fh:
-            fh.write("UYGULAMA_STATE_DIR=%s\n" % values["UYGULAMA_STATE_DIR"])
+            fh.write("UYGULAMA_STATE_DIR=%s\nUYGULAMA_VERI_DIR=%s\n" % (values["UYGULAMA_STATE_DIR"], values["UYGULAMA_VERI_DIR"]))
         app_fixtures.record(dict(values, STATE_FILE=str(self.state)))
+        (Path(values["UYGULAMA_VERI_DIR"]) / "notlar" / "uploads").mkdir(parents=True)
         registry = {"root": "/srv", "items": [{"id": "abc", "path": "media/filmler", "name": "filmler",
                                                "connections": {"tailscale": {"enabled": True, "permission": "rw", "expires": None}}}]}
         with patch.object(panel.master_shares, "Manager") as manager, patch.object(panel.subprocess, "run",
@@ -217,6 +209,12 @@ class RouteReplyTests(Fixture):
         self.assertEqual(answer["kullananlar"], [
             {"yol": "/srv/media", "id": "notlar", "ad": "notlar", "tur": "uygulama", "hedef": "web: /media", "yazilabilir": False},
             {"yol": "/srv/media/filmler", "id": "paylasim", "ad": "filmler", "tur": "paylasim", "hedef": "/s/abc/", "yazilabilir": True}])
+        # Each application's data folders (A5) with their sizes; one the walk did not find says so.
+        [data] = answer["uygulamalar"]
+        self.assertEqual((data["ad"], data["yol"], data["neden"]), ("notlar", str(Path(values["UYGULAMA_VERI_DIR"]) / "notlar"), ""))
+        self.assertIsInstance(data["boyut"], int)
+        self.assertEqual([(f["ad"], f["hedefler"], f["boyut"] is None, f["neden"]) for f in data["klasorler"]],
+                         [("db-data", ["db: /var/lib/db"], True, "Klasör yok."), ("uploads", ["web: /app/uploads"], False, "")])
         self.assertEqual(answer["hatalar"], [])
 
     def raw_post(self, path, body):
@@ -334,6 +332,18 @@ class OnlyTheTableAnswers(Fixture):
                     with self.subTest(method=method, path=path):
                         self.assertEqual(self.request(method, path, body)[0], 404)
         self.assertTrue(match.called)
+
+    def test_removed_reads_are_404(self):
+        # Rebuild §2.2: no screen read a container's detail or the old folder picker; both routes are gone.
+        paths = ("/api/konsol/konteynerler/ayrinti?ad=notlar_web", "/api/konsol/ayarlar/klasorler",
+                 "/api/konsol/ayarlar/klasorler?path=/srv")
+        with patch.object(panel.subprocess, "run", side_effect=AssertionError("no handler may run")):
+            for path in paths:
+                self.assertIsNone(master_api.find("GET", path.partition("?")[0]), path)
+                for method in ("GET", "HEAD"):
+                    with self.subTest(method=method, path=path):
+                        self.assertEqual(self.request(method, path)[0], 404)
+        self.assertFalse([n for n in ("api_konteyner_ayrintisi", "api_klasorler") if hasattr(panel.Handler, n)])
 
     def test_the_two_exceptions_answer_without_the_table(self):
         with patch.object(panel.master_api, "match", side_effect=AssertionError("not through the table")):

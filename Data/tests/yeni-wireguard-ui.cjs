@@ -6,10 +6,12 @@
    before. Starting and stopping WireGuard, adding, opening, closing, removing and regenerating a network go
    through the settings plan with the state's revizyon and their exact bodies: an opening waits for the 60 s
    confirmation in the pending banner, a closing commits at once, removing and regenerating need the typed
-   word (sent as onay). WireGuard off after install ("Aç" creates the first network), stopped ("Başlat"),
+   word (sent as onay). WireGuard off after install ("Aç" creates the first network), turned off ("Aç"),
    a pending change holding the planned actions, master-wg not answering (Sistem → Sağlık); polling only
    while visible. QR codes and profiles are fetched only on a click, with cache "no-store", and their object
    URLs are revoked. Fails on any console error, CSP violation or page error. Never contacts a server.
+   The layout follows the phase 5 prototype: the chosen network's card (state, switch, port, addresses, DNS, "Ağ
+   ayarları") above its devices' card ("Cihaz ekle"); "WireGuard'ı kapat" and "Aç" for WireGuard as a whole.
    PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-wireguard-ui.cjs */
 const assert = require("node:assert/strict");
 
@@ -54,7 +56,7 @@ const data = {
   erisim: { read_at: NOW, alan: "ev", revizyon: "rev-1", hizmetler: [], uyarilar: [], hatalar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "", surum: "", adresler: [], cikis_dugumu: null },
       internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
-  uygulamalar: { read_at: NOW, hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 0, kullanilmayan_imaj: 0, birim: 0, ag: 0 }, items: [], kaynaklar: [] },
+  uygulamalar: { read_at: NOW, hatalar: [], items: [], kaynaklar: [] },
 };
 
 let expectedFailures = [];
@@ -253,16 +255,22 @@ const panel = (page) => page.locator(".modal-sheet");
     assert.deepEqual(await netTabs.evaluateAll((ts) => ts.map((t) => [t.querySelector(".tab-label").textContent, t.querySelector(".tab-hint").textContent])),
       [["wg0 · Ana ağ", "1/3 bağlı · UDP 61001"], ["wg1 · Misafir", "Kapalı · UDP 61020"]]);
     const card = tab.locator(".wg-net");
+    const view = tab.locator(".wg-view");
     assert.equal(await card.locator("h2").innerText(), "wg0 · Ana ağ");
     assert.equal(await card.locator(".wg-net-title .meter-note").innerText(), "UDP 61001 · 10.8.0.0/24 · Yalnız internet");
-    assert.deepEqual(await card.getByTestId("wg-summary").locator("dd").allInnerTexts(), ["1 / 3 cihaz · 1 kapalı", "61001 · UDP açık", "Yalnız internet", "10.8.0.1/24"]);
-    const row = (name) => card.locator(`tr[data-cihaz="${name}"]`);
-    assert.deepEqual(await card.getByTestId("device-state").allInnerTexts(), ["Bağlı", "Boşta", "Kapalı"]);
+    assert.equal(await card.getByTestId("wg-net-state").innerText(), "Çalışıyor");
+    assert.deepEqual(await card.getByTestId("wg-summary").locator("dt").allInnerTexts(), ["Port", "Ağ", "Sunucu", "DNS", "Cihaz"]);
+    assert.deepEqual(await card.getByTestId("wg-summary").locator("dd").allInnerTexts(),
+      ["203.0.113.10:61001/udp · açık", "10.8.0.0/24", "10.8.0.1", "Cloudflare", "1 / 3 bağlı · 1 kapalı"]);
+    const devicesCard = view.getByTestId("wg-devices");
+    assert.equal(await devicesCard.locator("h3").innerText(), "Cihazlar");
+    const row = (name) => devicesCard.locator(`tr[data-cihaz="${name}"]`);
+    assert.deepEqual(await devicesCard.getByTestId("device-state").allInnerTexts(), ["Bağlı", "Boşta", "Kapalı"]);
     assert.equal(await row("iphone").locator(".cell-sub").innerText(), "DNS Cloudflare · keepalive 21 sn");
     assert.equal(await row("macbook").locator(".cell-sub").innerText(), "DNS Quad9 · keepalive 25 sn");
     assert.equal(await row("tv").locator(".cell-sub").innerText(), "DNS Cloudflare · keepalive kapalı");
     assert.equal(await row("iphone").locator('td[data-label="Adres"]').innerText(), "10.8.0.2\nfd42:8:0::2");
-    assert.deepEqual(await card.locator('td[data-label="Son görülme"]').allInnerTexts(), ["az önce", "60 dakika önce", "—"]);
+    assert.deepEqual(await devicesCard.locator('td[data-label="Son görülme"]').allInnerTexts(), ["az önce", "60 dakika önce", "—"]);
     assert.equal(await row("iphone").locator(".traffic").innerText(), "↓ 50 MB\n↑ 10 MB");
     assert.equal(wgGets("qr.png") + wgGets("/profile"), 0, "no secret is read before a click");
     await noStyles(page, "wireguard");
@@ -273,9 +281,11 @@ const panel = (page) => page.locator(".modal-sheet");
     await page.waitForURL((u) => u.hash === "#/erisim?sekme=wireguard&ag=wg1");
     await card.locator("h2").filter({ hasText: "wg1 · Misafir" }).waitFor();
     await card.getByTestId("wg-off").waitFor();
-    assert.deepEqual(await card.getByTestId("device-state").allInnerTexts(), ["Ağ kapalı"]);
-    assert(await card.getByRole("switch", { name: "misafir-tel bağlantısı" }).isDisabled(), "devices of a stopped network wait");
-    assert.equal(await card.getByTestId("wg-summary").locator("dd").first().innerText(), "Kapalı · 1 cihaz bekliyor");
+    assert.equal(await card.getByTestId("wg-net-state").innerText(), "Kapalı");
+    assert.deepEqual(await devicesCard.getByTestId("device-state").allInnerTexts(), ["Ağ kapalı"]);
+    assert(await devicesCard.getByRole("switch", { name: "misafir-tel bağlantısı" }).isDisabled(), "devices of a stopped network wait");
+    assert.deepEqual(await card.getByTestId("wg-summary").locator("dd").allInnerTexts(),
+      ["203.0.113.10:61020/udp · dinlenmiyor", "10.8.1.0/24", "10.8.1.1", "AdGuard", "1 cihaz · bağlanamaz"]);
     await page.reload();
     await card.locator("h2").filter({ hasText: "wg1 · Misafir" }).waitFor();
     await shot(page, "1440-light-wireguard-kapali.png", true);
@@ -296,11 +306,12 @@ const panel = (page) => page.locator(".modal-sheet");
     const pending = page.locator(".pending");
     await pending.waitFor();
     await page.getByTestId("countdown").filter({ hasText: /^(1:00|0:59)$/ }).waitFor();
+    assert.equal(await pending.getByTestId("pending-title").innerText(), "Bekleyen değişiklik: wg1 ağını aç", "the banner names the WireGuard action");
     // A pending change holds every planned action; devices still change.
     await tab.getByTestId("wg-locked").waitFor();
     for (const id of ["wg-add-net", "wg-stop"]) assert(await tab.getByTestId(id).isDisabled(), id);
     assert(await card.getByRole("switch", { name: "wg1 ağı açık" }).isDisabled());
-    assert(await card.getByTestId("wg-add-device").isEnabled(), "devices are not settings changes");
+    assert(await view.getByTestId("wg-add-device").isEnabled(), "devices are not settings changes");
     await shot(page, "1440-light-wireguard-bekliyor.png");
     await pending.getByTestId("pending-confirm").click();
     await pending.waitFor({ state: "detached" });
@@ -378,7 +389,7 @@ const panel = (page) => page.locator(".modal-sheet");
     assert.equal(wgGets("qr.png"), 1, "the QR was read once, on its click");
 
     // ================= add a device: name checks, DNS, keepalive, MTU; the QR opens afterwards
-    await card.getByTestId("wg-add-device").click();
+    await view.getByTestId("wg-add-device").click();
     let sheet = panel(page);
     await sheet.getByRole("heading", { name: "wg0 ağına cihaz ekle" }).waitFor();
     const go = sheet.getByTestId("review");
@@ -499,7 +510,7 @@ const panel = (page) => page.locator(".modal-sheet");
     await sheet.waitFor({ state: "detached" });
     assert.deepEqual(lastSettings("uygula"), body);
     await tab.getByTestId("wg-note").filter({ hasText: "wg0 yeniden üretildi: 3 cihaz silindi, yeni sunucu anahtarı etkin." }).waitFor();
-    await card.getByText("Bu ağda henüz cihaz yok").waitFor();
+    await devicesCard.getByText("Henüz cihaz yok").waitFor();
     assert.equal(await page.locator(".pending").count(), 0);
 
     // ================= add a network: the next free one, port checks, name, DNS; the plan waits for the confirmation
@@ -588,6 +599,8 @@ const panel = (page) => page.locator(".modal-sheet");
     await page.goto(url("#/erisim?sekme=wireguard"));
     const empty = page.getByTestId("wg-empty");
     await empty.getByText("WireGuard kapalı", { exact: true }).waitFor();
+    assert.equal(await empty.locator(".empty-text").innerText(),
+      "Tailscale kurulamayan cihazların bu sunucu üzerinden internete çıkması için. Açınca ilk ağ kurulur ve bir UDP portu internete açılır.");
     assert.equal(await page.getByTestId("wg-stopped").count(), 0, "not stopped: just no network yet");
     assert.equal(await page.getByTestId("wg-stop").count(), 0);
     await noStyles(page, "wireguard off");
@@ -612,7 +625,7 @@ const panel = (page) => page.locator(".modal-sheet");
     assert.deepEqual(lastSettings("geri-al"), { id: "p-wg" });
     await page.getByTestId("wg-empty").waitFor();
     await page.context().close();
-    // Stopped with no network: Başlat first; Aç waits for it.
+    // Turned off with no network: its own Aç first; the first network waits for it.
     reset({ networks: [], durduruldu: true });
     page = await open();
     await page.goto(url("#/erisim?sekme=wireguard"));
@@ -620,23 +633,24 @@ const panel = (page) => page.locator(".modal-sheet");
     assert(await page.getByTestId("wg-setup").isDisabled(), "a stopped WireGuard adds no network");
     await page.context().close();
 
-    // ================= running: "Durdur" through the plan, at once; every network goes down
+    // ================= running: "WireGuard'ı kapat" through the plan, at once; every network goes down
     reset();
     page = await open();
     await page.goto(url("#/erisim?sekme=wireguard"));
     await page.locator('tr[data-cihaz="iphone"]').waitFor();
     await page.getByTestId("wg-stop").click();
-    const stop = page.getByRole("dialog", { name: "WireGuard durdurulsun mu?" });
+    assert.equal(await page.getByTestId("wg-stop").innerText(), "WireGuard'ı kapat");
+    const stop = page.getByRole("dialog", { name: "WireGuard kapatılsın mı?" });
     body2 = await planned(stop);
     assert.equal(await stop.locator(".modal-desc").innerText(), "2 ağ · 1 cihaz bağlı");
     assert.deepEqual(await stop.getByTestId("wg-action-list").locator("li").allInnerTexts(), [
       "Bütün ağlar kapanır, UDP portları ve yönlendirme kalkar; cihazlar bağlanamaz.",
-      "Başlatınca önceden açık olan ağlar geri gelir.",
-      "Anahtarlar, cihazlar ve profiller silinmez. Sunucu yeniden başlasa da durdurulmuş kalır.",
+      "Açınca önceden açık olan ağlar geri gelir.",
+      "Anahtarlar, cihazlar ve profiller silinmez. Sunucu yeniden başlasa da kapalı kalır.",
     ]);
     assert.deepEqual(body2, { revision: "rev-wg", wireguard: { eylem: "durdur" } }, "no typed word for a stop");
     assert.equal(await stop.getByTestId("plan-window").innerText(), "Hemen kaydedilir; onay beklenmez.");
-    assert.equal(await stop.getByTestId("apply").innerText(), "Durdur");
+    assert.equal(await stop.getByTestId("apply").innerText(), "Kapat");
     await shot(page, "1440-light-wireguard-durdur.png");
     await stop.getByRole("button", { name: "Vazgeç" }).click();
     await stop.waitFor({ state: "detached" });
@@ -646,16 +660,18 @@ const panel = (page) => page.locator(".modal-sheet");
     await stop.getByTestId("apply").click();
     await stop.waitFor({ state: "detached" });
     assert.deepEqual(lastSettings("uygula"), body2);
-    await page.getByTestId("wireguard").getByTestId("wg-note").filter({ hasText: "WireGuard durduruldu: ağlar kapandı, cihazlar bağlanamaz." }).waitFor();
+    await page.getByTestId("wireguard").getByTestId("wg-note").filter({ hasText: "WireGuard kapatıldı: ağlar kapandı, cihazlar bağlanamaz." }).waitFor();
     assert.equal(await page.locator(".pending").count(), 0);
 
-    // ================= stopped: a banner with "Başlat" (planned, 60 s), writes off, secrets still readable
+    // ================= turned off: a banner with "Aç" (planned, 60 s), writes off, secrets still readable
     const stopped = page.getByTestId("wg-stopped");
     await stopped.waitFor();
-    assert.equal(await stopped.locator(".notice-title").innerText(), "WireGuard durduruldu");
+    assert.equal(await stopped.locator(".notice-title").innerText(), "WireGuard kapalı");
     assert.equal(await stopped.locator(".notice-list").innerText(),
-      "Cihazlar bağlanamaz; ağlar ve cihazlar değiştirilemez. Anahtarlar, cihazlar ve profiller duruyor. Başlatınca önceden açık olan ağlar geri gelir.");
-    assert.equal(await page.getByTestId("wg-stop").count(), 0, "no Durdur while stopped");
+      "Cihazlar bağlanamaz; ağlar ve cihazlar değiştirilemez. Anahtarlar, cihazlar ve profiller duruyor. Açınca önceden açık olan ağlar geri gelir.");
+    assert.equal(await stopped.getByTestId("wg-start").innerText(), "Aç");
+    assert.equal(await page.getByTestId("wg-stop").count(), 0, "no WireGuard'ı kapat while it is off");
+    assert.equal(await page.getByTestId("wg-net-state").innerText(), "WireGuard kapalı");
     for (const name of ["wg0 ağı açık", "iphone bağlantısı", "macbook bağlantısı"]) assert(await page.getByRole("switch", { name }).isDisabled(), name);
     for (const id of ["wg-add-device", "wg-add-net"]) assert(await page.getByTestId(id).isDisabled(), id);
     assert(await page.getByRole("button", { name: "iphone sil" }).isDisabled());
@@ -663,14 +679,14 @@ const panel = (page) => page.locator(".modal-sheet");
     await noStyles(page, "wireguard stopped");
     await shot(page, "1440-light-wireguard-durdu.png", true);
     await stopped.getByTestId("wg-start").click();
-    const start = page.getByRole("dialog", { name: "WireGuard başlatılsın mı?" });
+    const start = page.getByRole("dialog", { name: "WireGuard açılsın mı?" });
     body2 = await planned(start);
     assert.deepEqual(body2, { revision: wg.state.revizyon, wireguard: { eylem: "baslat" } });
     assert.match(await start.getByTestId("plan-window").innerText(), /1:00 içinde/);
     await start.getByTestId("apply").click();
     await start.waitFor({ state: "detached" });
     assert.deepEqual(lastSettings("uygula"), body2);
-    await page.getByTestId("wireguard").getByTestId("wg-note").filter({ hasText: "WireGuard başlatıldı: önceden açık olan ağlar geri geldi; 60 saniye içinde yukarıdaki banttan onaylayın." }).waitFor();
+    await page.getByTestId("wireguard").getByTestId("wg-note").filter({ hasText: "WireGuard açıldı: önceden açık olan ağlar geri geldi; 60 saniye içinde yukarıdaki banttan onaylayın." }).waitFor();
     await stopped.waitFor({ state: "detached" });
     await page.locator(".pending").getByTestId("pending-confirm").click();
     await page.locator(".pending").waitFor({ state: "detached" });
@@ -771,15 +787,16 @@ const panel = (page) => page.locator(".modal-sheet");
 
     assert.deepEqual(h.errors, []);
     console.log("PASS: Konsol WireGuard (built-in, /api/konsol/wireguard; planned actions through the settings transaction, DD-275) under the " +
-      "production CSP — networks as tabs (label, port, x/y bağlı, Kapalı, ?ag= across a reload), a network opened through the plan (60 s, the " +
+      "production CSP — networks as tabs (label, port, x/y bağlı, Kapalı, ?ag= across a reload), the network's card (state, port, addresses, " +
+      "DNS, devices) above its devices' card, a network opened through the plan (60 s, the " +
       "pending banner holding the planned actions, Onayla) and closed at once (asked in the plan sheet, Vazgeç sends nothing), a stale revision " +
       "refused, devices (state, DNS provider and keepalive, addresses, last seen, traffic, on/off at once), QR and profile only on a click with " +
       "cache no-store and revoked object URLs (QR on load, profile after 10 s), add device (duplicate and name checks, DNS presets, keepalive " +
       "chips, integer MTU, the QR afterwards), DNS and keepalive (custom DNS, invalid custom refused, the new QR offered), delete, the " +
       "network's name and default DNS with its revision (409 on a stale one), regenerate and remove with the typed word sent as onay (devices " +
       "listed, Geri asks the word again, last network warned, at once), add network through the plan (next wgN, port checks, integer port, " +
-      "name, 60 s), off after install with Aç (no label, rolled back), stopped with no network, Durdur at once without a typed word, Başlat " +
-      "planned with 60 s, master-wg not answering, polling every 10 s only while shown and visible, no request to the removed routes, " +
+      "name, 60 s), off after install with Aç (no label, rolled back), turned off with no network, WireGuard'ı kapat at once without a typed " +
+      "word, Aç planned with 60 s, master-wg not answering, polling every 10 s only while shown and visible, no request to the removed routes, " +
       "1440/390/320 in light and dark. Screenshots: " + h.shots);
   } finally {
     await h.stop();

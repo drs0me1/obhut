@@ -1,9 +1,9 @@
-// Gelişmiş's reads and actions (DD-266, phase 4a): the effective Caddy and dnsmasq configuration, and
-// Podman's images, volumes and networks with their jobs (docs/design/container-manager-api.md). Paths and
-// shapes come from sema.ts (generated from panel/master_api.py); every reply is checked before a page shows
-// it, a list item without its expected fields is left out, and a collection that could not be read is
-// never shown as an empty one.
-import { YOLLAR, type Gelismis, type KonteynerIsi, type KonteynerIstegi, type KonteynerListesi, type YapilandirmaDosyasi } from "./sema";
+// Gelişmiş's reads (DD-266; read-only since the rebuild's phase 5, K8): the effective Caddy and dnsmasq
+// configuration, Podman's images, volumes and networks (docs/design/container-manager-api.md), and its only write:
+// the cleanup of what nothing uses (its read model and the job). Paths and shapes come from sema.ts (generated
+// from panel/master_api.py); every reply is checked before a page shows it, a list item without its expected
+// fields is left out, and a collection that could not be read is never shown as an empty one.
+import { YOLLAR, type Gelismis, type KonteynerListesi, type Temizlik, type TemizlikIsi, type TemizlikIstegi, type YapilandirmaDosyasi } from "./sema";
 import { getJson, postJson } from "./http";
 import { isObject, isText, shaped } from "./konsol";
 
@@ -77,20 +77,17 @@ export interface Image {
   size: number | null;
   created: number | null;
   used_by: string[];
-  managed: boolean;
 }
 
 export interface Volume {
   name: string;
   driver: string;
-  size: number | null;
   used_by: string[];
   managed: boolean;
 }
 
 export interface Network {
   name: string;
-  id: string;
   driver: string;
   subnets: string[];
   used_by: string[];
@@ -105,7 +102,7 @@ export interface Resources {
   images: Image[] | null;
   volumes: Volume[] | null;
   networks: Network[] | null;
-  storage: { images: number | null; containers: number | null; size: number | null };
+  storage: { size: number | null };
   errors: Partial<Record<"images" | "volumes" | "networks" | "stats" | "containers", string>> & Record<string, string>;
 }
 
@@ -125,47 +122,47 @@ export async function readResources(): Promise<Resources> {
     images: isList(value.images)
       ? value.images.filter((i) => isObject(i) && isText(i.name)).map((i) => ({
           id: isText(i.id) ? i.id : "", name: i.name as string, size: isNumber(i.size) ? i.size : null, created: isNumber(i.created) ? i.created : null,
-          used_by: used(i.used_by), managed: i.managed === true,
+          used_by: used(i.used_by),
         }))
       : null,
     volumes: isList(value.volumes)
       ? value.volumes.filter((x) => isObject(x) && isText(x.name)).map((x) => ({
-          name: x.name as string, driver: isText(x.driver) ? x.driver : "", size: isNumber(x.size) ? x.size : null, used_by: used(x.used_by), managed: x.managed === true,
+          name: x.name as string, driver: isText(x.driver) ? x.driver : "", used_by: used(x.used_by), managed: x.managed === true,
         }))
       : null,
     networks: isList(value.networks)
       ? value.networks.filter((n) => isObject(n) && isText(n.name)).map((n) => ({
-          name: n.name as string, id: isText(n.id) ? n.id : "", driver: isText(n.driver) ? n.driver : "", subnets: subnets(n.subnets),
+          name: n.name as string, driver: isText(n.driver) ? n.driver : "", subnets: subnets(n.subnets),
           used_by: used(n.used_by), managed: n.managed === true, internal: n.internal === true,
         }))
       : null,
-    storage: {
-      images: isNumber(storage.images) ? storage.images : null,
-      containers: isNumber(storage.containers) ? storage.containers : null,
-      size: isNumber(storage.size) ? storage.size : null,
-    },
+    storage: { size: isNumber(storage.size) ? storage.size : null },
     errors,
   };
 }
 
-/** One of Gelişmiş's six resource actions, in the route table's typed shape (KonteynerIstegi). */
-export type ResourceJob = KonteynerIstegi & (
-  | { action: "image-pull"; image: string }
-  | { action: "image-remove"; image: string }
-  | { action: "volume-create"; name: string }
-  | { action: "volume-remove"; name: string }
-  | { action: "network-create"; name: string; subnet: string; internal: boolean }
-  | { action: "network-remove"; name: string }
-);
+// ---- the cleanup (K8)
+const nullableNumber = (v: unknown): number | null => (isNumber(v) ? v : null);
 
-/** Starts a resource job (202 {id, action, name, state}); its end arrives in the activity list. */
-export async function startResourceJob(request: ResourceJob): Promise<KonteynerIsi & { id: string }> {
-  return shaped<KonteynerIsi & { id: string }>(await postJson(YOLLAR.konteyner_islemi, request), (v) => isText(v.id) && v.id !== "");
+/** What nothing uses (images by ID with their tags, networks and volumes by name, removed applications' data
+    folders with their sizes) and the containers Obhut does not manage; `fresh` measures the folders again. */
+export async function readCleanup(fresh = false): Promise<Temizlik> {
+  const v = shaped<Temizlik>(await getJson(YOLLAR.temizlik + (fresh ? "?yenile=1" : "")), (d) =>
+    ["imajlar", "aglar", "birimler", "klasorler", "konteynerler"].every((k) => isList(d[k])));
+  return {
+    read_at: isNumber(v.read_at) ? v.read_at : 0,
+    imajlar: v.imajlar.filter((i) => isObject(i) && isText(i.id)).map((i) => ({ id: i.id, etiketler: texts(i.etiketler), boyut: nullableNumber(i.boyut), olusturuldu: nullableNumber(i.olusturuldu) })),
+    aglar: v.aglar.filter((n) => isObject(n) && isText(n.ad)).map((n) => ({ ad: n.ad, surucu: isText(n.surucu) ? n.surucu : "", arayuz: isText(n.arayuz) ? n.arayuz : "" })),
+    birimler: v.birimler.filter((b) => isObject(b) && isText(b.ad)).map((b) => ({ ad: b.ad, surucu: isText(b.surucu) ? b.surucu : "", olusturuldu: nullableNumber(b.olusturuldu) })),
+    klasorler: v.klasorler.filter((k) => isObject(k) && isText(k.ad) && isText(k.yol)).map((k) => ({ ad: k.ad, yol: k.yol, boyut: nullableNumber(k.boyut), neden: isText(k.neden) ? k.neden : "" })),
+    konteynerler: v.konteynerler
+      .filter((c) => isObject(c) && isText(c.ad))
+      .map((c) => ({ ad: c.ad, imaj: isText(c.imaj) ? c.imaj : "", durum: isText(c.durum) ? c.durum : "", yonetici: c.yonetici === "kayitsiz" || c.yonetici === "baska" ? c.yonetici : "podman" })),
+    hatalar: texts(v.hatalar),
+  };
 }
 
-// The worker checks these again.
-/** A fully qualified image: a registry (with a dot or a port, or localhost), a repository and a tag or digest. */
-export const IMAGE_RE =
-  /^(localhost|[a-z0-9-]+(\.[a-z0-9-]+)+)(:[0-9]{1,5})?\/[a-z0-9]+([._-][a-z0-9]+)*(\/[a-z0-9]+([._-][a-z0-9]+)*)*(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}|@sha256:[0-9a-f]{64})$/;
-export const RESOURCE_NAME_RE = /^[a-z0-9][a-z0-9_.-]{0,62}$/;
-export const CIDR_RE = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
+/** The selected items as one job (202), followed in İşlemler; each is checked again right before it goes. */
+export async function startCleanup(request: TemizlikIstegi): Promise<TemizlikIsi> {
+  return shaped(await postJson(YOLLAR.temizle, request), (v) => isText(v.is) && v.is !== "");
+}

@@ -2,7 +2,7 @@
 """Read-only Podman mapper (DD-208), reused by the DD-211 container manager.
 
 Podman is part of the base (Konsol's container runtime). The root backend calls this module
-for GET /api/konsol/konteynerler/{liste,ayrinti}; everything comes from `podman` itself
+for GET /api/konsol/konteynerler/liste; everything comes from `podman` itself
 (ps, inspect, images, system df) run inside the backend's sandbox, which is enough for
 reading, and, for a container on the host network, from /proc (the sockets it listens on, DD-215).
 Nothing here starts, stops or removes a container: that belongs to the application that owns it.
@@ -17,7 +17,6 @@ import sys
 import time
 
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
-LABEL_KEYS = {"version": "org.opencontainers.image.version", "source": "org.opencontainers.image.source", "title": "org.opencontainers.image.title"}
 
 
 def epoch(value):
@@ -32,19 +31,6 @@ def epoch(value):
         except ValueError:
             return None
     return None
-
-
-def ports_of(bindings):
-    """{'8080/tcp': [{'HostIp': '', 'HostPort': '61016'}]} → rows; an empty list for host networking."""
-    rows = []
-    for key, binds in sorted((bindings or {}).items()):
-        port, _, proto = str(key).partition("/")
-        for b in binds or []:
-            host_port = str((b or {}).get("HostPort", "")).strip()
-            if port.isdigit() and host_port.isdigit():
-                rows.append({"host_ip": (b or {}).get("HostIp") or "0.0.0.0", "host_port": int(host_port),
-                             "container_port": int(port), "protocol": proto or "tcp"})
-    return rows
 
 
 def ps_ports(items):
@@ -281,8 +267,11 @@ class Containers:
             if not isinstance(labels, dict):
                 labels = {}
             networks = c.get("Networks") or []
+            image_id = str(c.get("ImageID") or "")
             result.append({
-                "id": str(c.get("Id", ""))[:12], "name": name, "image": c.get("Image", ""), "state": c.get("State") or "unknown",
+                "id": str(c.get("Id", ""))[:12], "name": name, "image": c.get("Image", ""),
+                # The full ID of the image it was made from (whether an image is unused, Gelişmiş's cleanup).
+                "image_id": image_id[7:] if image_id.startswith("sha256:") else image_id, "state": c.get("State") or "unknown",
                 "status": c.get("Status", ""), "created": epoch(c.get("Created")), "started": epoch(c.get("StartedAt")),
                 "exit_code": c.get("ExitCode", 0) if isinstance(c.get("ExitCode"), int) else 0,
                 "restarts": c.get("Restarts", 0) if isinstance(c.get("Restarts"), int) else 0,
@@ -321,38 +310,3 @@ class Containers:
                     total += size
             answer["storage"]["size"] = total
         return answer
-
-    def ayrinti(self, name):
-        ok, data, message = self.podman("inspect", "--type", "container", name)
-        if not ok:
-            raise ContainerError(404 if "no such" in message.lower() or "not found" in message.lower() else 502, "Konteyner bulunamadı" if "no such" in message.lower() else "Konteyner okunamadı: %s" % message)
-        try:
-            c = json.loads(data)[0]
-        except (ValueError, IndexError, TypeError):
-            raise ContainerError(502, "podman inspect çıktısı okunamadı")
-        state, host, config, net = c.get("State") or {}, c.get("HostConfig") or {}, c.get("Config") or {}, c.get("NetworkSettings") or {}
-        mode = host.get("NetworkMode", "") or ""
-        networks = sorted(k for k in (net.get("Networks") or {}) if isinstance(k, str))
-        labels = config.get("Labels") or {}
-        health = state.get("Health") or {}
-        mounts = []
-        for m in c.get("Mounts") or []:
-            if isinstance(m, dict):
-                mounts.append({"type": m.get("Type", ""), "source": m.get("Source", ""), "destination": m.get("Destination", ""),
-                               "rw": bool(m.get("RW", True)), "name": m.get("Name") or ""})
-        mounts.sort(key=lambda m: m["destination"])
-        return {
-            "name": (c.get("Name") or name).lstrip("/"), "id": str(c.get("Id", ""))[:12], "image": c.get("ImageName", ""),
-            "image_digest": str(c.get("ImageDigest", "")).replace("sha256:", "")[:12], "state": state.get("Status") or "unknown",
-            "status": "", "created": epoch(c.get("Created")), "started": epoch(state.get("StartedAt")), "finished": epoch(state.get("FinishedAt")),
-            "exit_code": state.get("ExitCode", 0) if isinstance(state.get("ExitCode"), int) else 0,
-            "restarts": c.get("RestartCount", 0) if isinstance(c.get("RestartCount"), int) else 0,
-            "unit": labels.get("PODMAN_SYSTEMD_UNIT", "") if isinstance(labels, dict) else "",
-            "network": ", ".join(networks) if mode == "bridge" and networks else mode,
-            "health": (health.get("Status") or "") if isinstance(health, dict) else "",
-            # DD-227: the account the process runs as ("" = the image's default, often root).
-            "user": str(config.get("User") or ""),
-            "ports": ports_of(net.get("Ports") or host.get("PortBindings")), "mounts": mounts,
-            "labels": {k: str(labels.get(v, "")) if isinstance(labels, dict) else "" for k, v in LABEL_KEYS.items()},
-            "command": " ".join(str(x) for x in (config.get("Cmd") or [])),
-        }

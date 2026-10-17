@@ -16,7 +16,6 @@ import master_settings as settings
 LIMIT = 1024 * 1024
 NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z')
 REV_RE = re.compile(r'[0-9a-f]{32}\Z')
-IMAGE_RE = re.compile(r'(?:[a-z0-9][a-z0-9.-]*\.[a-z0-9.-]+|localhost)(?::[0-9]{1,5})?/(?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[0-9a-f]{64})?\Z')
 MANAGED_LABEL = 'io.master-stack.managed'
 
 
@@ -29,17 +28,6 @@ class ContainerConfigError(Exception):
 def require(ok, message, status=400):
     if not ok:
         raise ContainerConfigError(status, message)
-
-
-def name_of(value):
-    require(isinstance(value, str) and NAME_RE.fullmatch(value), 'Ad 1–64 harf/rakam, . _ veya - içermeli; harf/rakamla başlamalı.')
-    return value
-
-
-def image_of(value):
-    require(isinstance(value, str) and len(value) <= 512 and IMAGE_RE.fullmatch(value),
-            'İmajın tam kayıt adresini yazın (ör. docker.io/library/nginx:alpine).')
-    return value
 
 
 def private_dir(path):

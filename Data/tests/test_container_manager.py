@@ -95,7 +95,7 @@ class ManagerTests(unittest.TestCase):
                          [('web', 'calisiyor', 'bilinmiyor'), ('db', 'calisiyor', 'bilinmiyor')])
         self.assertEqual(item['eylemler'], ['durdur', 'yeniden-baslat', 'guncelle'])
         self.assertEqual(item['kaynak'], {'cpu': None, 'bellek': 4000}, 'memory summed over the services; one reading gives no CPU')
-        self.assertEqual(answer['altyapi']['podman'], '5.4.2')
+        self.assertNotIn('altyapi', answer, "Podman's inventory is Gelişmiş's; the list carries none")
         # One service down: kismen; a failed unit: hata; a stopped record: durduruldu.
         self.units['konsol-notlar_db.service'] = 'inactive'
         self.inspected['notlar_db']['State']['Running'] = False
@@ -135,7 +135,8 @@ class ManagerTests(unittest.TestCase):
                                            'kullanim': 'caddy', 'tailscale_adi': 'notlar', 'yerel_port': 62100}])
         self.assertEqual(detail['servisler'][1]['portlar'], [], 'the database publishes no port')
         self.assertEqual([m['tur'] for m in web['baglamalar']], ['app', 'srv'])
-        self.assertEqual(web['baglamalar'][1], {'hedef': '/media', 'tur': 'srv', 'yol': '/srv/media', 'salt_okunur': True})
+        self.assertEqual(web['baglamalar'][1], {'hedef': '/media', 'tur': 'srv', 'yol': '/srv/media', 'salt_okunur': True,
+                                                'boyut': None})
         self.assertEqual((web['gizliler'], web['saglik'], web['yeniden_baslama']), (['notlar-db-password'], 'healthy', 1))
         self.assertEqual(detail['gizliler'], [{'ad': 'notlar-db-password', 'servisler': ['web', 'db']}])
         self.assertEqual(detail['yanitlar']['answers']['var:DB_PASSWORD'], {'set': True})
@@ -145,6 +146,27 @@ class ManagerTests(unittest.TestCase):
         with self.assertRaises(manager.ContainerError) as err:
             self.s.view().application('yok')
         self.assertEqual(err.exception.status, 404)
+
+    def test_the_detail_gives_application_folders_their_measured_size_and_the_last_update_check(self):
+        self.running_app()
+        folder = Path(self.env['UYGULAMA_VERI_DIR']) / 'notlar' / 'uploads'
+        folder.mkdir(parents=True)
+        (folder / 'dosya.bin').write_bytes(b'x' * 20000)
+        detail = self.s.view().application('notlar')
+        web, db = detail['servisler']
+        self.assertGreaterEqual(web['baglamalar'][0]['boyut'], 20000, "the folder's share of Depolama's measurement")
+        self.assertIsNone(web['baglamalar'][1]['boyut'], 'a server folder has no size here')
+        self.assertIsNone(db['baglamalar'][0]['boyut'], 'a folder not on disk yet')
+        self.assertIsNone(detail['guncelleme_denetlendi'], 'never checked')
+        # The same cached measurement Depolama reads: a second read walks nothing.
+        (folder / 'ikinci.bin').write_bytes(b'x' * 50000)
+        self.assertEqual(self.s.view().application('notlar')['servisler'][0]['baglamalar'][0]['boyut'], web['baglamalar'][0]['boyut'])
+        with self.s.lock:
+            self.s.update_items, self.s.update_at = {'notlar': {'web': {'state': 'guncel'}}}, 1791845000.5
+        self.assertEqual(self.s.view().application('notlar')['guncelleme_denetlendi'], 1791845000)
+        with self.s.lock:
+            self.s.update_items = {'baska': {'web': {'state': 'guncel'}}}
+        self.assertIsNone(self.s.view().application('notlar')['guncelleme_denetlendi'], 'a check that did not ask about it')
 
     def test_a_service_log_is_its_unit_journal_unfiltered(self):
         # DD-251: an application's log is its unit's journal (every start and re-creation), nothing masked.
@@ -196,7 +218,6 @@ class ManagerTests(unittest.TestCase):
         self.p.run_tool = run
         row = self.s.view().liste()['images'][0]
         self.assertEqual((row['name'], row['used_by'], row['managed']), ('registry.example/notlar/web:1.4', ['notlar'], True))
-        self.assertEqual(self.s.view().applications()['altyapi']['kullanilmayan_imaj'], 0)
 
     def test_the_edit_plan_lists_what_changes_and_writes_nothing(self):
         self.running_app()
@@ -259,10 +280,29 @@ class ManagerTests(unittest.TestCase):
                                  ('uygulama-taslak', 'bad image name')):
                 with self.subTest(action=action, name=name), self.assertRaises(manager.ContainerError):
                     self.s.submit_app(action, name, {})
-            with self.assertRaises(manager.ContainerError):
-                self.s.submit({'action': 'create', 'name': 'web'})
-            self.s.submit({'action': 'image-remove', 'image': 'c' * 64})
-            self.assertEqual(launch.call_args.args[2]['image'], 'sha256:' + 'c' * 64)
+            self.assertFalse(hasattr(self.s, 'submit'), 'the Podman resource actions are gone')
+
+    def test_the_cleanup_job_takes_only_checked_items_and_names_no_application(self):
+        with patch.object(self.s, '_launch') as launch:
+            job = self.s.submit_cleanup({'imajlar': ['c' * 64, 'c' * 64], 'aglar': ['eski-ag'], 'birimler': ['yetim'],
+                                         'klasorler': ['eskiuygulama']})
+            self.assertEqual((job['action'], job['name']), ('temizlik', 'Podman'))
+            self.assertEqual(launch.call_args.args[1:], ('temizlik', {'imajlar': ['c' * 64], 'aglar': ['eski-ag'],
+                                                                      'birimler': ['yetim'], 'klasorler': ['eskiuygulama'],
+                                                                      'name': 'Podman'}))
+            self.assertIsNone(self.s.busy('podman'), 'an application named like the job is not busy')
+            with self.assertRaises(manager.ContainerError) as err:
+                self.s.submit_cleanup({'birimler': ['ikinci']})
+            self.assertEqual(err.exception.status, 409, 'one cleanup at a time')
+            self.s.jobs.clear()
+            for bad in ({}, {'imajlar': []}, {'imajlar': ['sha256:' + 'c' * 64]}, {'imajlar': ['nginx:latest']},
+                        {'aglar': ['podman']}, {'aglar': ['-f']}, {'birimler': ['a/b']}, {'klasorler': ['Bad_Name']},
+                        {'klasorler': ['../etc']}, {'konteynerler': ['eski']}, {'imajlar': 'c' * 64},
+                        {'birimler': ['v%d' % n for n in range(201)]}):
+                with self.subTest(bad=str(bad)[:60]), self.assertRaises(manager.ContainerError) as err:
+                    self.s.submit_cleanup(bad)
+                self.assertEqual(err.exception.status, 400)
+            self.assertEqual(launch.call_count, 1)
 
     def test_an_application_job_runs_longer_and_its_file_fits_on_standard_input(self):
         self.s.jobs['d' * 32] = {'id': 'd' * 32, 'action': 'uygulama-kur', 'name': 'notlar', 'state': 'running'}
@@ -276,7 +316,7 @@ class ManagerTests(unittest.TestCase):
         # The CLI the transient unit runs reads up to 2 MiB for an application job, 64 KiB for any other.
         big = json.dumps({'name': 'notlar', 'metin': '#' * (256 * 1024), 'yanitlar': {}})
         self.assertGreater(len(big), manager.STDIN_LIMIT)
-        for action, accepted in (('uygulama-kur', True), ('volume-create', False)):
+        for action, accepted in (('uygulama-kur', True), ('temizlik', False)):
             with self.subTest(action=action), patch.object(sys, 'argv', ['m', '--state', str(self.root / 'state.env'),
                                                                          '--operation', 'e' * 32, action]), \
                     patch.object(sys, 'stdin', io.StringIO(big)), patch('master_container_worker.Manager') as worker, \
@@ -314,6 +354,119 @@ class ManagerTests(unittest.TestCase):
         path.write_text('{"broken"')
         with self.assertRaises(manager.ContainerError):
             self.s.operation('d' * 32)
+
+
+class CleanupViewTests(unittest.TestCase):
+    """K8: Gelişmiş's cleanup read model offers only what is proven unused, and lists the containers no application
+    owns; a source that cannot be read leaves what depends on it empty."""
+    A, B, Z, R = ('%064x' % n for n in (0xa, 0xb, 0xf, 0xe))
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        self.env = app_fixtures.env(self.root)
+        app_fixtures.write_state(self.root, self.env)
+        self.record = app_fixtures.record(self.env)
+        veri = Path(self.env['UYGULAMA_VERI_DIR'])
+        (veri / 'notlar' / 'uploads').mkdir(parents=True)
+        (veri / 'eskiuygulama' / 'veri').mkdir(parents=True)
+        (veri / 'eskiuygulama' / 'veri' / 'dosya').write_bytes(b'x' * 10000)
+        (veri / 'baglanmis').mkdir()
+        (veri / 'Bad_Name').mkdir()
+        (veri / 'baglanti').symlink_to(veri / 'eskiuygulama')
+        self.ps = [
+            {'Id': 'a' * 64, 'Names': ['notlar_web'], 'Image': 'registry.example/notlar/web:1.4', 'ImageID': self.A,
+             'State': 'running', 'Networks': ['ksl-notlar']},
+            {'Id': 'b' * 64, 'Names': ['eski'], 'Image': 'registry.example/eski:1', 'ImageID': self.B, 'State': 'exited',
+             'Networks': ['ozel']},
+            {'Id': 'c' * 64, 'Names': ['bagli'], 'Image': 'registry.example/eski:1', 'ImageID': self.B, 'State': 'exited',
+             'Networks': []}]
+        labels = {'io.master-stack.managed': 'uygulama', 'io.master-stack.uygulama': 'notlar',
+                  'PODMAN_SYSTEMD_UNIT': 'konsol-notlar_web.service'}
+        self.inspected = {
+            'a' * 64: {'Name': 'notlar_web', 'Image': self.A, 'Config': {'Labels': labels},
+                       'NetworkSettings': {'Networks': {'ksl-notlar': {}}},
+                       'Mounts': [{'Type': 'bind', 'Source': str(veri / 'notlar' / 'uploads')}]},
+            'b' * 64: {'Name': 'eski', 'Image': self.B, 'Config': {'Labels': {}}, 'State': {},
+                       'Mounts': [{'Type': 'volume', 'Name': 'eski-veri', 'Source': '/var/lib/containers/storage/volumes/eski-veri/_data'}]},
+            'c' * 64: {'Name': 'bagli', 'Image': self.B, 'Config': {'Labels': {'PODMAN_SYSTEMD_UNIT': 'baska.service'}}, 'State': {},
+                       'Mounts': [{'Type': 'bind', 'Source': str(veri / 'baglanmis' / 'alt')}]}}
+        pinned = self.record['places']['images']
+        self.images = [
+            {'Id': self.A, 'Names': ['registry.example/notlar/web:1.4'], 'RepoDigests': [pinned['web']], 'Size': 10},
+            {'Id': self.B, 'Names': ['registry.example/eski:1'], 'Size': 20},
+            {'Id': '%064x' % 0xd, 'Names': ['registry.example/notlar/db:16'], 'RepoDigests': [pinned['db']], 'Size': 30},
+            {'Id': self.Z, 'Names': ['registry.example/artik:2', 'registry.example/artik:latest'], 'Size': 40, 'Created': 1700000000},
+            # Podman lists an image once for each of its tags.
+            {'Id': self.Z, 'Names': ['registry.example/artik:2', 'registry.example/artik:latest'], 'Size': 40, 'Created': 1700000000},
+            {'Id': self.R, 'Names': ['registry.example/salt:1'], 'Size': 50, 'ReadOnly': True},
+            {'Id': '%064x' % 0x9, 'Names': ['registry.example/sayilan:1'], 'Size': 60, 'Containers': 1}]
+        self.networks = [{'name': 'podman', 'driver': 'bridge'}, {'name': 'ksl-notlar', 'driver': 'bridge'},
+                         {'name': 'ozel', 'driver': 'bridge'}, {'name': 'bos-ag', 'driver': 'bridge', 'network_interface': 'podman3'}]
+        self.volumes = [{'Name': 'eski-veri', 'Driver': 'local'}, {'Name': 'yetim', 'Driver': 'local', 'CreatedAt': '2026-10-01T10:00:00Z'}]
+        self.fail = set()
+        self.calls = []
+        self.p = types.SimpleNamespace(args=types.SimpleNamespace(state=str(self.root / 'state.env')), run_tool=self.podman_fake, env=lambda: {})
+        self.s = manager.Service(self.p)
+
+    def podman_fake(self, argv, timeout=30, binary=False):
+        self.calls.append(list(argv))
+        if tuple(argv[:3]) in self.fail or tuple(argv[:2]) in self.fail:
+            return 125, '', 'fixture unavailable'
+        if argv[:2] == ['podman', 'version']:
+            return 0, '5.4.2', ''
+        if argv[:3] == ['podman', 'ps', '-a']:
+            return 0, json.dumps(self.ps), ''
+        if argv[:2] == ['podman', 'inspect']:
+            return (0, json.dumps([self.inspected[argv[-1]]]), '') if argv[-1] in self.inspected else (125, '', 'no such container')
+        if argv[:2] == ['podman', 'images']:
+            return 0, json.dumps(self.images), ''
+        if argv[:3] == ['podman', 'network', 'ls']:
+            return 0, json.dumps(self.networks), ''
+        if argv[:3] == ['podman', 'volume', 'ls']:
+            return 0, json.dumps(self.volumes), ''
+        raise AssertionError(argv)
+
+    def test_only_what_nothing_uses_is_offered(self):
+        answer = self.s.view().cleanup()
+        self.assertEqual(answer['hatalar'], [])
+        self.assertEqual(answer['imajlar'], [{'id': self.Z, 'etiketler': ['registry.example/artik:2', 'registry.example/artik:latest'],
+                                              'boyut': 40, 'olusturuldu': 1700000000}],
+                         'not a pinned or named image, not one a stopped container came from, not a read-only or counted one')
+        self.assertEqual(answer['aglar'], [{'ad': 'bos-ag', 'surucu': 'bridge', 'arayuz': 'podman3'}],
+                         "never Podman's default, an application's or a stopped container's network")
+        self.assertEqual([v['ad'] for v in answer['birimler']], ['yetim'])
+        [folder] = answer['klasorler']
+        self.assertEqual((folder['ad'], folder['yol'], folder['neden']), ('eskiuygulama', str(Path(self.env['UYGULAMA_VERI_DIR']) / 'eskiuygulama'), ''))
+        self.assertGreaterEqual(folder['boyut'], 10000)
+        self.assertEqual(answer['konteynerler'], [{'ad': 'bagli', 'imaj': 'registry.example/eski:1', 'durum': 'exited', 'yonetici': 'baska'},
+                                                  {'ad': 'eski', 'imaj': 'registry.example/eski:1', 'durum': 'exited', 'yonetici': 'podman'}])
+        import master_api
+        master_api.check(master_api.ref('Temizlik'), answer)
+        self.assertFalse([c for c in self.calls if c[:2] in (['podman', 'rm'], ['podman', 'image'], ['podman', 'volume'])
+                          and c[2:3] not in (['ls'],)], 'read-only')
+
+    def test_what_cannot_be_read_is_never_offered(self):
+        del self.inspected['b' * 64]
+        answer = self.s.view().cleanup()
+        self.assertEqual((answer['birimler'], answer['klasorler']), ([], []), 'a container that cannot be read may use them')
+        self.assertEqual([i['id'] for i in answer['imajlar']], [self.Z])
+        self.assertTrue(answer['hatalar'][0].startswith('Konteyner okunamadı: eski'))
+        self.fail.add(('podman', 'ps', '-a'))
+        answer = self.s.view().cleanup()
+        self.assertEqual([answer[k] for k in ('imajlar', 'aglar', 'birimler', 'klasorler', 'konteynerler')], [[]] * 5)
+        self.fail = {('podman', 'images')}
+        self.inspected['b' * 64] = {'Name': 'eski', 'Image': self.B, 'Config': {'Labels': {}}, 'Mounts': []}
+        answer = self.s.view().cleanup()
+        self.assertEqual(answer['imajlar'], [])
+        self.assertIn('İmajlar okunamadı: fixture unavailable', answer['hatalar'])
+        self.assertEqual([v['ad'] for v in answer['birimler']], ['eski-veri', 'yetim'], 'no container mounts eski-veri now')
+        # An application record that cannot be read: nothing can be proven unused.
+        (Path(self.env['UYGULAMA_STATE_DIR']) / 'notlar' / 'tanim.json').write_text('{')
+        answer = self.s.view().cleanup()
+        self.assertEqual([answer[k] for k in ('imajlar', 'aglar', 'birimler', 'klasorler')], [[]] * 4)
+        self.assertEqual(len(answer['hatalar']), 1)
 
 
 class ResourceTests(unittest.TestCase):
@@ -366,8 +519,6 @@ class ResourceTests(unittest.TestCase):
         self.clock[0] += 10
         row, errors = self.listing()
         self.assertEqual(row['cpu_percent'], 25.0, '2.5 s of CPU in 10 s: a quarter of one core')
-        detail = self.s.view().ayrinti('web')
-        self.assertEqual((detail['cpu_percent'], detail['memory_bytes']), (25.0, 69345280-67125248))
         self.assertFalse([c for c in self.calls if c[:2] == ['podman','stats']], 'podman stats needs a namespace switch')
 
     def test_quadlet_payload_cgroup_is_read(self):
@@ -429,33 +580,45 @@ class ResourceTests(unittest.TestCase):
 
 
 class RouteTests(unittest.TestCase):
-    def test_the_resource_route_requires_the_gates_and_returns_the_job(self):
+    def test_the_cleanup_routes_keep_the_gates_and_the_resource_actions_are_gone(self):
         from test_resources import panel, start_unix, unix_get
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name).resolve()
         (root / 'state').write_text(f'SERVER_ROOT={root}\nLOCAL_DOMAIN=test\nKONTEYNER_STATE_DIR={root}/containers\n')
         p = panel.Panel(types.SimpleNamespace(state=str(root / 'state'), allow_host=[], state_env=False))
+        audits = []
 
         class Handler(panel.Handler):
             def log_message(self, *_):
                 pass
+
+            def audit(self, user, action, detail, ok):
+                audits.append((action, detail, ok))
         Handler.panel = p
         _server, sock = start_unix(self, Handler)
-        body = json.dumps({'action': 'volume-create', 'name': 'yedek'}).encode()
+        body = json.dumps({'birimler': ['yetim'], 'klasorler': ['eskiuygulama']}).encode()
         headers = {'X-Konsol': '1', 'Content-Type': 'application/json'}
-        with patch.object(manager.Service, '_launch'):
-            self.assertEqual(unix_get(sock, '/api/konsol/konteynerler/islem', {'Content-Type': 'application/json'}, 'POST', body)[0], 403)
-            self.assertEqual(unix_get(sock, '/api/konsol/konteynerler/islem', dict(headers, Host='evil.test'), 'POST', body)[0], 403)
-            code, _, raw = unix_get(sock, '/api/konsol/konteynerler/islem', headers, 'POST', body)
+        path = '/api/konsol/gelismis/temizlik'
+        with patch.object(manager.Service, '_launch') as launch:
+            self.assertEqual(unix_get(sock, path, {'Content-Type': 'application/json'}, 'POST', body)[0], 403)
+            self.assertEqual(unix_get(sock, path, dict(headers, Host='evil.test'), 'POST', body)[0], 403)
+            code, _, raw = unix_get(sock, path, headers, 'POST', body)
             self.assertEqual(code, 202, raw)
             job = json.loads(raw)
-            code, _, raw = unix_get(sock, '/api/konsol/konteynerler/islem?id=' + job['id'], headers)
-            self.assertEqual((code, json.loads(raw)['state']), (200, 'running'))
-            # The single-container actions are gone from the table's request shape.
-            for action in ('create', 'save', 'start', 'adopt', 'image-update'):
+            self.assertEqual(set(job), {'is'})
+            self.assertEqual(launch.call_args.args[1:], ('temizlik', {'birimler': ['yetim'], 'klasorler': ['eskiuygulama'],
+                                                                      'name': 'Podman'}))
+            self.assertEqual(audits, [('temizlik', 'birim yetim; klasör eskiuygulama', True)])
+            code, _, raw = unix_get(sock, '/api/konsol/konteynerler/islem?id=' + job['is'], headers)
+            self.assertEqual((code, json.loads(raw)['state'], json.loads(raw)['name']), (200, 'running', 'Podman'))
+            for bad in ({'birimler': 'yetim'}, {'konteynerler': ['x']}, {}, {'aglar': ['podman']}):
+                self.assertEqual(unix_get(sock, path, headers, 'POST', json.dumps(bad).encode())[0], 400, bad)
+            # The six Podman resource actions and their route are gone; only the table answers.
+            for action in ('image-pull', 'image-remove', 'volume-create', 'volume-remove', 'network-create', 'network-remove'):
                 body = json.dumps({'action': action, 'name': 'web'}).encode()
-                self.assertEqual(unix_get(sock, '/api/konsol/konteynerler/islem', headers, 'POST', body)[0], 400, action)
+                self.assertEqual(unix_get(sock, '/api/konsol/konteynerler/islem', headers, 'POST', body)[0], 404, action)
+            self.assertEqual(launch.call_count, 1)
 
 
 if __name__ == '__main__':

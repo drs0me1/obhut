@@ -101,7 +101,9 @@ SCHEMAS = {
     # hedef the row id), uygulama (an application's page; hedef its name), tailscale.
     "Uyari": obj({"seviye": enum("warn", "bad"), "hizmet": STR, "metin": STR,
                   "duzelt": null(obj({"bolum": enum("adresler", "uygulama", "tailscale"), "hedef": STR}))}),
-    "Ag": obj({"read_at": INT, "sampled_at": null(INT), "rx": null(INT), "tx": null(INT)}),
+    # The WAN rate and the busiest applications with traffic (each one's own bridge; busiest first, at most five).
+    "Ag": obj({"read_at": INT, "sampled_at": null(INT), "rx": null(INT), "tx": null(INT),
+               "uygulamalar": arr(obj({"ad": STR, "indirme": INT, "yukleme": INT}))}),
     "OnarimAdimi": obj({"id": STR, "ad": STR, "durum": enum("ok", "onarildi", "sorun", "hata", "atlandi", "calisiyor"),
                         "detay": STR}),
     "Onarim": obj({"calisiyor": BOOL, "kurulu": BOOL, "baslatilabilir": BOOL,
@@ -112,9 +114,11 @@ SCHEMAS = {
     "OnarimBasladi": obj({"kip": STR}),
     "GuncellemeIsi": obj({"durum": enum("yok", "calisiyor", "tamam", "hata"), "hedef": STR, "mesaj": STR,
                           "bitis": null(INT), "asama": STR}),
+    # uygulamalar: the applications whose image has an update in the cached check (DD-214), each confirmed on its page.
     "Guncelleme": obj({"kurulu": STR, "kurulu_surum": STR, "son": null(STR), "son_surum": null(STR), "commit": null(STR),
                        "yeni": BOOL, "denetlendi": null(INT),
-                       "hata": STR, "is": ref("GuncellemeIsi"), "baslatilabilir": BOOL}),
+                       "hata": STR, "is": ref("GuncellemeIsi"), "baslatilabilir": BOOL,
+                       "uygulamalar": obj({"sayi": INT, "adlar": arr(STR), "denetlendi": null(INT)})}),
     # revizyon: the settings revision an access change sends ("" when it cannot be read).
     "Erisim": obj({
         "read_at": INT, "alan": STR, "revizyon": STR,
@@ -180,14 +184,10 @@ SCHEMAS = {
                           "satir": null(STR)})),
         "kayitlar": arr(ref("DnsKaydi")), "yonlendirme": BOOL, "sunucular": arr(STR), "hatalar": arr(STR),
     }),
-    # Gelişmiş's Podman resource jobs (DD-211, until phase 5): an image action names the image, the others a name.
-    "KonteynerIstegi": obj({"action": enum("image-pull", "image-remove", "volume-create", "volume-remove", "network-create",
-                                           "network-remove"),
-                            "name": STR, "image": STR, "subnet": STR, "internal": BOOL},
-                           optional=("name", "image", "subnet", "internal")),
+    # A job's record (an application's or the cleanup's), never its request.
     "KonteynerIsi": open_obj({"id": STR, "action": STR, "name": STR, "state": STR, "step": STR}),
-    # DD-266 (phase 4a): the Podman reads (docs/design/container-manager-api.md). Rows stay open objects: the
-    # list and the detail share them and add fields of their own. An application's container names it.
+    # DD-266 (phase 4a): the Podman list (docs/design/container-manager-api.md). Rows stay open objects and
+    # carry fields of their own. An application's container names it.
     "KonteynerPortu": open_obj({"host_ip": STR, "host_port": INT, "container_port": INT, "protocol": STR, "scope": STR}),
     "KonteynerSatiri": open_obj({
         "id": STR, "name": STR, "image": STR, "state": STR, "status": STR, "unit": STR, "network": STR,
@@ -207,12 +207,6 @@ SCHEMAS = {
         "storage": open_obj({"images": INT, "containers": INT, "size": null(INT)}),
         "resource_errors": open_obj({}),
     }),
-    # A container's detail: the row with its mounts, account and command (read-only).
-    "KonteynerAyrintisi": open_obj({
-        "name": STR, "state": STR, "image": STR,
-        "mounts": arr(open_obj({"type": STR, "source": STR, "destination": STR, "rw": BOOL, "name": STR})),
-        "user": STR, "command": STR,
-    }),
     # DD-266: Sistem.
     "Oturum": obj({"durum": enum("kurulum", "acik", "giris"), "kullanici": STR, "oturum_gun": INT,
                    "kanal": enum("yerel", "tailscale", "internet")}, optional=("kullanici", "oturum_gun")),
@@ -225,7 +219,6 @@ SCHEMAS = {
     "GuncellemeBasladi": obj({"surum": STR}),
     "KayitSatiri": obj({"at": INT, "source": STR, "user": STR, "client": STR, "action": STR, "detail": STR, "ok": BOOL}),
     "Kayitlar": obj({"items": arr(ref("KayitSatiri"))}),
-    "Klasorler": obj({"items": arr(obj({"path": STR, "free": INT}))}),
     # DD-267 (phase 4b): Dosyalar → Paylaşımlar (DD-158/179/190/192), the share manager's own view and requests.
     "PaylasimBaglantisi": obj({"enabled": BOOL, "permission": enum("ro", "rw"), "expires": null(NUM), "expired": BOOL,
                                "available": BOOL, "active": BOOL, "reason": STR, "url": STR}),
@@ -241,11 +234,16 @@ SCHEMAS = {
     "PaylasimKaydi": open_obj({"id": STR, "path": STR, "username": STR, "password": STR, "connections": open_obj({}),
                                "ack_wan_http": BOOL}),
     "PaylasimKimligi": obj({"id": STR}),
-    # DD-267: who uses which server folder (Dosyalar → Depolama), joined with the files backend's folders.
+    # DD-267: who uses which server folder (Dosyalar → Depolama), joined with the files backend's folders; K7: each
+    # application's data folders with their sizes (bytes on disk; null with neden when it could not be measured).
+    # hedefler: "<service>: <target>" of each mount (none: a folder the definition no longer names).
+    "VeriKlasoru": obj({"ad": STR, "yol": STR, "boyut": null(INT), "neden": STR, "hedefler": arr(STR)}),
+    "UygulamaVerisi": obj({"ad": STR, "yol": STR, "boyut": null(INT), "neden": STR, "olculdu": null(INT),
+                           "klasorler": arr(ref("VeriKlasoru"))}),
     "Depolama": obj({"read_at": INT, "kok": STR,
                      "kullananlar": arr(obj({"yol": STR, "id": STR, "ad": STR, "tur": enum("uygulama", "paylasim"),
                                              "hedef": STR, "yazilabilir": BOOL})),
-                     "hatalar": arr(STR)}),
+                     "uygulamalar": arr(ref("UygulamaVerisi")), "hatalar": arr(STR)}),
     # DD-266: Gelişmiş, the effective configuration as the server holds it (read-only).
     "YapilandirmaDosyasi": obj({"file": STR, "text": STR}),
     "Gelismis": obj({
@@ -259,6 +257,22 @@ SCHEMAS = {
                         "names": arr(open_obj({"name": STR, "iface": STR, "family": null(INT), "address": STR, "source": STR})),
                         "raw": arr(ref("YapilandirmaDosyasi"))}),
     }),
+    # K8: Gelişmiş's cleanup. What nothing uses (an image by its ID with its tags; a network or volume by its name; a
+    # removed application's data folder by its name, with its size) and the containers no application owns
+    # (yonetici: podman — nothing else manages it, kayitsiz — an application's labels without a record, baska —
+    # another manager), read-only.
+    "Temizlik": obj({
+        "read_at": INT,
+        "imajlar": arr(obj({"id": STR, "etiketler": arr(STR), "boyut": null(INT), "olusturuldu": null(INT)})),
+        "aglar": arr(obj({"ad": STR, "surucu": STR, "arayuz": STR})),
+        "birimler": arr(obj({"ad": STR, "surucu": STR, "olusturuldu": null(INT)})),
+        "klasorler": arr(obj({"ad": STR, "yol": STR, "boyut": null(INT), "neden": STR})),
+        "konteynerler": arr(obj({"ad": STR, "imaj": STR, "durum": STR, "yonetici": enum("podman", "kayitsiz", "baska")})),
+        "hatalar": arr(STR),
+    }),
+    "TemizlikIstegi": obj({"imajlar": arr(STR), "aglar": arr(STR), "birimler": arr(STR), "klasorler": arr(STR)},
+                          optional=("imajlar", "aglar", "birimler", "klasorler")),
+    "TemizlikIsi": obj({"is": STR}),
     # DD-271: WireGuard, a built-in (DD-133, DD-136, DD-137, DD-143, DD-229). Every change goes through master-wg.
     "WireGuardCihazi": obj({
         "name": STR, "ipv4": STR, "ipv6": STR, "handshake": INT, "rx": INT, "tx": INT, "profile": BOOL, "dns": STR,
@@ -381,19 +395,19 @@ SCHEMAS = {
     "KaynakTuru": enum("dosya", "adres", "imaj", "konteyner"),
     "UygulamaServisi": obj({"ad": STR, "durum": ref("UygulamaDurumu"), "imaj": STR, "guncelleme": ref("GuncellemeDurumu")}),
     # kaynak: resource use summed over the running containers; koken: where the file came from; uyari: how
-    # many warnings its definition carries.
+    # many warnings its definition carries; ag: its own bridge's live rate in bytes/s (null while it has none, e.g.
+    # stopped); adres: its first address row's URL (http://<ad>.<domain>) or null.
     "Uygulama": obj({
         "ad": STR, "durum": ref("UygulamaDurumu"), "bicim": enum("compose", "kubernetes"),
         "servisler": arr(ref("UygulamaServisi")), "kaynak": obj({"cpu": null(NUM), "bellek": null(INT)}),
         "guncelleme": ref("GuncellemeDurumu"), "eylemler": arr(enum("baslat", "durdur", "yeniden-baslat", "guncelle")),
         "revizyon": STR, "is": null(STR), "koken": ref("KaynakTuru"), "durduruldu": BOOL, "uyari": INT,
+        "ag": null(obj({"indirme": INT, "yukleme": INT})), "adres": null(STR),
     }),
     # A standalone container an application can be made from (K2).
     "UygulamaKaynagi": obj({"ad": STR, "imaj": STR, "durum": STR}),
     "Uygulamalar": obj({
-        "read_at": INT, "items": arr(ref("Uygulama")), "kaynaklar": arr(ref("UygulamaKaynagi")),
-        "altyapi": obj({"podman": STR, "calisiyor": BOOL, "imaj": INT, "kullanilmayan_imaj": INT, "birim": INT, "ag": INT}),
-        "hatalar": arr(STR),
+        "read_at": INT, "items": arr(ref("Uygulama")), "kaynaklar": arr(ref("UygulamaKaynagi")), "hatalar": arr(STR),
     }),
     # A secret answer as stored: never its value.
     "YanitSakli": obj({"set": BOOL}),
@@ -407,7 +421,10 @@ SCHEMAS = {
     # row is; yerel_port is an address's 127.0.0.1 pool port.
     "UygulamaPortu": obj({"port": INT, "protokol": enum("tcp", "udp"), "id": STR, "erisim": ref("ErisimSatiri"),
                           "kullanim": enum("caddy", "raw"), "tailscale_adi": null(STR), "yerel_port": null(INT)}),
-    "UygulamaBaglamasi": obj({"hedef": STR, "tur": enum("app", "srv", "tmpfs"), "yol": null(STR), "salt_okunur": BOOL}),
+    # boyut: an application folder's size in bytes from Dosyalar → Depolama's measurement (null for a server folder,
+    # a tmpfs, a folder not measured yet or one that could not be).
+    "UygulamaBaglamasi": obj({"hedef": STR, "tur": enum("app", "srv", "tmpfs"), "yol": null(STR), "salt_okunur": BOOL,
+                              "boyut": null(INT)}),
     "UygulamaServisAyrintisi": obj({
         "ad": STR, "durum": ref("UygulamaDurumu"), "baslangic": enum("direct", "root"), "kullanici": null(STR), "imaj": STR,
         "ozet": null(STR), "kanal": STR, "guncelleme": ref("GuncellemeDurumu"), "konteyner": STR, "birim": STR,
@@ -415,12 +432,15 @@ SCHEMAS = {
         "baglamalar": arr(ref("UygulamaBaglamasi")), "gizliler": arr(STR),
     }),
     "UygulamaUyarisi": obj({"servis": STR, "metin": STR}),
+    # guncelleme_denetlendi: when the cached image update check (DD-214) last asked the registries about this
+    # application (null before its first check).
     "UygulamaAyrinti": obj({
         "uygulama": ref("Uygulama"), "servisler": arr(ref("UygulamaServisAyrintisi")),
         "gizliler": arr(obj({"ad": STR, "servisler": arr(STR)})), "uyarilar": arr(ref("UygulamaUyarisi")),
         "koken": obj({"tur": ref("KaynakTuru"), "adres": null(STR), "imaj": null(STR), "konteyner": null(STR), "alindi": INT,
                       "sha256": STR}),
         "metin": STR, "yanitlar": ref("KayitliYanitlar"), "birimler": arr(STR), "veri": STR, "ag": STR, "pod": null(STR),
+        "guncelleme_denetlendi": null(INT),
     }),
     "UygulamaGunlugu": obj({"satirlar": arr(STR), "kesik": BOOL}),
     "KaynakDosya": obj({"tur": enum("dosya")}),
@@ -433,8 +453,24 @@ SCHEMAS = {
     "Taslak": obj({"metin": STR, "kaynak": one_of(ref("KaynakAdres"), ref("KaynakImaj"), ref("KaynakKonteyner"))}),
     "TaslakIsi": obj({"is": STR}),
     "KaynakYaniti": one_of(ref("Taslak"), ref("TaslakIsi")),
+    # plan: the dry run (KurPlani) instead of the job.
     "KurIstegi": obj({"metin": STR, "yanitlar": ref("Yanitlar"),
-                      "kaynak": one_of(ref("KaynakDosya"), ref("KaynakAdres"), ref("KaynakImaj"), ref("KaynakKonteyner"))}),
+                      "kaynak": one_of(ref("KaynakDosya"), ref("KaynakAdres"), ref("KaynakImaj"), ref("KaynakKonteyner")),
+                      "plan": BOOL}, optional=("plan",)),
+    # What an install creates (its plan): services with start mode, user, image, folders and secret names; the access
+    # rows it seeds (an address with its URL); the data folders it makes; secrets by name; warnings; images it pulls.
+    "KurOzeti": obj({
+        "ad": STR, "veri": STR, "ag": STR, "pod": null(STR), "birimler": arr(STR),
+        "servisler": arr(obj({"ad": STR, "baslangic": enum("direct", "root"), "kullanici": null(STR), "imaj": STR,
+                              "baglamalar": arr(ref("UygulamaBaglamasi")), "gizliler": arr(STR)})),
+        "erisim": arr(obj({"id": STR, "anahtar": STR, "servis": STR, "port": INT, "protokol": enum("tcp", "udp"),
+                           "satir": ref("ErisimSatiri"), "adres": null(STR)})),
+        "klasorler": arr(STR), "gizliler": arr(obj({"ad": STR, "servisler": arr(STR)})),
+        "uyarilar": arr(ref("UygulamaUyarisi")), "imajlar": arr(STR),
+    }),
+    # hatalar: by question id, or by part (dosya, name, podman, portlar, kaynak) for what no question answers.
+    "KurPlani": obj({"inceleme": ref("Inceleme"), "hatalar": map_of(STR), "tanim": ref("Tanim"), "ozet": ref("KurOzeti")},
+                    optional=("hatalar", "tanim", "ozet")),
     "UygulamaIsi": obj({"is": STR, "eylem": STR, "ad": STR}),
     "UygulamaIslemi": obj({"eylem": enum("baslat", "durdur", "yeniden-baslat", "guncelle"), "revizyon": STR}),
     # On an edit a secret question may keep the value the application already has.
@@ -470,13 +506,14 @@ JSON = "application/json"
 class Route:
     """content: the reply's media type; anything but JSON (a log, a device profile, a QR code) is sent as
     it is, its schema a string. params: the path's {name} segments, in order. body_limit: the largest
-    request body in bytes when it is not the backend's usual one (a whole file in a request)."""
+    request body in bytes when it is not the backend's usual one (a whole file in a request). also: other
+    successful replies by status (a dry run's 200 beside a job's 202)."""
 
     def __init__(self, method, path, name, summary, reply=None, events=None, request=None, query=None, status=200,
-                 content=JSON, body_limit=None):
+                 content=JSON, body_limit=None, also=None):
         self.method, self.path, self.name, self.summary = method, path, name, summary
         self.reply, self.events, self.request, self.query, self.status = reply, events, request, query or {}, status
-        self.content, self.body_limit = content, body_limit
+        self.content, self.body_limit, self.also = content, body_limit, dict(also or {})
         self.segments = path.split("/")
         self.params = [seg[1:-1] for seg in self.segments if seg.startswith("{") and seg.endswith("}")]
 
@@ -506,8 +543,9 @@ ROUTES = (
           "Taslak dosya: bir https adresinden ya da bir konteynerden hemen, bir imajdan iş olarak (indirir); hiçbir "
           "şey kurulmaz", ref("KaynakYaniti"), request=ref("KaynakIstegi")),
     Route("POST", "/api/konsol/uygulamalar/kur", "uygulama_kur",
-          "Uygulamayı dosyasından ve yanıtlardan kurar; iş arka planda, ilerleme olay akışında", ref("UygulamaIsi"),
-          request=ref("KurIstegi"), status=202, body_limit=1048576),
+          "Uygulamayı dosyasından ve yanıtlardan kurar; iş arka planda, ilerleme olay akışında. plan istenirse (200) "
+          "kurulumun ilk yazmadan önceki bütün denetimleri ve kurulacaklar; hiçbir şey yazılmaz, indirilmez",
+          ref("UygulamaIsi"), request=ref("KurIstegi"), status=202, body_limit=1048576, also={200: ref("KurPlani")}),
     Route("POST", "/api/konsol/uygulamalar/{app}/islem", "uygulama_islemi",
           "Başlat, durdur, yeniden başlat ya da imajları güncelle (DD-214); iş arka planda", ref("UygulamaIsi"),
           request=ref("UygulamaIslemi"), status=202),
@@ -549,18 +587,11 @@ ROUTES = (
           "Güvenlik duvarı: kurallar, port kataloğu, dinleyiciler ve teknik kurallar; ?yenile önbelleği atlar",
           ref("GuvenlikDuvari"), query={"yenile": STR}),
     Route("GET", "/api/konsol/adlar", "adlar", "Yerel DNS adları, kayıtlar ve dış ad yönlendirmesi", ref("Adlar")),
-    Route("POST", "/api/konsol/konteynerler/islem", "konteyner_islemi",
-          "Gelişmiş'in Podman kaynak işi: imaj, birim ya da ağ (DD-211); iş arka planda sürer, ilerleme olay akışında",
-          ref("KonteynerIsi"), request=ref("KonteynerIstegi"), status=202),
     # DD-266 (phase 4a): the Podman reads, the Sistem routes and Gelişmiş.
     Route("GET", "/api/konsol/konteynerler/liste", "konteyner_listesi",
           "Konteynerler, imajlar, birimler ve ağlar (DD-211)", ref("KonteynerListesi")),
-    Route("GET", "/api/konsol/konteynerler/ayrinti", "konteyner_ayrintisi",
-          "Bir konteynerin ayrıntısı (salt okunur)", ref("KonteynerAyrintisi"), query={"ad": STR}),
     Route("GET", "/api/konsol/konteynerler/islem", "konteyner_isi",
-          "Bir işin durumu ve sonucu (kaynak ve uygulama işleri; isteği taşımaz)", ref("KonteynerIsi"), query={"id": STR}),
-    Route("GET", "/api/konsol/ayarlar/klasorler", "klasorler", "Klasör seçici: bir klasörün alt klasörleri ve boş yer",
-          ref("Klasorler"), query={"path": STR}),
+          "Bir işin durumu ve sonucu (uygulama ve temizlik işleri; isteği taşımaz)", ref("KonteynerIsi"), query={"id": STR}),
     Route("GET", "/api/konsol/oturum", "oturum", "Konsol hesabı ve bu oturum (DD-194, DD-205)", ref("Oturum")),
     Route("POST", "/api/konsol/oturum/kur", "oturum_kur", "Konsol hesabını oluşturur; yalnız Tailscale'den",
           ref("HesapSonucu"), request=ref("HesapKur")),
@@ -586,11 +617,19 @@ ROUTES = (
           request=ref("PaylasimKaydi")),
     Route("POST", "/api/konsol/paylasim/kaldir", "paylasim_kaldir", "Bir klasör paylaşımını kaldırır", ref("Paylasimlar"),
           request=ref("PaylasimKimligi")),
-    Route("GET", "/api/konsol/depolama", "depolama", "Sunucu klasörlerini kullanan uygulamalar ve paylaşımlar",
-          ref("Depolama")),
+    Route("GET", "/api/konsol/depolama", "depolama",
+          "Sunucu klasörlerini kullanan uygulamalar ve paylaşımlar; uygulamaların veri klasörleri ve boyutları "
+          "(süreli ölçüm, önbellekli; ?yenile yeniden ölçer)", ref("Depolama"), query={"yenile": STR}),
     Route("GET", "/api/konsol/gelismis", "gelismis",
           "Gelişmiş: etkin Caddy ve dnsmasq yapılandırması (salt okunur); ?yenile önbelleği atlar", ref("Gelismis"),
           query={"yenile": STR}),
+    # K8: Gelişmiş's only write.
+    Route("GET", "/api/konsol/gelismis/temizlik", "temizlik",
+          "Hiçbir şeyin kullanmadığı imajlar, ağlar, birimler ve kaldırılmış uygulamaların veri klasörleri; Obhut'un "
+          "yönetmediği konteynerler (salt okunur); ?yenile klasörleri yeniden ölçer", ref("Temizlik"), query={"yenile": STR}),
+    Route("POST", "/api/konsol/gelismis/temizlik", "temizle",
+          "Seçilenleri kaldırır; her öge kaldırılmadan hemen önce yeniden denetlenir; iş arka planda, ilerleme olay "
+          "akışında", ref("TemizlikIsi"), request=ref("TemizlikIstegi"), status=202),
     # DD-271: WireGuard (Erişim → WireGuard); every change through master-wg, the audit line wireguard-<verb>.
     # DD-275: starting, stopping, adding, removing, opening, closing and regenerating a network are settings
     # actions (ayarlar/plan, ayarlar/uygula with "wireguard"); devices and a network's DNS and name stay here.
@@ -699,6 +738,8 @@ def openapi():
         else:
             content = {route.content: {"schema": STR if route.content.startswith("text/") else {}}}
         responses = {str(route.status): {"description": "Başarılı", "content": content},
+                     **{str(code): {"description": "Başarılı", "content": {JSON: {"schema": schema}}}
+                        for code, schema in route.also.items()},
                      "403": {"description": "Host, köken ya da X-Konsol denetimi",
                              "content": {"application/json": {"schema": ref("Hata")}}}}
         if route.events:

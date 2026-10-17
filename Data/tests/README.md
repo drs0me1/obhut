@@ -81,6 +81,8 @@ that `docs/konsol-api.json` and `tools/konsol-ui/src/api/sema.ts` are exactly wh
 (regenerate with `python3 panel/master_api.py openapi > docs/konsol-api.json` and
 `python3 panel/master_api.py ts > tools/konsol-ui/src/api/sema.ts`), that the schema check refuses
 wrong shapes, and that the table's routes answer through the real handler with their declared shapes.
+`OnlyTheTableAnswers` also checks that the removed reads no screen used, a container's detail
+(`konteynerler/ayrinti`) and the old folder picker (`ayarlar/klasorler`), answer 404 with no handler.
 `test_erisim.py` feeds `master_erisim.build()` the shapes the backend's sources return (documentation
 addresses only): the four cells of each service, one row per application port from its access row (an
 address's pool port, Tailscale name, Tailscale port and internet name; a raw port open only on its scope;
@@ -108,11 +110,20 @@ also holds `/api/konsol/olaylar` open as an event stream so the suite can push e
 `/api/*` reads are fixtures. Any console error, CSP violation or page error fails it. It first checks
 that `console/yeni/kaynak.sha256` equals `kaynak-ozeti.sh`'s digest (the build matches its sources) and
 that `app.js` opens with the licence banner naming the pinned Vue and vue-router versions. It covers the
-sidebar counts (Uygulamalar, Sistem, Erişim), the problem chip, the Tailscale and version card, the
+sidebar counts (Uygulamalar, Sistem, Erişim), the problem chip (it leads to the most serious problem's
+place), the Tailscale and version card, Genel Bakış (rebuild phase 5: Dikkat with each problem's link, a
+health check to Sistem → Sağlık, an Erişim warning to its row, an application to its page, a newer image
+listed but not counted; the calm state; the application tiles with their address, "Aç" and "Ayrıntı"; the
+access summary with a chip per opening to the internet; the network card with the busiest applications,
+read every 5 s only while shown and visible; no applications; phone tiles), the
 stream (an `X-Konsol` fetch, multi-line data, comments and unknown events, `kapat` with an immediate
-reconnect), the activity drawer, the pending-change banner and its local countdown, the command palette
-(Ctrl+K and Meta+K, Turkish case rules, arrow keys, Enter to a page, Esc with focus return), the theme
-kept across a reload, an old address landing on its new home, the
+reconnect), İşlemler (application jobs, a cleanup job with what it left and why, the pending change named with its
+phase), the pending-change banner naming every timed change (an access row by its name, a WireGuard action, the local
+domain, a fixed row, otherwise the firewall or the local names) and its local countdown, the command palette
+(Ctrl+K and Meta+K, Turkish case rules, arrow keys, Enter to a page, the access rows by name opening their sheet,
+"Uygulama ekle" to `#/uygulamalar?ekle=1`, "Adres aç", the theme, Esc with focus return), the top bar's theme
+button (A7: sistem → açık → koyu, said aloud, kept across a reload, also on a phone; no Görünüm tab), an unknown
+address landing on Genel Bakış, the
 skip link, the phone's bottom
 bar and menu sheet at 390 and 320 px, both themes, polling when the stream answers 404 or 503
 (resources 10 s, health 60 s, jobs and the pending change 5 s) and after three
@@ -148,40 +159,62 @@ by method, path and query before the plain fixtures; every request is logged wit
 `newHttpsPage()` for a page whose origin is `https://` (Playwright answers every request, no TLS), the
 console/CSP/page-error collector and the build check (digest, licence banner). Since DD-271 phase 3 it also
 exports `fixtures`: builders of the application shapes (`uygulama`, `servis`, `uygulamalar`, `ayrinti` for
-the detail) with neutral `registry.example` images, which every suite's fixtures use. `yeni-ui.cjs` uses it
-unchanged in substance; its fixtures read `/api/konsol/uygulamalar` (the sidebar count and the palette's
-applications come from there).
+the detail) with neutral `registry.example` images, which every suite's fixtures use, and since phase 5 of the
+inspector's (`soru.ad|port|degisken|gizli|klasor|baslangic` and `inceleme`, which derives the line marks from the
+refusals, questions and notes as `panel/master_inspector.py` does). `yeni-ui.cjs` uses it unchanged in substance;
+its fixtures read `/api/konsol/uygulamalar` (the sidebar count and the palette's applications come from there).
 
-`yeni-uygulamalar-ui.cjs` drives these pages on `KONSOL_URL` (default `http://127.0.0.1:8769`), since DD-271
-phase 3 on the application routes (`/api/konsol/uygulamalar` and `…/uygulamalar/{app}` with its `gunluk`,
-`islem` and `kaldir`): Genel Bakış with problems first (each health check with "Denetle ve onar": a
-confirmation, then `POST /api/konsol/onarim` with exactly `{"kip":"onar"}`, a refused start shown in the
-dialog, the running and ended repair through `islemler`; each Erişim warning with "Düzelt"), the calm state,
-the locked repair on the internet channel with its reason, the applications with their state, format,
-services, warnings and newer images, resources, the network card (read every 5 s only while the page is
-shown and the tab visible) and the server card; a clean server's empty states ("Henüz uygulama yok." and
-that adding from a Compose or Kubernetes file comes with the new screens, pointing nowhere else); the
-palette opening an application's page (by name or a service's name); Uygulamalar with its summary, state and
-warning pills, services, resources and version, filter chips and counts (Dikkat: a failed or partly running
-application, a warning or a newer image), a search by name, service or image with Turkish case rules, the
-view in the address across a reload, empty filters, the infrastructure card and read errors, keyboard order
-and a visible focus ring; an application's page with its trail, the definition's warnings above the tabs,
-tabs (arrow keys, Home/End, `?sekme=`): Özet (each service's state, start mode, user, image, digest,
-version, health, restarts, start, container and unit; a failing health check with the way to its log),
-Portlar (each container port with its use: an address on its 127.0.0.1 pool port, a raw port closed),
-Depolama (each mount with its path on this server, the data folder), Tanım (the source, the file exactly as
-given, the answers with a secret only as set, the secrets by name, the units; read-only) and Günlük per
-service (`servis=`, "Yenile", an error, the "Canlı" switch `canli=1`, every 5 s while on); the exact
-`…/islem` bodies (`{eylem, revizyon}`, only the actions the backend's `eylemler` offers) and `…/kaldir`
-bodies (keeping the data by default; deleting it only after the application's name is typed, Turkish case
-rules, the request carrying the name itself), the dialogs' focus trap, Esc and focus return, error replies in
-the backend's words, jobs (`tur: "uygulama"`) in the activity drawer whose end reads the page again, a failed
-job's reason, an image update's result from the job's record, a finished removal leading back to the list, a
-busy application, a stopped Kubernetes one and an unknown name; 1440, 390 and 320 px in both themes with no
-style attribute and no horizontal scroll. Screenshots go to a fresh temporary directory, printed at the end.
+`yeni-uygulamalar-ui.cjs` drives Uygulamalar and an application's page as in the phase 5 prototype on `KONSOL_URL`
+(default `http://127.0.0.1:8769`), on the application routes (`/api/konsol/uygulamalar` and `…/uygulamalar/{app}`
+with its `gunluk`, `islem` and `kaldir`, and `…/denetle` for Tanım's marks): a clean server's empty state with
+"Uygulama ekle" (its address `#/uygulamalar?ekle=1`, focus back on closing); the palette opening an application's
+page (by name or a service's name); Uygulamalar with its summary, state and warning pills, how each application is
+reached (chips from Erişim's rows: Tailscale, İnternet, each open raw port, or Kapalı), resources, the live rate of
+its own bridge (`ag`, the list read again every 10 s while shown), the update state, "Aç" (its first address while
+it runs), filter chips and counts (Dikkat: a failed or partly running application, a warning or a newer image), a
+search by name, service or image with Turkish case rules, the view in the address across a reload, empty filters,
+read errors, keyboard order and a visible focus ring; an application's page with its trail, "Aç", the actions the
+backend's `eylemler` offers, the definition's warnings above the tabs, tabs (arrow keys, Home/End, `?sekme=`):
+Özet (state, source, network, data folder, resources with the rate, each service's pinned digest, when the image
+check last asked about it, and "Güncelle",
+each service's state, start mode (A4), user, image, digest, health, restarts, start, container and unit; a failing
+health check with the way to its log), Erişim (each port's access row read-only: an address's Tailscale name, port
+and internet name on its 127.0.0.1 pool port, a raw port's scope; each linking to its sheet in Erişim → Adresler,
+which it opens), Depolama (each mount with its path, kind, permission, an application folder's size and its way into Dosyalar, the data
+folder), Tanım (the source and when it was read, the answers with a secret only "Kayıtlı" and each port's use from
+its row, the secrets by name, the units, the file read-only with the inspector's marks beside its lines; mounted on
+first view and kept while another tab is shown) and Günlük per service (`servis=`, "Yenile", an error, the "Canlı"
+switch `canli=1`, every 5 s while on); the exact `…/islem` bodies (`{eylem, revizyon}`) and `…/kaldir` bodies (the
+data kept by default; deleted only after the application's name is typed, Turkish case rules, the request carrying
+the name itself), the dialogs' focus trap, Esc and focus return, error replies in the backend's words, jobs (`tur:
+"uygulama"`) in the activity drawer whose end reads the page again, a failed job's reason, an image update's result
+from the job's record, a finished removal leading back to the list, a busy application, a stopped Kubernetes one and
+an unknown name; 1440, 390 and 320 px in both themes with no style attribute and no horizontal scroll.
+
+`yeni-uygulama-ekle-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8770`) drives Uygulama ekle and Tanım's edit
+(K2, K3): the four sources (a pasted file; an upload read in the browser, refused over 256 KiB or when it is not
+UTF-8; an `https` address, an `http` one refused before the server is asked and a server error in its words; an
+image name as a job, its step shown from `GET …/konteynerler/islem` until the result is the draft; an existing
+container from `kaynaklar`, and none), the close confirmation while something is entered; Denetçi with a refused
+line that stops the flow (its line, its mark, no questions) and is corrected in the editor, the marks beside the
+lines, notes, every question kind (the name, TCP ports with nothing chosen and the inspector's guess, a UDP port
+fixed as a closed raw port, a variable with the file's default and a server error under it, a generated and a typed
+secret with "Göster", the application's folder and a `/srv` folder from the folder picker with its read-only flag,
+start modes with the suggestion and a word when the choice differs), the answers checked again with `…/denetle` as
+they change (the waiting ones left out, so no "Yanıt gerekli." shows), a Tailscale name another row holds refused
+at once; the plan (`…/kur` with `plan: true`, exact body) with a refusal leading back to its question ("Soruya
+git", the error until the answer changes) and a part's refusal, then what the install creates; Kur (the same body
+without `plan`, the job's step, the new application's page when it ends; a failed install's reason, Vazgeç
+dropping everything); Tanım's edit (a staying port's use read-only with its link to Adresler, a stored secret
+kept as `{"keep": true}` or renewed, a new port asked for, a plan refusal mapped to its question, the difference by
+units, environment, ports, secrets and start modes with the warnings, apply as a job and the definition again) and
+"Kaynaktan yenile" (`…/{app}/yenile`: the new text with its new question marked; an unchanged source says so). No
+secret value reaches the address, the browser's storage or a GET request. Each step at 1440, 390 and 320 px in
+both themes.
 
 ```bash
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulamalar-ui.cjs
+PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulama-ekle-ui.cjs
 ```
 
 ## Erişim, access rows and the pending change (DD-258, DD-275)
@@ -190,17 +223,21 @@ Two suites drive the committed build through `yeni-harness.cjs`, which also answ
 `contentType` as it is (a PNG, a text file) and takes `h.dynamic` handlers for paths with variable parts (an
 application's `/api/konsol/uygulamalar/<app>/…` routes, WireGuard's networks).
 
-`yeni-erisim-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8771`): Erişim → Genel (warnings first, each
-"Düzelt" by its `duzelt`: the access row's sheet on Adresler, the application's page or the Tailscale tab; the
-summaries; every service's cells in plain words), Tailscale, Adresler (one list of Konsol, Paylaşımlar and
-every application port; each row's sheet with its exact settings body: a Tailscale name, a Tailscale port,
-an internet name, "Adres aç" and "Adresi kaldır", a raw port to Tailscale or the internet with the consent;
-openings wait for the 60 s banner, closings commit at once; `?satir=` deep links; the local names with
-application names locked and linked to their row; a DNS draft → plan → apply; the local domain with its 300 s
-window), Güvenlik duvarı (the catalogue merged with the rules, listeners, application rows locked with a link,
-a new rule with its checks, plan → apply → the 60 s banner → Onayla and Geri al), a stuck rollback, a refused
-confirmation, the internet channel's message, the palette, and 1440/390/320 px in both themes. Yayınla is
-gone: the suite checks that no button, query or palette entry opens it and nothing asks `/yayinlar`.
+`yeni-erisim-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8771`), Erişim's six tabs as in the phase 5
+prototype: Genel (the summaries; every service's cells in plain words, each access row linking to its sheet),
+Genel Bakış' links by `duzelt` (the access row's sheet, the application's page, the Tailscale tab), Tailscale,
+Adresler (the addresses with their Tailscale name, Tailscale port, internet name and state, and the raw ports
+with their scope; a switch or a scope opens the row's sheet with that change made: a closing straight to its
+plan, an opening with its field first; each sheet's exact settings body: a rename, a Tailscale port, an
+internet name, "Adres aç" from the tab bar or a row with another port chosen in the sheet, "Adresi kaldır", a
+raw port to Tailscale or the internet with the consent; openings wait for the 60 s banner, closings commit at
+once; `?satir=` and `?kip=adres-ac` deep links), Yerel adlar (owners, application names locked and linked to
+their row, a DNS draft → plan → apply, the local domain with its 300 s window), Güvenlik duvarı (scopes, the
+base's ports merged with the operator's rules, application rows locked with a link, a new rule with its
+checks, plan → apply → the 60 s banner → Onayla and Geri al; the technical rules are Gelişmiş's), a stuck
+rollback, a refused confirmation, the internet channel's message, the palette (each raw port by its name), and
+1440/390/320 px in both
+themes. Yayınla is gone: no button, query or palette entry opens it and nothing asks `/yayinlar`.
 
 `yeni-wireguard-ui.cjs` (default `http://127.0.0.1:8772`) feeds a fixture of the WireGuard package's own API
 that changes as the page asks: networks as tabs (`ag=`), on at once and off after a question, devices with
@@ -209,7 +246,8 @@ DNS and keepalive, networks, the name and default DNS with the revision and a 40
 regenerating and removing with the typed `onayla`), QR codes and profiles fetched only on a click with
 `cache: "no-store"` and their object URLs revoked (the QR's when decoded, the profile's after 10 s, checked
 with Playwright's clock), the limit, no network yet, the stopped and the not-installed package, and `/state`
-read every 10 s only while the tab is shown and the browser tab visible.
+read every 10 s only while the tab is shown and the browser tab visible. The chosen network's card sits
+above its devices' card; "WireGuard'ı kapat" and "Aç" turn WireGuard as a whole off and on.
 
 `yeni-ui.cjs` and `yeni-uygulamalar-ui.cjs` changed only where phase 3 meant them to: Erişim is no longer a
 placeholder, the palette's current-interface views no longer list Caddy, Dnsmasq and the firewall, the
@@ -232,28 +270,36 @@ section).
 ## New interface phase 4a: Sistem and Gelişmiş (DD-258, DD-266)
 
 `yeni-sistem-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8773`) drives the committed build through
-`yeni-harness.cjs`. Sistem → Sağlık: every check with problems first and the last check time; the last
+`yeni-harness.cjs`; since rebuild phase 5 its tabs are A7's (Sağlık, Güncellemeler, Hesap, Sunucu, İşlem geçmişi; no
+Görünüm) and Gelişmiş is K8's. Sistem → Sağlık: every check with problems first and the last check time; the last
 repair report (who ran it, the mode, start and end, each step with its state); "Denetle" at once and "Onar"
 after a confirmation (`POST /api/konsol/onarim` with `{kip}`), a refusal, the report read every 2 s while a
-run goes on and its end through a pushed `islemler` event; the repair log as the server's plain text in a
-sheet (`gunluk=72s|7g` in the address, scrolled to the newest line, copied whole, a failed read, an empty
-log). Güncellemeler: installed and newest version with their builds, "Yeniden denetle" (`?yenile=1`), the
+run goes on and its end through a pushed `islemler` event; "Onarım kaydı" as the server's plain text in a
+sheet (`kayit=72s|7g` in the address, scrolled to the newest line, copied whole, a failed read, an empty
+log). Güncellemeler: Obhut's installed and newest version with their builds, "Yeniden denetle" (`?yenile=1`), the
 confirmation's words, a refusal, the stage from the `guncelleme` job, an earlier run's end ignored, the page
-reloading after success, a failed run without reload, a failed check. Hesap: creating the account on the
-tailnet with master_auth's rules and a refusal, the tailnet password without the current one, the internet
-password with it, a wrong current password (401 without `giris`) shown on the form while an ended session
-(401 with `giris`) goes to the sign-in page, and the leave guard. Sunucu: the facts and the reboot (typed
-word, a refusal, the wait, the server going away and back with a shorter uptime, the reload). Görünüm and
-Günlük (newest first, the packages' `gunluk` templates from `moduller`, kind chips `tur=`, a Turkish-aware
-search `ara=`, a missing package list). The internet channel (`newHttpsPage`): repair, update and reboot
-locked with their reasons, "Çıkış yap" in the sidebar and the phone's menu sheet. Gelişmiş: Caddy's sites
-(routes, owner, access, scheme), the raw files (`ham=1`) with copy, "Yenile" past the cache and a failed
-read; DNS from the same read; the firewall tab's links to Erişim's technical rules; Podman's images,
-volumes and networks (`kaynak=`): what may not be removed and why, "İmaj çek" with the reference check, the
-exact `…/konteynerler/islem` bodies, each job's steps and end through `islemler`, a failed job, removal with
-the typed word, a sheet closed while its job runs, an unreadable collection, a runtime that does not answer.
-Also "Tüm denetimler", the palette's new tabs, keyboard and focus, and 1440/390/320 px in both themes with
-no style attribute and no horizontal scroll.
+reloading after success, a failed run without reload, a failed check; beside it the applications' image updates
+(`Guncelleme.uygulamalar`: each with its image and a link to its page, where it is confirmed; none; never checked).
+Hesap: creating the account on the tailnet with master_auth's rules and a refusal, the tailnet password without
+the current one, the internet password with it, a wrong current password (401 without `giris`) shown on the form
+while an ended session (401 with `giris`) goes to the sign-in page, and the leave guard. Sunucu: the facts and the
+reboot (typed word, a refusal, the wait, the server going away and back with a shorter uptime, the reload). An old
+`sekme=gorunum` shows Sağlık. İşlem geçmişi: newest first, every kind the backends write in the interface's words
+(the account, the update, the reboot, repair, the settings steps naming an access row or a WireGuard action,
+WireGuard's device lines, an application's verbs with its draft and its removal's data choice, the cleanup, the
+shares, the file backends' uploads, folders and root deletes), kind chips `tur=` in their fixed order, a
+Turkish-aware search `ara=`. The internet channel (`newHttpsPage`): repair, update and reboot locked with their
+reasons, "Çıkış yap" in the sidebar and the phone's menu sheet. Gelişmiş: Caddy's sites (routes, owner, access,
+scheme), the raw files (`ham=1`) with copy, "Yenile" past the cache and a failed read; DNS from the same read; the
+firewall's technical rules and listeners per family (`aile=`), "Erişim'de yönet", "Yenile" and an unreadable
+listener list; Podman's inventory read-only (`kaynak=`, an application in "Kullanan" linking to its page), the
+containers Obhut does not manage read-only, and the cleanup (`GET`/`POST /api/konsol/gelismis/temizlik`): groups
+with their counts, ticks and a group's tick, the dialog naming every chosen item, the typed word `temizle` with
+Turkish case rules, a refusal, the exact body, the job followed here and in İşlemler, what went (from the job's
+record) and what stayed and why, "Yenile" measuring again, nothing to clean, a failed read; an unreadable
+collection and a runtime that does not answer. Also "Tüm denetimler", the palette (İşlem geçmişi, Onarım kaydı, the
+theme instead of Görünüm, temizlik), keyboard and focus, and 1440/390/320 px in both themes with no style
+attribute and no horizontal scroll.
 
 `yeni-ui.cjs`, `yeni-uygulamalar-ui.cjs` and `yeni-erisim-ui.cjs` changed only where phase 4a meant them to:
 Sistem and Gelişmiş are no longer placeholders, the palette's current-interface views no longer list
@@ -265,8 +311,8 @@ PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-sistem-ui.cjs
 ```
 
 The phase 4a backend (DD-266): `test_api.py` checks the moved and new table routes through the real
-handler (the account state, the audit log, the repair log as plain text, the folder picker, Gelişmiş's
-configuration, the Podman reads, a package's account with and without `parola=1`, `kur` with its form,
+handler (the account state, the audit log, the repair log as plain text, Gelişmiş's
+configuration, the Podman list, a package's account with and without `parola=1`, `kur` with its form,
 a body of another shape refused); `test_container_worker.py` checks that a job waits for a held install
 lock and refuses after the wait.
 
@@ -278,8 +324,10 @@ that answers `/api/*` and `/api/sistem/*` in the real backend's shapes and words
 `dirs=1`, text with its encoding and version, save, download, raw-body upload, mkdir, rename, move, trash,
 restore, purge, empty, delete with the typed confirmation) and every request body compared exactly. The
 real editor bundle (`console/duzenleyici.js`) is served at `/duzenleyici.js`. Depolama: the disk (used,
-free, the user area without the trash, its own mount), the trash in short with its link, Gezgin's address
-or the way to install it, the top folders in Turkish order with size, count and who uses them
+free, the user area without the trash, its own mount) with the trash in short and its link; no file-manager card
+(K7); "Uygulama verileri" (each application's folder with its size, its folders largest first with the mounts
+that use them or "tanımda yok", a walk out of time with its reason, the oldest measurement's time, "Yeniden ölç"
+with `?yenile=1`, the way into Sistem dosyaları on the tailnet only, no application, a failed read); the top folders in Turkish order with size, count and who uses them
 (applications' binds with access and container path, a bind of the whole user area in short on every
 folder, folder shares, a package's own folder with its owner, binds outside the listed folders, a failed
 `GET /api/konsol/depolama`). Sunucu klasörleri: Turkish order with numbers, sizes and times, the share
@@ -602,8 +650,8 @@ or unregistered package or for a placed Quadlet on another network (the installe
 `test_container_package.py` moves the loopback `PublishPort` line with the interface port in the
 rendered and the placed Quadlet, restores both on failure and refuses a Quadlet without that line
 before stopping anything; `test_torrent_api.py` checks that the install writes `WebUI\Address=*`.
-`test_container_listening.py` labels published addresses (the WAN one as internet access) and names
-the bridge in the detail. `common.bats` drives the engine with fake podman: the bridge is created
+`test_container_listening.py` labels published addresses (the WAN one as internet access).
+`common.bats` drives the engine with fake podman: the bridge is created
 once with the guard's interface name and the package label, removed with the package, and an
 unexpected publication stops the install; it also pins the three `PublishPort` lines.
 
@@ -635,10 +683,11 @@ keys and the absence of any automatic update.
 
 `test_containers.py` drives `panel/master_containers.py` with canned `podman` JSON: the list
 (containers, host network, ps ports, images, storage size), a calm answer when podman is
-missing or fails, `inspect` mapping (sorted mounts, port bindings, three labels, health, never
-the environment), name and path gates and RFC 3339 parsing (an application's log is its units' journal,
+missing or fails, name and path gates and RFC 3339 parsing (an application's log is its units' journal,
 `test_container_manager.py`); a route test runs the real backend handler on a Unix socket (shared
-gates, 400/404 answers, no write route: POST → 404, no podman write verb).
+gates, the removed detail read and unknown paths 404, no write route: POST → 404, no podman write verb).
+`test_container_integration_edges.py` checks that the list, which inspects each live container, never
+returns a container's environment.
 The browser side of the container manager is `yeni-uygulamalar-ui.cjs` (an application's page and its
 jobs) and `yeni-sistem-ui.cjs` (Gelişmiş → Podman's images, volumes and networks).
 `common.bats` pins the stage-1/7 Podman install and check (no daemon units), the base view's
@@ -674,8 +723,8 @@ stopped, unregistered, undeclared and built-in packages; broken modules reported
 2 s cache; no bytecode in the package folder; the 120 s window) and both packages'
 `trafik.py` (qBittorrent's real `AllStats` line from nrm, large totals through a Qt-style
 escaper, no file yet and damaged records; the WireGuard registry and interface counters).
-`yeni-uygulamalar-ui.cjs` checks Genel Bakış's network card (read every 5 s only while the page is shown
-and the browser tab visible). `common.bats` pins the source guards; fixture browsers do not establish
+`yeni-ui.cjs` checks Genel Bakış's network card (read every 5 s only while the page is shown and the
+browser tab visible). `common.bats` pins the source guards; fixture browsers do not establish
 live deployment or fresh-install acceptance.
 
 ## Konsol sign-in (v2-166, DD-194; v2-181, DD-205)
@@ -1284,8 +1333,7 @@ a failed rollback saying so; taking a standalone container over (its volume copi
 removed only after the application is ready, started again on a failure); start, stop, restart, update, an
 edit that keeps one secret and renews another (the old one removed only after the new units run) and its
 rollback, a dropped service, removal keeping or deleting the data and run again after an interruption; the
-image draft; Gelişmiş's resources an application uses; one run per operation id and a record without the
-request. After every action it checks that no secret value is in an argument, a file, a record or a reply.
+image draft; one run per operation id and a record without the request. After every action it checks that no secret value is in an argument, a file, a record or a reply.
 `test_container_manager.py` covers the read model from the records with live state (per service, summed
 resources, actions, a running job), the standalone sources, the detail with no secret value, a service's
 journal, an unreadable record as an error line, the edit plan (nothing written), and the broker (no request
@@ -1329,4 +1377,33 @@ following it; `firewall-linux.py` checks it with real packets (IPv4 tailnet only
 
 ```bash
 cd tests && python3.13 -m unittest test_access_rows test_publications test_https_settings test_erisim test_obhut
+```
+
+## Rebuild phase 5: the backend for Konsol (DD-271)
+
+`test_overview.py` covers each application's rate from its own bridge in a fake `/sys/class/net` (the interface
+`master_generator.interface_name` gives; the host's view: tx is what the application downloads, rx what it
+uploads): the first reading a baseline, the 1.5 s step, a counter that went back starting over, a missing bridge
+(a stopped application) and a stale baseline giving no rate, the 120 s window, an application without a record
+forgotten, no command run, and `/api/konsol/ag`'s five busiest applications with traffic. `test_uygulamalar.py`
+covers `Uygulama.ag` and `adres` on the list and the detail, the image update count in `/api/konsol/guncelleme`
+(the list's own state), and the install plan (`…/kur` with `plan`): the summary, nothing written (every path under
+the test root unchanged), no job or audit line, only read-only commands (a pull, a secret or a unit start refused),
+and every refusal by question or part (an inspection, the answers, the name, a `/srv` folder, Podman 4.9, a taken
+Tailscale name, a network of the name, no pool port, a takeover's container). `test_container_manager.py` covers
+the cleanup read model (only what nothing uses: not a pinned, named, read-only or counted image, not one a stopped
+container came from; never Podman's default or an application's network; volumes and data folders withheld when a
+container cannot be read; unmanaged containers), the cleanup broker (checked items, one job named `Podman`) and its
+routes (gates, audit line, the six removed resource actions 404), the application list without Podman's inventory
+(no `altyapi`: Gelişmiş → Podman has its own reads), and the detail's `boyut` of each application folder (its share
+of Depolama's cached measurement; null for a `/srv` folder, a tmpfs or a folder not on disk yet) and
+`guncelleme_denetlendi` (when the cached image check last asked about the application; null before, or when the
+check did not ask about it).
+`test_container_worker.py` covers the cleanup job: each item checked again, what is in use or gone named and kept,
+the rest removed (an image by its tags or its ID, never forced), a folder an application took meanwhile kept.
+`test_applications.py` covers the size walker (blocks, a hard link once, no link followed, the time limit) and its
+cache; `test_api.py` the storage route's application data folders.
+
+```bash
+cd tests && python3.13 -m unittest test_overview test_uygulamalar test_container_manager test_container_worker test_applications test_api
 ```

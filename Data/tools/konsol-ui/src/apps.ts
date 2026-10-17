@@ -1,10 +1,11 @@
-// How an application (GET /api/konsol/uygulamalar, DD-271 phase 3) is shown everywhere: its state, whether
-// it needs attention, its services, resources and version, where its file came from, its tile colour. One
-// place, so Genel Bakış, Uygulamalar, the application page and the palette say the same thing. Erişim's
-// cell words live here too (CELL_TEXT, CELL_TONE).
+// How an application (GET /api/konsol/uygulamalar, DD-271) is shown everywhere: its state, whether it needs
+// attention, its services, resources, live rate and version, where its file came from, how each service starts,
+// how it is reached (from Erişim's rows), its first address and its tile colour. One place, so Genel Bakış,
+// Uygulamalar, the application page and the palette say the same thing. Erişim's cell words live here too
+// (CELL_TEXT, CELL_TONE).
 import type { Tone } from "./components/ui/types";
-import type { ErisimDurumu, Uygulama, UygulamaServisAyrintisi } from "./api/sema";
-import { UNKNOWN, bytes, percent } from "./format";
+import type { ErisimDurumu, Hizmet, KaynakTuru, Uygulama, UygulamaServisAyrintisi } from "./api/sema";
+import { UNKNOWN, bytes, percent, rate } from "./format";
 
 export type AppState = Uygulama["durum"];
 export type AppAction = Uygulama["eylemler"][number];
@@ -32,38 +33,43 @@ export function needsAttention(app: Uygulama): boolean {
 // becomes "guncel" or "yeni" within about a minute); like "sabit" it shows nothing and is never an error.
 const UPDATE_TEXTS: Record<Uygulama["guncelleme"], string> = {
   guncel: "Güncel",
-  yeni: "Yeni sürüm",
+  yeni: "Yeni imaj",
   denetlenemedi: "Denetlenemedi",
   bilinmiyor: UNKNOWN,
   sabit: UNKNOWN,
 };
 
-/** The version column: "Güncel", "Yeni sürüm", "Denetlenemedi", or "—" (not checked yet, or a fixed image). */
+/** The update column: "Güncel", "Yeni imaj", "Denetlenemedi", or "—" (not checked yet, or a fixed image). */
 export const updateText = (state: Uygulama["guncelleme"]): string => UPDATE_TEXTS[state] ?? UNKNOWN;
-
-/** Whether there is a version state worth a line of its own. */
-export const hasUpdateState = (state: Uygulama["guncelleme"]): boolean => state === "guncel" || state === "yeni" || state === "denetlenemedi";
 
 export const FORMAT_TEXT: Record<Uygulama["bicim"], string> = { compose: "Compose", kubernetes: "Kubernetes" };
 
-/** Where the application's file came from (K2). */
-export const SOURCE_TEXT: Record<Uygulama["koken"], string> = {
-  dosya: "Dosyadan",
-  adres: "Bir adresten",
-  imaj: "Bir imajdan",
-  konteyner: "Bir konteynerden",
+/** Where the application's file came from (K2), in a line ("Compose · adresten · 2 servis"). */
+export const SOURCE_SHORT: Record<KaynakTuru, string> = {
+  dosya: "dosyadan",
+  adres: "adresten",
+  imaj: "imajdan",
+  konteyner: "konteynerden",
+};
+
+/** Where the application's file came from (K2), as a fact. */
+export const SOURCE_TEXT: Record<KaynakTuru, string> = {
+  dosya: "Dosya",
+  adres: "Adres",
+  imaj: "İmaj adından taslak",
+  konteyner: "Var olan konteynerden taslak",
 };
 
 /** How a service starts (A4). */
-export const START_TEXT: Record<UygulamaServisAyrintisi["baslangic"], string> = {
-  direct: "Doğrudan kendi kullanıcısıyla",
-  root: "Root olarak; kendi kullanıcısına geçebilir",
-};
+export function startText(mode: UygulamaServisAyrintisi["baslangic"], user: string | null): string {
+  return mode === "direct" ? `Doğrudan${user ? ` ${user}` : ""} · bütün yetkiler kapalı` : "Root olarak · kendi kullanıcısına geçebilir";
+}
 
 export const servicesText = (n: number): string => `${n} servis`;
 
-/** The application's line under its name: "Compose · 2 servis". */
-export const appLine = (app: Pick<Uygulama, "bicim" | "servisler">): string => `${FORMAT_TEXT[app.bicim] ?? app.bicim} · ${servicesText(app.servisler.length)}`;
+/** The application's line under its name: "Compose · dosyadan · 2 servis". */
+export const appLine = (app: Pick<Uygulama, "bicim" | "servisler" | "koken">): string =>
+  `${FORMAT_TEXT[app.bicim] ?? app.bicim} · ${SOURCE_SHORT[app.koken] ?? app.koken} · ${servicesText(app.servisler.length)}`;
 
 /** "1 uyarı". */
 export const warningText = (n: number): string => `${n} uyarı`;
@@ -75,6 +81,34 @@ export const CELL_TONE: Record<ErisimDurumu, Tone> = { acik: "ok", kismen: "acce
 export function resourceText(app: Pick<Uygulama, "kaynak">): string {
   const parts = [app.kaynak.cpu, app.kaynak.bellek].map((v, i) => (v === null ? null : i === 0 ? percent(v) : bytes(v))).filter((v): v is string => v !== null);
   return parts.length ? parts.join(" · ") : UNKNOWN;
+}
+
+/** The live rate of the application's own bridge: "↓ 1,2 MB/s · ↑ 38 KB/s"; "—" while it has none. */
+export function rateText(app: Pick<Uygulama, "ag">): string {
+  return app.ag ? `↓ ${rate(app.ag.indirme)} · ↑ ${rate(app.ag.yukleme)}` : UNKNOWN;
+}
+
+const ADDRESS_RE = /^https?:\/\/[^/\s]+/;
+
+/** The application's first address when it can be opened now (it runs, fully or in part); "" otherwise. */
+export function openAddress(app: Pick<Uygulama, "adres" | "durum">): string {
+  const address = typeof app.adres === "string" && ADDRESS_RE.test(app.adres) ? app.adres : "";
+  return address && (app.durum === "calisiyor" || app.durum === "kismen") ? address : "";
+}
+
+/** How an application is reached, from Erişim's rows: a Tailscale name, an internet name, each open raw port;
+    "Kapalı" when nothing is open. */
+export function accessChips(rows: readonly Hizmet[], app: string): { text: string; tone: Tone }[] {
+  const mine = rows.filter((h) => h.tur === "uygulama" && h.uygulama === app && h.satir);
+  const out: { text: string; tone: Tone }[] = [];
+  if (mine.some((h) => h.satir?.tur === "adres")) out.push({ text: "Tailscale", tone: "ok" });
+  const internet = mine.filter((h) => h.satir?.tur === "adres" && h.satir.internet);
+  if (internet.length) out.push({ text: "İnternet", tone: internet.some((h) => h.internet.durum === "hata" || h.internet.uyari) ? "warning" : "accent" });
+  for (const h of mine) {
+    if (h.satir?.tur === "ham" && h.satir.kapsam !== "kapali") out.push({ text: `Ham ${h.satir.port} · ${h.satir.kapsam === "internet" ? "internet" : "Tailscale"}`, tone: "warning" });
+  }
+  if (!out.length) out.push({ text: "Kapalı", tone: "neutral" });
+  return out;
 }
 
 /** One of four tile colours, always the same for the same application (by its name). */
@@ -90,9 +124,4 @@ export function shortImage(image: string): string {
   if (at < 0) return image;
   const digest = image.slice(at + 8);
   return digest.length > 12 ? `${image.slice(0, at)}@sha256:${digest.slice(0, 12)}…` : image;
-}
-
-/** Podman's images, volumes and networks: Gelişmiş's Podman view (phase 4a), one of its lists. */
-export function podmanRoute(kaynak: "imajlar" | "birimler" | "aglar" | "" = ""): string {
-  return "/gelismis?sekme=podman" + (kaynak ? "&kaynak=" + kaynak : "");
 }

@@ -84,9 +84,7 @@ STREAM_RETRY_MS = 3000
 STREAM_LIMIT = 4
 # The activity drawer keeps a finished operation this long.
 JOB_KEEP_SECONDS = 120
-JOB_CONTAINER_ACTIONS = {"image-pull": "İmaj indirme", "image-remove": "İmaj silme",
-                         "volume-create": "Birim oluşturma", "volume-remove": "Birim silme",
-                         "network-create": "Ağ oluşturma", "network-remove": "Ağ silme",
+JOB_CONTAINER_ACTIONS = {"temizlik": "Temizlik",
                          "uygulama-kur": "Kurulum", "uygulama-baslat": "Başlatma", "uygulama-durdur": "Durdurma",
                          "uygulama-yeniden-baslat": "Yeniden başlatma", "uygulama-guncelle": "İmaj güncelleme",
                          "uygulama-tanim": "Tanım değişikliği", "uygulama-kaldir": "Kaldırma",
@@ -132,6 +130,10 @@ TAILNET_RANGES = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("f
 # arayla hızı yeniden ölçer; NET_WINDOW_SECONDS saniyeden eski bir ölçüm gösterilmez.
 NET_STEP_SECONDS = 1.5
 NET_WINDOW_SECONDS = 120
+# The operator's decision (2026-10-17): each application's rate is read the same way from its own bridge's counters;
+# Genel Bakış' network card lists at most this many of the busiest.
+NET_APPS_LIMIT = 5
+SYS_NET = "/sys/class/net"
 # DD-261: at most one background image-update check (DD-214) a minute from the read model.
 UPDATE_KICK_SECONDS = 60
 IFACE_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,15}$")
@@ -408,7 +410,10 @@ class Panel:
         self.net_lock = threading.Lock()
         self.net_prev = None
         self.net_last = None
-        self.containers = master_container_manager.Service(self)
+        # Per application: {app: (interface, monotonic, rx, tx)} and {app: {"t", "indirme", "yukleme"}}.
+        self.app_net_prev = {}
+        self.app_net_last = {}
+        self.containers = master_container_manager.Service(self, rates=self.app_rates)
         # DD-271: WireGuard, a built-in; its tool master-wg runs with this backend's environment.
         self.wireguard = master_wireguard.WireGuard(
             lambda: read_env(self.args.state), lambda *a, **k: self.run_tool(*a, **k), lambda env: self.ports(env),
@@ -487,7 +492,31 @@ class Panel:
     # -- güncelleme (DD-233)
     def update_info(self, force=False):
         env = read_env(self.args.state)
-        return self.updates.status(env, self.unit_active(env.get("GUNCELLEME_UNIT", "")), force)
+        return dict(self.updates.status(env, self.unit_active(env.get("GUNCELLEME_UNIT", "")), force),
+                    uygulamalar=self.app_updates(env))
+
+    def app_updates(self, env):
+        """Sistem → Güncellemeler: the applications whose image has an update in the cached check (DD-214), the same
+        state the application list shows (master_applications.app_update); each is confirmed on its own page. Reads
+        the records only; a stale check starts in the background as the list does. An unreadable record counts as
+        no update (the list names it)."""
+        names, any_app = [], False
+        if env.get("UYGULAMA_STATE_DIR"):
+            try:
+                records = master_applications.Records(env)
+                for app in records.names():
+                    any_app = True
+                    try:
+                        definition = records.load(app)["definition"]
+                    except master_container_config.ContainerConfigError:
+                        continue
+                    if master_applications.app_update(definition, self.containers.update_of(app)) == "yeni":
+                        names.append(app)
+            except master_container_config.ContainerConfigError:
+                pass
+        if any_app:
+            self.update_check_soon()
+        return {"sayi": len(names), "adlar": names, "denetlendi": int(self.containers.update_at) or None}
 
     def update_start(self, data):
         """Starts master-guncelle for the commit and version the page showed, as its own unit: the
@@ -610,11 +639,13 @@ class Panel:
         return REBOOT_DELAY_SECONDS
 
     def sample_resources_forever(self):
-        """Host resource sampling: the CPU and the WAN rate."""
+        """Host resource sampling: the CPU, the WAN rate and each application's bridge rate."""
         while True:
             try:
                 self.sample_system()
-                self.net_sample(read_env(self.args.state))
+                env = read_env(self.args.state)
+                self.net_sample(env)
+                self.app_net_sample(env)
             except Exception as err:
                 print("panel: sistem ölçülemedi (%s)" % err, flush=True)
             time.sleep(SAMPLE_SECONDS)
@@ -648,7 +679,7 @@ class Panel:
         """WAN arayüzünün alınan ve gönderilen bayt sayaçları (çekirdeğin sysfs dosyalarından)."""
         values = []
         for name in ("rx_bytes", "tx_bytes"):
-            with open("/sys/class/net/%s/statistics/%s" % (iface, name), "rb") as fh:
+            with open("%s/%s/statistics/%s" % (SYS_NET, iface, name), "rb") as fh:
                 values.append(int(fh.read(32).strip()))
         return values
 
@@ -676,17 +707,73 @@ class Panel:
                 self.net_last = None  # another interface: its rate does not belong here
             self.net_prev = (iface, mono, rx, tx)
 
+    def app_net_sample(self, env):
+        """Each application's rate (bytes/s) from its own bridge, the interface master_generator.interface_name gives,
+        read like the WAN's (no command). The counters are the host's view of the bridge: what the host sends into it
+        (tx) is what the application receives (indirme), what it receives from it (rx) is what the application sends
+        (yukleme). A counter that went back (the bridge was made again) starts over; a missing interface (a stopped
+        application) has no rate; an application without a record is forgotten."""
+        wanted = {}
+        if env.get("UYGULAMA_STATE_DIR"):
+            try:
+                for app in master_applications.Records(env).names():
+                    wanted[app] = master_applications.interface(env, app)
+            except master_container_config.ContainerConfigError:
+                return
+        readings = {}
+        for app, iface in wanted.items():
+            try:
+                readings[app] = (iface, *self.net_counters(iface)) if IFACE_RE.fullmatch(iface) else None
+            except (OSError, ValueError):
+                readings[app] = None
+        mono, now = time.monotonic(), int(time.time())
+        with self.net_lock:
+            for app in set(self.app_net_prev) | set(self.app_net_last):
+                if readings.get(app) is None:
+                    self.app_net_prev.pop(app, None)
+                    self.app_net_last.pop(app, None)
+            for app, reading in readings.items():
+                if reading is None:
+                    continue
+                iface, rx, tx = reading
+                prev = self.app_net_prev.get(app)
+                if prev is not None and prev[0] == iface:
+                    span = mono - prev[1]
+                    if span < NET_STEP_SECONDS:
+                        continue
+                    if rx < prev[2] or tx < prev[3]:
+                        self.app_net_last.pop(app, None)
+                    elif span <= 3 * max(SAMPLE_SECONDS, NET_STEP_SECONDS):
+                        self.app_net_last[app] = {"t": now, "indirme": int((tx - prev[3]) / span),
+                                                  "yukleme": int((rx - prev[2]) / span)}
+                elif prev is not None:
+                    self.app_net_last.pop(app, None)
+                self.app_net_prev[app] = (iface, mono, rx, tx)
+
+    def app_rates(self):
+        """{app: {"indirme", "yukleme"}}: the applications' last rates, none older than NET_WINDOW_SECONDS."""
+        now = int(time.time())
+        with self.net_lock:
+            return {app: {"indirme": r["indirme"], "yukleme": r["yukleme"]} for app, r in self.app_net_last.items()
+                    if r["t"] >= now - NET_WINDOW_SECONDS}
+
     def network(self):
-        """GET /api/konsol/ag: the WAN rate (none older than NET_WINDOW_SECONDS)."""
+        """GET /api/konsol/ag: the WAN rate and the busiest applications with traffic (none older than
+        NET_WINDOW_SECONDS)."""
         env = read_env(self.args.state)
         self.net_sample(env)
+        self.app_net_sample(env)
         now = int(time.time())
         with self.net_lock:
             last = self.net_last
         if last and last["t"] < now - NET_WINDOW_SECONDS:
             last = None
+        busiest = sorted(((r["indirme"] + r["yukleme"], app, r) for app, r in self.app_rates().items()
+                          if r["indirme"] + r["yukleme"] > 0), key=lambda item: (-item[0], item[1]))
         return {"read_at": now, "sampled_at": last["t"] if last else None, "rx": last["rx"] if last else None,
-                "tx": last["tx"] if last else None}
+                "tx": last["tx"] if last else None,
+                "uygulamalar": [{"ad": app, "indirme": r["indirme"], "yukleme": r["yukleme"]}
+                                for _total, app, r in busiest[:NET_APPS_LIMIT]]}
 
     def meminfo(self):
         info = {}
@@ -1444,9 +1531,7 @@ class Panel:
         try:
             answer = self.containers.view().applications()
         except master_containers.ContainerError as err:
-            answer = {"read_at": int(time.time()), "items": [], "kaynaklar": [],
-                      "altyapi": {"podman": "", "calisiyor": False, "imaj": 0, "kullanilmayan_imaj": 0, "birim": 0, "ag": 0},
-                      "hatalar": [str(err)]}
+            answer = {"read_at": int(time.time()), "items": [], "kaynaklar": [], "hatalar": [str(err)]}
         if answer["items"]:
             self.update_check_soon()
         return answer
@@ -1470,14 +1555,22 @@ class Panel:
         except (master_containers.ContainerError, OSError, ValueError, KeyError):
             pass  # the check keeps its own error; the next listing after a minute tries again
 
-    def depolama(self):
+    def depolama(self, fresh=False):
         """GET /api/konsol/depolama (DD-267, K7): who uses which server folder — each application's /srv
-        mounts (its record) and each folder share. Read-only; Dosyalar joins it with the files backend's
-        folders. A source that fails adds an error line."""
+        mounts (its record) and each folder share — and each application's data folders (UYGULAMA_VERI_DIR/<app>,
+        A5) with their sizes: a bounded walk (master_applications.Sizes; fresh measures again), a folder that could
+        not be measured has no size and says why. Read-only; Dosyalar joins it with the files backend's folders. A
+        source that fails adds an error line."""
         env = read_env(self.args.state)
         root = os.path.realpath(env.get("SERVER_ROOT", "") or "/srv")
-        users, errors = [], []
+        users, errors, held = [], [], []
         if env.get("UYGULAMA_STATE_DIR"):
+            try:
+                master_applications.data_root(env)
+                data_known = True
+            except master_container_config.ContainerConfigError as err:
+                errors.append(str(err))
+                data_known = False
             try:
                 records = master_applications.Records(env)
                 for app in records.names():
@@ -1486,11 +1579,16 @@ class Panel:
                     except master_container_config.ContainerConfigError as err:
                         errors.append("%s: %s" % (app, err))
                         continue
+                    folders = {}
                     for svc in definition["services"]:
                         for m in svc.get("mounts", []):
                             if m.get("to") == "srv":
                                 users.append({"yol": m["path"], "id": app, "ad": app, "tur": "uygulama",
                                               "hedef": "%s: %s" % (svc["name"], m["target"]), "yazilabilir": not m.get("read_only")})
+                            elif m.get("to") == "app":
+                                folders.setdefault(m["folder"], []).append("%s: %s" % (svc["name"], m["target"]))
+                    if data_known:
+                        held.append((app, master_applications.data_dir(env, app), folders))
             except master_container_config.ContainerConfigError as err:
                 errors.append(str(err))
         try:
@@ -1503,7 +1601,19 @@ class Panel:
         except (master_shares.ShareError, OSError, ValueError, KeyError):
             errors.append("Paylaşım kaydı okunamadı.")
         users.sort(key=lambda u: (u["yol"], u["ad"], u["hedef"]))
-        return {"read_at": int(time.time()), "kok": root, "kullananlar": users, "hatalar": errors}
+        sizes = self.containers.sizes.measure([path for _app, path, _f in held], fresh=fresh)
+        apps_data = []
+        for app, path, folders in held:
+            size = sizes[str(path)]
+            rows = []
+            # The definition's folders and whatever else is in the application's folder (one an edit dropped stays).
+            for name in sorted(set(folders) | set(size["alt"])):
+                measured = size["boyut"] is not None and name in size["alt"]
+                rows.append({"ad": name, "yol": str(path / name), "boyut": size["alt"][name] if measured else None,
+                             "neden": "" if measured else size["neden"] or "Klasör yok.", "hedefler": sorted(folders.get(name, []))})
+            apps_data.append({"ad": app, "yol": str(path), "boyut": size["boyut"], "neden": size["neden"],
+                              "olculdu": size["olculdu"], "klasorler": rows})
+        return {"read_at": int(time.time()), "kok": root, "kullananlar": users, "uygulamalar": apps_data, "hatalar": errors}
 
     def pending(self):
         """The settings change waiting for confirmation or rollback (the page's banner)."""
@@ -1555,6 +1665,15 @@ class Panel:
                                   "adim": str(steps[-1].get("ad", "")) if steps and not done else "",
                                   "bitis": ended if done else None})
         return {"items": items}
+
+
+def cleanup_detail(data):
+    """The cleanup's audit detail: what was asked, by kind (bounded)."""
+    words = {"imajlar": "imaj", "aglar": "ağ", "birimler": "birim", "klasorler": "klasör"}
+    parts = ["%s %s" % (words[k], ", ".join(v[:12] if k == "imajlar" else v for v in data[k]))
+             for k in words if data.get(k)]
+    text = "; ".join(parts)
+    return text if len(text) <= 300 else text[:297] + "..."
 
 
 def num_or(value, default):
@@ -1900,15 +2019,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def api_adlar(self, query):
         self.json(200, self.panel.adlar())
 
-    def api_konteyner_islemi(self, user, data):
-        try:
-            result = self.panel.containers.submit(data)
-        except master_containers.ContainerError as err:
-            self.error(err.status, str(err))
-            return
-        self.audit(user, "konteyner-" + result["action"], result["name"], True)
-        self.json(202, result)
-
     # DD-266 (phase 4a): the Podman reads.
     def container_read(self, read):
         try:
@@ -1922,17 +2032,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def api_konteyner_listesi(self, query):
         self.container_read(lambda: self.container_view().liste())
 
-    def api_konteyner_ayrintisi(self, query):
-        self.container_read(lambda: self.container_view().ayrinti(master_containers.name_of(query.get("ad", [""])[0])))
-
     def api_konteyner_isi(self, query):
         self.container_read(lambda: self.panel.containers.operation(query.get("id", [""])[0]))
-
-    def api_klasorler(self, query):
-        try:
-            self.json(200, {"items": master_settings.Manager(self.panel.args.state).folders(query.get("path", [None])[0])})
-        except (master_settings.SettingsError, OSError, KeyError, ValueError) as err:
-            self.error(400, str(err) if isinstance(err, master_settings.SettingsError) else "Ayarlar okunamadı.")
 
     # DD-266: Sistem — the account and this session, the update, the reboot, the repair log, the audit log.
     def api_oturum(self, query):
@@ -2011,12 +2112,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.share_change(user, "remove", data)
 
     def api_depolama(self, query):
-        self.json(200, self.panel.depolama())
+        self.json(200, self.panel.depolama(fresh="yenile" in query))
 
     # DD-266: Gelişmiş — the effective Caddy and dnsmasq configuration, from the settings view's cache.
     def api_gelismis(self, query):
         view = self.panel.settings(fresh="yenile" in query)
         self.json(200, {"read_at": view["read_at"], "caddy": view["web"], "dnsmasq": view["dns"]})
+
+    # K8: Gelişmiş's only write, the cleanup of what nothing uses: a read model and one job (each item checked again
+    # by the worker right before it goes), with an audit line naming what was asked.
+    def api_temizlik(self, query):
+        self.container_read(lambda: self.container_view().cleanup(fresh="yenile" in query))
+
+    def api_temizle(self, user, data):
+        try:
+            job = self.panel.containers.submit_cleanup(data)
+        except master_containers.ContainerError as err:
+            self.error(err.status, str(err))
+            return
+        self.audit(user, "temizlik", cleanup_detail(data), True)
+        self.json(202, {"is": job["id"]})
 
     # DD-271 (phase 3): applications. Reads come from the records with their live state; every write is a job
     # of the container broker (the request on the worker's standard input only) and an audit line
@@ -2078,11 +2193,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.json(200, {"metin": text, "kaynak": dict(data)})
 
     def api_uygulama_kur(self, user, data):
-        """Checks the file and the answers here first (a refusal never reaches the worker); the worker checks
-        them again before anything is written."""
+        """With plan: the install's dry run (KurPlani: every check the job makes before its first write, nothing
+        written, pulled or created). Without: checks the file and the answers here first (a refusal never reaches the
+        worker); the worker checks them again before anything is written."""
         try:
             text = master_applications.checked_text(data["metin"])
             source = master_applications.request_source(data["kaynak"])
+            if data.get("plan"):
+                self.json(200, self.app_view().install_plan(text, data["yanitlar"], source))
+                return
             inspection = master_inspector.inspect(text)
             if inspection["refusals"] or inspection["format"] is None:
                 raise master_containers.ContainerError(400, "Dosyada kurulumu durduran satırlar var; önce denetimdekileri giderin.")

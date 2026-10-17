@@ -169,8 +169,7 @@ class RouteTests(unittest.TestCase):
                 pass
         Handler.panel = p
         _server, sock = start_unix(self, Handler)
-        empty = {"read_at": 1, "items": [], "kaynaklar": [], "hatalar": [],
-                 "altyapi": {"podman": "5.4.2", "calisiyor": True, "imaj": 0, "kullanilmayan_imaj": 0, "birim": 0, "ag": 0}}
+        empty = {"read_at": 1, "items": [], "kaynaklar": [], "hatalar": []}
         view = types.SimpleNamespace(applications=lambda: empty)
         with patch.object(manager.Service, "updates") as updates, patch.object(p.containers, "view", return_value=view):
             code, _, raw = unix_get(sock, "/api/konsol/uygulamalar", {"X-Konsol": "1"})

@@ -1,17 +1,21 @@
-<!-- Sistem → Güncellemeler (DD-233, DD-260): the installed and the newest version with their build numbers,
+<!-- Sistem → Güncellemeler (DD-233, DD-260; A7): Obhut's installed and newest version with their build numbers,
      the state (güncel, yeni sürüm, denetlenemedi), "Yeniden denetle" (GET ?yenile=1, past the server's
      cache) and "Güncelle", which says what happens before it asks the server (tailnet only). The run is
-     followed in the activity list (the "guncelleme" job) and the update read: when it ends well the
-     installer has replaced Konsol's own files, so the page reloads itself; a failure is shown here. -->
+     followed in İşlemler (the "guncelleme" job) and the update read: when it ends well the installer has
+     replaced Konsol's own files, so the page reloads itself; a failure is shown here. Beside it the applications
+     whose image has an update in the cached check (Guncelleme.uygulamalar), each linking to its page, where the
+     update is confirmed. -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { RouterLink } from "vue-router";
 import { Icon } from "../../components/icons";
 import EmptyState from "../../components/ui/EmptyState.vue";
 import Modal from "../../components/ui/Modal.vue";
 import StatusPill from "../../components/ui/StatusPill.vue";
 import type { Tone } from "../../components/ui/types";
 import { readUpdate, startUpdate } from "../../api/sistem";
-import { live, serverNow } from "../../live";
+import { apps, live, serverNow } from "../../live";
+import { appRoute } from "../../router";
 import { UNKNOWN, dateTime, shortVersion, since } from "../../format";
 import type { Guncelleme } from "../../api/sema";
 
@@ -51,6 +55,17 @@ const state = computed<{ text: string; tone: Tone } | null>(() => {
   return r.yeni ? { text: "Yeni sürüm var", tone: "accent" } : { text: "Güncel", tone: "ok" };
 });
 
+// ---- the applications' image updates (each confirmed on its own page)
+const appUpdates = computed(() => {
+  const u = g.value?.uygulamalar as Guncelleme["uygulamalar"] | undefined;
+  if (!u || typeof u !== "object" || !Array.isArray(u.adlar)) return null;
+  const names = u.adlar.filter((a): a is string => typeof a === "string");
+  // The image whose newer build waits, from the application list (its first such service).
+  const image = (ad: string) => apps.value?.find((a) => a.ad === ad)?.servisler.find((x) => x.guncelleme === "yeni")?.imaj ?? "";
+  return { names: names.map((ad) => ({ ad, image: image(ad) })), checked: typeof u.denetlendi === "number" ? u.denetlendi : null };
+});
+const noApps = computed(() => apps.value !== null && apps.value.length === 0);
+
 // ---- the run
 const job = computed(() => (live.islemler ?? []).find((j) => j.tur === "guncelleme") ?? null);
 // Seen running in this page (started here, or found running): only then does its end reload the page.
@@ -87,7 +102,7 @@ watch([() => job.value?.durum, () => job.value?.bitis, () => g.value?.is.durum, 
     clearTimeout(reloadTimer);
     reloadTimer = window.setTimeout(() => location.reload(), 2500);
   } else {
-    failure.value = `Güncelleme başarısız: ${end.message || "ayrıntı Günlük'te"}`;
+    failure.value = `Güncelleme başarısız: ${end.message || "sunucu bir neden bildirmedi"}`;
     followed.value = false;
   }
 }, { immediate: true });
@@ -145,40 +160,67 @@ onBeforeUnmount(() => {
 <template>
   <div class="system-tab" data-testid="updates-tab">
     <p v-if="readError" class="form-error" role="alert" data-testid="update-read-error">{{ readError }}</p>
-    <section v-if="g" class="card" aria-labelledby="surum-baslik" data-testid="update">
-      <div class="card-head">
-        <h2 id="surum-baslik" class="card-title">Obhut sürümü</h2>
-        <div v-if="state" class="card-actions"><StatusPill :tone="state.tone" data-testid="update-state">{{ state.text }}</StatusPill></div>
-      </div>
-      <dl class="facts" data-testid="update-facts">
-        <dt>Kurulu</dt>
-        <dd><strong>{{ installed(g) }}</strong> <span class="muted">yapı <span class="mono">{{ g.kurulu || UNKNOWN }}</span></span></dd>
-        <dt>En yeni</dt>
-        <dd v-if="g.son"><strong>{{ offered(g) }}</strong> <span class="muted">yapı <span class="mono">{{ g.son }}<template v-if="g.commit"> · {{ g.commit.slice(0, 7) }}</template></span></span></dd>
-        <dd v-else>{{ UNKNOWN }}</dd>
-        <dt>Son denetim</dt>
-        <dd>{{ g.denetlendi ? `${dateTime(g.denetlendi)} (${since(g.denetlendi, serverNow())})` : UNKNOWN }}</dd>
-      </dl>
-      <p v-if="g.hata" class="notice notice-warning" role="note" data-testid="update-error">
-        <Icon name="alert" class="notice-icon" /><span>Sürüm denetlenemedi: {{ g.hata }}</span>
-      </p>
-      <p v-if="g.is.durum === 'hata' && g.is.mesaj && !failure" class="notice notice-warning" role="note" data-testid="update-last-failure">
-        <Icon name="alert" class="notice-icon" /><span>Son deneme başarısız: {{ g.is.mesaj }}</span>
-      </p>
-      <div class="action-line">
-        <button type="button" class="btn btn-secondary" :disabled="loading || running" data-testid="update-check" @click="recheck">
-          <Icon name="refresh" :size="16" />{{ loading ? "Denetleniyor…" : "Yeniden denetle" }}
-        </button>
-        <button v-if="g.yeni" type="button" class="btn btn-primary" :disabled="!canUpdate" :aria-describedby="lock ? 'guncelleme-kilit' : undefined" data-testid="update-start" @click="ask">
-          <Icon name="update" :size="16" />{{ offered(g) }} sürümüne güncelle
-        </button>
-      </div>
-      <p v-if="lock && g.yeni" id="guncelleme-kilit" class="notice" role="note" data-testid="update-lock">
-        <Icon name="lock" class="notice-icon" /><span>{{ lock }}</span>
-      </p>
-      <p class="sr-only" role="status">{{ finished || note }}</p>
-      <p v-if="note && !running && !finished" class="meter-note" aria-hidden="true" data-testid="update-note">{{ note }}</p>
-    </section>
+    <div v-if="g" class="tab-grid updates-grid">
+      <section class="card" aria-labelledby="surum-baslik" data-testid="update">
+        <div class="card-head">
+          <h2 id="surum-baslik" class="card-title">Obhut</h2>
+          <div v-if="state" class="card-actions"><StatusPill :tone="state.tone" data-testid="update-state">{{ state.text }}</StatusPill></div>
+        </div>
+        <dl class="facts" data-testid="update-facts">
+          <dt>Kurulu</dt>
+          <dd><strong>{{ installed(g) }}</strong> <span class="muted">yapı <span class="mono">{{ g.kurulu || UNKNOWN }}</span></span></dd>
+          <dt>En yeni</dt>
+          <dd v-if="g.son"><strong>{{ offered(g) }}</strong> <span class="muted">yapı <span class="mono">{{ g.son }}<template v-if="g.commit"> · {{ g.commit.slice(0, 7) }}</template></span></span></dd>
+          <dd v-else>{{ UNKNOWN }}</dd>
+          <dt>Son denetim</dt>
+          <dd>{{ g.denetlendi ? `${dateTime(g.denetlendi)} (${since(g.denetlendi, serverNow())})` : UNKNOWN }}</dd>
+        </dl>
+        <p v-if="g.hata" class="notice notice-warning" role="note" data-testid="update-error">
+          <Icon name="alert" class="notice-icon" /><span>Sürüm denetlenemedi: {{ g.hata }}</span>
+        </p>
+        <p v-if="g.is.durum === 'hata' && g.is.mesaj && !failure" class="notice notice-warning" role="note" data-testid="update-last-failure">
+          <Icon name="alert" class="notice-icon" /><span>Son deneme başarısız: {{ g.is.mesaj }}</span>
+        </p>
+        <div class="action-line">
+          <button type="button" class="btn btn-secondary" :disabled="loading || running" data-testid="update-check" @click="recheck">
+            <Icon name="refresh" :size="16" />{{ loading ? "Denetleniyor…" : "Yeniden denetle" }}
+          </button>
+          <button v-if="g.yeni" type="button" class="btn btn-primary" :disabled="!canUpdate" :aria-describedby="lock ? 'guncelleme-kilit' : undefined" data-testid="update-start" @click="ask">
+            <Icon name="update" :size="16" />{{ offered(g) }} sürümüne güncelle
+          </button>
+        </div>
+        <p v-if="lock && g.yeni" id="guncelleme-kilit" class="notice" role="note" data-testid="update-lock">
+          <Icon name="lock" class="notice-icon" /><span>{{ lock }}</span>
+        </p>
+        <p class="sr-only" role="status">{{ finished || note }}</p>
+        <p v-if="note && !running && !finished" class="meter-note" aria-hidden="true" data-testid="update-note">{{ note }}</p>
+      </section>
+
+      <section class="card" aria-labelledby="uygulama-guncelleme-baslik" data-testid="app-updates">
+        <div class="card-head">
+          <h2 id="uygulama-guncelleme-baslik" class="card-title">Uygulama güncellemeleri</h2>
+          <div v-if="appUpdates" class="card-actions">
+            <StatusPill :tone="appUpdates.names.length ? 'accent' : 'ok'" data-testid="app-updates-count">{{ appUpdates.names.length ? `${appUpdates.names.length} bekliyor` : "Yok" }}</StatusPill>
+          </div>
+        </div>
+        <ul v-if="appUpdates?.names.length" class="update-apps">
+          <li v-for="a in appUpdates.names" :key="a.ad" class="update-app" :data-uygulama="a.ad">
+            <span class="cell-stack">
+              <strong>{{ a.ad }}</strong>
+              <span class="cell-note mono wrap">{{ a.image ? `${a.image} · yeni yapı` : "yeni yapı" }}</span>
+            </span>
+            <RouterLink :to="appRoute(a.ad)" class="btn btn-secondary btn-sm" :aria-label="`${a.ad}: uygulamaya git`">Uygulamaya git</RouterLink>
+          </li>
+        </ul>
+        <p v-else-if="!appUpdates" class="card-text">{{ UNKNOWN }}</p>
+        <p v-else-if="noApps" class="card-text">Kurulu uygulama yok.</p>
+        <p v-else-if="appUpdates.checked === null" class="card-text">İmajlar henüz denetlenmedi.</p>
+        <p v-else class="card-text">Bütün uygulamalar güncel.</p>
+        <p class="meter-note" data-testid="app-updates-note">
+          <template v-if="appUpdates?.checked">Son denetim {{ dateTime(appUpdates.checked) }} ({{ since(appUpdates.checked, serverNow()) }}). </template>Güncelleme uygulamanın sayfasında onaylanır.
+        </p>
+      </section>
+    </div>
     <section v-else-if="!readError" class="card" aria-label="Güncellemeler">
       <EmptyState title="Sürüm bilgisi okunuyor" icon="update" />
     </section>

@@ -1,20 +1,20 @@
-<!-- Erişim → Genel: warnings first, each with its fix (an access row's sheet in Adresler, an application's
-     page, the Tailscale tab); the summaries (Tailscale, the internet with its open ports, WireGuard,
-     certificates); then every service with its four cells in plain words. "Teknik ayrıntı" (?teknik=1) adds
-     the addresses and the technical lines. A table on wide screens, cards on narrow ones. An access row
-     (Konsol, Paylaşımlar, each application port) links to its sheet in Adresler, where it changes; WebDAV's
-     row also leads to Dosyalar → Paylaşımlar for each folder's connections. -->
+<!-- Erişim → Genel (rebuild phase 5): the summaries (Tailscale, the internet with what is open on it, WireGuard,
+     the certificates), then every service with its four cells in plain words. "Teknik ayrıntı" (?teknik=1) adds
+     the addresses and the technical lines. A table on wide screens, cards on narrow ones. An access row (Konsol,
+     Paylaşımlar, each application port) links to its sheet in Adresler, where it changes; Paylaşımlar' row also
+     leads to Dosyalar → Paylaşımlar for each folder's connections. Warnings are Genel Bakış' Dikkat; here a
+     cell says what is wrong. -->
 <script setup lang="ts">
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
-import { Icon, type IconName } from "../../components/icons";
 import Card from "../../components/ui/Card.vue";
 import EmptyState from "../../components/ui/EmptyState.vue";
 import StatusPill from "../../components/ui/StatusPill.vue";
 import Switch from "../../components/ui/Switch.vue";
 import type { Tone } from "../../components/ui/types";
+import { Icon } from "../../components/icons";
 import { CELL_TEXT, CELL_TONE } from "../../apps";
-import { fixRoute } from "../../access";
+import { isAccessRow } from "../../access";
 import { accessRoute, filesRoute } from "../../sections";
 import { live, serverNow } from "../../live";
 import { useQueryFlag } from "../../query";
@@ -24,11 +24,11 @@ import type { ErisimHucresi, Hizmet } from "../../api/sema";
 const technical = useQueryFlag("teknik");
 const e = computed(() => live.erisim);
 
-const COLUMNS: readonly { key: "yerel" | "tailscale" | "wireguard" | "internet"; title: string; icon: IconName }[] = [
-  { key: "yerel", title: "Bu sunucu", icon: "server" },
-  { key: "tailscale", title: "Tailscale", icon: "tailnet" },
-  { key: "wireguard", title: "WireGuard", icon: "shield" },
-  { key: "internet", title: "İnternet", icon: "globe" },
+const COLUMNS: readonly { key: "yerel" | "tailscale" | "wireguard" | "internet"; title: string }[] = [
+  { key: "yerel", title: "Bu sunucu" },
+  { key: "tailscale", title: "Tailscale" },
+  { key: "wireguard", title: "WireGuard" },
+  { key: "internet", title: "İnternet" },
 ];
 
 // WireGuard's note is the same for every service (VPN networks lead only to the internet): said once.
@@ -39,12 +39,6 @@ const cellText = (c: ErisimHucresi) => CELL_TEXT[c.durum] ?? UNKNOWN;
 const KIND: Record<Hizmet["tur"], string> = {
   konsol: "Konsol", uygulama: "Uygulama portu", konteyner: "Konteyner", paylasim: "Paylaşım", sistem: "Sistem", vpn: "VPN ağı", kural: "Kural",
 };
-/** The rows whose home is Erişim → Adresler. */
-const hasRow = (h: Hizmet) => h.tur === "konsol" || h.tur === "paylasim" || h.tur === "uygulama";
-
-const warnings = computed(() =>
-  (e.value?.uyarilar ?? []).map((u, i) => ({ key: i, u, to: fixRoute(u.duzelt), tone: (u.seviye === "bad" ? "danger" : "warning") as Tone })),
-);
 
 const ts = computed(() => e.value?.ozet.tailscale ?? null);
 const TS_STATE: Record<string, { text: string; tone: Tone }> = {
@@ -56,31 +50,40 @@ const tsState = computed(() => TS_STATE[ts.value?.durum ?? "bilinmiyor"] ?? (TS_
 const keyLeft = computed(() => (ts.value?.anahtar_bitis ? daysUntil(ts.value.anahtar_bitis, serverNow()) : null));
 
 const net = computed(() => e.value?.ozet.internet ?? null);
-const openPorts = computed(() =>
-  (net.value?.acik ?? []).map((p) => ({
-    key: `${p.ad}:${p.port}:${p.proto}`,
-    text: `${p.ad} · ${p.port}/${p.proto}`,
-    detail: [p.aileler.length === 1 ? `yalnız IPv${p.aileler[0]}` : "", p.kaynak === "kural" ? "sizin kuralınız" : ""].filter(Boolean).join(" · "),
-  })),
+/** What is open on the internet address, in one line ("SSH 22/tcp, Oyun 27015/udp (yalnız IPv4, kural)"). */
+const openLine = computed(() =>
+  (net.value?.acik ?? [])
+    .map((p) => {
+      const extra = [p.aileler.length === 1 ? `yalnız IPv${p.aileler[0]}` : "", p.kaynak === "kural" ? "kural" : ""].filter(Boolean).join(", ");
+      return `${p.ad} ${p.port}/${p.proto}${extra ? ` (${extra})` : ""}`;
+    })
+    .join(", "),
 );
+
 const wg = computed(() => e.value?.ozet.wireguard ?? null);
-const certs = computed(() => e.value?.ozet.sertifikalar ?? []);
-const certLeft = (bitis: number | null) => (bitis ? daysUntil(bitis, serverNow()) : null);
+const wgState = computed<{ text: string; tone: Tone }>(() => {
+  const w = wg.value;
+  if (!w || !w.aglar.length) return { text: "Kapalı", tone: "neutral" };
+  if (w.durduruldu) return { text: "Durduruldu", tone: "neutral" };
+  return w.aglar.some((a) => a.etkin) ? { text: "Açık", tone: "ok" } : { text: "Kapalı", tone: "neutral" };
+});
+
+const certs = computed(() =>
+  (e.value?.ozet.sertifikalar ?? []).map((c) => {
+    const left = c.bitis ? daysUntil(c.bitis, serverNow()) : null;
+    const ok = c.durum === "gecerli";
+    return {
+      ad: c.ad,
+      ok,
+      text: !ok ? "Hazır değil; DNS kaydını ve 443 portunu denetleyin." : c.bitis ? `${date(c.bitis)} tarihine kadar` : "Geçerli",
+      soon: ok && left !== null && left < 14,
+    };
+  }),
+);
 </script>
 
 <template>
   <div class="access-tab" data-testid="access-overview">
-    <section v-if="warnings.length" class="card access-warnings" aria-labelledby="erisim-uyari-baslik" data-testid="access-warnings">
-      <h2 id="erisim-uyari-baslik" class="card-title">Dikkat isteyen konular</h2>
-      <ul class="problems">
-        <li v-for="w in warnings" :key="w.key" class="problem" :class="'problem-' + w.tone" :data-hizmet="w.u.hizmet">
-          <Icon :name="w.tone === 'danger' ? 'xcircle' : 'alert'" :size="22" class="problem-icon" />
-          <div class="problem-text"><strong>{{ w.u.metin }}</strong></div>
-          <RouterLink :to="w.to" class="btn btn-primary" data-eylem="duzelt">Düzelt</RouterLink>
-        </li>
-      </ul>
-    </section>
-
     <section v-if="e?.hatalar.length" class="notice notice-warning" aria-labelledby="erisim-hata-baslik" data-testid="access-errors">
       <Icon name="alert" class="notice-icon" />
       <div>
@@ -93,7 +96,7 @@ const certLeft = (bitis: number | null) => (bitis ? daysUntil(bitis, serverNow()
 
     <template v-if="e">
       <div class="summary-grid">
-        <Card title="Tailscale" data-testid="sum-tailscale">
+        <Card title="Tailscale" :level="3" data-testid="sum-tailscale">
           <template #actions><StatusPill :tone="tsState.tone" :dot="ts?.durum === 'bagli'">{{ tsState.text }}</StatusPill></template>
           <dl class="facts">
             <dt>Cihaz</dt>
@@ -105,41 +108,37 @@ const certLeft = (bitis: number | null) => (bitis ? daysUntil(bitis, serverNow()
               <dd :class="{ 'warn-text': keyLeft !== null && keyLeft < 14 }">{{ date(ts.anahtar_bitis) }} tarihine kadar</dd>
             </template>
           </dl>
-          <RouterLink :to="accessRoute('tailscale')" class="section-link">Tailscale ayrıntısı</RouterLink>
         </Card>
-        <Card title="İnternet" data-testid="sum-internet">
+        <Card title="İnternet" :level="3" data-testid="sum-internet">
           <dl class="facts">
             <dt>Adres</dt>
             <dd class="mono">{{ [net?.ipv4, net?.ipv6].filter(Boolean).join(" · ") || UNKNOWN }}</dd>
+            <dt>Açık</dt>
+            <dd data-testid="sum-internet-open">{{ openLine || "Hiçbir port açık değil" }}</dd>
           </dl>
-          <ul v-if="openPorts.length" class="fact-list" aria-label="İnternete açık portlar">
-            <li v-for="p in openPorts" :key="p.key"><span class="mono">{{ p.text }}</span><span v-if="p.detail" class="muted"> · {{ p.detail }}</span></li>
-          </ul>
-          <p v-else class="meter-note">İnternete açık port yok.</p>
-          <RouterLink :to="accessRoute('guvenlik-duvari')" class="section-link">Güvenlik duvarı</RouterLink>
         </Card>
-        <Card title="WireGuard" data-testid="sum-wireguard">
+        <Card title="WireGuard" :level="3" data-testid="sum-wireguard">
+          <template #actions><StatusPill :tone="wgState.tone" :dot="wgState.tone === 'ok'">{{ wgState.text }}</StatusPill></template>
           <ul v-if="wg?.aglar.length" class="fact-list" aria-label="WireGuard ağları">
             <li v-for="a in wg.aglar" :key="a.arayuz">
               <strong>{{ a.arayuz }}</strong><template v-if="a.ad"> · {{ a.ad }}</template> · UDP {{ a.port }} ·
-              <span :class="a.etkin ? 'ok-text' : 'muted'">{{ a.etkin ? "açık" : "kapalı" }}</span>
+              <span :class="a.etkin && !wg.durduruldu ? 'ok-text' : 'muted'">{{ a.etkin && !wg.durduruldu ? "açık" : "kapalı" }}</span>
             </li>
           </ul>
-          <p v-else class="meter-note" data-testid="sum-wireguard-none">{{ wg?.durduruldu ? "WireGuard durduruldu; ağlar kapalı." : "WireGuard ağı yok." }}</p>
-          <p v-if="wg?.not" class="meter-note">{{ wg.not }}</p>
-          <RouterLink :to="accessRoute('wireguard')" class="section-link">WireGuard ağları</RouterLink>
+          <p v-else class="meter-note" data-testid="sum-wireguard-none">Ağ yok; açınca ilk ağ kurulur.</p>
+          <RouterLink :to="accessRoute('wireguard')" class="btn btn-secondary btn-sm fit" data-testid="sum-wireguard-link">WireGuard</RouterLink>
         </Card>
-        <Card title="Sertifikalar" data-testid="sum-certs">
-          <ul v-if="certs.length" class="fact-list" aria-label="Sertifikalar">
-            <li v-for="c in certs" :key="c.ad">
-              <span class="mono">{{ c.ad }}</span> ·
-              <span v-if="c.durum !== 'gecerli'" class="warn-text">hazır değil</span>
-              <span v-else-if="c.bitis" :class="{ 'warn-text': (certLeft(c.bitis) ?? 99) < 14 }">{{ date(c.bitis) }} tarihine kadar</span>
-              <span v-else>geçerli</span>
+        <Card title="Sertifikalar" :level="3" data-testid="sum-certs">
+          <ul v-if="certs.length" class="cert-list" aria-label="Sertifikalar">
+            <li v-for="c in certs" :key="c.ad" class="cert">
+              <span class="cert-text">
+                <strong class="mono">{{ c.ad }}</strong>
+                <span :class="{ 'warn-text': c.soon }">{{ c.text }}</span>
+              </span>
+              <StatusPill :tone="c.ok ? 'ok' : 'warning'">{{ c.ok ? "Geçerli" : "Sorunlu" }}</StatusPill>
             </li>
           </ul>
-          <p v-else class="meter-note">İnternet adı olan adres yok.</p>
-          <RouterLink :to="accessRoute('adresler')" class="section-link">Adresler</RouterLink>
+          <p v-else class="meter-note">İnternet adı yok.</p>
         </Card>
       </div>
 
@@ -162,7 +161,7 @@ const certLeft = (bitis: number | null) => (bitis ? daysUntil(bitis, serverNow()
                   <th scope="row" class="col-main">
                     <strong>{{ h.ad }}</strong>
                     <span class="cell-sub">{{ h.aciklama || KIND[h.tur] }}</span>
-                    <RouterLink v-if="hasRow(h)" :to="accessRoute('adresler', h.id)" class="cell-note" data-testid="row-link">Adresler'de değiştir</RouterLink>
+                    <RouterLink v-if="isAccessRow(h)" :to="accessRoute('adresler', h.id)" class="cell-note" data-testid="row-link">Adresler'de değiştir</RouterLink>
                     <RouterLink v-if="h.tur === 'paylasim'" :to="filesRoute('paylasimlar')" class="cell-note" data-testid="share-folders">Klasörler: Dosyalar → Paylaşımlar</RouterLink>
                   </th>
                   <td v-for="c in COLUMNS" :key="c.key" :data-label="c.title" :data-hucre="c.key" class="matrix-cell">

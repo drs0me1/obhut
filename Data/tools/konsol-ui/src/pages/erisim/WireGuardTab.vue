@@ -1,11 +1,12 @@
-<!-- Erişim → WireGuard (DD-258's approved layout; a built-in of the base, DD-271): off after install (K6), so
-     with no network the tab says "WireGuard kapalı" and "Aç" opens the first network's creation, which turns
-     it on. Running, it offers "Durdur" (every network goes down, DD-229); stopped, it says so and offers
-     "Başlat", which brings back the networks that were on. The networks as tabs (?ag=wg0) with "Ağ ekle"; a
-     network card with its on/off switch, its summary and its devices (on/off, state, DNS and keepalive,
-     addresses, last seen, traffic, QR, profile, edit, delete); one side panel for adding a device, a device's
-     DNS and keepalive, the network's name and default DNS, regenerating its key, removing it and adding a
-     network. Starting, stopping, adding, opening, closing, removing and regenerating are settings changes
+<!-- Erişim → WireGuard (a built-in of the base, DD-271; the phase 5 prototype's layout): off after install (K6),
+     so with no network the tab says "WireGuard kapalı" and "Aç" opens the first network's creation, which turns
+     it on. Running, it offers "WireGuard'ı kapat" (every network goes down, DD-229); turned off with its networks
+     kept, it says so and "Aç" brings back the networks that were on. The networks as tabs (?ag=wg0) with "Ağ
+     ekle"; for the chosen network a card with its state, its on/off switch, its port, addresses and DNS, and a
+     card of its devices (on/off, state, DNS and keepalive, addresses, last seen, traffic, QR, profile, edit,
+     delete); one side panel for adding a device, a device's DNS and keepalive, the network's name and default
+     DNS, regenerating its key, removing it and adding a network. Turning WireGuard on and off, adding, opening,
+     closing, removing and regenerating a network are settings changes
      (DD-275): each goes through the settings plan with the state's `revizyon`; an opening (Başlat, a network
      added or opened) waits for the 60 s confirmation in the pending banner, the rest commit at once, and
      removing or regenerating needs the typed word ("onayla", sent as `onay`). Devices, their DNS and
@@ -114,12 +115,17 @@ const devices = (n: WgNetwork) =>
 function summary(n: WgNetwork) {
   const total = n.peers.length;
   const off = n.peers.filter((p) => !p.enabled).length;
+  const endpoint = state.value?.endpoint;
   return {
-    connected: n.active ? `${onlineCount(n, now.value)} / ${total} cihaz${off ? ` · ${off} kapalı` : ""}` : `Kapalı · ${total} cihaz bekliyor`,
-    port: `${n.port} · ${n.active ? "UDP açık" : "UDP dinlenmiyor"}`,
-    address: n.server4 ? `${n.server4}/24` : n.subnet4,
+    port: `${endpoint ? endpoint + ":" : ""}${n.port}/udp · ${n.active && !stopped.value ? "açık" : "dinlenmiyor"}`,
+    subnet: n.subnet4,
+    server: n.server4 || UNKNOWN,
+    dns: providerOf(n.dns),
+    connected: n.active && !stopped.value ? `${onlineCount(n, now.value)} / ${total} bağlı${off ? ` · ${off} kapalı` : ""}` : `${total} cihaz · bağlanamaz`,
   };
 }
+const netState = (n: WgNetwork): { text: string; tone: Tone } =>
+  stopped.value ? { text: "WireGuard kapalı", tone: "neutral" } : n.active ? { text: "Çalışıyor", tone: "ok" } : { text: "Kapalı", tone: "neutral" };
 const seen = (p: WgPeer) => (p.handshake ? since(p.handshake, now.value) : "hiç");
 
 // ---- actions with a result line
@@ -183,15 +189,15 @@ function actionApplied(result: AyarSonucu): void {
   void refreshAccess();
 }
 
-// WireGuard as a whole (DD-229): stopping cuts every network; starting brings back those that were on.
+// WireGuard as a whole (DD-229): turning it off cuts every network; turning it on brings back those that were on.
 function openStop(): void {
-  plan({ kind: "durdur", title: "WireGuard durdurulsun mu?", description: `${networks.value.length} ağ · ${online.value} cihaz bağlı`,
-    request: wgRequest({ eylem: "durdur" }), applyLabel: "Durdur", danger: true, net: null,
-    done: () => "WireGuard durduruldu: ağlar kapandı, cihazlar bağlanamaz." });
+  plan({ kind: "durdur", title: "WireGuard kapatılsın mı?", description: `${networks.value.length} ağ · ${online.value} cihaz bağlı`,
+    request: wgRequest({ eylem: "durdur" }), applyLabel: "Kapat", danger: true, net: null,
+    done: () => "WireGuard kapatıldı: ağlar kapandı, cihazlar bağlanamaz." });
 }
 function start(): void {
-  plan({ kind: "baslat", title: "WireGuard başlatılsın mı?", description: `${networks.value.length} ağ`, request: wgRequest({ eylem: "baslat" }),
-    applyLabel: "Başlat", danger: false, net: null, done: (p) => "WireGuard başlatıldı: önceden açık olan ağlar geri geldi" + confirmLater(p) });
+  plan({ kind: "baslat", title: "WireGuard açılsın mı?", description: `${networks.value.length} ağ`, request: wgRequest({ eylem: "baslat" }),
+    applyLabel: "Aç", danger: false, net: null, done: (p) => "WireGuard açıldı: önceden açık olan ağlar geri geldi" + confirmLater(p) });
 }
 
 // A network on or off: opening waits for the confirmation; closing cuts every device at once.
@@ -526,16 +532,16 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
 
     <template v-else>
       <div v-if="stopped" class="notice notice-warning" role="note" data-testid="wg-stopped">
-        <Icon name="stop" class="notice-icon" />
+        <Icon name="power" class="notice-icon" />
         <div class="wg-stopped-text">
-          <p class="notice-title">WireGuard durduruldu</p>
-          <p class="notice-list">Cihazlar bağlanamaz; ağlar ve cihazlar değiştirilemez. Anahtarlar, cihazlar ve profiller duruyor. Başlatınca önceden açık olan ağlar geri gelir.</p>
+          <p class="notice-title">WireGuard kapalı</p>
+          <p class="notice-list">Cihazlar bağlanamaz; ağlar ve cihazlar değiştirilemez. Anahtarlar, cihazlar ve profiller duruyor. Açınca önceden açık olan ağlar geri gelir.</p>
         </div>
-        <button type="button" class="btn btn-primary btn-sm" :disabled="working || planLocked" data-testid="wg-start" @click="start"><Icon name="play" :size="16" />Başlat</button>
+        <button type="button" class="btn btn-primary btn-sm" :disabled="working || planLocked" data-testid="wg-start" @click="start"><Icon name="power" :size="16" />Aç</button>
       </div>
       <p v-if="planLocked" class="notice" role="note" data-testid="wg-locked">
         <Icon name="clock" class="notice-icon" />
-        <span>Bekleyen bir ayar değişikliği var; onaylanana ya da geri alınana kadar WireGuard başlatılamaz, durdurulamaz, ağ eklenemez ya da değiştirilemez.</span>
+        <span>Bekleyen bir ayar değişikliği var; onaylanana ya da geri alınana kadar WireGuard açılamaz, kapatılamaz, ağ eklenemez ya da değiştirilemez.</span>
       </p>
       <p v-if="loadError" class="form-error" role="alert" data-testid="wg-load-error">{{ loadError }}</p>
       <p class="sr-only" role="status">{{ note }}</p>
@@ -547,12 +553,7 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
 
       <template v-if="state">
         <section v-if="!networks.length" class="card" aria-label="WireGuard kapalı" data-testid="wg-empty">
-          <EmptyState title="WireGuard kapalı" text="Kurulum WireGuard'ı kapalı bırakır; ilk ağı oluşturunca açılır. Anahtar sunucuda üretilir, UDP portu açılır ve cihaz eklemeye hazır olur." icon="shield">
-            <ul class="modal-list wg-empty-list">
-              <li><Icon name="shield" :size="18" /><span>wg0 · 10.8.0.0/24 · sunucu 10.8.0.1</span></li>
-              <li><Icon name="lock" :size="18" /><span>Cihazlar yalnız internete çıkar; sunucu servislerine ve diğer ağlara erişemez.</span></li>
-              <li><Icon name="plus" :size="18" /><span>Kurduktan sonra cihaz eklersiniz; QR hemen hazır olur.</span></li>
-            </ul>
+          <EmptyState title="WireGuard kapalı" text="Tailscale kurulamayan cihazların bu sunucu üzerinden internete çıkması için. Açınca ilk ağ kurulur ve bir UDP portu internete açılır." icon="shield">
             <button type="button" class="btn btn-primary" :disabled="!writable || planLocked" data-testid="wg-setup" @click="open({ kind: 'ag-ekle' })"><Icon name="power" :size="18" />Aç</button>
           </EmptyState>
         </section>
@@ -570,90 +571,106 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
               <Icon name="plus" :size="16" />Ağ ekle
             </button>
             <span v-if="next === null" id="wg-sinir" class="meter-note">En çok {{ state.max }} ağ</span>
-            <button v-if="!stopped" type="button" class="btn btn-secondary btn-sm" :disabled="working || planLocked" data-testid="wg-stop" @click="openStop">
-              <Icon name="stop" :size="16" />Durdur
+            <button v-if="!stopped" type="button" class="btn btn-danger-quiet btn-sm" :disabled="working || planLocked" data-testid="wg-stop" @click="openStop">
+              <Icon name="power" :size="16" />WireGuard'ı kapat
             </button>
           </template>
           <template #default>
-            <section v-if="current" class="card wg-net" :class="{ 'wg-net-off': !current.active }" :aria-labelledby="'wg-baslik-' + current.iface" :data-ag="current.iface">
-              <div class="card-head">
-                <div class="wg-net-title">
-                  <h2 :id="'wg-baslik-' + current.iface" class="card-title">{{ current.iface }} · {{ labelOf(current) }}</h2>
-                  <span class="meter-note">UDP {{ current.port }} · {{ current.subnet4 }} · Yalnız internet</span>
+            <div v-if="current" class="wg-view" :data-ag="current.iface">
+              <section class="card wg-net" :class="{ 'wg-net-off': !current.active || stopped }" :aria-labelledby="'wg-baslik-' + current.iface">
+                <div class="card-head">
+                  <div class="wg-net-title">
+                    <h2 :id="'wg-baslik-' + current.iface" class="card-title">{{ current.iface }} · {{ labelOf(current) }}</h2>
+                    <span class="meter-note">UDP {{ current.port }} · {{ current.subnet4 }} · Yalnız internet</span>
+                  </div>
+                  <div class="card-actions">
+                    <StatusPill :tone="netState(current).tone" :dot="netState(current).tone === 'ok'" data-testid="wg-net-state">{{ netState(current).text }}</StatusPill>
+                    <Switch
+                      :model-value="current.active"
+                      :label="`${current.iface} ağı açık`"
+                      hide-label
+                      :disabled="!writable || planLocked"
+                      data-testid="wg-net-switch"
+                      @update:model-value="toggleNetwork(current, $event)"
+                    />
+                  </div>
                 </div>
-                <div class="card-actions">
-                  <Switch
-                    :model-value="current.active"
-                    :label="`${current.iface} ağı açık`"
-                    :disabled="!writable || planLocked"
-                    data-testid="wg-net-switch"
-                    @update:model-value="toggleNetwork(current, $event)"
-                  />
-                  <button type="button" class="btn btn-secondary btn-sm" data-testid="wg-net-settings" @click="open({ kind: 'ag-ayar', iface: current.iface })">
-                    <Icon name="sliders" :size="16" />Ağ ayarları
+                <div v-if="!current.active" class="notice" role="note" data-testid="wg-off">
+                  <Icon name="power" class="notice-icon" />
+                  <span><strong>{{ current.iface }} kapalı.</strong> Cihazlar bağlanamaz. Anahtarlar, cihazlar ve profiller duruyor; açınca kendiliğinden bağlanırlar.</span>
+                  <button type="button" class="btn btn-primary btn-sm" :disabled="!writable || planLocked" data-testid="wg-net-open" @click="toggleNetwork(current, true)">Ağı aç</button>
+                </div>
+                <dl class="facts" data-testid="wg-summary">
+                  <dt>Port</dt>
+                  <dd class="mono">{{ summary(current).port }}</dd>
+                  <dt>Ağ</dt>
+                  <dd class="mono">{{ summary(current).subnet }}</dd>
+                  <dt>Sunucu</dt>
+                  <dd class="mono">{{ summary(current).server }}</dd>
+                  <dt>DNS</dt>
+                  <dd>{{ summary(current).dns }}</dd>
+                  <dt>Cihaz</dt>
+                  <dd>{{ summary(current).connected }}</dd>
+                </dl>
+                <button type="button" class="btn btn-secondary btn-sm fit" data-testid="wg-net-settings" @click="open({ kind: 'ag-ayar', iface: current.iface })">
+                  <Icon name="sliders" :size="16" />Ağ ayarları
+                </button>
+              </section>
+
+              <section class="card wg-devices" :aria-labelledby="'wg-cihaz-' + current.iface" data-testid="wg-devices">
+                <div class="card-head">
+                  <h3 :id="'wg-cihaz-' + current.iface" class="card-title">Cihazlar</h3>
+                  <button type="button" class="btn btn-primary btn-sm" :disabled="!writable" data-testid="wg-add-device" @click="open({ kind: 'cihaz-ekle', iface: current.iface })">
+                    <Icon name="plus" :size="16" />Cihaz ekle
                   </button>
                 </div>
-              </div>
-              <div v-if="!current.active" class="notice" role="note" data-testid="wg-off">
-                <Icon name="power" class="notice-icon" />
-                <span><strong>{{ current.iface }} kapalı.</strong> Cihazlar bağlanamaz. Anahtarlar, cihazlar ve profiller duruyor; açınca kendiliğinden bağlanırlar.</span>
-                <button type="button" class="btn btn-primary btn-sm" :disabled="!writable || planLocked" data-testid="wg-net-open" @click="toggleNetwork(current, true)">Ağı aç</button>
-              </div>
-              <dl class="wg-summary" data-testid="wg-summary">
-                <div><dt>Bağlı</dt><dd>{{ summary(current).connected }}</dd></div>
-                <div><dt>Port</dt><dd>{{ summary(current).port }}</dd></div>
-                <div><dt>Erişim</dt><dd>Yalnız internet</dd></div>
-                <div><dt>Adres</dt><dd class="mono">{{ summary(current).address }}</dd></div>
-              </dl>
-              <div v-if="current.peers.length" class="table-wrap">
-                <table class="data-table wg-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Cihaz</th>
-                      <th scope="col">Açık</th>
-                      <th scope="col">Durum</th>
-                      <th scope="col">Adres</th>
-                      <th scope="col">Son görülme</th>
-                      <th scope="col">Trafik</th>
-                      <th scope="col"><span class="sr-only">Eylemler</span></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="d in devices(current)" :key="d.p.name" :class="{ 'row-off': d.cut }" :data-cihaz="d.p.name">
-                      <th scope="row" class="col-main">
-                        <strong>{{ d.p.name }}</strong>
-                        <span class="cell-sub">DNS {{ providerOf(d.p.dns, d.p.provider) }} · keepalive {{ keepaliveText(d.p.keepalive) }}</span>
-                      </th>
-                      <td data-label="Açık">
-                        <Switch
-                          :model-value="d.p.enabled"
-                          :label="`${d.p.name} bağlantısı`"
-                          hide-label
-                          :disabled="!writable || !current.active"
-                          @update:model-value="toggleDevice(current, d.p, $event)"
-                        />
-                      </td>
-                      <td data-label="Durum"><StatusPill :tone="d.tone" :dot="d.st === 'ok'" data-testid="device-state">{{ d.label }}</StatusPill></td>
-                      <td data-label="Adres"><span class="cell-stack"><span class="mono">{{ d.p.ipv4 }}</span><span class="mono cell-note">{{ d.p.ipv6 }}</span></span></td>
-                      <td data-label="Son görülme">{{ d.cut ? UNKNOWN : seen(d.p) }}</td>
-                      <td data-label="Trafik"><span class="traffic"><span>↓ {{ bytes(d.p.rx) }}</span><span>↑ {{ bytes(d.p.tx) }}</span></span></td>
-                      <td class="col-act">
-                        <span class="row-actions">
-                          <button type="button" class="icon-btn" :disabled="!d.p.profile" :aria-label="`${d.p.name} QR kodu`" :title="`${d.p.name} QR kodu`" data-eylem="qr" @click="openQr(current, d.p)"><Icon name="qr" :size="18" /></button>
-                          <button type="button" class="icon-btn" :disabled="!d.p.profile" :aria-label="`${d.p.name} profilini indir (gizli anahtar içerir)`" :title="`${d.p.name} profilini indir (gizli anahtar içerir)`" data-eylem="profil" @click="downloadProfile(current.iface, d.p.name)"><Icon name="download" :size="18" /></button>
-                          <button type="button" class="icon-btn" :disabled="!writable" :aria-label="`${d.p.name} düzenle`" :title="`${d.p.name} düzenle`" data-eylem="duzenle" @click="open({ kind: 'cihaz', iface: current.iface, name: d.p.name })"><Icon name="pencil" :size="18" /></button>
-                          <button type="button" class="icon-btn icon-btn-danger" :disabled="!writable" :aria-label="`${d.p.name} sil`" :title="`${d.p.name} sil`" data-eylem="sil" @click="askDelete = { n: current, p: d.p }"><Icon name="trash" :size="18" /></button>
-                        </span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <EmptyState v-else title="Bu ağda henüz cihaz yok" text="Cihaz ekle ile ilk cihazı ekleyin; QR hemen hazır olur." icon="shield" />
-              <button type="button" class="btn btn-primary fit" :disabled="!writable" data-testid="wg-add-device" @click="open({ kind: 'cihaz-ekle', iface: current.iface })">
-                <Icon name="plus" :size="18" />Cihaz ekle
-              </button>
-            </section>
+                <div v-if="current.peers.length" class="table-wrap">
+                  <table class="data-table wg-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Cihaz</th>
+                        <th scope="col">Açık</th>
+                        <th scope="col">Durum</th>
+                        <th scope="col">Adres</th>
+                        <th scope="col">Son görülme</th>
+                        <th scope="col">Trafik</th>
+                        <th scope="col"><span class="sr-only">Eylemler</span></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="d in devices(current)" :key="d.p.name" :class="{ 'row-off': d.cut }" :data-cihaz="d.p.name">
+                        <th scope="row" class="col-main">
+                          <strong>{{ d.p.name }}</strong>
+                          <span class="cell-sub">DNS {{ providerOf(d.p.dns, d.p.provider) }} · keepalive {{ keepaliveText(d.p.keepalive) }}</span>
+                        </th>
+                        <td data-label="Açık">
+                          <Switch
+                            :model-value="d.p.enabled"
+                            :label="`${d.p.name} bağlantısı`"
+                            hide-label
+                            :disabled="!writable || !current.active"
+                            @update:model-value="toggleDevice(current, d.p, $event)"
+                          />
+                        </td>
+                        <td data-label="Durum"><StatusPill :tone="d.tone" :dot="d.st === 'ok'" data-testid="device-state">{{ d.label }}</StatusPill></td>
+                        <td data-label="Adres"><span class="cell-stack"><span class="mono">{{ d.p.ipv4 }}</span><span class="mono cell-note">{{ d.p.ipv6 }}</span></span></td>
+                        <td data-label="Son görülme">{{ d.cut ? UNKNOWN : seen(d.p) }}</td>
+                        <td data-label="Trafik"><span class="traffic"><span>↓ {{ bytes(d.p.rx) }}</span><span>↑ {{ bytes(d.p.tx) }}</span></span></td>
+                        <td class="col-act">
+                          <span class="row-actions">
+                            <button type="button" class="icon-btn" :disabled="!d.p.profile" :aria-label="`${d.p.name} QR kodu`" :title="`${d.p.name} QR kodu`" data-eylem="qr" @click="openQr(current, d.p)"><Icon name="qr" :size="18" /></button>
+                            <button type="button" class="icon-btn" :disabled="!d.p.profile" :aria-label="`${d.p.name} profilini indir (gizli anahtar içerir)`" :title="`${d.p.name} profilini indir (gizli anahtar içerir)`" data-eylem="profil" @click="downloadProfile(current.iface, d.p.name)"><Icon name="download" :size="18" /></button>
+                            <button type="button" class="icon-btn" :disabled="!writable" :aria-label="`${d.p.name} düzenle`" :title="`${d.p.name} düzenle`" data-eylem="duzenle" @click="open({ kind: 'cihaz', iface: current.iface, name: d.p.name })"><Icon name="pencil" :size="18" /></button>
+                            <button type="button" class="icon-btn icon-btn-danger" :disabled="!writable" :aria-label="`${d.p.name} sil`" :title="`${d.p.name} sil`" data-eylem="sil" @click="askDelete = { n: current, p: d.p }"><Icon name="trash" :size="18" /></button>
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <EmptyState v-else title="Henüz cihaz yok" text="“Cihaz ekle” bir profil ve QR kodu üretir." icon="shield" />
+              </section>
+            </div>
           </template>
         </Tabs>
       </template>
@@ -761,7 +778,7 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
       </template>
     </SettingsPlanSheet>
 
-    <!-- Başlat, Durdur, a network opened or closed: the settings plan -->
+    <!-- WireGuard on or off, a network opened or closed: the settings plan -->
     <SettingsPlanSheet
       :open="action !== null"
       :title="action?.title ?? ''"
@@ -773,9 +790,9 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
       @applied="actionApplied"
     >
       <ul v-if="action?.kind === 'durdur'" class="modal-list" data-testid="wg-action-list">
-        <li><Icon name="stop" :size="18" /><span>Bütün ağlar kapanır, UDP portları ve yönlendirme kalkar; cihazlar bağlanamaz.</span></li>
-        <li><Icon name="refresh" :size="18" /><span>Başlatınca önceden açık olan ağlar geri gelir.</span></li>
-        <li><Icon name="lock" :size="18" /><span>Anahtarlar, cihazlar ve profiller silinmez. Sunucu yeniden başlasa da durdurulmuş kalır.</span></li>
+        <li><Icon name="power" :size="18" /><span>Bütün ağlar kapanır, UDP portları ve yönlendirme kalkar; cihazlar bağlanamaz.</span></li>
+        <li><Icon name="refresh" :size="18" /><span>Açınca önceden açık olan ağlar geri gelir.</span></li>
+        <li><Icon name="lock" :size="18" /><span>Anahtarlar, cihazlar ve profiller silinmez. Sunucu yeniden başlasa da kapalı kalır.</span></li>
       </ul>
       <ul v-else-if="action?.kind === 'ag-kapat' && action.net" class="modal-list" data-testid="wg-action-list">
         <li><Icon name="shield" :size="18" /><span>{{ offOnline ? `${offOnline} bağlı cihazın bağlantısı hemen kesilir; ${action.net.peers.length} cihazın hiçbiri bağlanamaz.` : `Bu ağdaki ${action.net.peers.length} cihaz bağlanamaz.` }}</span></li>

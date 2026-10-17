@@ -1,10 +1,11 @@
-<!-- Erişim → Güvenlik duvarı: the check, the incoming networks as tabs (?kapsam=: İnternet, Tailscale,
-     WireGuard, Sunucu içi) and the address family (?aile=6). Rows are the base's ports (`portlar`) merged
-     with the operator's rules: port, protocol, name, whether something listens, the saved or draft state and
-     the allow/deny switch (locked for the server's own ports and for an application's raw and Tailscale ports, whose
-     row in Erişim → Adresler they link to: "Uygulama erişimi"). "+ Port kuralı" adds a rule. Edits are a draft →
-     "İncele" → the plan → "Uygula" → the pending banner's 60 s confirmation. "Teknik kurallar" (?kurallar=1)
-     shows the live iptables rows with their counters and owners, and the listeners. -->
+<!-- Erişim → Güvenlik duvarı (rebuild phase 5): the incoming networks (?kapsam=: İnternet, Tailscale, WireGuard when
+     it has networks, Yalnız bu sunucu) and the address family (?aile=6). Rows are the base's ports (`portlar`)
+     merged with the operator's rules: the service, its port (with a rule's source), where the row comes from
+     (Temel, Adresler, Elle) and its permission: a switch for the base's ports and the operator's rules, a lock for
+     the server's own loopback ports and for an application's raw and Tailscale ports, whose row in Erişim →
+     Adresler they link to. "Port kuralı" adds a rule. Edits are a draft → "İncele" → the plan → "Uygula" → the
+     pending banner's 60 s confirmation. The live iptables rules and the listeners are Gelişmiş's ("Teknik
+     kurallar"). -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
@@ -12,15 +13,13 @@ import { Icon } from "../../components/icons";
 import EmptyState from "../../components/ui/EmptyState.vue";
 import Field from "../../components/ui/Field.vue";
 import Modal from "../../components/ui/Modal.vue";
-import StatusPill from "../../components/ui/StatusPill.vue";
 import Switch from "../../components/ui/Switch.vue";
-import Tabs from "../../components/ui/Tabs.vue";
 import SettingsPlanSheet from "./SettingsPlanSheet.vue";
 import { readFirewall } from "../../api/erisim";
 import { live } from "../../live";
-import { accessRoute } from "../../sections";
+import { accessRoute, advancedRoute } from "../../sections";
 import { useLeaveGuard } from "../../leave";
-import { useQueryFlag, useQueryParam } from "../../query";
+import { useQueryParam } from "../../query";
 import type { AyarIstegi, GuvenlikDuvari, KuralTaslagi } from "../../api/sema";
 
 type Scope = "internet" | "tailscale" | "wireguard" | "sunucu";
@@ -28,17 +27,13 @@ const SCOPE_KEY: Record<Scope, "wan" | "tail" | "wg" | "lo"> = { internet: "wan"
 
 const fw = ref<GuvenlikDuvari | null>(null);
 const loadError = ref("");
-const loading = ref(false);
 
 async function load(fresh = false): Promise<void> {
-  loading.value = true;
   try {
     fw.value = await readFirewall(fresh);
     loadError.value = "";
   } catch (err) {
     loadError.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    loading.value = false;
   }
 }
 onMounted(() => void load());
@@ -50,15 +45,15 @@ watch(() => live.ayarSurumu, async () => {
   if (JSON.stringify(fw.value?.kurallar ?? null) !== before) draft.value = null;
 });
 
-const TABS = [
-  { id: "internet", label: "İnternet" },
-  { id: "tailscale", label: "Tailscale" },
-  { id: "wireguard", label: "WireGuard" },
-  { id: "sunucu", label: "Sunucu içi" },
-] as const;
+const SCOPES = computed(() => [
+  { id: "internet" as const, label: "İnternet" },
+  { id: "tailscale" as const, label: "Tailscale" },
+  ...(fw.value?.aglar.length ? [{ id: "wireguard" as const, label: "WireGuard" }] : []),
+  { id: "sunucu" as const, label: "Yalnız bu sunucu" },
+]);
+const scope = useQueryParam<Scope>("kapsam", () => SCOPES.value.map((s) => s.id), "internet");
 const FAMILIES = ["4", "6"] as const;
 const family = useQueryParam<"4" | "6">("aile", FAMILIES, "4");
-const technical = useQueryFlag("kurallar");
 const locked = computed(() => Boolean(live.bekleyen));
 
 // ---- the draft: the operator's rules as they would be saved
@@ -114,19 +109,21 @@ const allRows = computed<Row[]>(() => {
   return out;
 });
 
-function rowsOf(scope: Scope): Row[] {
-  const key = SCOPE_KEY[scope];
+const rows = computed(() => {
+  const key = SCOPE_KEY[scope.value];
   return allRows.value.filter((r) => r.scope === key && String(r.family) === family.value);
-}
+});
 
 const savedOf = (row: Row) =>
   saved.value.find((x) => (row.rule ? x.id === row.rule.id : x.family === row.family && x.scope === row.scope && x.proto === row.proto && x.port === row.port && !x.source));
 const allowOf = (row: Row) => (row.rule ? row.rule.allow : true);
-function stateOf(row: Row): { badge: string; note: string; changed: boolean } {
+/** Where a row comes from: the base, an access row in Adresler, or the operator (Elle); and whether it is a draft. */
+function originOf(row: Row): { text: string; note: string; changed: boolean } {
   const s = savedOf(row);
   const changed = row.rule ? !same(row.rule, s) : Boolean(s);
-  const note = changed ? (s ? `Kayıtlı: ${s.allow ? "izinli" : "engelli"}` : "Yeni kural") : "";
-  return { badge: changed ? "Taslak" : row.rule ? "Kural" : "Temel", note, changed };
+  if (changed) return { text: "Taslak", note: s ? `Kayıtlı: ${s.allow ? "izinli" : "engelli"}` : "Yeni kural", changed };
+  if (row.satir) return { text: "Adresler", note: "", changed };
+  return { text: row.rule ? "Elle" : "Temel", note: "", changed };
 }
 
 function setAllow(row: Row, on: boolean): void {
@@ -151,29 +148,12 @@ function removeRule(row: Row): void {
   });
 }
 
-// ---- listeners
-function listening(row: Row): string {
-  const list = fw.value?.dinleyiciler;
-  if (list == null) return "Okunamadı";
-  const binds = list.filter((b) => b.port === row.port && b.proto === row.proto && b.aile === row.family);
-  if (!binds.length) return "Dinleyici yok";
-  if (binds.some((b) => b.kapsam === "any" || b.kapsam === row.scope)) return row.scope === "lo" ? "Sunucu içinde dinliyor" : "Bu ağda dinliyor";
-  if (binds.every((b) => b.kapsam === "lo")) return "Yalnız sunucu içinde";
-  if (binds.some((b) => !b.kapsam || b.kapsam === "unknown")) return "Ağ eşleşmesi bilinmiyor";
-  return "Başka adreste dinliyor";
-}
-const listenAddresses = (row: Row) =>
-  [...new Set((fw.value?.dinleyiciler ?? []).filter((b) => b.port === row.port && b.proto === row.proto && b.aile === row.family).map((b) => b.adres))];
-
 const DESCRIPTIONS: Record<Scope, string> = {
-  internet: "İnternet arayüzünden gelen bağlantılar. SSH ve VPN bağlantı portları burada yer alır; listede olmayan portlar varsayılan olarak engellenir.",
-  tailscale: "Tailscale ağından sunucuya gelen bağlantılar. Gerekli servisler ve tanımlı VPN portları izinlidir; diğer portlar bir kural açmadıkça engellenir.",
-  wireguard: "",
-  sunucu: "Sunucunun kendi iç bağlantıları (loopback). Servislerin arka uçları burada çalışır; bu izinler korunur ve değiştirilemez.",
+  internet: "İnternet arayüzünden gelen bağlantılar; listede olmayan portlar engellenir.",
+  tailscale: "Tailscale ağından gelen bağlantılar; listede olmayan portlar bir kural açmadıkça engellenir.",
+  wireguard: "WireGuard cihazları yalnız internete çıkar; sunucu servisleri, özel ağlar ve diğer cihazlar engellenir. Bu politika değiştirilemez.",
+  sunucu: "Sunucunun kendi iç bağlantıları (loopback): servislerin arka uçları. Bu izinler korunur ve değiştirilemez.",
 };
-const VPN_TEXT =
-  "WireGuard cihazları yalnız internete çıkar. Sunucu servisleri, özel ağlar ve diğer cihazlar engellenir; bu politika değiştirilemez. " +
-  "WireGuard'ın UDP bağlantı portu İnternet sekmesindedir; yönlendirme ve NAT kuralları Teknik kurallar'dadır.";
 
 // ---- the rule form
 const formOpen = ref(false);
@@ -181,9 +161,9 @@ const formEditing = ref<KuralTaslagi | null>(null);
 const form = ref({ name: "", family: "4", scope: "wan" as "wan" | "tail", proto: "tcp" as "tcp" | "udp", port: "", source: "", allow: "true" });
 const formTried = ref(false);
 
-function openForm(rule: KuralTaslagi | null, scope: Scope): void {
+function openForm(rule: KuralTaslagi | null): void {
   formEditing.value = rule;
-  const s = scope === "tailscale" ? "tail" : "wan";
+  const s = scope.value === "tailscale" ? "tail" : "wan";
   form.value = rule
     ? { name: rule.name, family: String(rule.family), scope: rule.scope, proto: rule.proto, port: String(rule.port), source: rule.source, allow: String(rule.allow) }
     : { name: "", family: family.value, scope: s, proto: "tcp", port: "", source: "", allow: "true" };
@@ -241,24 +221,15 @@ function applied(): void {
   planOpen.value = false;
   draft.value = null;
 }
-
-// ---- technical rules
-const technicalRows = computed(() => (fw.value?.teknik ?? []).filter((r) => String(r.aile) === family.value));
-const listeners = computed(() => (fw.value?.dinleyiciler ?? []).filter((r) => String(r.aile) === family.value));
-const SCOPE_TEXT: Record<string, string> = { wan: "İnternet", tail: "Tailscale", lo: "Sunucu içi", any: "Tüm arayüzler", wg: "VPN" };
-const number = (n: number) => n.toLocaleString("tr-TR");
-function onTechnical(event: Event): void {
-  technical.value = (event.target as HTMLDetailsElement).open;
-}
 </script>
 
 <template>
   <div class="access-tab firewall" data-testid="firewall">
     <p v-if="loadError" class="form-error" role="alert">{{ loadError }}</p>
     <template v-if="fw">
-      <div class="notice" :class="fw.denetim.ok ? 'notice-ok' : 'notice-warning'" role="note" data-testid="fw-check">
-        <Icon :name="fw.denetim.ok ? 'check' : 'alert'" class="notice-icon" />
-        <span>{{ fw.denetim.metin || (fw.denetim.ok ? "Güvenlik duvarı kuralları beklendiği gibi." : "Güvenlik duvarı denetimi uyardı.") }}</span>
+      <div v-if="!fw.denetim.ok" class="notice notice-warning" role="note" data-testid="fw-check">
+        <Icon name="alert" class="notice-icon" />
+        <span>{{ fw.denetim.metin || "Güvenlik duvarı denetimi uyardı." }}</span>
       </div>
       <ul v-if="fw.hatalar.length" class="notice-list">
         <li v-for="(x, i) in fw.hatalar" :key="i" class="warn-text">{{ x }}</li>
@@ -268,156 +239,89 @@ function onTechnical(event: Event): void {
         <span>Bekleyen bir ayar değişikliği var; onaylanana ya da geri alınana kadar kurallar değiştirilemez.</span>
       </p>
 
-      <div class="fw-tools">
-        <div class="filters" role="group" aria-label="Adres ailesi">
-          <button v-for="f in FAMILIES" :key="f" type="button" class="filter-chip" :aria-pressed="family === f" :data-aile="f" @click="family = f">IPv{{ f }}</button>
+      <section class="card table-card fw-card" aria-label="Güvenlik duvarı" :data-kapsam="scope">
+        <div class="fw-tools">
+          <span class="segmented" role="radiogroup" aria-label="Gelen ağ" data-testid="fw-scopes">
+            <button v-for="s in SCOPES" :key="s.id" type="button" role="radio" class="segment" :aria-checked="scope === s.id" :data-kapsam="s.id" @click="scope = s.id">
+              {{ s.label }}
+            </button>
+          </span>
+          <span class="fw-actions">
+            <span v-if="scope !== 'wireguard'" class="filters" role="group" aria-label="Adres ailesi">
+              <button v-for="f in FAMILIES" :key="f" type="button" class="filter-chip" :aria-pressed="family === f" :data-aile="f" @click="family = f">IPv{{ f }}</button>
+            </span>
+            <button v-if="scope === 'internet' || scope === 'tailscale'" type="button" class="btn btn-secondary btn-sm" :disabled="locked" data-testid="add-rule" @click="openForm(null)">
+              <Icon name="plus" :size="16" />Port kuralı
+            </button>
+            <RouterLink :to="advancedRoute('guvenlik-duvari')" class="btn btn-secondary btn-sm" data-testid="fw-technical">Teknik kurallar</RouterLink>
+          </span>
         </div>
-        <button type="button" class="btn btn-secondary btn-sm" :disabled="loading" @click="load(true)"><Icon name="refresh" :size="16" />Yenile</button>
-      </div>
+        <p class="meter-note">{{ DESCRIPTIONS[scope] }}</p>
 
-      <Tabs :tabs="TABS" label="Gelen ağlar" param="kapsam">
-        <template #default="{ active }">
-          <div class="fw-panel" :data-kapsam="active">
-            <template v-if="active === 'wireguard'">
-              <p class="card-text">{{ VPN_TEXT }}</p>
-              <ul v-if="fw.aglar.length" class="fact-list" aria-label="WireGuard ağları">
-                <li v-for="a in fw.aglar" :key="a.arayuz"><strong>{{ a.arayuz }}</strong><template v-if="a.ad"> · {{ a.ad }}</template> · {{ a.etkin ? "açık" : "durduruldu" }}</li>
-              </ul>
-              <p v-else class="meter-note">Henüz WireGuard ağı yok; ağlar Erişim → WireGuard'da kurulur.</p>
-            </template>
-            <template v-else>
-              <div class="fw-head">
-                <p class="meter-note">{{ DESCRIPTIONS[active as Scope] }}</p>
-                <button
-                  v-if="active === 'internet' || active === 'tailscale'"
-                  type="button"
-                  class="btn btn-secondary btn-sm"
-                  :disabled="locked"
-                  data-testid="add-rule"
-                  @click="openForm(null, active as Scope)"
+        <ul v-if="scope === 'wireguard'" class="fact-list" aria-label="WireGuard ağları" data-testid="fw-wireguard">
+          <li v-for="a in fw.aglar" :key="a.arayuz"><strong>{{ a.arayuz }}</strong><template v-if="a.ad"> · {{ a.ad }}</template> · {{ a.etkin ? "açık" : "kapalı" }}</li>
+        </ul>
+        <template v-else>
+          <div v-if="rows.length" class="table-wrap">
+            <table class="data-table fw-table">
+              <thead>
+                <tr>
+                  <th scope="col">Hizmet</th>
+                  <th scope="col">Port</th>
+                  <th scope="col">Kaynak</th>
+                  <th scope="col">İzin</th>
+                  <th scope="col"><span class="sr-only">Eylemler</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="r in rows"
+                  :key="r.key"
+                  :class="{ 'row-changed': originOf(r).changed }"
+                  :data-kural="r.rule?.id ?? ''"
+                  :data-port="`${r.proto}/${r.port}`"
                 >
-                  <Icon name="plus" :size="16" />Port kuralı
-                </button>
-              </div>
-              <div v-if="rowsOf(active as Scope).length" class="table-wrap">
-                <table class="data-table fw-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Hizmet</th>
-                      <th scope="col">Port</th>
-                      <th scope="col">Kaynak</th>
-                      <th scope="col">Dinleme</th>
-                      <th scope="col">Durum</th>
-                      <th scope="col">İzin</th>
-                      <th scope="col"><span class="sr-only">Eylemler</span></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="r in rowsOf(active as Scope)"
-                      :key="r.key"
-                      :class="{ 'row-changed': stateOf(r).changed }"
-                      :data-kural="r.rule?.id ?? ''"
-                      :data-port="`${r.proto}/${r.port}`"
-                    >
-                      <th scope="row" class="col-main">
-                        <strong>{{ r.name.split(" — ")[0] }}</strong>
-                        <span class="cell-sub">IPv{{ r.family }}</span>
-                      </th>
-                      <td data-label="Port"><span class="mono">{{ r.port }}</span> {{ r.proto.toUpperCase() }}</td>
-                      <td data-label="Kaynak"><span :class="{ mono: r.rule?.source }">{{ r.rule?.source || "Tüm kaynaklar" }}</span></td>
-                      <td data-label="Dinleme">
-                        <span class="cell-stack">
-                          <span>{{ listening(r) }}</span>
-                          <span v-for="a in listenAddresses(r)" :key="a" class="mono cell-note">{{ a }}</span>
-                        </span>
-                      </td>
-                      <td data-label="Durum">
-                        <span class="cell-stack">
-                          <StatusPill :tone="allowOf(r) ? 'ok' : 'danger'">{{ allowOf(r) ? "İzinli" : "Engelli" }}</StatusPill>
-                          <span class="cell-note" :class="{ 'warn-text': stateOf(r).changed }" data-testid="rule-state">{{ stateOf(r).badge }}<template v-if="stateOf(r).note"> · {{ stateOf(r).note }}</template></span>
-                        </span>
-                      </td>
-                      <td data-label="İzin">
-                        <Switch
-                          :model-value="allowOf(r)"
-                          :label="`${r.name} ${r.proto.toUpperCase()} ${r.port} izni`"
-                          hide-label
-                          :disabled="locked || r.scope === 'lo' || r.fixed"
-                          @update:model-value="setAllow(r, $event)"
-                        />
-                        <span v-if="r.scope === 'lo'" class="cell-note">Sunucu içi · korunur</span>
-                        <RouterLink v-else-if="r.fixed && r.satir" :to="accessRoute('adresler', r.satir)" class="cell-note" data-testid="fw-row-link">Uygulama erişimi</RouterLink>
-                        <span v-else-if="r.fixed" class="cell-note">Sabit · değiştirilemez</span>
-                      </td>
-                      <td class="col-act">
-                        <span v-if="r.rule" class="row-actions">
-                          <button type="button" class="btn btn-secondary btn-sm" :disabled="locked" :aria-label="`${r.name} kuralını düzenle`" @click="openForm(r.rule, active as Scope)">Düzenle</button>
-                          <button type="button" class="btn btn-danger-quiet btn-sm" :disabled="locked" :aria-label="`${r.name} kuralını kaldır`" @click="removeRule(r)">Kaldır</button>
-                        </span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <EmptyState v-else title="Bu seçimde port yok" icon="shield" />
-              <p class="meter-note">Dinleme ve izin ayrıdır: bir servisin bu ağda dinlemesi erişim garantisi değildir. Anahtar yalnız yeni bağlantıların iznini değiştirir; açık bağlantılar korunur.</p>
-            </template>
+                  <th scope="row" class="col-main"><strong>{{ r.name.split(" — ")[0] }}</strong></th>
+                  <td data-label="Port" class="mono">{{ r.port }}/{{ r.proto }}<template v-if="r.rule?.source"> · {{ r.rule.source }}</template></td>
+                  <td data-label="Kaynak">
+                    <span class="cell-stack" data-testid="rule-origin">
+                      <span :class="{ 'warn-text': originOf(r).changed }">{{ originOf(r).text }}</span>
+                      <span v-if="originOf(r).note" class="cell-note">{{ originOf(r).note }}</span>
+                    </span>
+                  </td>
+                  <td data-label="İzin">
+                    <span v-if="r.scope === 'lo'" class="lock-line"><Icon name="lock" :size="14" />Korunur</span>
+                    <RouterLink v-else-if="r.fixed && r.satir" :to="accessRoute('adresler', r.satir)" class="lock-line lock-link" data-testid="fw-row-link">
+                      <Icon name="lock" :size="14" />Adresler'de yönet
+                    </RouterLink>
+                    <span v-else-if="r.fixed" class="lock-line"><Icon name="lock" :size="14" />Sabit</span>
+                    <Switch
+                      v-else
+                      :model-value="allowOf(r)"
+                      :label="`${r.name} ${r.proto.toUpperCase()} ${r.port} izni`"
+                      hide-label
+                      :disabled="locked"
+                      @update:model-value="setAllow(r, $event)"
+                    />
+                  </td>
+                  <td class="col-act">
+                    <span v-if="r.rule" class="row-actions">
+                      <button type="button" class="btn btn-secondary btn-sm" :disabled="locked" :aria-label="`${r.name} kuralını düzenle`" @click="openForm(r.rule)">Düzenle</button>
+                      <button type="button" class="btn btn-danger-quiet btn-sm" :disabled="locked" :aria-label="`${r.name} kuralını kaldır`" @click="removeRule(r)">Kaldır</button>
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
+          <EmptyState v-else title="Bu seçimde port yok" icon="shield" />
         </template>
-      </Tabs>
-
-      <details class="card technical-card" :open="technical" data-testid="fw-technical" @toggle="onTechnical">
-        <summary>Teknik kurallar</summary>
-        <p class="meter-note">Tüm ağlar · INPUT, FORWARD ve NAT dahil tüm tablolar · IPv{{ family }}. Kurallar zincir içindeki sırayla değerlendirilir; sayaçlar son okumanın değeridir. Salt okunur.</p>
-        <div class="table-wrap">
-          <table class="data-table tech-table">
-            <thead>
-              <tr>
-                <th scope="col">Zincir</th>
-                <th scope="col">Sıra</th>
-                <th scope="col">Kural</th>
-                <th scope="col">Sayaç</th>
-                <th scope="col">Sahibi</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(t, i) in technicalRows" :key="i">
-                <th scope="row" class="col-main"><strong>{{ t.zincir }}</strong><span class="cell-sub">{{ t.tablo }} · IPv{{ t.aile }}</span></th>
-                <td data-label="Sıra">{{ t.sira }}</td>
-                <td data-label="Kural"><code class="rule-spec">{{ t.kural }}</code></td>
-                <td data-label="Sayaç">{{ number(t.paket) }} paket · {{ number(t.bayt) }} bayt</td>
-                <td data-label="Sahibi">{{ t.sahip }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p v-if="!technicalRows.length" class="meter-note">Bu ailede okunan kural yok.</p>
-        <h3 class="plan-title">Dinleyiciler</h3>
-        <p v-if="fw.dinleyiciler === null" class="meter-note">Dinleyiciler okunamadı.</p>
-        <div v-else class="table-wrap">
-          <table class="data-table listen-table">
-            <thead>
-              <tr>
-                <th scope="col">Port</th>
-                <th scope="col">Adres</th>
-                <th scope="col">Ağ</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(l, i) in listeners" :key="i">
-                <th scope="row" class="col-main"><span class="mono">{{ l.port }}</span> {{ l.proto.toUpperCase() }}</th>
-                <td data-label="Adres" class="mono">{{ l.adres }}</td>
-                <td data-label="Ağ">{{ SCOPE_TEXT[l.kapsam] ?? l.kapsam }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </details>
+        <p class="meter-note">Adres ve ham port satırlarının kuralları kendiliğinden gelir ve burada değiştirilemez; elle kurallar plan → uygula ve 60 sn onay ister.</p>
+      </section>
 
       <div v-if="dirty" class="draft-bar" role="region" aria-label="Taslak" data-testid="fw-draft">
         <div>
-          <strong>{{ changes }} değişiklik taslakta</strong>
+          <strong>{{ changes }} değişiklik kaydedilmedi</strong>
           <span class="meter-note">İnceleyip uygulayana kadar sunucu değişmez; uygulayınca 60 saniye içinde onaylamanız gerekir.</span>
         </div>
         <div class="draft-actions">
