@@ -1,5 +1,5 @@
 /* The shell's layout (DD-258): a 248 px sidebar and the page on wide screens; at 760 px and below a compact
-   top bar, the page and a bottom bar. Dialogs: the command palette, the activity drawer and the menu sheet. */
+   top bar, the page and a bottom bar. Dialogs: the command palette, İşlemler (a side drawer) and the menu sheet. */
 
 .app {
   display: flex;
@@ -386,13 +386,7 @@
   font-weight: 600;
 }
 
-/* ---- theme choice */
-.theme-field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
+/* ---- segmented choice (one of a few, as radios) */
 .segmented {
   display: inline-flex;
   gap: 4px;

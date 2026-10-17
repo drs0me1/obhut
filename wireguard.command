@@ -5,15 +5,14 @@
 # İstenirse profil kurulum/wireguard/<ad>.conf ve QR resmi <ad>.png olarak indirilir
 # (DD-132) — bu yalnız kolaylıktır, kurulum o klasöre bakmaz. "DNS değiştir" yalnız
 # profildeki DNS satırını, "Ağı yeniden üret" sunucu anahtarını ve o ağdaki bütün
-# peer'ları sıfırlar (DD-130). Ağları Konsol (panel.<alan>) ya da bu menü kurar.
+# peer'ları sıfırlar (DD-130). Networks are created only in Konsol (panel.<alan>, Erişim → WireGuard → Aç);
+# this menu picks one of them.
 # Finder bu dosyayı macOS /bin/bash 3.2 ile çalıştırır.
 set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
 INPUT_FILE="$ROOT/kurulum/kurulum.env"
 DEFAULTS_FILE="$ROOT/Data/config/defaults.env"
-# DD-201: WireGuard'ın varsayılanları paketindedir, temelin defaults.env'inde değil.
-WG_DEFAULTS_FILE="$ROOT/Data/magaza/wireguard/wireguard.env"
 INSTALLER="$ROOT/Data/install.sh"
 WG_DIR="$ROOT/kurulum/wireguard"
 NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$'
@@ -29,23 +28,21 @@ fail() {
     pause_exit 1
 }
 
-# defaults.env'den ya da paketin wireguard.env'inden tek bir değer (source edilmez).
-value_of() {
-    awk -F= -v k="$2" '$1 == k {v = substr($0, length(k) + 2); gsub(/^"|"$/, "", v); print v; exit}' "$1"
+# defaults.env'den tek bir değer (source edilmez). DD-271: WireGuard'ın varsayılanları da orada.
+default_of() {
+    awk -F= -v k="$1" '$1 == k {v = substr($0, length(k) + 2); gsub(/^"|"$/, "", v); print v; exit}' "$DEFAULTS_FILE"
 }
-default_of() { value_of "$DEFAULTS_FILE" "$1"; }
-wg_default_of() { value_of "$WG_DEFAULTS_FILE" "$1"; }
 
-[[ -f "$DEFAULTS_FILE" && -f "$WG_DEFAULTS_FILE" && -f "$INSTALLER" ]] || fail "Data/ bulunamadı; betiği repo kökünden çalıştırın."
+[[ -f "$DEFAULTS_FILE" && -f "$INSTALLER" ]] || fail "Data/ bulunamadı; betiği repo kökünden çalıştırın."
 [[ -f "$INPUT_FILE" ]] || fail "girdi dosyası yok: $INPUT_FILE"
 # kurulum.env'den yalnız SSH_HOST okunur.
 HOST="$(awk 'index($0, "SSH_HOST=") == 1 {print substr($0, 10); exit}' "$INPUT_FILE")"
 [[ "$HOST" =~ ^[A-Za-z0-9._@-]+$ ]] || fail "kurulum.env içinde SSH_HOST boş ya da geçersiz"
 LOCAL_VERSION="$(awk -F= '/^V2_VERSION=/{gsub(/"/, "", $2); print $2; exit}' "$INSTALLER")"
 MASTER_WG="$(default_of SBIN_DIR)/master-wg"
-DEFAULT_DNS="$(wg_default_of WG_CLIENT_DNS_DEFAULT)"
-DEFAULT_KEEPALIVE="$(wg_default_of WG_CLIENT_KEEPALIVE_DEFAULT)"
-DEFAULT_MTU="$(wg_default_of WG_MTU)"
+DEFAULT_DNS="$(default_of WG_CLIENT_DNS_DEFAULT)"
+DEFAULT_KEEPALIVE="$(default_of WG_CLIENT_KEEPALIVE_DEFAULT)"
+DEFAULT_MTU="$(default_of WG_MTU)"
 
 ctl_dir="$(mktemp -d "${TMPDIR:-/tmp}/wg-menu.XXXXXX")"
 # ServerAlive: sunucu kaybolursa açık bağlantı dakikalarca asılı kalmasın.
@@ -219,7 +216,7 @@ select_net() {
     if [[ -z "$out" ]]; then
         echo
         echo "Sunucuda WireGuard ağı yok."
-        echo "Konsol'u açın (http://panel.<alan adı>) → Erişim → WireGuard → Yapılandır ile ilk ağı kurun."
+        echo "Konsol'u açın (http://panel.<alan adı>) → Erişim → WireGuard → Aç ile ilk ağı kurun."
         return 1
     fi
     lines=""
@@ -257,9 +254,9 @@ show_qr() {
 printf '\n=== WireGuard peer yönetimi ===\n'
 echo "==> Sunucu: $HOST"
 remote_version="$(remote version 2>/dev/null)" ||
-    fail "sunucuda master-wg yok ya da çalışmıyor; önce WireGuard'ı Konsol → Uygulamalar → Uygulama ekle ile kurun ve sunucuyu Konsol'dan güncelleyin."
+    fail "sunucuda master-wg yok ya da çalışmıyor; sunucuyu Konsol → Sistem → Güncellemeler → Güncelle ile güncelleyin."
 [[ "$remote_version" == "$LOCAL_VERSION" ]] ||
-    fail "sunucudaki kurulum $remote_version, bu repo $LOCAL_VERSION; önce sunucuyu Konsol'dan (Güncelle) güncelleyin."
+    fail "sunucudaki kurulum $remote_version, bu repo $LOCAL_VERSION; önce sunucuyu Konsol → Sistem → Güncellemeler → Güncelle ile güncelleyin."
 
 select_net || pause_exit 1
 

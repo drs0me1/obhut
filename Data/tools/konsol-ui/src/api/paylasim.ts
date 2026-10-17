@@ -59,10 +59,9 @@ function cleanShare(v: unknown): Paylasim | null {
 }
 
 function cleanView(data: unknown): Paylasimlar {
-  const v = shaped<Paylasimlar>(data, (d) => Array.isArray(d.items) && isBool(d.running));
+  const v = shaped<Paylasimlar>(data, (d) => Array.isArray(d.items));
   return {
     ...v,
-    enabled: v.enabled === true,
     host: isText(v.host) ? v.host : "",
     items: v.items.map(cleanShare).filter((s): s is Paylasim => s !== null),
     max: isNumber(v.max) ? v.max : 32,

@@ -50,7 +50,7 @@ export interface Saglik {
 }
 
 export interface Islem {
-  tur: "modul" | "konteyner" | "guncelleme" | "onarim";
+  tur: "uygulama" | "konteyner" | "guncelleme" | "onarim";
   id: string;
   ad: string;
   durum: "calisiyor" | "tamam" | "hata";
@@ -74,6 +74,11 @@ export interface BekleyenDegisiklik {
     new: string;
   };
   web?: boolean;
+  erisim?: string;
+  wireguard?: {
+    eylem: WireGuardEylemi;
+    iface: string | null;
+  };
 }
 
 export interface Bekleyen {
@@ -96,15 +101,22 @@ export interface ErisimHucresi {
 export interface Hizmet {
   id: string;
   ad: string;
-  tur: "konsol" | "paket" | "konteyner" | "elle" | "paylasim" | "sistem" | "vpn" | "kural";
+  tur: "konsol" | "uygulama" | "konteyner" | "paylasim" | "sistem" | "vpn" | "kural";
   aciklama: string;
   uygulama: string | null;
+  servis: string | null;
+  anahtar: string | null;
   calisiyor: boolean | null;
   yerel: ErisimHucresi;
   tailscale: ErisimHucresi;
   wireguard: ErisimHucresi;
   internet: ErisimHucresi;
-  yayinlar: string[];
+  satir: ErisimSatiri | null;
+  web: {
+    tail: boolean;
+    enabled: boolean;
+    domain: string;
+  } | null;
   ayrinti: {
     baslik: string;
     deger: string;
@@ -116,103 +128,9 @@ export interface Uyari {
   hizmet: string;
   metin: string;
   duzelt: {
-    bolum: "yayinlar" | "uygulama" | "tailscale";
+    bolum: "adresler" | "uygulama" | "tailscale";
     hedef: string;
   } | null;
-}
-
-export interface UygulamaHucresi {
-  durum: ErisimDurumu;
-  adresler: string[];
-  uyari: string;
-  not: string;
-}
-
-export interface Uygulama {
-  id: string;
-  ad: string;
-  tur: "paket" | "konteyner" | "yerlesik";
-  aciklama: string;
-  modul: string | null;
-  konteyner: string | null;
-  simge: string | null;
-  durum: "calisiyor" | "durduruldu" | "islemde" | "hata" | "bilinmiyor";
-  islem: {
-    eylem: string;
-    adim: string;
-    metin: string;
-  } | null;
-  tailscale: UygulamaHucresi;
-  internet: UygulamaHucresi;
-  kaynak: {
-    cpu: number | null;
-    bellek: number | null;
-  };
-  guncelleme: "guncel" | "yeni" | "denetlenemedi" | "bilinmiyor" | "sabit";
-  adres: {
-    tailscale: string | null;
-    internet: string | null;
-  };
-  eylemler: ("baslat" | "durdur" | "yeniden-baslat" | "kaldir" | "guncelle")[];
-  revizyon: string | null;
-  metinler: UygulamaMetinleri | null;
-  hesap: boolean;
-}
-
-export interface UygulamaMetinleri {
-  durdur: string;
-  kaldir: string[][];
-  veri_etiket: string;
-  veri_kalir: string;
-  veri_silinir: string;
-}
-
-export interface UygulamaAyrinti {
-  uygulama: Uygulama;
-  konteyner: {
-    imaj: string;
-    ag: string;
-    kullanici: string;
-    baslangic: number | null;
-    saglik: string;
-    yeniden_baslama: number;
-    portlar: {
-      host_ip: string;
-      host_port: number;
-      container_port: number;
-      protocol: string;
-      scope: string;
-    }[];
-    baglamalar: {
-      tur: string;
-      kaynak: string;
-      hedef: string;
-      yazilabilir: boolean;
-      ad: string;
-    }[];
-  } | null;
-  erisim: Hizmet | null;
-}
-
-export interface UygulamaGunlugu {
-  satirlar: string[];
-  kesik: boolean;
-}
-
-export interface UygulamaIslemi {
-  id: string;
-  eylem: "kur" | "baslat" | "durdur" | "yeniden-baslat" | "guncelle" | "kaldir";
-  revizyon?: string;
-  veri?: boolean;
-  form?: {
-    [key: string]: unknown;
-  };
-}
-
-export interface UygulamaIslemiBasladi {
-  id: string;
-  eylem: string;
-  is: string | null;
 }
 
 export interface Ag {
@@ -220,12 +138,11 @@ export interface Ag {
   sampled_at: number | null;
   rx: number | null;
   tx: number | null;
-  apps: ({
-    id: string;
-    name: string;
-    down: number | null;
-    up: number | null;
-  })[];
+  uygulamalar: {
+    ad: string;
+    indirme: number;
+    yukleme: number;
+  }[];
 }
 
 export interface OnarimAdimi {
@@ -258,58 +175,6 @@ export interface OnarimBasladi {
   kip: string;
 }
 
-export interface Uygulamalar {
-  read_at: number;
-  items: Uygulama[];
-  katalog: ({
-    id: string;
-    ad: string;
-    aciklama: string;
-    simge: string | null;
-  })[];
-  altyapi: {
-    podman: string;
-    calisiyor: boolean;
-    imaj: number;
-    kullanilmayan_imaj: number;
-    birim: number;
-    ag: number;
-  };
-  hatalar: string[];
-}
-
-export interface KonsolBildirimi {
-  ad?: string;
-  alt?: string;
-  simge?: string;
-  [key: string]: unknown;
-}
-
-export interface Modul {
-  id: string;
-  installed: boolean;
-  state: "calisiyor" | "durduruldu" | "";
-  live: string;
-  busy: boolean;
-  progress: {
-    action: string;
-    step: string;
-    total: number;
-    text: string;
-  } | null;
-  durdurulabilir: boolean;
-  hesap?: boolean;
-  konsol?: KonsolBildirimi;
-  urls?: {
-    tailscale: string | null;
-    internet: string | null;
-  };
-}
-
-export interface Moduller {
-  items: Modul[];
-}
-
 export interface GuncellemeIsi {
   durum: "yok" | "calisiyor" | "tamam" | "hata";
   hedef: string;
@@ -325,19 +190,21 @@ export interface Guncelleme {
   son_surum: string | null;
   commit: string | null;
   yeni: boolean;
-  yeni_nesil: {
-    nesil: number;
-    metin: string;
-  } | null;
   denetlendi: number | null;
   hata: string;
   is: GuncellemeIsi;
   baslatilabilir: boolean;
+  uygulamalar: {
+    sayi: number;
+    adlar: string[];
+    denetlendi: number | null;
+  };
 }
 
 export interface Erisim {
   read_at: number;
   alan: string;
+  revizyon: string;
   ozet: {
     tailscale: {
       ipv4: string;
@@ -362,9 +229,9 @@ export interface Erisim {
     };
     wireguard: {
       kurulu: boolean;
+      durduruldu: boolean;
       not: string;
       aglar: {
-        uygulama: string;
         arayuz: string;
         ad: string;
         etkin: boolean;
@@ -401,38 +268,56 @@ export interface DnsKaydi {
 }
 
 export interface DnsTaslagi {
-  disabled: string[];
   records: DnsKaydi[];
   forward: boolean;
   servers: string[];
 }
 
-export interface YayinSatiri {
-  service?: string;
-  tail?: boolean;
-  enabled?: boolean;
-  domain?: string;
+export interface WebSatiri {
+  service: "panel" | "paylasim";
+  tail: boolean;
+  enabled: boolean;
+  domain: string;
   confirm?: string;
-  sil?: boolean;
-  elle?: {
-    name: string;
-    local: string;
-    upstream: string;
-  };
-  [key: string]: unknown;
 }
 
-export interface AyarIstegi {
-  revision?: string;
+export interface ErisimIstegi {
+  uygulama: string;
+  anahtar: string;
+  satir: ErisimSatiri;
+  internet_onayi?: boolean;
+}
+
+export interface AyarKurallari {
+  revision: string;
   firewall?: KuralTaslagi[];
   dns?: DnsTaslagi;
-  domain?: string;
-  web?: YayinSatiri;
-  [key: string]: unknown;
 }
 
+export interface AyarAlanAdi {
+  revision: string;
+  domain: string;
+}
+
+export interface AyarWeb {
+  revision: string;
+  web: WebSatiri;
+}
+
+export interface AyarErisim {
+  revision: string;
+  erisim: ErisimIstegi;
+}
+
+export interface AyarWireGuard {
+  revision: string;
+  wireguard: WireGuardIstegi;
+}
+
+export type AyarIstegi = AyarKurallari | AyarAlanAdi | AyarWeb | AyarErisim | AyarWireGuard;
+
 export interface PlanDegisikligi {
-  alan: "guvenlik-duvari" | "dns" | "alan-adi" | "yayin";
+  alan: "guvenlik-duvari" | "dns" | "alan-adi" | "erisim" | "wireguard";
   islem: "ekle" | "kaldir" | "degistir" | "ac" | "kapat";
   nesne: string;
   once: string | null;
@@ -476,13 +361,14 @@ export interface GuvenlikDuvari {
     metin: string;
   };
   kurallar: KuralTaslagi[];
-  katalog: ({
+  portlar: ({
     ad: string;
     aile: number;
     proto: string;
     port: number;
     kapsam: "wan" | "tail" | "lo";
     sabit: boolean;
+    satir: string | null;
   })[];
   dinleyiciler: {
     proto: string;
@@ -502,12 +388,10 @@ export interface GuvenlikDuvari {
     sahip: string;
   }[];
   aglar: {
-    uygulama: string;
     arayuz: string;
     ad: string;
     etkin: boolean;
   }[];
-  vpn: string;
   hatalar: string[];
 }
 
@@ -519,102 +403,12 @@ export interface Adlar {
     aile: number | null;
     hedef: string;
     kaynak: string;
-    kapali: boolean;
-    kilitli: boolean;
+    satir: string | null;
   })[];
   kayitlar: DnsKaydi[];
   yonlendirme: boolean;
   sunucular: string[];
   hatalar: string[];
-}
-
-export interface YayinAdayi {
-  id: string;
-  tur: "konsol" | "paket" | "konteyner" | "elle" | "paylasim";
-  ad: string;
-  servis: string | null;
-  yerel_ad: string | null;
-  tailscale: boolean;
-  internet: boolean;
-  alan_adi: string;
-  durum: string;
-  mesaj: string;
-  bitis: number | null;
-  hedef: string | null;
-  giris: string;
-  onay_kelimesi: boolean;
-  internet_engel: string;
-  kullanilabilir: boolean;
-  neden: string;
-  konteyner: {
-    ad: string;
-    kaynak: "konsol" | "dis";
-    calisiyor: boolean;
-    yerel_portlar: {
-      host_port: number;
-      container_port: number;
-    }[];
-    diger_portlar: {
-      kapsam: string;
-      host_port: number;
-      container_port: number;
-    }[];
-    port_eklenebilir: boolean;
-    onerilen_port: number | null;
-  } | null;
-}
-
-export interface Yayinlar {
-  revizyon: string;
-  alan: string;
-  wan_ipv4: string;
-  adaylar: YayinAdayi[];
-  hatalar: string[];
-}
-
-export interface YayinIstegi {
-  hedef: string;
-  revizyon: string;
-  tailscale: boolean;
-  internet: boolean;
-  alan_adi: string;
-  ad?: string;
-  yerel?: string;
-  konteyner_portu?: number;
-  onay?: string;
-}
-
-export interface YayinAdimi {
-  tur: "konteyner" | "ayar";
-  baslik: string;
-  aciklama: string;
-  istek: {
-    [key: string]: unknown;
-  };
-}
-
-export interface YayinPlani {
-  hedef: YayinAdayi;
-  adimlar: YayinAdimi[];
-  plan: AyarPlani | null;
-  engel: string;
-  dns: {
-    ad: string;
-    tur: string;
-    deger: string;
-  } | null;
-  uyarilar: PlanUyarisi[];
-}
-
-export interface KonteynerIstegi {
-  action?: string;
-  name?: string;
-  image?: string;
-  revision?: string | null;
-  config?: {
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
 }
 
 export interface KonteynerIsi {
@@ -635,14 +429,6 @@ export interface KonteynerPortu {
   [key: string]: unknown;
 }
 
-export interface KonteynerGuncellemesi {
-  state?: string;
-  channel?: string;
-  error?: string;
-  checked_at?: number;
-  [key: string]: unknown;
-}
-
 export interface KonteynerSatiri {
   id?: string;
   name?: string;
@@ -658,12 +444,8 @@ export interface KonteynerSatiri {
   restarts?: number;
   health?: string;
   live?: boolean;
-  source?: "appstore" | "konsol" | "external";
-  management_id?: string;
-  module_id?: string | null;
-  revision?: string | null;
-  actions?: string[];
-  restricted_reason?: string;
+  source?: "uygulama" | "external";
+  uygulama?: string | null;
   cpu_percent?: number | null;
   memory_bytes?: number | null;
   busy?: string | null;
@@ -673,7 +455,6 @@ export interface KonteynerSatiri {
     protocol: string;
     scope: string;
   }[] | null;
-  update?: KonteynerGuncellemesi | null;
   [key: string]: unknown;
 }
 
@@ -692,7 +473,6 @@ export interface KonteynerListesi {
     created?: number | null;
     used_by?: string[];
     managed?: boolean;
-    pinned?: boolean;
     [key: string]: unknown;
   })[];
   volumes?: ({
@@ -723,39 +503,6 @@ export interface KonteynerListesi {
     [key: string]: unknown;
   };
   [key: string]: unknown;
-}
-
-export interface KonteynerAyrintisi {
-  name?: string;
-  state?: string;
-  image?: string;
-  revision?: string | null;
-  actions?: string[];
-  mounts?: {
-    type?: string;
-    source?: string;
-    destination?: string;
-    rw?: boolean;
-    name?: string;
-    [key: string]: unknown;
-  }[];
-  config?: {
-    [key: string]: unknown;
-  };
-  editable?: string[];
-  protected_mounts?: string[];
-  effective_autostart?: boolean;
-  user?: string;
-  command?: string;
-  [key: string]: unknown;
-}
-
-export interface KonteynerGuncellemeleri {
-  checked_at: number;
-  items: {
-    [key: string]: unknown;
-  };
-  cached: boolean;
 }
 
 export interface Oturum {
@@ -809,20 +556,6 @@ export interface Kayitlar {
   items: KayitSatiri[];
 }
 
-export interface Klasorler {
-  items: {
-    path: string;
-    free: number;
-  }[];
-}
-
-export interface UygulamaHesabi {
-  user: string;
-  temp: boolean;
-  host: string;
-  pass?: string;
-}
-
 export interface PaylasimBaglantisi {
   enabled: boolean;
   permission: "ro" | "rw";
@@ -856,8 +589,6 @@ export interface Paylasim {
 }
 
 export interface Paylasimlar {
-  enabled: boolean;
-  running: boolean;
   host: string;
   items: Paylasim[];
   max: number;
@@ -892,6 +623,23 @@ export interface PaylasimKimligi {
   id: string;
 }
 
+export interface VeriKlasoru {
+  ad: string;
+  yol: string;
+  boyut: number | null;
+  neden: string;
+  hedefler: string[];
+}
+
+export interface UygulamaVerisi {
+  ad: string;
+  yol: string;
+  boyut: number | null;
+  neden: string;
+  olculdu: number | null;
+  klasorler: VeriKlasoru[];
+}
+
 export interface Depolama {
   read_at: number;
   kok: string;
@@ -899,10 +647,11 @@ export interface Depolama {
     yol: string;
     id: string;
     ad: string;
-    tur: "paket" | "konteyner" | "paylasim";
+    tur: "uygulama" | "paylasim";
     hedef: string;
     yazilabilir: boolean;
   })[];
+  uygulamalar: UygulamaVerisi[];
   hatalar: string[];
 }
 
@@ -943,6 +692,785 @@ export interface Gelismis {
   };
 }
 
+export interface Temizlik {
+  read_at: number;
+  imajlar: ({
+    id: string;
+    etiketler: string[];
+    boyut: number | null;
+    olusturuldu: number | null;
+  })[];
+  aglar: {
+    ad: string;
+    surucu: string;
+    arayuz: string;
+  }[];
+  birimler: ({
+    ad: string;
+    surucu: string;
+    olusturuldu: number | null;
+  })[];
+  klasorler: ({
+    ad: string;
+    yol: string;
+    boyut: number | null;
+    neden: string;
+  })[];
+  konteynerler: ({
+    ad: string;
+    imaj: string;
+    durum: string;
+    yonetici: "podman" | "kayitsiz" | "baska";
+  })[];
+  hatalar: string[];
+}
+
+export interface TemizlikIstegi {
+  imajlar?: string[];
+  aglar?: string[];
+  birimler?: string[];
+  klasorler?: string[];
+}
+
+export interface TemizlikIsi {
+  is: string;
+}
+
+export interface WireGuardCihazi {
+  name: string;
+  ipv4: string;
+  ipv6: string;
+  handshake: number;
+  rx: number;
+  tx: number;
+  profile: boolean;
+  dns: string;
+  provider: string;
+  keepalive: number;
+  mtu: number;
+  enabled: boolean;
+  online: boolean;
+  active_at: number | null;
+}
+
+export interface WireGuardAgi {
+  iface: string;
+  port: number;
+  server4: string;
+  subnet4: string;
+  server6: string;
+  subnet6: string;
+  dns: string;
+  label: string;
+  active: boolean;
+  count: number;
+  revision: string;
+  peers: WireGuardCihazi[];
+}
+
+export interface WireGuard {
+  kurulu: boolean;
+  durduruldu: boolean;
+  endpoint: string;
+  max: number;
+  reserved: number[];
+  defaults: {
+    dns: string;
+    keepalive: number;
+    mtu: number;
+    port: number;
+  };
+  now: number;
+  active_window: number;
+  networks: WireGuardAgi[];
+  revizyon: string;
+}
+
+export type WireGuardEylemi = "baslat" | "durdur" | "ag-ekle" | "ag-kaldir" | "ag-ac" | "ag-kapat" | "yeniden-uret";
+
+export interface WireGuardAgIstegi {
+  port: number;
+  dns: string;
+  label?: string;
+}
+
+export interface WireGuardIstegi {
+  eylem: WireGuardEylemi;
+  iface?: string;
+  ag?: WireGuardAgIstegi;
+  onay?: string;
+}
+
+export interface WireGuardAgAyari {
+  dns: string;
+  revision: string;
+  label?: string;
+}
+
+export interface WireGuardAgAyarSonucu {
+  iface: string;
+  dns: string;
+  label?: string;
+}
+
+export interface WireGuardCihazIstegi {
+  name: string;
+  dns: string;
+  keepalive: number;
+  mtu: number;
+}
+
+export interface WireGuardCihazEklendi {
+  name: string;
+  ipv4: string;
+}
+
+export interface WireGuardDns {
+  dns: string;
+}
+
+export interface WireGuardKeepalive {
+  keepalive: number;
+}
+
+export interface Acik {
+  on: boolean;
+}
+
+export interface Bulgu {
+  line: number;
+  key: string;
+  text: string;
+}
+
+export interface Isaret {
+  line: number;
+  kind: "refuse" | "question" | "note";
+  text: string;
+}
+
+export interface ModelOrtami {
+  name: string;
+  value: string;
+  line: number;
+  secret_ref: boolean;
+  secret_key: string | null;
+}
+
+export interface ModelPortu {
+  port: number;
+  protocol: "tcp" | "udp";
+  host_port: number | null;
+  line: number;
+}
+
+export interface ModelBaglamasi {
+  kind: "named" | "relative" | "absolute" | "tmpfs";
+  source: string;
+  target: string;
+  read_only: boolean;
+  line: number;
+}
+
+export interface SaglikDenetimi {
+  test: string[];
+  interval: string | null;
+  timeout: string | null;
+  retries: number | null;
+  start_period: string | null;
+}
+
+export interface Bagimlilik {
+  service: string;
+  condition: "started" | "healthy";
+}
+
+export interface Sinirlar {
+  cpus: number | null;
+  memory: number | null;
+  pids: number | null;
+  ulimits: {
+    [key: string]: {
+      soft: number;
+      hard: number;
+    };
+  };
+}
+
+export type YenidenBaslatmaKurali = "no" | "always" | "on-failure" | "unless-stopped";
+
+export interface ModelServisi {
+  name: string;
+  line: number;
+  image: string;
+  image_line: number;
+  command: string[] | null;
+  entrypoint: string[] | null;
+  workdir: string | null;
+  user: string | null;
+  environment: ModelOrtami[];
+  ports: ModelPortu[];
+  mounts: ModelBaglamasi[];
+  health: SaglikDenetimi | null;
+  restart: YenidenBaslatmaKurali;
+  depends_on: Bagimlilik[];
+  caps_add: string[];
+  caps_drop: string[];
+  no_new_privileges: boolean;
+  read_only: boolean;
+  init: boolean;
+  hostname: string | null;
+  shm_size: number | null;
+  limits: Sinirlar;
+  labels: {
+    [key: string]: string;
+  };
+  stop_signal: string | null;
+  stop_grace: string | null;
+}
+
+export interface ModelDegiskeni {
+  name: string;
+  default: string | null;
+  required: boolean;
+  line: number;
+  uses: ({
+    service: string | null;
+    field: string;
+    line: number;
+  })[];
+}
+
+export interface SoruAd {
+  id: string;
+  kind: "name";
+  line: number;
+  title: string;
+  why: string;
+  suggest: string;
+}
+
+export interface SoruPort {
+  id: string;
+  kind: "port";
+  line: number;
+  title: string;
+  why: string;
+  service: string;
+  port: number;
+  protocol: "tcp" | "udp";
+  guess: "web" | "raw";
+  choices: ("caddy" | "raw")[];
+  suggest: string | null;
+  host_port: number | null;
+}
+
+export interface SoruDegisken {
+  id: string;
+  kind: "var";
+  line: number;
+  title: string;
+  why: string;
+  name: string;
+  secret: boolean;
+  generate: boolean;
+  default: string | null;
+  required: boolean;
+  services: string[];
+}
+
+export interface SoruGizli {
+  id: string;
+  kind: "secret";
+  line: number;
+  title: string;
+  why: string;
+  service: string;
+  env: string;
+  generate: boolean;
+  services: string[];
+  uses: {
+    service: string;
+    env: string;
+  }[];
+}
+
+export interface SoruKlasor {
+  id: string;
+  kind: "mount";
+  line: number;
+  title: string;
+  why: string;
+  service: string;
+  target: string;
+  source: string;
+  source_kind: "named" | "relative" | "absolute";
+  read_only: boolean;
+  suggest: "app" | "srv";
+  folder: string;
+  srv_path: string | null;
+}
+
+export interface SoruBaslangic {
+  id: string;
+  kind: "start";
+  line: number;
+  title: string;
+  why: string;
+  service: string;
+  suggest: "direct" | "root";
+  user: string | null;
+  direct_user: string;
+  caps_add: string[];
+  open_caps: string[];
+}
+
+export type Soru = SoruAd | SoruPort | SoruDegisken | SoruGizli | SoruKlasor | SoruBaslangic;
+
+export interface Inceleme {
+  format: "compose" | "kubernetes" | null;
+  name: string;
+  pod: boolean;
+  services: ModelServisi[];
+  variables: ModelDegiskeni[];
+  refusals: Bulgu[];
+  notes: Bulgu[];
+  questions: Soru[];
+  marks: Isaret[];
+}
+
+export interface YanitAdres {
+  use: "caddy";
+  tailscale_name: string;
+}
+
+export interface YanitHamPort {
+  use: "raw";
+}
+
+export interface YanitDeger {
+  value: string;
+}
+
+export interface YanitUygulamaKlasoru {
+  to: "app";
+}
+
+export interface YanitSrvKlasoru {
+  to: "srv";
+  path: string;
+  read_only: boolean;
+}
+
+export interface YanitBaslangic {
+  mode: "direct" | "root";
+}
+
+export type Yanit = YanitAdres | YanitHamPort | YanitDeger | YanitUygulamaKlasoru | YanitSrvKlasoru | YanitBaslangic;
+
+export interface Yanitlar {
+  name: string;
+  answers: {
+    [key: string]: Yanit;
+  };
+}
+
+export type TanimOrtami = {
+  name: string;
+  value: string;
+} | {
+  name: string;
+  secret: string;
+};
+
+export interface TanimPortu {
+  port: number;
+  protocol: "tcp" | "udp";
+  use: "caddy" | "raw";
+  tailscale_name: string | null;
+}
+
+export type TanimBaglamasi = {
+  target: string;
+  to: "app";
+  folder: string;
+  read_only: boolean;
+} | {
+  target: string;
+  to: "srv";
+  path: string;
+  read_only: boolean;
+} | {
+  target: string;
+  to: "tmpfs";
+};
+
+export interface TanimServisi {
+  name: string;
+  image: string;
+  command: string[] | null;
+  entrypoint: string[] | null;
+  workdir: string | null;
+  health: SaglikDenetimi | null;
+  restart: YenidenBaslatmaKurali;
+  depends_on: Bagimlilik[];
+  labels: {
+    [key: string]: string;
+  };
+  stop_signal: string | null;
+  stop_grace: string | null;
+  start: "direct" | "root";
+  user: string | null;
+  caps_drop: string[] | "all";
+  caps_add: string[];
+  no_new_privileges: boolean;
+  read_only: boolean;
+  init: boolean;
+  hostname: string | null;
+  shm_size: number | null;
+  limits: Sinirlar;
+  environment: TanimOrtami[];
+  ports: TanimPortu[];
+  mounts: TanimBaglamasi[];
+}
+
+export interface Tanim {
+  name: string;
+  format: "compose" | "kubernetes";
+  pod: boolean;
+  services: TanimServisi[];
+  secrets: {
+    name: string;
+    services: string[];
+    keep?: boolean;
+  }[];
+  warnings: {
+    service: string;
+    text: string;
+  }[];
+}
+
+export interface DenetimIstegi {
+  metin: string;
+  yanitlar?: Yanitlar;
+}
+
+export interface Denetim {
+  inceleme: Inceleme;
+  tanim?: Tanim;
+  hatalar?: {
+    [key: string]: string;
+  };
+}
+
+export type UygulamaDurumu = "calisiyor" | "durduruldu" | "kismen" | "hata" | "islemde";
+
+export type GuncellemeDurumu = "guncel" | "yeni" | "denetlenemedi" | "bilinmiyor" | "sabit";
+
+export type KaynakTuru = "dosya" | "adres" | "imaj" | "konteyner";
+
+export interface UygulamaServisi {
+  ad: string;
+  durum: UygulamaDurumu;
+  imaj: string;
+  guncelleme: GuncellemeDurumu;
+}
+
+export interface Uygulama {
+  ad: string;
+  durum: UygulamaDurumu;
+  bicim: "compose" | "kubernetes";
+  servisler: UygulamaServisi[];
+  kaynak: {
+    cpu: number | null;
+    bellek: number | null;
+  };
+  guncelleme: GuncellemeDurumu;
+  eylemler: ("baslat" | "durdur" | "yeniden-baslat" | "guncelle")[];
+  revizyon: string;
+  is: string | null;
+  koken: KaynakTuru;
+  durduruldu: boolean;
+  uyari: number;
+  ag: {
+    indirme: number;
+    yukleme: number;
+  } | null;
+  adres: string | null;
+}
+
+export interface UygulamaKaynagi {
+  ad: string;
+  imaj: string;
+  durum: string;
+}
+
+export interface Uygulamalar {
+  read_at: number;
+  items: Uygulama[];
+  kaynaklar: UygulamaKaynagi[];
+  hatalar: string[];
+}
+
+export interface YanitSakli {
+  set: boolean;
+}
+
+export interface KayitliYanitlar {
+  name: string;
+  answers: {
+    [key: string]: Yanit | YanitSakli;
+  };
+}
+
+export interface ErisimAdresi {
+  tur: "adres";
+  ad: string;
+  tailscale_portu: number | null;
+  internet: string;
+}
+
+export interface ErisimHamPortu {
+  tur: "ham";
+  kapsam: "kapali" | "tailscale" | "internet";
+  port: number;
+}
+
+export type ErisimSatiri = ErisimAdresi | ErisimHamPortu;
+
+export interface UygulamaPortu {
+  port: number;
+  protokol: "tcp" | "udp";
+  id: string;
+  erisim: ErisimSatiri;
+  kullanim: "caddy" | "raw";
+  tailscale_adi: string | null;
+  yerel_port: number | null;
+}
+
+export interface UygulamaBaglamasi {
+  hedef: string;
+  tur: "app" | "srv" | "tmpfs";
+  yol: string | null;
+  salt_okunur: boolean;
+  boyut: number | null;
+}
+
+export interface UygulamaServisAyrintisi {
+  ad: string;
+  durum: UygulamaDurumu;
+  baslangic: "direct" | "root";
+  kullanici: string | null;
+  imaj: string;
+  ozet: string | null;
+  kanal: string;
+  guncelleme: GuncellemeDurumu;
+  konteyner: string;
+  birim: string;
+  calisma: number | null;
+  saglik: string;
+  yeniden_baslama: number;
+  portlar: UygulamaPortu[];
+  baglamalar: UygulamaBaglamasi[];
+  gizliler: string[];
+}
+
+export interface UygulamaUyarisi {
+  servis: string;
+  metin: string;
+}
+
+export interface UygulamaAyrinti {
+  uygulama: Uygulama;
+  servisler: UygulamaServisAyrintisi[];
+  gizliler: {
+    ad: string;
+    servisler: string[];
+  }[];
+  uyarilar: UygulamaUyarisi[];
+  koken: {
+    tur: KaynakTuru;
+    adres: string | null;
+    imaj: string | null;
+    konteyner: string | null;
+    alindi: number;
+    sha256: string;
+  };
+  metin: string;
+  yanitlar: KayitliYanitlar;
+  birimler: string[];
+  veri: string;
+  ag: string;
+  pod: string | null;
+  guncelleme_denetlendi: number | null;
+}
+
+export interface UygulamaGunlugu {
+  satirlar: string[];
+  kesik: boolean;
+}
+
+export interface KaynakDosya {
+  tur: "dosya";
+}
+
+export interface KaynakAdres {
+  tur: "adres";
+  adres: string;
+}
+
+export interface KaynakImaj {
+  tur: "imaj";
+  imaj: string;
+}
+
+export interface KaynakKonteyner {
+  tur: "konteyner";
+  konteyner: string;
+}
+
+export type KaynakIstegi = KaynakAdres | KaynakImaj | KaynakKonteyner;
+
+export interface Taslak {
+  metin: string;
+  kaynak: KaynakAdres | KaynakImaj | KaynakKonteyner;
+}
+
+export interface TaslakIsi {
+  is: string;
+}
+
+export type KaynakYaniti = Taslak | TaslakIsi;
+
+export interface KurIstegi {
+  metin: string;
+  yanitlar: Yanitlar;
+  kaynak: KaynakDosya | KaynakAdres | KaynakImaj | KaynakKonteyner;
+  plan?: boolean;
+}
+
+export interface KurOzeti {
+  ad: string;
+  veri: string;
+  ag: string;
+  pod: string | null;
+  birimler: string[];
+  servisler: ({
+    ad: string;
+    baslangic: "direct" | "root";
+    kullanici: string | null;
+    imaj: string;
+    baglamalar: UygulamaBaglamasi[];
+    gizliler: string[];
+  })[];
+  erisim: ({
+    id: string;
+    anahtar: string;
+    servis: string;
+    port: number;
+    protokol: "tcp" | "udp";
+    satir: ErisimSatiri;
+    adres: string | null;
+  })[];
+  klasorler: string[];
+  gizliler: {
+    ad: string;
+    servisler: string[];
+  }[];
+  uyarilar: UygulamaUyarisi[];
+  imajlar: string[];
+}
+
+export interface KurPlani {
+  inceleme: Inceleme;
+  hatalar?: {
+    [key: string]: string;
+  };
+  tanim?: Tanim;
+  ozet?: KurOzeti;
+}
+
+export interface UygulamaIsi {
+  is: string;
+  eylem: string;
+  ad: string;
+}
+
+export interface UygulamaIslemi {
+  eylem: "baslat" | "durdur" | "yeniden-baslat" | "guncelle";
+  revizyon: string;
+}
+
+export interface YanitSakla {
+  keep: boolean;
+}
+
+export interface TanimYanitlari {
+  name: string;
+  answers: {
+    [key: string]: Yanit | YanitSakla;
+  };
+}
+
+export interface TanimIstegi {
+  metin: string;
+  yanitlar: TanimYanitlari;
+  plan: boolean;
+  revizyon: string;
+}
+
+export interface TanimFarki {
+  birimler: ({
+    ad: string;
+    degisim: "eklenir" | "kaldirilir" | "degisir";
+  })[];
+  ortam: string[];
+  portlar: ({
+    anahtar: string;
+    degisim: "eklenir" | "kaldirilir" | "kalir";
+    yerel_port: number | null;
+  })[];
+  klasorler: {
+    eklenen: string[];
+    birakilan: string[];
+  };
+  gizliler: {
+    yeni: string[];
+    yenilenen: string[];
+    korunan: string[];
+    kaldirilan: string[];
+  };
+  baslangic: ({
+    servis: string;
+    once: "direct" | "root" | null;
+    sonra: "direct" | "root";
+  })[];
+  uyarilar: UygulamaUyarisi[];
+  yeniden_baslar: boolean;
+}
+
+export interface TanimPlani {
+  inceleme: Inceleme;
+  hatalar?: {
+    [key: string]: string;
+  };
+  fark?: TanimFarki;
+}
+
+export type TanimYaniti = TanimPlani | UygulamaIsi;
+
+export interface Yenileme {
+  metin: string;
+  yanitlar: KayitliYanitlar;
+  yeni_sorular: string[];
+}
+
+export interface KaldirIstegi {
+  veri: "sakla" | "sil";
+  onay?: string;
+  revizyon: string;
+}
+
 export interface Olaylar {
   kaynaklar: Kaynaklar;
   saglik: Saglik;
@@ -958,11 +1486,16 @@ export const YOLLAR = {
   saglik: "/api/konsol/saglik",
   etkinlik: "/api/konsol/etkinlik",
   bekleyen: "/api/konsol/bekleyen",
-  moduller: "/api/konsol/moduller",
   uygulamalar: "/api/konsol/uygulamalar",
-  uygulama_ayrinti: "/api/konsol/uygulamalar/ayrinti",
-  uygulama_gunlugu: "/api/konsol/uygulamalar/gunluk",
-  uygulama_islemi: "/api/konsol/uygulamalar/islem",
+  uygulama: "/api/konsol/uygulamalar/{app}",
+  uygulama_gunlugu: "/api/konsol/uygulamalar/{app}/gunluk",
+  uygulama_kaynak: "/api/konsol/uygulamalar/kaynak",
+  uygulama_kur: "/api/konsol/uygulamalar/kur",
+  uygulama_islemi: "/api/konsol/uygulamalar/{app}/islem",
+  uygulama_tanim: "/api/konsol/uygulamalar/{app}/tanim",
+  uygulama_yenile: "/api/konsol/uygulamalar/{app}/yenile",
+  uygulama_kaldir: "/api/konsol/uygulamalar/{app}/kaldir",
+  uygulama_denetle: "/api/konsol/uygulamalar/denetle",
   ag: "/api/konsol/ag",
   onarim: "/api/konsol/onarim",
   onarim_baslat: "/api/konsol/onarim",
@@ -974,15 +1507,8 @@ export const YOLLAR = {
   ayarlar_birak: "/api/konsol/ayarlar/birak",
   guvenlik_duvari: "/api/konsol/guvenlik-duvari",
   adlar: "/api/konsol/adlar",
-  yayinlar: "/api/konsol/yayinlar",
-  yayin_plani: "/api/konsol/yayinlar/plan",
-  konteyner_islemi: "/api/konsol/konteynerler/islem",
   konteyner_listesi: "/api/konsol/konteynerler/liste",
-  konteyner_ayrintisi: "/api/konsol/konteynerler/ayrinti",
-  konteyner_guncellemeleri: "/api/konsol/konteynerler/guncellemeler",
   konteyner_isi: "/api/konsol/konteynerler/islem",
-  uygulama_hesabi: "/api/konsol/uygulamalar/hesap",
-  klasorler: "/api/konsol/ayarlar/klasorler",
   oturum: "/api/konsol/oturum",
   oturum_kur: "/api/konsol/oturum/kur",
   oturum_cikis: "/api/konsol/oturum/cikis",
@@ -996,4 +1522,15 @@ export const YOLLAR = {
   paylasim_kaldir: "/api/konsol/paylasim/kaldir",
   depolama: "/api/konsol/depolama",
   gelismis: "/api/konsol/gelismis",
+  temizlik: "/api/konsol/gelismis/temizlik",
+  temizle: "/api/konsol/gelismis/temizlik",
+  wireguard: "/api/konsol/wireguard/state",
+  wireguard_cihaz_ekle: "/api/konsol/wireguard/nets/{iface}/peers",
+  wireguard_ag_ayarlar: "/api/konsol/wireguard/nets/{iface}/ayarlar",
+  wireguard_cihaz_kaldir: "/api/konsol/wireguard/nets/{iface}/peers/{name}/remove",
+  wireguard_cihaz_dns: "/api/konsol/wireguard/nets/{iface}/peers/{name}/dns",
+  wireguard_cihaz_keepalive: "/api/konsol/wireguard/nets/{iface}/peers/{name}/keepalive",
+  wireguard_cihaz_durum: "/api/konsol/wireguard/nets/{iface}/peers/{name}/durum",
+  wireguard_profil: "/api/konsol/wireguard/nets/{iface}/peers/{name}/profile",
+  wireguard_qr: "/api/konsol/wireguard/nets/{iface}/peers/{name}/qr.png",
 } as const;

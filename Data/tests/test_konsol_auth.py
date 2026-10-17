@@ -324,11 +324,9 @@ class PanelEndpointTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         root = Path(temp.name).resolve()
         (root / "konsol").mkdir(mode=0o700)
-        (root / "modules").write_text("")
         state = root / "state.env"
-        state.write_text("SERVER_ROOT=%s\nLOCAL_DOMAIN=test\nV2_VERSION=test\nMODULES_FILE=%s\nKONSOL_AUTH_DIR=%s\n"
-                         % (root, root / "modules", root / "konsol"))
-        self.p = panel.Panel(types.SimpleNamespace(state=str(state), allow_host=[]))
+        state.write_text("SERVER_ROOT=%s\nLOCAL_DOMAIN=test\nV2_VERSION=test\nKONSOL_AUTH_DIR=%s\n" % (root, root / "konsol"))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(state)))
         self.store = auth.Store(root / "konsol")
 
         class Handler(panel.Handler):
@@ -375,12 +373,9 @@ class PanelEndpointTests(unittest.TestCase):
         status, headers, _ = self.gate("/giris.html")
         self.assertEqual((status, headers["Location"]), (302, "/"))
         self.assertEqual(self.gate("/giris.html?x=1")[0], 302)
-        # DD-267: Konsol is at / and the sign-in page always returns there; nothing in the request names a
-        # target (an old ?geri=yeni from the interface's /yeni/ days included).
-        self.assertEqual(self.gate("/giris.html?geri=yeni")[1]["Location"], "/")
+        # DD-267: Konsol is at / and the sign-in page always returns there; nothing in the request names a target.
         self.assertEqual(self.gate("/giris.html?geri=//evil.test")[1]["Location"], "/")
-        self.assertEqual(self.local("/yeni/")[1]["Location"], "/giris.html")
-        self.assertEqual(self.local("/giris.html?geri=yeni")[0], 204)
+        self.assertEqual(self.local("/giris.html?geri=//evil.test")[0], 204)
         # Without Caddy's forwarding headers a session is required, except for the sign-in page itself.
         status, headers, _ = self.local("/#/ayarlar")
         self.assertEqual((status, headers["Location"]), (302, "/giris.html"))

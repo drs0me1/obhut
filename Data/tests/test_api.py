@@ -1,6 +1,7 @@
 """DD-259: master_api's route table. Every route has its handler method, the committed OpenAPI
 description and TypeScript types are what the table generates, the schema check refuses wrong
-shapes, and the table's routes answer through the real handler with replies of their declared shape."""
+shapes, and the table's routes answer through the real handler with replies of their declared shape.
+DD-271: the backend answers nothing outside the table but the session check and the sign-in POST."""
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import unittest
 import unittest.mock
 from unittest.mock import patch
 
+import app_fixtures
 import test_resources
 from test_overview import Fixture
 
@@ -17,7 +19,18 @@ DATA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DATA / "panel"))
 import master_api  # noqa: E402
 
+FIXTURES = DATA / "tests" / "fixtures" / "uygulama"
+
 panel = test_resources.panel
+SAMPLES = {"app": "notlar", "iface": "wg0", "name": "telefon"}
+
+
+def concrete(route):
+    """A request path for a route: each {param} filled with a valid sample."""
+    path = route.path
+    for name in route.params:
+        path = path.replace("{%s}" % name, SAMPLES[name])
+    return path
 
 
 class TableTests(unittest.TestCase):
@@ -28,9 +41,13 @@ class TableTests(unittest.TestCase):
         for route in master_api.ROUTES:
             self.assertTrue(callable(getattr(panel.Handler, "api_" + route.name, None)), route.name)
             self.assertTrue(route.path.startswith("/api/konsol/"), route.path)
-            self.assertIs(master_api.find(route.method, route.path), route)
+            self.assertIs(master_api.find(route.method, concrete(route)), route)
             self.assertTrue((route.reply is None) != (route.events is None), route.name)
+            self.assertLessEqual(set(route.params), set(master_api.PATH_PARAMS), route.name)
         self.assertIsNone(master_api.find("POST", "/api/konsol/erisim"))
+        # A handler method without a route would be dead code, or a way in that the table does not show.
+        handlers = {name[len("api_"):] for name in dir(panel.Handler) if name.startswith("api_")}
+        self.assertEqual(handlers, set(names))
 
     def test_the_committed_descriptions_are_generated_from_the_table(self):
         # Regenerate: python3 panel/master_api.py openapi > docs/konsol-api.json (and ts > ...sema.ts).
@@ -108,18 +125,9 @@ class RouteReplyTests(Fixture):
         with patch.object(self.p, "health_compute", return_value={"status": "warn", "read_at": 1,
                                                                     "checks": [{"id": "units", "name": "Servisler", "status": "warn", "detail": "x"}]}):
             self.assertEqual(self.get("saglik")["status"], "warn")
-        with patch.object(self.p, "busy_units", return_value=set()):
-            self.assertEqual(self.get("etkinlik"), {"items": []})
+        self.assertEqual(self.get("etkinlik"), {"items": []})
         self.assertEqual(self.get("bekleyen"), {"bekleyen": None})
-        modules = [{"id": "torrent", "installed": True, "state": "calisiyor", "live": "running", "busy": False,
-                    "progress": None, "durdurulabilir": True,
-                    "konsol": {"ad": "qBittorrent", "neler": [["box", "x"]]},
-                    "urls": {"tailscale": "http://torrent.test", "internet": None}},
-                   {"id": "wireguard", "installed": False, "state": "", "live": "-", "busy": True,
-                    "progress": {"action": "kur", "step": "1", "total": 4, "text": "Paketler"}, "durdurulabilir": False}]
-        with patch.object(self.p, "modules", return_value=modules):
-            self.assertEqual(self.get("moduller"), {"items": modules})
-        with patch.object(self.p.updates, "latest", return_value={"at": 7, "ok": True, "son": "2026.08.06-v2-300",
+        with patch.object(self.p.updates, "latest", return_value={"at": 7, "ok": True, "son": "2026.08.06-v2-300", "nesil": 2,
                                                                   "commit": "a" * 40, "hata": ""}), \
              patch.object(self.p, "unit_active", return_value=False):
             update = self.get("guncelleme")
@@ -135,10 +143,6 @@ class RouteReplyTests(Fixture):
             status, headers, body = test_resources.unix_get(self.sock, "/api/konsol/onarim/gunluk?sure=7g", {"X-Konsol": "1"})
         self.assertEqual((status, headers["Content-Type"], body.decode()), (200, "text/plain; charset=utf-8", "satır 1\n"))
         log.assert_called_once_with("7g")
-        with patch.object(panel.master_settings, "Manager") as manager:
-            manager.return_value.folders.return_value = [{"path": "/srv/downloads", "free": 5}]
-            self.assertEqual(self.get("klasorler", "?path=/srv")["items"][0]["path"], "/srv/downloads")
-        manager.return_value.folders.assert_called_once_with("/srv")
         # Gelişmiş: the settings view's Caddy and dnsmasq parts.
         view = {"read_at": 3, "web": {"entries": [{"address": "panel.test:80", "routes": [{"path": "/", "kind": "proxy", "to": "x"}], "source": "base",
                                                     "access": "tailscale", "scheme": "http"}],
@@ -147,51 +151,26 @@ class RouteReplyTests(Fixture):
         with patch.object(self.p, "settings", return_value=view) as settings:
             self.assertEqual(self.get("gelismis", "?yenile=1"), {"read_at": 3, "caddy": view["web"], "dnsmasq": view["dns"]})
         settings.assert_called_once_with(fresh=True)
-        # Podman reads go to the same view as the current Konsol's.
-        row = {"id": "abc", "name": "notlar", "image": "docker.io/library/nginx:alpine", "state": "running", "status": "Up",
-               "unit": "konsol-notlar.service", "network": "konsol", "created": 1, "started": 2, "exit_code": 0, "restarts": 0,
-               "ports": [{"host_ip": "127.0.0.1", "host_port": 8090, "container_port": 80, "protocol": "tcp", "scope": "local"}],
-               "mounts": 1, "health": "", "live": True, "source": "konsol", "management_id": "konsol:notlar", "module_id": None,
-               "revision": "r1", "actions": ["stop", "restart", "save", "remove", "image-update"], "restricted_reason": "",
-               "cpu_percent": None, "memory_bytes": 1024, "busy": None, "listening": None,
-               "update": {"state": "guncel", "channel": "alpine", "error": "", "checked_at": 5}}
+        # The Podman list reads the container manager's view.
+        row = {"id": "abc", "name": "notlar_web", "image": "registry.example/notlar/web@sha256:" + "a" * 64, "state": "running",
+               "status": "Up", "unit": "konsol-notlar_web.service", "network": "ksl-notlar", "created": 1, "started": 2, "exit_code": 0,
+               "restarts": 0, "ports": [{"host_ip": "127.0.0.1", "host_port": 62100, "container_port": 80, "protocol": "tcp",
+                                          "scope": "local"}],
+               "mounts": 1, "health": "", "live": True, "source": "uygulama", "uygulama": "notlar",
+               "cpu_percent": None, "memory_bytes": 1024, "busy": None, "listening": None}
         listing = {"read_at": 1, "runtime": {"version": "5.4.2", "ok": True, "error": ""}, "containers": [row],
                    "images": [{"id": "i1", "name": "docker.io/library/nginx:alpine", "size": 10, "created": 1, "used_by": ["notlar"],
-                               "managed": True, "pinned": False}],
+                               "managed": True}],
                    "volumes": [{"name": "v", "driver": "local", "size": None, "used_by": [], "managed": True}],
-                   "networks": [{"name": "konsol", "id": "n1", "driver": "bridge", "subnets": ["10.89.1.0/24"], "used_by": ["notlar"],
+                   "networks": [{"name": "ksl-notlar", "id": "n1", "driver": "bridge", "subnets": ["10.89.1.0/24"], "used_by": ["notlar"],
                                  "managed": True, "internal": False}],
                    "storage": {"images": 1, "containers": 1, "size": None}, "resource_errors": {}}
-        detail = dict(row, mounts=[{"type": "volume", "source": "v", "destination": "/data", "rw": True, "name": "v"}],
-                      config={"name": "notlar"}, editable=["ports"], protected_mounts=[], effective_autostart=True,
-                      user="", command="nginx")
         fake = unittest.mock.Mock()
-        fake.liste.return_value, fake.ayrinti.return_value = listing, detail
+        fake.liste.return_value = listing
         with patch.object(panel.Handler, "container_view", return_value=fake):
             self.assertEqual(self.get("konteyner_listesi"), listing)
-            self.assertEqual(self.get("konteyner_ayrintisi", "?ad=notlar")["command"], "nginx")
-        status, _headers, body = test_resources.unix_get(self.sock, "/api/konsol/konteynerler/ayrinti?ad=../x", {"X-Konsol": "1"})
-        self.assertEqual(status, 400, body)
 
-    def test_a_package_account_and_an_install_from_the_table(self):
-        self.package("torrent", manifest_extra='PAKET_HESAP="1"\n')
-        with patch.object(self.p, "modul", return_value=(0, "admin\tgecici\tgizli-deneme\n", "")) as modul:
-            self.assertEqual(self.get("uygulama_hesabi", "?id=paket:torrent"), {"user": "admin", "temp": True, "host": ""})
-            modul.assert_called_with("hesap", "torrent")
-            self.assertEqual(self.get("uygulama_hesabi", "?id=paket:torrent&parola=1")["pass"], "gizli-deneme")
-            modul.assert_called_with("hesap", "torrent", "--parola")
-        for bad in ("?id=torrent", "?id=konteyner:torrent", "?id=paket:yok"):
-            status, _headers, _body = test_resources.unix_get(self.sock, "/api/konsol/uygulamalar/hesap" + bad, {"X-Konsol": "1"})
-            self.assertEqual(status, 404, bad)
-        # "kur" installs a catalogue package with its form, as App Store does.
-        with patch.object(self.p, "modules", return_value=[{"id": "torrent", "installed": False}]), \
-             patch.object(self.p, "module_install", return_value=(202, "")) as install:
-            self.assertEqual(self.post("uygulama_islemi", {"id": "paket:torrent", "eylem": "kur", "form": {"kullanici": "admin"}}),
-                             (202, {"id": "paket:torrent", "eylem": "kur", "is": None}))
-            install.assert_called_once_with("torrent", {"kullanici": "admin"})
-            self.assertEqual(self.post("uygulama_islemi", {"id": "paket:yok", "eylem": "kur"})[0], 404)
-            self.assertEqual(self.post("uygulama_islemi", {"id": "konteyner:x", "eylem": "kur"})[0], 404)
-        # The account routes keep their shapes; a body of another shape is refused before the handler.
+    def test_a_body_of_another_shape_is_refused_before_the_handler(self):
         self.assertEqual(self.post("oturum_cikis", {}), (200, {"durum": "cikis"}))
         status, answer = self.post("oturum_cikis", {"x": 1})
         self.assertEqual(status, 400)
@@ -202,7 +181,7 @@ class RouteReplyTests(Fixture):
         # DD-267: Dosyalar → Paylaşımlar reads the share manager's own view; a pause request is gone.
         conn = {"enabled": True, "permission": "ro", "expires": 1900000000, "expired": False, "available": True, "active": True,
                 "reason": "", "url": "http://100.64.0.1:61010/s/abc/"}
-        view = {"enabled": True, "running": True, "host": "http://100.64.0.1:61010", "max": 32, "tail_enabled": True,
+        view = {"host": "http://100.64.0.1:61010", "max": 32, "tail_enabled": True,
                 "items": [{"id": "abc", "path": "media/filmler", "name": "filmler", "username": "film", "created": 1, "changed": 2,
                            "type": "dir", "available": True, "connections": {"tailscale": conn}, "urls": {"tailscale": conn["url"]},
                            "url": conn["url"]}],
@@ -210,39 +189,174 @@ class RouteReplyTests(Fixture):
         with patch.object(panel.master_shares, "Manager") as manager:
             manager.return_value.public.return_value = view
             self.assertEqual(self.get("paylasimlar"), view)
-        status, _headers, _body = test_resources.unix_get(self.sock, "/api/konsol/paylasim/durum", {"X-Konsol": "1", "Content-Type": "application/json"},
-                                                          method="POST", body=b'{"id": "abc"}')
-        self.assertEqual(status, 404, "pausing is a connection switch since DD-192")
         with patch.object(self.p, "settings_run", return_value=(200, view)) as run:
             self.assertEqual(self.post("paylasim_kaldir", {"id": "abc"}), (200, view))
         run.assert_called_once_with("remove", {"id": "abc"}, shares=True)
         self.assertEqual(self.post("paylasim_kaldir", {"id": "abc", "x": 1})[0], 400)
-        # Depolama: an application's bind mounts under the user area and each share.
-        root = str(self.root)
-        apps = {"items": [{"id": "konteyner:notlar", "ad": "notlar", "tur": "konteyner", "konteyner": "notlar"},
-                          {"id": "yerlesik:dosyalar", "ad": "Dosyalar", "tur": "yerlesik", "konteyner": None}], "hatalar": []}
-        mounts = [{"type": "bind", "source": root + "/media", "destination": "/media", "rw": False, "name": ""},
-                  {"type": "bind", "source": "/etc/localtime", "destination": "/etc/localtime", "rw": False, "name": ""},
-                  {"type": "volume", "source": "/var/lib/containers/v", "destination": "/data", "rw": True, "name": "v"}]
-        fake = unittest.mock.Mock()
-        fake.ayrinti.return_value = {"mounts": mounts}
-        registry = {"root": root, "items": [{"id": "abc", "path": "media/filmler", "name": "filmler",
-                                             "connections": {"tailscale": {"enabled": True, "permission": "rw", "expires": None}}}]}
-        with patch.object(self.p, "uygulamalar", return_value=apps), patch.object(self.p.containers, "view", return_value=fake), \
-             patch.object(panel.master_shares, "Manager") as manager:
+        # Depolama (K7): each application's /srv folders from its record, and each share.
+        values = app_fixtures.env(self.root)
+        with self.state.open("a") as fh:
+            fh.write("UYGULAMA_STATE_DIR=%s\nUYGULAMA_VERI_DIR=%s\n" % (values["UYGULAMA_STATE_DIR"], values["UYGULAMA_VERI_DIR"]))
+        app_fixtures.record(dict(values, STATE_FILE=str(self.state)))
+        (Path(values["UYGULAMA_VERI_DIR"]) / "notlar" / "uploads").mkdir(parents=True)
+        registry = {"root": "/srv", "items": [{"id": "abc", "path": "media/filmler", "name": "filmler",
+                                               "connections": {"tailscale": {"enabled": True, "permission": "rw", "expires": None}}}]}
+        with patch.object(panel.master_shares, "Manager") as manager, patch.object(panel.subprocess, "run",
+                                                                                   side_effect=AssertionError("no command")):
             manager.return_value.read.return_value = registry
             answer = self.get("depolama")
-        self.assertEqual(answer["kok"], os.path.realpath(root))
+        self.assertEqual(answer["kok"], os.path.realpath(str(self.root)))
         self.assertEqual(answer["kullananlar"], [
-            {"yol": root + "/media", "id": "konteyner:notlar", "ad": "notlar", "tur": "konteyner", "hedef": "/media", "yazilabilir": False},
-            {"yol": root + "/media/filmler", "id": "yerlesik:paylasim", "ad": "filmler", "tur": "paylasim", "hedef": "/s/abc/", "yazilabilir": True}])
+            {"yol": "/srv/media", "id": "notlar", "ad": "notlar", "tur": "uygulama", "hedef": "web: /media", "yazilabilir": False},
+            {"yol": "/srv/media/filmler", "id": "paylasim", "ad": "filmler", "tur": "paylasim", "hedef": "/s/abc/", "yazilabilir": True}])
+        # Each application's data folders (A5) with their sizes; one the walk did not find says so.
+        [data] = answer["uygulamalar"]
+        self.assertEqual((data["ad"], data["yol"], data["neden"]), ("notlar", str(Path(values["UYGULAMA_VERI_DIR"]) / "notlar"), ""))
+        self.assertIsInstance(data["boyut"], int)
+        self.assertEqual([(f["ad"], f["hedefler"], f["boyut"] is None, f["neden"]) for f in data["klasorler"]],
+                         [("db-data", ["db: /var/lib/db"], True, "Klasör yok."), ("uploads", ["web: /app/uploads"], False, "")])
         self.assertEqual(answer["hatalar"], [])
+
+    def raw_post(self, path, body):
+        status, _headers, raw = test_resources.unix_get(
+            self.sock, path, {"X-Konsol": "1", "Content-Type": "application/json"}, method="POST", body=body)
+        return status, raw
+
+    def test_the_inspector_dry_run_from_the_table(self):
+        # DD-271 (phase 2): a whole file fits in the request, nothing is run or written, no secret value comes back.
+        text = (FIXTURES / "notlar-compose.yaml").read_text()
+        answers = {"name": "notlar", "answers": {
+            "var:NOTLAR_VERSION": {"value": "1.5"}, "var:BASE_URL": {"value": ""}, "var:DB_PASSWORD": {"value": "Gizli-7f3a9"},
+            "var:LOG_LEVEL": {"value": "debug"}, "port:web:3000/tcp": {"use": "caddy", "tailscale_name": "notlar"},
+            "mount:web:/app/uploads": {"to": "app"},
+            "mount:web:/media/notlar": {"to": "srv", "path": "/srv/media/notlar", "read_only": True},
+            "start:web": {"mode": "direct"}, "mount:db:/var/lib/postgresql/data": {"to": "app"}, "start:db": {"mode": "root"}}}
+        route = next(r for r in master_api.ROUTES if r.name == "uygulama_denetle")
+        handler = panel.Handler.api_uygulama_denetle
+
+        def guarded(self, user, data):
+            # While the handler runs (the gates before it read state.env), no file is opened.
+            with patch("builtins.open", side_effect=AssertionError("nothing is read or written")), \
+                    patch.object(panel.os, "open", side_effect=AssertionError("nothing is read or written")):
+                return handler(self, user, data)
+        with patch.object(panel.subprocess, "run", side_effect=AssertionError("no command may run")), \
+                patch.object(panel.subprocess, "Popen", side_effect=AssertionError("no command may run")), \
+                patch.object(panel.Handler, "api_uygulama_denetle", guarded):
+            status, answer = self.post("uygulama_denetle", {"metin": text})
+            self.assertEqual((status, set(answer)), (200, {"inceleme"}))
+            self.assertEqual((answer["inceleme"]["format"], answer["inceleme"]["refusals"]), ("compose", []))
+            self.assertIn("var:DB_PASSWORD", [q["id"] for q in answer["inceleme"]["questions"]])
+            status, raw = self.raw_post(route.path, json.dumps({"metin": text, "yanitlar": answers}).encode())
+        self.assertEqual(status, 200, raw)
+        reply = json.loads(raw)
+        master_api.check(route.reply, reply)
+        self.assertEqual(set(reply), {"inceleme", "tanim"})
+        self.assertNotIn(b"Gizli-7f3a9", raw)
+        env = {e["name"]: e for e in reply["tanim"]["services"][0]["environment"]}
+        self.assertEqual((env["DB_PASSWORD"], env["LOG_LEVEL"]),
+                         ({"name": "DB_PASSWORD", "secret": "notlar-db-password"}, {"name": "LOG_LEVEL", "value": "debug"}))
+        # Answers the checker refuses come back by question, without a definition.
+        answers["answers"]["port:web:3000/tcp"] = {"use": "caddy", "tailscale_name": "panel"}
+        answers["answers"].pop("start:db")
+        status, answer = self.post("uygulama_denetle", {"metin": text, "yanitlar": answers})
+        self.assertEqual((status, set(answer)), (200, {"inceleme", "hatalar"}))
+        self.assertEqual(set(answer["hatalar"]), {"port:web:3000/tcp", "start:db"})
+        # A refused file is an inspection, not an error.
+        status, answer = self.post("uygulama_denetle", {"metin": (FIXTURES / "unsafe-compose.yaml").read_text()})
+        self.assertEqual((status, len(answer["inceleme"]["refusals"])), (200, 8))
+        status, answer = self.post("uygulama_denetle", {"metin": "services: ["})
+        self.assertEqual((status, answer["inceleme"]["format"], answer["inceleme"]["refusals"][0]["line"]), (200, None, 1))
+
+    def test_the_inspector_takes_a_whole_file_and_no_more(self):
+        route = next(r for r in master_api.ROUTES if r.name == "uygulama_denetle")
+        padding = "# %s\n" % ("x" * 76)
+        big = (FIXTURES / "ornek-compose.yaml").read_text() + padding * 2500
+        self.assertGreater(len(big), 3 * 65536)
+        status, answer = self.post("uygulama_denetle", {"metin": big})
+        self.assertEqual((status, answer["inceleme"]["refusals"]), (200, []), "larger than the usual body limit")
+        status, answer = self.post("uygulama_denetle", {"metin": "#" * (256 * 1024 + 1)})
+        self.assertEqual(status, 400)
+        self.assertIn("256 KiB", answer["error"])
+        status, raw = self.raw_post(route.path, json.dumps({"metin": "\n" * (route.body_limit // 2)}).encode())
+        self.assertEqual(status, 400, "the body limit holds before anything is parsed")
+        self.assertIn("JSON", json.loads(raw)["error"])
+        status, raw = self.raw_post(route.path, b'{"metin": "\\ud800"}')
+        self.assertEqual(status, 400, raw)
+        for bad in ({"metin": 5}, {"metin": "x", "extra": 1}, {"metin": "x", "yanitlar": {"name": "x"}},
+                    {"metin": "x", "yanitlar": {"name": "x", "answers": {"start:a": {"mode": 1}}}}):
+            with self.subTest(bad=bad):
+                self.assertEqual(self.post("uygulama_denetle", bad)[0], 400)
+        # Every other route keeps the usual limit.
+        status, raw = self.raw_post("/api/konsol/oturum/cikis", json.dumps({"x": "y" * 70000}).encode())
+        self.assertEqual(status, 400)
+        self.assertIn("JSON", json.loads(raw)["error"])
 
     def test_a_real_health_reply_has_the_declared_shape(self):
         # Commands that do not exist on the test machine read as failed checks, not as a broken reply.
-        self.p.args.master_modul = "/fixture/master-modul"
         with patch.object(self.p, "health_cmd", return_value=(None, "")):
             master_api.check(master_api.ref("Saglik"), self.p.health_compute())
+
+
+class OnlyTheTableAnswers(Fixture):
+    """DD-271 (rebuild.md §2.3, §7.4): no request reaches the backend outside the route table except the
+    session check Caddy asks and the sign-in POST. With the table emptied, every other path is 404 and
+    no handler runs."""
+
+    def setUp(self):
+        super().setUp()
+
+        class Handler(panel.Handler):
+            def log_message(self, *_args):
+                pass
+        Handler.panel = self.p
+        _server, self.sock = test_resources.start_unix(self, Handler)
+
+    def request(self, method, path, body=None):
+        headers = {"X-Konsol": "1"}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        status, _headers, raw = test_resources.unix_get(self.sock, path, headers, method=method, body=body)
+        return status, raw
+
+    def test_nothing_outside_the_table_answers(self):
+        paths = sorted({concrete(r) for r in master_api.ROUTES} | {
+            "/", "/api", "/api/konsol", "/api/konsol/", "/api/x/y", "/api/state", "/giris.html",
+            "/api/konsol/oturum/giris", "/oturum-denetle/x", "/api/konsol/erisim/x", "/api/konsol/wireguard/nets/wg0"})
+        empty = (None, None)
+        with patch.object(panel.master_api, "match", return_value=empty) as match, \
+                patch.object(panel.subprocess, "run", side_effect=AssertionError("no handler may run")):
+            for path in paths:
+                for method, body in (("GET", None), ("HEAD", None), ("POST", b"{}")):
+                    if (method, path) == ("POST", "/api/konsol/oturum/giris"):
+                        continue
+                    with self.subTest(method=method, path=path):
+                        self.assertEqual(self.request(method, path, body)[0], 404)
+        self.assertTrue(match.called)
+
+    def test_removed_reads_are_404(self):
+        # Rebuild §2.2: no screen read a container's detail or the old folder picker; both routes are gone.
+        paths = ("/api/konsol/konteynerler/ayrinti?ad=notlar_web", "/api/konsol/ayarlar/klasorler",
+                 "/api/konsol/ayarlar/klasorler?path=/srv")
+        with patch.object(panel.subprocess, "run", side_effect=AssertionError("no handler may run")):
+            for path in paths:
+                self.assertIsNone(master_api.find("GET", path.partition("?")[0]), path)
+                for method in ("GET", "HEAD"):
+                    with self.subTest(method=method, path=path):
+                        self.assertEqual(self.request(method, path)[0], 404)
+        self.assertFalse([n for n in ("api_konteyner_ayrintisi", "api_klasorler") if hasattr(panel.Handler, n)])
+
+    def test_the_two_exceptions_answer_without_the_table(self):
+        with patch.object(panel.master_api, "match", side_effect=AssertionError("not through the table")):
+            status, _raw = self.request("GET", "/oturum-denetle")
+            self.assertNotEqual(status, 404)
+            status, raw = self.request("POST", "/api/konsol/oturum/giris", b'{"kullanici": "x", "parola": "y"}')
+            self.assertNotEqual(status, 404, raw)
+
+    def test_other_methods_are_not_implemented(self):
+        self.assertEqual({name for name in dir(panel.Handler) if name.startswith("do_")}, {"do_GET", "do_HEAD", "do_POST"})
+        for method in ("PUT", "DELETE", "PATCH", "OPTIONS"):
+            with self.subTest(method=method):
+                self.assertEqual(self.request(method, "/api/konsol/erisim")[0], 501)
 
 
 if __name__ == "__main__":

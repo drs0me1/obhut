@@ -1,6 +1,8 @@
-<!-- The activity drawer (DD-258): jobs the server is running (App Store operations, container work, the
-     Obhut update, repair) and the ones that just ended, as the event stream or GET /api/konsol/etkinlik
-     report them. A side panel: focus stays inside, Esc or the backdrop closes it. -->
+<!-- İşlemler (DD-258; rebuild phase 5): the settings change waiting for its confirmation (named as the banner names
+     it; it is confirmed or rolled back from the banner), the jobs the server is running (applications, Gelişmiş's
+     Podman cleanup, the Obhut update, repair) and the ones that just ended with their result (a failed one's reason,
+     such as what a cleanup left and why), as the event stream or GET /api/konsol/etkinlik report them. A side
+     panel: focus stays inside, Esc or the backdrop closes it. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { Icon } from "./icons";
@@ -9,7 +11,9 @@ import StatusPill from "./ui/StatusPill.vue";
 import { finishedJobs, live, runningJobs } from "../live";
 import { closeSurface, ui } from "../ui";
 import { clock } from "../format";
-import type { Islem } from "../api/sema";
+import { pendingTitle } from "../pending";
+import type { Tone } from "./ui/types";
+import type { BekleyenDegisiklik, Islem } from "../api/sema";
 
 const panel = ref<HTMLElement | null>(null);
 const closeButton = ref<HTMLButtonElement | null>(null);
@@ -19,10 +23,21 @@ watch(open, (isOpen) => {
   if (isOpen) void nextTick(() => closeButton.value?.focus());
 });
 
-const KINDS: Record<Islem["tur"], string> = { modul: "Uygulama", konteyner: "Konteyner", guncelleme: "Güncelleme", onarim: "Onarım" };
+const KINDS: Record<Islem["tur"], string> = { uygulama: "Uygulama", konteyner: "Gelişmiş", guncelleme: "Güncelleme", onarim: "Onarım" };
 const STATES: Record<Islem["durum"], string> = { calisiyor: "Çalışıyor", tamam: "Tamamlandı", hata: "Hata" };
 const kind = (j: Islem) => KINDS[j.tur] ?? j.tur;
 const state = (j: Islem) => STATES[j.durum] ?? j.durum;
+
+// The pending change: its name and its phase in a word; Onayla and Geri al stay in the banner.
+const change = computed(() => live.bekleyen ?? null);
+const PHASES: Record<BekleyenDegisiklik["phase"], { text: string; tone: Tone }> = {
+  applying: { text: "Uygulanıyor", tone: "accent" },
+  awaiting: { text: "Onay bekliyor", tone: "warning" },
+  committed: { text: "Kaydedildi", tone: "ok" },
+  rollback: { text: "Geri alınıyor", tone: "warning" },
+  stuck: { text: "Geri alma takıldı", tone: "danger" },
+};
+const phase = computed(() => (change.value ? PHASES[change.value.phase] ?? { text: change.value.phase, tone: "neutral" as Tone } : null));
 
 const connection = computed(() => {
   switch (live.connection) {
@@ -57,6 +72,13 @@ function onKeydown(event: KeyboardEvent): void {
           </button>
         </header>
         <div class="drawer-body">
+          <section v-if="change && phase" class="job drawer-pending" aria-labelledby="cekmece-bekleyen" data-testid="drawer-pending">
+            <div class="job-line">
+              <strong id="cekmece-bekleyen" class="job-name">{{ pendingTitle(change, live.erisim) }}</strong>
+              <StatusPill :tone="phase.tone">{{ phase.text }}</StatusPill>
+            </div>
+            <span class="job-meta">Bekleyen ayar değişikliği · onay ve geri alma sayfanın üstündeki bantta</span>
+          </section>
           <ul v-if="runningJobs.length" class="jobs" aria-label="Çalışan işlemler">
             <li v-for="j in runningJobs" :key="j.tur + ':' + j.id" class="job" data-durum="calisiyor">
               <div class="job-line">

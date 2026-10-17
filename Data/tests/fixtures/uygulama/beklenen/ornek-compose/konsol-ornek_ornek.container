@@ -1,0 +1,38 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: ornek uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması ornek: ornek
+After=network-online.target master-firewall.service
+Wants=network-online.target master-firewall.service
+RequiresMountsFor="/srv/ornek"
+
+[Container]
+ContainerName=ornek_ornek
+Image=registry.example/ornek/sunucu@sha256:11fa7f5fd1a835df9f4c722e39ea491c14b6cd239d8889621af2a67701aa7857
+Pull=never
+Network=konsol-ornek.network
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=ornek
+LogDriver=journald
+User=1000:1000
+DropCapability=all
+NoNewPrivileges=true
+EnvironmentFile="/etc/master-stack/containers/uygulamalar/ornek/env/ornek.env"
+PublishPort=127.0.0.1:62100:8080/tcp
+Volume=/var/lib/master-stack/uygulamalar/ornek/ornek-db:/database:rw,U
+Volume=/var/lib/master-stack/uygulamalar/ornek/ornek-config:/config:rw,U
+Volume=/run/master-stack/konteyner-baglama/ornek_ornek/0fe845d930afbeba:/srv:rw
+PodmanArgs=--network-alias=ornek
+PodmanArgs=--umask=0002
+
+[Service]
+Restart=always
+RestartSec=10s
+TimeoutStartSec=180
+TimeoutStopSec=75
+UMask=0077
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_network.py" --state "/etc/master-stack/state.env" --check
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_binds.py" --state "/etc/master-stack/state.env" bagla "ornek_ornek" "/srv/ornek"
+ExecStopPost=-/usr/bin/python3 "/usr/local/sbin/master_container_binds.py" --state "/etc/master-stack/state.env" birak "ornek_ornek"
+
+[Install]
+WantedBy=multi-user.target

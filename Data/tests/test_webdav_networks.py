@@ -171,9 +171,7 @@ class NetworkTests(unittest.TestCase):
         self.addCleanup(fqdn.stop)
         self.root = Path(self.tmp.name)
         self.config = {"schema": 4, "root": str(self.root), "items": [],
-                       "limits": dict(shares.DEFAULT_LIMITS),
-                       # DD-203: root-relative folders packages write into; hidden and unreachable in shares.
-                       "protected": ["1/incomplete", "2/incomplete", "3/incomplete"]}
+                       "limits": dict(shares.DEFAULT_LIMITS)}
         for index, networks in enumerate((["tailscale"], ["wan"], ["tailscale", "wan"]), 1):
             folder = self.root / str(index)
             folder.mkdir()
@@ -385,7 +383,7 @@ class NetworkTests(unittest.TestCase):
         policy["permission"] = "ro"
         for method in dav.WRITE_METHODS:
             self.assertEqual(self.request(method=method, body=b"denied")[0], 403)
-        for leaf in ("../1/file.txt", "%2e%2e/1/file.txt", "a%2fb", ".secret", "incomplete/x"):
+        for leaf in ("../1/file.txt", "%2e%2e/1/file.txt", "a%2fb", ".secret"):
             self.assertIn(self.request(leaf=leaf)[0], (400, 403))
         os.symlink(self.root / "1/file.txt", self.root / "2/link")
         os.link(self.root / "1/file.txt", self.root / "2/hard")

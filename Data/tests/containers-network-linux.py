@@ -7,19 +7,25 @@ This exercises our actual nft guard with Netavark-shaped DNAT/SNAT and permissiv
 foreign filter chains, including what a container may open itself (DD-224): the
 internet yes; tailnet, WireGuard, private, link-local and IPv6 destinations no.
 DD-229: the container opens nothing on the host itself, only DNS on its bridge gateway.
+DD-271 (phases 3 and 4): the guard's input is an application record with its access rows. The
+address row is published on 127.0.0.1; an open raw row on the Tailscale or the WAN address passes
+only as its own DNAT, from its own interface (TCP and UDP); a closed raw row, another interface,
+another address or port, a direct packet to the bridge and an address the host no longer has find
+no permit; a publication the guard does not understand keeps the previous table.
 Real Podman/Quadlet lifecycle is a separate live check.
 """
 import importlib.util
 import json
 import os
 from pathlib import Path
-import select
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 
 DATA = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(DATA / "panel"))
 spec = importlib.util.spec_from_file_location("container_network", DATA / "panel/master_container_network.py")
 net = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(net)
@@ -27,12 +33,6 @@ spec.loader.exec_module(net)
 
 def cmd(*args, **kw):
     return subprocess.run(args, check=True, capture_output=True, text=True, timeout=15, **kw).stdout.strip()
-
-
-def line(process, timeout=5):
-    if not select.select([process.stdout], [], [], timeout)[0]:
-        raise AssertionError("fixture session output timed out")
-    return process.stdout.readline().strip()
 
 
 SERVER = r'''
@@ -43,11 +43,11 @@ def client(c):
             data=c.recv(1024)
             if not data: return
             c.sendall(data)
-def serve(kind):
+def serve(kind, port):
     s=socket.socket(socket.AF_INET6,kind)
     s.setsockopt(socket.IPPROTO_IPV6,socket.IPV6_V6ONLY,0)
     s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-    s.bind(('::',8080))
+    s.bind(('::',port))
     if kind == socket.SOCK_STREAM:
         s.listen()
         while True:
@@ -55,7 +55,9 @@ def serve(kind):
     else:
         while True:
             d,a=s.recvfrom(1024);s.sendto(d,a)
-for k in (socket.SOCK_STREAM,socket.SOCK_DGRAM): threading.Thread(target=serve,args=(k,),daemon=True).start()
+for k in (socket.SOCK_STREAM,socket.SOCK_DGRAM):
+    for p in (8080, 8081, 8082):
+        threading.Thread(target=serve,args=(k,p),daemon=True).start()
 time.sleep(300)
 '''
 # DD-229: listeners on the host itself (any address), plus a stand-in for aardvark-dns on port 53.
@@ -138,16 +140,18 @@ def main():
         probes += 1
     try:
         with tempfile.TemporaryDirectory(prefix="container-network-") as root:
-            env = dict(KONTEYNER_STATE_DIR=root, RUNTIME_DIR=root, KONTEYNER_NETWORK="konsol",
+            env = dict(KONTEYNER_STATE_DIR=root, RUNTIME_DIR=root, UYGULAMA_STATE_DIR=root + "/uygulamalar",
                        KONTEYNER_BRIDGE_PREFIX="ksl", KONTEYNER_NFT_TABLE="master_containers", TAILSCALE_IF="tailscale0",
+                       TAILSCALE_IPV4="100.64.0.1", WAN_IPV4="192.0.2.1",
                        VPN_BLOCK_DEST4=net.env_read(DATA / "config/defaults.env")["VPN_BLOCK_DEST4"])
+            import master_applications
+            bridge = master_applications.interface(env, "probe")
             wan = peer("eth0", "192.0.2", "2001:db8:1")
             tail = peer("tailscale0", "100.64.0", "fd7a:115c:a1e0:1")
             wg = peer("wg0", "10.8.0", "fd00:3")
             other = peer("eth1", "198.51.100", "2001:db8:4")
             lan = peer("eth2", "192.168.77", "2001:db8:77")
             meta = peer("eth3", "169.254.169", "2001:db8:169")
-            bridge = net.bridge_name(env)
             cmd("ip", "link", "add", bridge, "type", "bridge")
             cmd("ip", "link", "set", bridge, "up")
             ctr = peer("ceth", "10.250.0", "fd00:250", bridge)
@@ -155,32 +159,48 @@ def main():
             server = subprocess.Popen([*ctr, "python3", "-c", SERVER], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             children.append(server)
             deadline = time.monotonic() + 5
-            while True:
-                try:
-                    with socket.create_connection(("10.250.0.2", 8080), timeout=.1):
-                        break
-                except OSError:
-                    if time.monotonic() > deadline:
-                        raise AssertionError("fixture echo server not ready")
-                    time.sleep(.05)
-            rows = []
-            for scope, port in (("local", 18080), ("tailscale", 18081), ("public", 18082)):
-                for protocol in ("tcp", "udp"):
-                    rows.append(dict(scope=scope, host_port=port, container_port=8080, protocol=protocol, public_ack=scope == "public"))
-            definition = dict(name="probe", network="bridge", ports=rows)
-            directory = Path(root) / "definitions"
-            directory.mkdir()
-            path = directory / "probe.json"
-            path.write_text(json.dumps(definition))
+            for port in (8080, 8081, 8082):
+                while True:
+                    try:
+                        with socket.create_connection(("10.250.0.2", port), timeout=.1):
+                            break
+                    except OSError:
+                        if time.monotonic() > deadline:
+                            raise AssertionError("fixture echo server not ready: %d" % port)
+                        time.sleep(.05)
+            # The application record the guard reads: an address on the loopback pool (8080/tcp), raw rows open to
+            # Tailscale (8081, TCP and UDP, host port 18081) and to the internet (8082, host port 18082), and a
+            # closed raw row (8080/udp) that a foreign NAT rule points at anyway.
+            directory = Path(env["UYGULAMA_STATE_DIR"]) / "probe"
+            directory.mkdir(parents=True, mode=0o700)
+            Path(env["UYGULAMA_STATE_DIR"]).chmod(0o700)
+            path, rows_path = directory / "yerler.json", directory / "erisim.json"
+            path.write_text(json.dumps({"revision": "a" * 32, "stopped": False, "ports": {"web:8080/tcp": 18080},
+                                        "secrets": {}, "images": {}}))
+            path.chmod(0o600)
+            rows = {"web:8080/tcp": {"tur": "adres", "ad": "probe", "tailscale_portu": None, "internet": ""},
+                    "web:8080/udp": {"tur": "ham", "kapsam": "kapali", "port": 18084}}
+            for protocol in ("tcp", "udp"):
+                rows["web:8081/%s" % protocol] = {"tur": "ham", "kapsam": "tailscale", "port": 18081}
+                rows["web:8082/%s" % protocol] = {"tur": "ham", "kapsam": "internet", "port": 18082}
+
+            def write_rows(value):
+                rows_path.write_text(json.dumps({"satirlar": value}))
+                rows_path.chmod(0o600)
+            write_rows(rows)
             # Prefix guards must win over both earlier and later foreign ACCEPT chains.
             nat = ["table inet fixture {",
                    "chain early { type filter hook forward priority -20; policy accept; accept; }",
                    "chain late { type filter hook forward priority 0; policy accept; accept; }",
                    "chain pre { type nat hook prerouting priority -100; policy accept;"]
             for protocol in ("tcp", "udp"):
-                for address, port in (("127.0.0.1", 18080), ("100.64.0.1", 18081), ("192.0.2.1", 18082), ("203.0.113.88", 18082)):
-                    nat.append(f"ip daddr {address} {protocol} dport {port} dnat ip to 10.250.0.2:8080;")
-                nat.append(f"ip6 daddr 2001:db8:1::1 {protocol} dport 18082 dnat ip6 to [fd00:250::2]:8080;")
+                # Podman's DNAT for each publication; plus foreign rules the guard never permits: a closed row's
+                # port, the same address with another host port, transit traffic and IPv6.
+                for address, port, target in (("127.0.0.1", 18080, 8080), ("100.64.0.1", 18081, 8081), ("192.0.2.1", 18082, 8082),
+                                              ("100.64.0.1", 18084, 8080), ("100.64.0.1", 18085, 8081),
+                                              ("192.0.2.1", 18081, 8081), ("203.0.113.88", 18082, 8082)):
+                    nat.append(f"ip daddr {address} {protocol} dport {port} dnat ip to 10.250.0.2:{target};")
+                nat.append(f"ip6 daddr 2001:db8:1::1 {protocol} dport 18082 dnat ip6 to [fd00:250::2]:8082;")
             nat += ["}", "chain out { type nat hook output priority -100; policy accept;"]
             for protocol in ("tcp", "udp"):
                 nat.append(f"ip daddr 127.0.0.1 {protocol} dport 18080 dnat ip to 10.250.0.2:8080;")
@@ -231,33 +251,61 @@ def main():
                 # Other networks still reach the host's services: the input guard names only container bridges.
                 probe(tail, "100.64.0.1", 9090, protocol, True)
             for protocol in ("tcp", "udp"):
+                # The loopback publication answers on the host (OUTPUT DNAT, no permit); a raw row answers only as
+                # its own DNAT from its own interface.
                 probe([], "127.0.0.1", 18080, protocol, True)
                 probe(tail, "100.64.0.1", 18081, protocol, True)
                 probe(wan, "192.0.2.1", 18082, protocol, True)
+                for prefix in (wan, wg, other):
+                    probe(prefix, "100.64.0.1", 18081, protocol, False)
+                for prefix in (tail, wg, other):
+                    probe(prefix, "192.0.2.1", 18082, protocol, False)
                 for prefix in (wan, tail, wg, other):
-                    probe(prefix, "10.250.0.2", 8080, protocol, False)
-                    probe(prefix, "fd00:250::2", 8080, protocol, False)
+                    for port in (8080, 8081, 8082):
+                        probe(prefix, "10.250.0.2", port, protocol, False)
+                        probe(prefix, "fd00:250::2", port, protocol, False)
                     probe(prefix, "127.0.0.1", 18080, protocol, False)
-                    if prefix != tail:
-                        probe(prefix, "100.64.0.1", 18081, protocol, False)
-                    if prefix != wan:
-                        probe(prefix, "192.0.2.1", 18082, protocol, False)
+                # A closed row's port, another host port to the same container port, the WAN address on the
+                # Tailscale row's port: no permit, whatever a foreign NAT rule says.
+                probe(tail, "100.64.0.1", 18084, protocol, False)
+                probe(tail, "100.64.0.1", 18085, protocol, False)
+                probe(wan, "192.0.2.1", 18081, protocol, False)
                 probe(wan, "2001:db8:1::1", 18082, protocol, False)
-                # Exit-node/transit packets with the same port never count as a local publication.
+                # Exit-node/transit packets with the same port never count as a publication.
                 probe(tail, "203.0.113.88", 18082, protocol, False)
                 probe(wg, "203.0.113.88", 18082, protocol, False)
-            # Existing inbound TCP connections must stop after changing public -> local.
-            session = subprocess.Popen([*wan, "python3", "-u", "-c",
-                "import socket,sys;s=socket.create_connection(('192.0.2.1',18082));s.settimeout(.7);s.sendall(b'before');print(s.recv(32).decode(),flush=True);sys.stdin.readline();s.sendall(b'after');\ntry: print(s.recv(32).decode(),flush=True)\nexcept OSError: print('blocked',flush=True)"],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            children.append(session)
-            assert line(session) == "before"
-            definition["ports"] = [p for p in rows if p["scope"] != "public"]
-            path.write_text(json.dumps(definition))
+            # Closing the rows closes the doors at the next apply.
+            write_rows({k: (dict(v, kapsam="kapali") if v["tur"] == "ham" else v) for k, v in rows.items()})
             net.apply(env)
-            session.stdin.write("continue\n"); session.stdin.flush()
-            assert line(session) == "blocked", "revoked established inbound session still allowed"
-            session.wait(timeout=3)
+            assert net.check(env)
+            for protocol in ("tcp", "udp"):
+                probe(tail, "100.64.0.1", 18081, protocol, False)
+                probe(wan, "192.0.2.1", 18082, protocol, False)
+            # An address the host no longer has gets no permit; the rest of the guard stays (DD-217's lesson).
+            write_rows(rows)
+            stale = dict(env, TAILSCALE_IPV4="100.64.0.9")
+            net.apply(stale)
+            assert net.check(stale)
+            for protocol in ("tcp", "udp"):
+                probe(tail, "100.64.0.1", 18081, protocol, False)
+                probe(wan, "192.0.2.1", 18082, protocol, True)
+            net.apply(env)
+            # A publication the guard does not understand stops the apply; the previous table stays.
+            before = cmd("nft", "-j", "list", "table", "inet", env["KONTEYNER_NFT_TABLE"])
+            try:
+                net.apply(dict(env, WAN_IPV4="0.0.0.0"))
+            except net.NetworkError:
+                pass
+            else:
+                raise AssertionError("the guard took a publication on 0.0.0.0")
+            assert before == cmd("nft", "-j", "list", "table", "inet", env["KONTEYNER_NFT_TABLE"]), "the table changed"
+            probe(tail, "100.64.0.1", 18081, "tcp", True)
+            # Removing the record removes the bridge's own rules at the next apply.
+            path.unlink()
+            rows_path.unlink()
+            directory.rmdir()
+            net.apply(env)
+            assert bridge not in cmd("nft", "-j", "list", "table", "inet", env["KONTEYNER_NFT_TABLE"])
             assert outsiders == cmd("nft", "-j", "list", "table", "inet", "fixture"), "foreign table changed"
             # Tampering that keeps the table present must fail health verification.
             cmd("nft", "add", "rule", "inet", env["KONTEYNER_NFT_TABLE"], "forward", "accept")
@@ -276,7 +324,7 @@ def main():
                 pass
             else:
                 raise AssertionError("health accepted a changed input chain")
-            print(f"PASS: {probes} TCP/UDP IPv4/IPv6 packet probes (publications, container egress and the closed host side), scope revocation, foreign chains preserved, rule-integrity check")
+            print(f"PASS: {probes} TCP/UDP IPv4/IPv6 packet probes (the loopback publication, raw Tailscale and WAN publications, container egress and the closed host side), closed and stale rows, a refused publication, record removal, foreign chains preserved, rule-integrity check")
     finally:
         for child in reversed(children):
             if child.poll() is None:

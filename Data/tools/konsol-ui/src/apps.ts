@@ -1,133 +1,81 @@
-// How an application (GET /api/konsol/uygulamalar, DD-261) is shown everywhere: its state, how it is
-// reached, whether it needs attention, where "Aç" leads, its resources and version, its icon. One place,
-// so Genel Bakış, Uygulamalar, the application page and the palette say the same thing.
-import type { IconName } from "./components/icons";
+// How an application (GET /api/konsol/uygulamalar, DD-271) is shown everywhere: its state, whether it needs
+// attention, its services, resources, live rate and version, where its file came from, how each service starts,
+// how it is reached (from Erişim's rows), its first address and its tile colour. One place, so Genel Bakış,
+// Uygulamalar, the application page and the palette say the same thing. Erişim's cell words live here too
+// (CELL_TEXT, CELL_TONE).
 import type { Tone } from "./components/ui/types";
-import type { ErisimDurumu, Uygulama, UygulamaHucresi } from "./api/sema";
-import { UNKNOWN, bytes, percent } from "./format";
-import { filesRoute } from "./sections";
+import type { ErisimDurumu, Hizmet, KaynakTuru, Uygulama, UygulamaServisAyrintisi } from "./api/sema";
+import { UNKNOWN, bytes, percent, rate } from "./format";
 
 export type AppState = Uygulama["durum"];
 export type AppAction = Uygulama["eylemler"][number];
 
-const STATES: Record<Exclude<AppState, "islemde">, { text: string; tone: Tone }> = {
+const STATES: Record<AppState, { text: string; tone: Tone }> = {
   calisiyor: { text: "Çalışıyor", tone: "ok" },
   durduruldu: { text: "Durdurulmuş", tone: "neutral" },
+  kismen: { text: "Kısmen çalışıyor", tone: "warning" },
   hata: { text: "Sorun var", tone: "danger" },
-  bilinmiyor: { text: UNKNOWN, tone: "neutral" },
+  islemde: { text: "İşlemde…", tone: "accent" },
 };
 
-// An operation's verb while its own progress line is empty (engine verbs and the action names).
-const DOING: Record<string, string> = {
-  kur: "Kuruluyor…",
-  baslat: "Başlatılıyor…",
-  durdur: "Durduruluyor…",
-  "yeniden-baslat": "Yeniden başlatılıyor…",
-  guncelle: "Güncelleniyor…",
-  kaldir: "Kaldırılıyor…",
-};
-
-/** The state pill: "Çalışıyor", "Durdurulmuş", the running operation's text, "Sorun var" or "—". */
-export function appState(app: Pick<Uygulama, "durum" | "islem">): { text: string; tone: Tone } {
-  if (app.durum === "islemde") {
-    const op = app.islem;
-    return { text: op?.metin || (op ? DOING[op.eylem] : "") || "İşlemde…", tone: "accent" };
-  }
+/** The state pill of an application or of one of its services. */
+export function appState(app: Pick<Uygulama, "durum">): { text: string; tone: Tone } {
   return STATES[app.durum] ?? { text: UNKNOWN, tone: "neutral" };
 }
 
-/** Dikkat: a failed state, a warning on how it is reached, or a newer image waiting for the operator. */
+/** Dikkat: a failed or partly running application, a warning in its definition, or a newer image waiting for
+    the operator. */
 export function needsAttention(app: Uygulama): boolean {
-  return app.durum === "hata" || Boolean(app.tailscale.uyari) || Boolean(app.internet.uyari) || app.guncelleme === "yeni";
+  return app.durum === "hata" || app.durum === "kismen" || app.uyari > 0 || app.guncelleme === "yeni";
 }
 
 // "bilinmiyor": the image can move but Konsol has not checked it yet (the backend starts that check and it
-// becomes guncel/yeni within about a minute); like "sabit" it shows nothing and is never an error.
+// becomes "guncel" or "yeni" within about a minute); like "sabit" it shows nothing and is never an error.
 const UPDATE_TEXTS: Record<Uygulama["guncelleme"], string> = {
   guncel: "Güncel",
-  yeni: "Yeni sürüm",
+  yeni: "Yeni imaj",
   denetlenemedi: "Denetlenemedi",
   bilinmiyor: UNKNOWN,
   sabit: UNKNOWN,
 };
 
-/** The version column: "Güncel", "Yeni sürüm", "Denetlenemedi", or "—" (not checked yet, or a fixed image). */
+/** The update column: "Güncel", "Yeni imaj", "Denetlenemedi", or "—" (not checked yet, or a fixed image). */
 export const updateText = (state: Uygulama["guncelleme"]): string => UPDATE_TEXTS[state] ?? UNKNOWN;
 
-/** Whether there is a version state worth a line of its own. */
-export const hasUpdateState = (state: Uygulama["guncelleme"]): boolean => state === "guncel" || state === "yeni" || state === "denetlenemedi";
+export const FORMAT_TEXT: Record<Uygulama["bicim"], string> = { compose: "Compose", kubernetes: "Kubernetes" };
 
-export interface AccessChip {
-  scope: "tailscale" | "internet";
-  text: string;
-  tone: Tone;
-  /** The cell's note, read out after the chip's text. */
-  detail: string;
+/** Where the application's file came from (K2), in a line ("Compose · adresten · 2 servis"). */
+export const SOURCE_SHORT: Record<KaynakTuru, string> = {
+  dosya: "dosyadan",
+  adres: "adresten",
+  imaj: "imajdan",
+  konteyner: "konteynerden",
+};
+
+/** Where the application's file came from (K2), as a fact. */
+export const SOURCE_TEXT: Record<KaynakTuru, string> = {
+  dosya: "Dosya",
+  adres: "Adres",
+  imaj: "İmaj adından taslak",
+  konteyner: "Var olan konteynerden taslak",
+};
+
+/** How a service starts (A4). */
+export function startText(mode: UygulamaServisAyrintisi["baslangic"], user: string | null): string {
+  return mode === "direct" ? `Doğrudan${user ? ` ${user}` : ""} · bütün yetkiler kapalı` : "Root olarak · kendi kullanıcısına geçebilir";
 }
 
-const SCOPES = [
-  ["tailscale", "Tailscale"],
-  ["internet", "İnternet"],
-] as const;
+export const servicesText = (n: number): string => `${n} servis`;
 
-/** One chip per cell that applies: open, partly open, closed or failing; a warning ("Şifresiz HTTP") wins. */
-export function accessChips(app: Pick<Uygulama, "tailscale" | "internet">): AccessChip[] {
-  const out: AccessChip[] = [];
-  for (const [scope, label] of SCOPES) {
-    const c: UygulamaHucresi = app[scope];
-    if (c.uyari) out.push({ scope, text: `${label} · ${c.uyari}`, tone: "warning", detail: c.not });
-    else if (c.durum === "acik") out.push({ scope, text: label, tone: "ok", detail: c.not });
-    else if (c.durum === "kismen") out.push({ scope, text: `${label} · kısmen`, tone: "accent", detail: c.not });
-    else if (c.durum === "hata") out.push({ scope, text: `${label} · sorun`, tone: "danger", detail: c.not });
-    else if (c.durum === "kapali") out.push({ scope, text: `${label} kapalı`, tone: "neutral", detail: c.not });
-  }
-  return out;
-}
+/** The application's line under its name: "Compose · dosyadan · 2 servis". */
+export const appLine = (app: Pick<Uygulama, "bicim" | "servisler" | "koken">): string =>
+  `${FORMAT_TEXT[app.bicim] ?? app.bicim} · ${SOURCE_SHORT[app.koken] ?? app.koken} · ${servicesText(app.servisler.length)}`;
+
+/** "1 uyarı". */
+export const warningText = (n: number): string => `${n} uyarı`;
 
 export const CELL_TEXT: Record<ErisimDurumu, string> = { acik: "Açık", kismen: "Kısmen", kapali: "Kapalı", yok: UNKNOWN, hata: "Sorun var" };
 export const CELL_TONE: Record<ErisimDurumu, Tone> = { acik: "ok", kismen: "accent", kapali: "neutral", yok: "neutral", hata: "danger" };
-
-function host(url: string | null): string | null {
-  if (!url) return null;
-  try {
-    return new URL(url).host || null;
-  } catch {
-    return null;
-  }
-}
-
-/** The overview card's line: the address and how far it reaches ("torrent.ev · internette kısmen açık"). */
-export function accessLine(app: Uygulama): string {
-  const parts: string[] = [];
-  const name = host(app.adres.tailscale) ?? host(app.adres.internet) ?? app.tailscale.adresler.find((a) => /^[a-z0-9][a-z0-9.-]*\.[a-z0-9-]+$/.test(a));
-  if (name) parts.push(name);
-  const net = app.internet;
-  if (net.durum === "acik") parts.push(net.uyari ? `internette açık · ${net.uyari}` : "internette açık");
-  else if (net.durum === "kismen") parts.push("internette kısmen açık");
-  else if (net.durum === "hata") parts.push("internet yayınında sorun");
-  else if (app.tailscale.durum === "acik") parts.push("yalnız Tailscale");
-  return parts.join(" · ") || app.aciklama || UNKNOWN;
-}
-
-const WEB = /^https?:\/\/[^\s]+$/i;
-
-/** Where "Aç" goes: the application's own address in a new tab (the internet name when this page itself
-    came over HTTPS, else the tailnet name; the other one when only that exists), or for a built-in its
-    section here (builtinHome). None when the application has neither. */
-export function openTarget(app: Pick<Uygulama, "adres" | "tur" | "id">, https = location.protocol === "https:"): { href: string; external: boolean } | null {
-  const [first, second] = https ? [app.adres.internet, app.adres.tailscale] : [app.adres.tailscale, app.adres.internet];
-  const url = [first, second].find((u): u is string => typeof u === "string" && WEB.test(u));
-  if (url) return { href: url, external: true };
-  const home = builtinHome(app);
-  return home ? { href: "#" + home, external: false } : null;
-}
-
-/** A built-in's place in this interface: Files is Dosyalar, WebDAV its Paylaşımlar tab. */
-const BUILTIN_HOMES: Record<string, string> = { "yerlesik:dosya": filesRoute(), "yerlesik:paylasim": filesRoute("paylasimlar") };
-
-export function builtinHome(app: Pick<Uygulama, "tur" | "id">): string | null {
-  return app.tur === "yerlesik" ? BUILTIN_HOMES[app.id] ?? null : null;
-}
 
 /** "%1 · 84 MB"; "—" when neither is known. */
 export function resourceText(app: Pick<Uygulama, "kaynak">): string {
@@ -135,38 +83,45 @@ export function resourceText(app: Pick<Uygulama, "kaynak">): string {
   return parts.length ? parts.join(" · ") : UNKNOWN;
 }
 
-const ICONS: Record<string, IconName> = { download: "download", shield: "shield", folder: "folder", share: "share", box: "box", globe: "globe" };
-
-export function appIcon(app: Pick<Uygulama, "id" | "simge" | "tur">): IconName {
-  if (app.simge && ICONS[app.simge]) return ICONS[app.simge] as IconName;
-  if (app.id === "yerlesik:dosya") return "folder";
-  if (app.id === "yerlesik:paylasim") return "share";
-  return "box";
+/** The live rate of the application's own bridge: "↓ 1,2 MB/s · ↑ 38 KB/s"; "—" while it has none. */
+export function rateText(app: Pick<Uygulama, "ag">): string {
+  return app.ag ? `↓ ${rate(app.ag.indirme)} · ↑ ${rate(app.ag.yukleme)}` : UNKNOWN;
 }
 
-// The prototype's colours for the known icons; any other application gets one by its id.
-const TILES: Partial<Record<IconName, number>> = { folder: 1, download: 2, shield: 3, share: 4 };
+const ADDRESS_RE = /^https?:\/\/[^/\s]+/;
 
-/** One of four tile colours, always the same for the same application. */
-export function appTile(app: Pick<Uygulama, "id" | "simge" | "tur">): number {
-  const known = TILES[appIcon(app)];
-  if (known) return known;
+/** The application's first address when it can be opened now (it runs, fully or in part); "" otherwise. */
+export function openAddress(app: Pick<Uygulama, "adres" | "durum">): string {
+  const address = typeof app.adres === "string" && ADDRESS_RE.test(app.adres) ? app.adres : "";
+  return address && (app.durum === "calisiyor" || app.durum === "kismen") ? address : "";
+}
+
+/** How an application is reached, from Erişim's rows: a Tailscale name, an internet name, each open raw port;
+    "Kapalı" when nothing is open. */
+export function accessChips(rows: readonly Hizmet[], app: string): { text: string; tone: Tone }[] {
+  const mine = rows.filter((h) => h.tur === "uygulama" && h.uygulama === app && h.satir);
+  const out: { text: string; tone: Tone }[] = [];
+  if (mine.some((h) => h.satir?.tur === "adres")) out.push({ text: "Tailscale", tone: "ok" });
+  const internet = mine.filter((h) => h.satir?.tur === "adres" && h.satir.internet);
+  if (internet.length) out.push({ text: "İnternet", tone: internet.some((h) => h.internet.durum === "hata" || h.internet.uyari) ? "warning" : "accent" });
+  for (const h of mine) {
+    if (h.satir?.tur === "ham" && h.satir.kapsam !== "kapali") out.push({ text: `Ham ${h.satir.port} · ${h.satir.kapsam === "internet" ? "internet" : "Tailscale"}`, tone: "warning" });
+  }
+  if (!out.length) out.push({ text: "Kapalı", tone: "neutral" });
+  return out;
+}
+
+/** One of four tile colours, always the same for the same application (by its name). */
+export function appTile(app: Pick<Uygulama, "ad">): number {
   let sum = 0;
-  for (const ch of app.id) sum = (sum + (ch.codePointAt(0) ?? 0)) % 9973;
+  for (const ch of app.ad) sum = (sum + (ch.codePointAt(0) ?? 0)) % 9973;
   return (sum % 4) + 1;
 }
 
-/** An image reference with its digest shortened ("…/qbittorrent@sha256:0123456789ab…"). */
+/** An image reference with its digest shortened ("…/web@sha256:0123456789ab…"). */
 export function shortImage(image: string): string {
   const at = image.indexOf("@sha256:");
   if (at < 0) return image;
   const digest = image.slice(at + 8);
   return digest.length > 12 ? `${image.slice(0, at)}@sha256:${digest.slice(0, 12)}…` : image;
-}
-
-export const KIND_TEXT: Record<Uygulama["tur"], string> = { paket: "App Store paketi", konteyner: "Konteyner", yerlesik: "Yerleşik" };
-
-/** Podman's images, volumes and networks: Gelişmiş's Podman view (phase 4a), one of its lists. */
-export function podmanRoute(kaynak: "imajlar" | "birimler" | "aglar" | "" = ""): string {
-  return "/gelismis?sekme=podman" + (kaynak ? "&kaynak=" + kaynak : "");
 }

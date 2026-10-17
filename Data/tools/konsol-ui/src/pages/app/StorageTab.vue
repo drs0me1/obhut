@@ -1,66 +1,85 @@
-<!-- An application's Depolama: the folders bound into its container and its volumes, each read-only or
-     read-write (podman inspect, through GET /api/konsol/uygulamalar/ayrinti). The container's detail marks
-     what the editor never changes (`protected_mounts`: an App Store package's data, with its reason) and an
-     App Store package's save folder, which is its own setting (Ayarlar). -->
+<!-- An application's Depolama (rebuild phase 5; A5): every mount of every service with its target in the container,
+     what it is (a folder of the application, a server folder under the Files account's area, or a tmpfs), its path
+     on this server, whether it is read-only and, for an application folder, its size (Dosyalar → Depolama's
+     measurement), each folder with the way to it in Dosyalar; and the application's own data folder. Read-only: a
+     mount changes in Tanım. -->
 <script setup lang="ts">
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
-import { Icon } from "../../components/icons";
 import Card from "../../components/ui/Card.vue";
 import EmptyState from "../../components/ui/EmptyState.vue";
-import { podmanRoute } from "../../apps";
-import type { ContainerDetail } from "../../api/podman";
-import type { UygulamaAyrinti } from "../../api/sema";
+import { relativePath } from "./answers";
+import { filesRoute } from "../../sections";
+import { live } from "../../live";
+import { UNKNOWN, bytes } from "../../format";
+import type { UygulamaAyrinti, UygulamaBaglamasi } from "../../api/sema";
 
-const props = withDefaults(defineProps<{ detail: UygulamaAyrinti | null; box?: ContainerDetail | null }>(), { box: null });
+const props = defineProps<{ detail: UygulamaAyrinti }>();
 
-type Mount = NonNullable<UygulamaAyrinti["konteyner"]>["baglamalar"][number];
-const mounts = computed<Mount[]>(() => props.detail?.konteyner?.baglamalar ?? []);
-const folders = computed(() => mounts.value.filter((m) => m.tur === "bind"));
-const volumes = computed(() => mounts.value.filter((m) => m.tur !== "bind"));
-const access = (m: Mount) => (m.yazilabilir ? "Okuma-yazma" : "Salt okunur");
-const guarded = computed(() => new Map((props.box?.protected ?? []).map((p) => [p.destination, p.reason])));
-const save = computed(() => props.box?.adapter?.save ?? "");
-const flag = (m: Mount) => {
-  const reason = guarded.value.get(m.hedef);
-  if (reason !== undefined) return { kind: "korunur", text: reason ? `korunur · ${reason.replace(/\.$/, "")}` : "uygulama verisi · korunur" };
-  if (save.value && (m.hedef === save.value || m.kaynak === save.value)) return { kind: "kayit", text: "kayıt klasörü · uygulama ayarı" };
-  return null;
-};
+const KIND_TEXT: Record<UygulamaBaglamasi["tur"], string> = { app: "Uygulamanın klasörü", srv: "Sunucu klasörü · Dosyalar hesabı", tmpfs: "Geçici (bellekte)" };
+const root = computed(() => live.kaynaklar?.root ?? "");
+const systemPath = (path: string) => filesRoute("sistem", { yol: path.replace(/^\/+/, "") });
+const mounts = computed(() =>
+  props.detail.servisler.flatMap((s) =>
+    s.baglamalar.map((m) => {
+      const rel = m.tur === "srv" ? relativePath(m.yol, root.value) : "";
+      const to = m.tur === "app" && m.yol ? systemPath(m.yol) : m.tur === "srv" && rel ? filesRoute("srv", { yol: rel }) : "";
+      return {
+        key: `${s.ad}:${m.hedef}`,
+        service: s.ad,
+        m,
+        access: m.tur === "tmpfs" ? UNKNOWN : m.salt_okunur ? "Salt okunur" : "Okuma-yazma",
+        size: m.tur === "app" && typeof m.boyut === "number" ? bytes(m.boyut) : UNKNOWN,
+        to,
+        link: m.tur === "app" ? "Sistem dosyaları'nda aç" : "Dosyalar'da aç",
+      };
+    }),
+  ),
+);
 </script>
 
 <template>
-  <div v-if="detail?.konteyner" class="tab-grid tab-grid-wide">
-    <Card title="Bağlı klasörler" data-testid="folders">
-      <ul v-if="folders.length" class="mount-list">
-        <li v-for="m in folders" :key="m.kaynak + '→' + m.hedef" class="mount" :data-hedef="m.hedef">
-          <span class="mono">{{ m.kaynak }}</span>
-          <span class="mount-meta">{{ access(m) }} · konteynerde <span class="mono">{{ m.hedef }}</span></span>
-          <span v-if="flag(m)" class="mount-flag" :data-isaret="flag(m)?.kind"><Icon name="lock" :size="14" />{{ flag(m)?.text }}</span>
-        </li>
-      </ul>
-      <p v-else class="meter-note">Bu konteynere bağlı sunucu klasörü yok.</p>
-      <p v-if="save" class="meter-note" data-testid="save-folder">
-        Kayıt klasörü <span class="mono">{{ save }}</span>; uygulamanın ayarıdır, <RouterLink :to="{ query: { sekme: 'ayarlar' } }">Ayarlar</RouterLink>'dan değişir.
-      </p>
-    </Card>
-    <Card title="Birimler" data-testid="volumes">
-      <ul v-if="volumes.length" class="mount-list">
-        <li v-for="m in volumes" :key="(m.ad || m.kaynak) + '→' + m.hedef" class="mount" :data-hedef="m.hedef">
-          <span class="mono">{{ m.ad || m.kaynak }}</span>
-          <span class="mount-meta">{{ access(m) }} · konteynerde <span class="mono">{{ m.hedef }}</span><template v-if="m.tur !== 'volume'"> · {{ m.tur }}</template></span>
-          <span v-if="flag(m)" class="mount-flag" :data-isaret="flag(m)?.kind"><Icon name="lock" :size="14" />{{ flag(m)?.text }}</span>
-        </li>
-      </ul>
-      <p v-else class="meter-note">Bu konteynerin adlı birimi yok.</p>
-      <p class="meter-note">Birimler konteyner kaldırılınca kalır; <RouterLink :to="podmanRoute('birimler')">Gelişmiş → Podman → Birimler</RouterLink>'den silinir.</p>
+  <div class="storage-tab">
+    <section class="card table-card" aria-labelledby="baglama-baslik" data-testid="mounts">
+      <h2 id="baglama-baslik" class="card-title">Bağlamalar</h2>
+      <div v-if="mounts.length" class="table-wrap">
+        <table class="data-table" data-testid="mount-table">
+          <thead>
+            <tr>
+              <th scope="col">Konteynerde</th>
+              <th scope="col">Sunucuda</th>
+              <th scope="col">İzin</th>
+              <th scope="col">Boyut</th>
+              <th scope="col"><span class="sr-only">Klasör</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="x in mounts" :key="x.key" :data-hedef="x.key">
+              <th scope="row" class="col-main">
+                <strong class="mono wrap">{{ x.m.hedef }}</strong>
+                <span class="cell-sub">{{ x.service }}</span>
+              </th>
+              <td data-label="Sunucuda">
+                <span class="cell-stack">
+                  <span v-if="x.m.yol" class="mono wrap">{{ x.m.yol }}</span>
+                  <span class="cell-note">{{ KIND_TEXT[x.m.tur] ?? x.m.tur }}</span>
+                </span>
+              </td>
+              <td data-label="İzin">{{ x.access }}</td>
+              <td data-label="Boyut" class="nowrap" data-testid="mount-size">{{ x.size }}</td>
+              <td class="col-act">
+                <RouterLink v-if="x.to" :to="x.to" class="btn btn-secondary btn-sm" :aria-label="`${x.m.hedef}: ${x.link}`">{{ x.link }}</RouterLink>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <EmptyState v-else title="Bu uygulamaya bağlı klasör yok" icon="folder" />
+    </section>
+    <Card title="Uygulamanın verileri" data-testid="data-folder">
+      <p class="mono wrap" data-testid="data-path">{{ detail.veri }}</p>
+      <p class="meter-note">Uygulamanın klasörleri burada durur. Kaldırırken verilerin saklanması sorulur (saklamak varsayılan); sunucu klasörlerine (/srv) hiçbir durumda dokunulmaz.</p>
+      <div><RouterLink :to="systemPath(detail.veri)" class="btn btn-secondary btn-sm">Sistem dosyaları'nda aç</RouterLink></div>
     </Card>
   </div>
-  <section v-else class="card" aria-label="Depolama" data-testid="storage-empty">
-    <EmptyState
-      title="Bu uygulama bir konteynerde çalışmıyor"
-      text="Konteynere bağlanan bir klasörü ya da birimi yok."
-      icon="folder"
-    />
-  </section>
 </template>

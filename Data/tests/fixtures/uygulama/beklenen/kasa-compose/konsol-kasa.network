@@ -1,0 +1,10 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: kasa uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması kasa: ağ
+
+[Network]
+NetworkName=ksl-kasa
+Driver=bridge
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=kasa
+PodmanArgs=--interface-name=ksl0d2e5318ec

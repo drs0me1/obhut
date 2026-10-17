@@ -1,91 +1,95 @@
-<!-- An application's Erişim: the four cells of its row in Erişim's read model (this server, Tailscale,
-     WireGuard, the internet) with their addresses and notes, the technical lines behind "Teknik ayrıntı"
-     (open state in the address, ?teknik=1), and the way to change it: the Yayınla flow over this page
-     (?yayinla=<id>). WireGuard itself is changed on Erişim's WireGuard tab. A container's network and
-     ports follow (PortsCard: its published ports by scope, or on the host network the sockets it listens on). -->
+<!-- An application's Erişim (rebuild phase 5; DD-275's rows): every container port of every service with its access
+     row, read-only. An address: its Tailscale name, its Tailscale port and its internet name, the container published
+     only on this server's loopback (Yalnız bu sunucu) at its pool port. A raw port: closed, Tailscale or internet,
+     with where it is reached. Each row links to its sheet in Erişim → Adresler, the row's one home. -->
 <script setup lang="ts">
 import { computed } from "vue";
-import { RouterLink, useRouter } from "vue-router";
-import { Icon, type IconName } from "../../components/icons";
+import { RouterLink } from "vue-router";
 import EmptyState from "../../components/ui/EmptyState.vue";
 import StatusPill from "../../components/ui/StatusPill.vue";
-import { CELL_TEXT, CELL_TONE } from "../../apps";
-import { candidateOfApp } from "../../access";
+import { SCOPE_TEXT } from "../../access";
+import { live } from "../../live";
 import { accessRoute } from "../../sections";
-import { updateQuery, useQueryFlag } from "../../query";
-import PortsCard from "../uygulama/PortsCard.vue";
-import type { ContainerDetail } from "../../api/podman";
-import type { ErisimHucresi, Hizmet, Uygulama } from "../../api/sema";
+import type { UygulamaAyrinti } from "../../api/sema";
 
-const props = withDefaults(defineProps<{ row: Hizmet | null; app: Pick<Uygulama, "id" | "ad">; box?: ContainerDetail | null }>(), { box: null });
-const router = useRouter();
+const props = defineProps<{ detail: UygulamaAyrinti }>();
 
-const technical = useQueryFlag("teknik");
-
-const CELLS: readonly { key: "yerel" | "tailscale" | "wireguard" | "internet"; title: string; icon: IconName }[] = [
-  { key: "yerel", title: "Bu sunucu", icon: "server" },
-  { key: "tailscale", title: "Tailscale", icon: "tailnet" },
-  { key: "wireguard", title: "WireGuard", icon: "shield" },
-  { key: "internet", title: "İnternet", icon: "globe" },
-];
-
-const cells = computed(() => {
-  const row = props.row;
-  if (!row) return [];
-  return CELLS.map((c) => ({ ...c, cell: row[c.key] as ErisimHucresi }));
-});
-
-const vpn = computed(() => props.app.id === "paket:wireguard");
-
-function onToggle(event: Event): void {
-  technical.value = (event.target as HTMLDetailsElement).open;
-}
-
-function publish(): void {
-  updateQuery(router, { yayinla: props.row ? props.row.id : candidateOfApp(props.app.id) });
-}
+const domain = computed(() => live.erisim?.alan || live.kaynaklar?.domain || "");
+const tailscale = computed(() => live.erisim?.ozet.tailscale.ipv4 || live.kaynaklar?.net?.tailscale || "");
+const wan = computed(() => live.erisim?.ozet.internet.ipv4 || live.kaynaklar?.net?.wan || "");
+const rows = computed(() =>
+  props.detail.servisler.flatMap((s) =>
+    s.portlar.map((p) => {
+      const a = p.erisim;
+      const port = `${s.ad} · ${p.port}/${p.protokol.toUpperCase()}`;
+      if (a.tur === "adres") {
+        return {
+          id: p.id, port, address: true as const,
+          local: p.yerel_port ? `127.0.0.1:${p.yerel_port} → ${p.port}` : "",
+          name: domain.value ? `${a.ad}.${domain.value}` : a.ad,
+          tsPort: a.tailscale_portu === null ? "" : tailscale.value ? `${tailscale.value}:${a.tailscale_portu}` : `TCP ${a.tailscale_portu}`,
+          internet: a.internet,
+        };
+      }
+      const host = a.kapsam === "internet" ? wan.value : a.kapsam === "tailscale" ? tailscale.value : "";
+      return {
+        id: p.id, port, address: false as const,
+        scope: a.kapsam === "tailscale" ? "Yalnız Tailscale" : SCOPE_TEXT[a.kapsam],
+        open: a.kapsam !== "kapali",
+        where: a.kapsam === "kapali" ? "" : host ? `${host}:${a.port}` : `${p.protokol.toUpperCase()} ${a.port}`,
+      };
+    }),
+  ),
+);
+const first = computed(() => rows.value[0]?.id ?? "");
 </script>
 
 <template>
-  <section v-if="row" class="card access-card" aria-label="Erişim" data-testid="access">
-    <ul class="access-rows">
-      <li v-for="c in cells" :key="c.key" class="access-row" :data-hucre="c.key">
-        <Icon :name="c.icon" :size="22" class="access-row-icon" />
-        <div class="access-row-text">
-          <strong>{{ c.title }}</strong>
-          <span v-if="c.cell.adresler.length" class="mono access-addresses">{{ c.cell.adresler.join(" · ") }}</span>
-          <span v-if="c.cell.not" class="access-note">{{ c.cell.not }}</span>
-          <span v-if="c.cell.uyari" class="warn-text">{{ c.cell.uyari }}</span>
-        </div>
-        <StatusPill :tone="c.cell.uyari ? 'warning' : CELL_TONE[c.cell.durum]">{{ CELL_TEXT[c.cell.durum] }}</StatusPill>
-      </li>
-    </ul>
-    <details v-if="row.ayrinti.length" class="technical" :open="technical" @toggle="onToggle">
-      <summary>Teknik ayrıntı</summary>
-      <dl class="facts mono">
-        <template v-for="(line, i) in row.ayrinti" :key="i">
-          <dt>{{ line.baslik }}</dt>
-          <dd>{{ line.deger }}</dd>
-        </template>
-      </dl>
-    </details>
-    <div class="access-foot">
-      <span class="meter-note">Tailscale adı, internet adı ve kimin erişeceği Yayınla ile değişir.</span>
-      <button type="button" class="btn btn-primary" data-testid="access-edit" @click="publish">Erişimi düzenle</button>
+  <section class="card table-card" aria-labelledby="erisim-baslik" data-testid="access">
+    <div class="card-head">
+      <h2 id="erisim-baslik" class="card-title">Bu uygulamanın adresleri</h2>
+      <RouterLink :to="accessRoute('adresler', first)" class="btn btn-secondary btn-sm" data-testid="access-edit">Erişim'de düzenle</RouterLink>
     </div>
+    <p class="meter-note">Burada yalnız görünür; adresler, Tailscale portu, internet adı ve ham portlar Erişim → Adresler'de değişir.</p>
+    <div v-if="rows.length" class="table-wrap">
+      <table class="data-table app-access-table" data-testid="access-table">
+        <thead>
+          <tr>
+            <th scope="col">Port</th>
+            <th scope="col">Tür</th>
+            <th scope="col">Tailscale adı</th>
+            <th scope="col">Tailscale portu</th>
+            <th scope="col">İnternet adı</th>
+            <th scope="col"><span class="sr-only">Erişim satırı</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in rows" :key="r.id" :data-satir="r.id">
+            <th scope="row" class="col-main">
+              <strong>{{ r.port }}</strong>
+              <span v-if="r.address && r.local" class="cell-sub mono">Yalnız bu sunucu · {{ r.local }}</span>
+            </th>
+            <td data-label="Tür">
+              <StatusPill :tone="r.address ? 'accent' : 'warning'">{{ r.address ? "Adres" : "Ham port" }}</StatusPill>
+            </td>
+            <template v-if="r.address">
+              <td data-label="Tailscale adı" class="mono">{{ r.name }}</td>
+              <td data-label="Tailscale portu" :class="{ mono: r.tsPort, muted: !r.tsPort }">{{ r.tsPort || "Kapalı" }}</td>
+              <td data-label="İnternet adı" :class="{ mono: r.internet, muted: !r.internet }">{{ r.internet || "Kapalı" }}</td>
+            </template>
+            <td v-else colspan="3" data-label="Erişim" data-testid="access-raw">
+              <span class="cell-stack">
+                <StatusPill :tone="r.open ? 'warning' : 'neutral'">{{ r.scope }}</StatusPill>
+                <span v-if="r.where" class="mono cell-note">{{ r.where }}</span>
+              </span>
+            </td>
+            <td class="col-act">
+              <RouterLink :to="accessRoute('adresler', r.id)" class="section-link" :aria-label="`${r.port}: Adresler'de aç`" data-testid="access-link">Adresler'de aç</RouterLink>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <EmptyState v-else title="Bu uygulamanın portu yok" text="Dosyasında port yok; yalnız kendi ağındaki servisler ona ulaşır." icon="globe" />
   </section>
-  <section v-else class="card" aria-label="Erişim" data-testid="access">
-    <EmptyState
-      v-if="vpn"
-      title="Bu uygulamanın yayınladığı bir adres yok"
-      text="WireGuard ağları ve cihazları Erişim'in WireGuard bölümünde."
-      icon="shield"
-    >
-      <RouterLink :to="accessRoute('wireguard')" class="btn btn-secondary">WireGuard ağları</RouterLink>
-    </EmptyState>
-    <EmptyState v-else title="Bu uygulamanın yayınladığı bir adres yok" text="Erişim'de bu uygulamaya ait bir satır görünmüyor." icon="globe">
-      <button type="button" class="btn btn-secondary" data-testid="access-publish" @click="publish">Yayınla</button>
-    </EmptyState>
-  </section>
-  <PortsCard v-if="box" :box="box" />
 </template>

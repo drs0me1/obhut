@@ -21,8 +21,8 @@ import {
   type Uygulamalar,
   type Uyari,
 } from "./api/sema";
-import { ApiError, getJson } from "./api/http";
-import { isApp } from "./api/konsol";
+import { getJson } from "./api/http";
+import { cleanApp, isApp } from "./api/konsol";
 import { openEvents } from "./api/olaylar";
 
 export type Connection = "baslangic" | "canli" | "yeniden" | "yoklama";
@@ -38,7 +38,7 @@ export const live = reactive({
   bekleyen: undefined as BekleyenDegisiklik | null | undefined,
   /** Date.now() when bekleyen.seconds was read; the banner counts down from there. */
   bekleyenAt: 0,
-  /** Applications (DD-261): packages, Konsol's containers and the built-ins in one list. */
+  /** Applications (DD-271): each from its record, with its live state. */
   uygulamalar: null as Uygulamalar | null,
   guncelleme: null as Guncelleme | null,
   /** Erişim's warnings; null while unknown. */
@@ -47,8 +47,6 @@ export const live = reactive({
   erisim: null as Erisim | null,
   /** Rises when the saved settings may have changed; pages that show settings read them again. */
   ayarSurumu: 0,
-  /** GET /api/konsol/erisim answered 404: an older backend without the read model. */
-  erisimYok: false,
   connection: "baslangic" as Connection,
 });
 
@@ -113,9 +111,8 @@ const apply: Record<Key, (data: unknown) => void> = {
     const value = data as unknown as Uygulamalar;
     live.uygulamalar = {
       ...value,
-      items: value.items.filter(isApp),
-      katalog: Array.isArray(value.katalog) ? value.katalog.filter((k) => isObject(k) && isText(k.id) && isText(k.ad)) : [],
-      altyapi: isObject(value.altyapi) ? value.altyapi : { podman: "", calisiyor: false, imaj: 0, kullanilmayan_imaj: 0, birim: 0, ag: 0 },
+      items: value.items.filter(isApp).map(cleanApp),
+      kaynaklar: Array.isArray(value.kaynaklar) ? value.kaynaklar.filter((k) => isObject(k) && isText(k.ad)) : [],
       hatalar: Array.isArray(value.hatalar) ? value.hatalar.filter(isText) : [],
     };
   },
@@ -127,7 +124,6 @@ const apply: Record<Key, (data: unknown) => void> = {
       const value = data as unknown as Erisim;
       const uyarilar = value.uyarilar.filter((u): u is Uyari => isObject(u) && isText(u.metin));
       live.uyarilar = uyarilar;
-      live.erisimYok = false;
       if (Array.isArray(value.hizmetler) && isObject(value.ozet)) {
         live.erisim = {
           ...value,
@@ -148,7 +144,6 @@ const inflight = new Set<Key>();
 const again = new Set<Key>();
 
 async function refresh(key: Key, changed = false): Promise<void> {
-  if (key === "erisim" && live.erisimYok) return;
   if (inflight.has(key)) {
     if (changed) again.add(key);
     return;
@@ -158,11 +153,8 @@ async function refresh(key: Key, changed = false): Promise<void> {
   try {
     const data = await getJson(PATHS[key]);
     if (generation[key] === before) apply[key](data);
-  } catch (err) {
-    if (key === "erisim" && err instanceof ApiError && err.status === 404) {
-      live.erisimYok = true;
-      live.uyarilar = null;
-    }
+  } catch {
+    // a failed read keeps the last known value
   } finally {
     inflight.delete(key);
     if (again.delete(key)) void refresh(key, true);
@@ -287,19 +279,8 @@ export const health = computed(() => {
   return { danger, warning };
 });
 
-/** Health problems plus Erişim's warnings (the top bar's chip); null while health is unknown. */
-export const problems = computed(() => {
-  const h = health.value;
-  if (!h) return null;
-  const warnings = live.uyarilar ?? [];
-  const bad = warnings.filter((u) => u.seviye === "bad").length;
-  const count = h.danger + h.warning + warnings.length;
-  const level: Level = h.danger + bad > 0 ? "danger" : count > 0 ? "warning" : "ok";
-  return { count, level };
-});
-
-/** The applications the operator manages: every item but Files, which has its own section (Dosyalar). */
-export const apps = computed(() => (live.uygulamalar ? live.uygulamalar.items.filter((a) => a.id !== "yerlesik:dosya") : null));
+/** The applications the operator manages; null while unknown. */
+export const apps = computed(() => live.uygulamalar?.items ?? null);
 
 export const runningJobs = computed(() => (live.islemler ?? []).filter((j) => j.durum === "calisiyor"));
 export const finishedJobs = computed(() => (live.islemler ?? []).filter((j) => j.durum !== "calisiyor"));

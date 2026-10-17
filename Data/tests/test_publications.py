@@ -1,4 +1,7 @@
-"""Publication transactions, rollback and private/public isolation (DD-191)."""
+"""The fixed rows' transactions (Konsol, WebDAV), rollback and private/public isolation (DD-191, DD-195).
+
+Decision 1 (rebuild phase 4): a row that opens or widens access waits for the confirmation from Tailscale; one
+that only closes commits at once. The applications' rows are test_access_rows'."""
 from pathlib import Path
 import json
 import subprocess
@@ -15,36 +18,22 @@ REAL_RUN = subprocess.run
 
 class PublicationTests(unittest.TestCase):
     command = fixtures.HttpsSettingsTests.command
+    confirm = fixtures.HttpsSettingsTests.confirm
+    commit = fixtures.HttpsSettingsTests.commit
 
     def setUp(self):
         fixtures.HttpsSettingsTests.setUp(self)
-        self.env["TORRENT_UI_PORT"] = "61006"
         self.env["FILES_PANEL_PORT"] = "61009"
         self.env["KONSOL_AUTH_DIR"] = str(self.root / "konsol")
         (self.root / "konsol").mkdir(mode=0o700)
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
         self.m = settings.Manager(self.state)
         self.s.env.update(self.env)
-        (self.root / "modules").write_text("paylasim\tcalisiyor\ntorrent\tcalisiyor\n")
-        for service, addresses in (("paylasim", "http://paylas.ayc, http://{$TAILSCALE_IPV4}:61010"),
-                                   ("torrent", "http://torrent.ayc")):
-            directory = self.root / "templates" / service
-            directory.mkdir()
-            source = "# fixture\n%s {\n\trespond 401\n}\n" % addresses
-            (directory / (service + ".caddy")).write_text(source)
-            (self.root / "sites" / (service + ".caddy")).write_text(source)
-        # DD-199: the qBittorrent row comes from the package's rendered manifest and check module.
-        repo = Path(__file__).resolve().parents[1] / "magaza/torrent"
-        (self.root / "templates/torrent/paket.env").write_text(
-            (repo / "paket.env").read_text().replace("__TORRENT_UI_PORT__", self.env["TORRENT_UI_PORT"]))
-        (self.root / "templates/torrent/yayin.py").write_bytes((repo / "yayin.py").read_bytes())
-        # DD-203: the check module reads the interface port and profile from the package's own env file.
-        (self.root / "templates/torrent/torrent.env").write_text(
-            "TORRENT_UI_PORT=%s\nTORRENT_PROFILE_DIR=%s\n" % (self.env["TORRENT_UI_PORT"], self.root / "profile"))
-        self.qconf = self.root / "profile/qBittorrent/qBittorrent.conf"
-        self.qconf.parent.mkdir()
-        self.qconf.write_text("[Preferences]\nWebUI\\Password_PBKDF2=@ByteArray(fixture)\nWebUI\\LocalHostAuth=true\n")
-        self.m.apply({"revision": self.m.revision(), "https": {"domain": "dav.example.net"}})
+        # WebDAV's tailnet site as the installer leaves it: rendered to SHARE_CADDY_SOURCE and placed.
+        source = "# fixture\nhttp://paylas.ayc, http://{$TAILSCALE_IPV4}:61010 {\n\trespond 401\n}\n"
+        Path(self.env["SHARE_CADDY_SOURCE"]).write_text(source)
+        (self.root / "sites/paylasim.caddy").write_text(source)
+        self.commit(self.payload())
 
     def payload(self, service="paylasim", tail=True, enabled=True, domain="dav.example.net", **extra):
         return {"revision": self.m.revision(), "web": dict(service=service, tail=tail, enabled=enabled, domain=domain, **extra)}
@@ -56,7 +45,9 @@ class PublicationTests(unittest.TestCase):
         return self.payload(service="panel", **item)
 
     def test_unknown_upstreams_rejected(self):
-        for service in ("wireguard", "localhost:2019", "dosya", [], None):
+        # The fixed rows are WebDAV and Konsol; an application's rows are its own (the erisim section).
+        self.assertEqual(pubs.ids(), ("paylasim", "panel"))
+        for service in ("wireguard", "medya", "localhost:2019", "dosya", [], None):
             with self.subTest(service=service), self.assertRaises(settings.SettingsError):
                 self.m.validate(self.payload(service=service))
         payload = self.payload(); payload["web"]["upstream"] = "localhost:2019"
@@ -75,28 +66,28 @@ class PublicationTests(unittest.TestCase):
         import test_resources
         panel = test_resources.panel
         import types
-        instance = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[], state_env=False))
-        with patch.object(pubs, "https_apps_active", return_value=["qBittorrent"]), \
+        instance = panel.Panel(types.SimpleNamespace(state=str(self.state)))
+        with patch.object(pubs, "https_apps_active", return_value=["Notlar"]), \
                 patch.object(panel.master_settings, "tailnet_ports", return_value=[]), \
                 patch.object(instance, "ports", return_value=[]):
             rows = instance.settings_ports(self.env, [])
             self.assertEqual(len(rows), 1)
-            self.assertIn("qBittorrent + WebDAV", rows[0]["name"])
+            self.assertIn("Notlar + WebDAV", rows[0]["name"])
             self.assertEqual(rows[0]["port"], 443)
             with patch.object(panel.master_shares.Manager, "wan_active", return_value=False):
                 rows = instance.settings_ports(self.env, [])
             self.assertEqual(len(rows), 1)
-            self.assertIn("qBittorrent", rows[0]["name"])
+            self.assertIn("Notlar", rows[0]["name"])
             self.assertNotIn("WebDAV", rows[0]["name"])
-        # DD-195/199: Konsol joins the same single row; the names come from the package manifests.
-        with patch.object(pubs, "https_apps_active", return_value=["qBittorrent", "Konsol"]), \
+        # DD-195, rebuild phase 4: Konsol and the applications' internet names join the same single row.
+        with patch.object(pubs, "https_apps_active", return_value=["Konsol", "Notlar"]), \
                 patch.object(panel.master_settings, "tailnet_ports", return_value=[]), \
                 patch.object(instance, "ports", return_value=[]):
             rows = instance.settings_ports(self.env, [])
-        self.assertEqual([r["name"] for r in rows], ["Caddy HTTPS · qBittorrent + Konsol + WebDAV · WAN"])
+        self.assertEqual([r["name"] for r in rows], ["Caddy HTTPS · Konsol + Notlar + WebDAV · WAN"])
         self.assertEqual(pubs.https_apps_active(self.env), [])
-        with patch.object(pubs, "package_active", return_value=True), patch.object(pubs, "panel_active", return_value=True):
-            self.assertEqual(pubs.https_apps_active(self.env), ["qBittorrent", "Konsol"])
+        with patch.object(pubs, "panel_active", return_value=True):
+            self.assertEqual(pubs.https_apps_active(self.env), ["Konsol"])
 
     def make_account(self):
         import master_auth
@@ -136,7 +127,9 @@ class PublicationTests(unittest.TestCase):
         pubs.config(self.env, {"web": {"panel": {"tail": True, "enabled": True, "domain": "konsol.example.net"}}})
         store = self.make_account()
         self.assertEqual(self.wan_firewall()[0], "1")  # WebDAV over HTTPS already listens
-        self.assertTrue(self.m.apply(self.panel())["committed"])
+        result = self.m.apply(self.panel())
+        self.assertEqual(result["pending"]["phase"], "awaiting", "decision 1: an internet name waits for its confirmation")
+        self.confirm(result)
         # Keeping it on with the same name needs no new word; a new name does.
         self.m.validate(self.payload(service="panel", domain="konsol.example.net"))
         with self.assertRaises(settings.SettingsError):
@@ -166,8 +159,8 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(row["status"], "error")
         self.assertIn("Sistem → Hesap bölümünde oluşturun", row["message"])
 
-    def legacy_http(self):
-        # A fresh install: no HTTPS setting and no WebDAV row, so WebDAV is in legacy consent-gated HTTP mode.
+    def plain_http(self):
+        # A fresh install: no HTTPS setting and no WebDAV row, so WebDAV is in consent-gated plain HTTP mode.
         cfg = self.m.config()
         cfg.pop("https", None)
         cfg.pop("web", None)
@@ -176,28 +169,25 @@ class PublicationTests(unittest.TestCase):
 
     def test_fresh_install_publishes_panel_without_a_webdav_name(self):
         # v2-169: WebDAV's mode alone does not block; folders live on plaintext HTTP do.
-        self.legacy_http()
+        self.plain_http()
         self.make_account()
         self.s.publish()
-        self.assertTrue(self.s.wan_active(), "setUp shares media/alpha over legacy HTTP")
-        self.assertTrue(pubs.legacy_http_active(self.env))
+        self.assertTrue(self.s.wan_active(), "setUp shares media/alpha over plain HTTP")
+        self.assertTrue(pubs.plain_http_active(self.env))
         with self.assertRaises(settings.SettingsError) as err:
             self.m.validate(self.panel())
-        self.assertIn("eski HTTP ile açık", str(err.exception))
-        with patch.object(pubs, "security_check"), self.assertRaises(settings.SettingsError) as err:
-            self.m.validate(self.payload(service="torrent", domain="torrent.example.net"))
-        self.assertIn("eski HTTP ile açık", str(err.exception))
+        self.assertIn("şifresiz HTTP ile açık", str(err.exception))
         row = {r["service"]: r for r in pubs.status(self.env)}["paylasim"]
         self.assertEqual(row["status"], "http")
         # Closing that folder's internet connection frees the port; no WebDAV name is needed.
         item = self.s.read()["items"][0]
         self.s.change("save", {"id": item["id"], "connections": {"wan": {"enabled": False}}})
-        self.assertFalse(pubs.legacy_http_active(self.env))
-        self.assertTrue(self.m.apply(self.panel())["committed"])
+        self.assertFalse(pubs.plain_http_active(self.env))
+        self.commit(self.panel())
         self.assertTrue((self.root / "sites/panel-wan.caddy").exists())
         self.assertFalse((self.root / "sites/paylasim-wan.caddy").exists())
         self.assertEqual(self.wan_firewall(), ["1", "16", "64", "443"])
-        # While the HTTPS row is on, legacy HTTP stays closed and the cards say why; nothing is rewritten.
+        # While the HTTPS row is on, plain HTTP stays closed and the cards say why; nothing is rewritten.
         info = self.s.wan_info()
         self.assertFalse(info["available"])
         self.assertIn("HTTPS alan adı gerekir", info["reason"])
@@ -207,7 +197,7 @@ class PublicationTests(unittest.TestCase):
         row = {r["service"]: r for r in pubs.status(self.env)}["paylasim"]
         self.assertEqual(row["status"], "http")
         self.assertIn("HTTPS alan adı gerekir", row["message"])
-        # Turning the Panel row off reopens legacy HTTP for the folders (a plain re-enable).
+        # Turning the Panel row off reopens plain HTTP for the folders (a simple re-enable).
         self.m.apply(self.payload(service="panel", enabled=False, domain="konsol.example.net"))
         self.assertTrue(self.s.wan_info()["available"])
         self.s.change("save", {"id": item["id"], "connections": {"wan": {"enabled": True}}, "ack_wan_http": True})
@@ -223,7 +213,7 @@ class PublicationTests(unittest.TestCase):
         self.assertNotIn("panel", self.m.config().get("web", {}))
         self.assertFalse(self.m.pending_path.exists())
         # Turning it off again removes the site and keeps the remembered name.
-        self.m.apply(self.panel())
+        self.commit(self.panel())
         self.assertTrue((self.root / "sites/panel-wan.caddy").exists())
         self.m.apply(self.payload(service="panel", enabled=False, domain="konsol.example.net"))
         self.assertFalse((self.root / "sites/panel-wan.caddy").exists())
@@ -251,6 +241,10 @@ class PublicationTests(unittest.TestCase):
         self.assertFalse((self.root / "sites/paylasim-wan.caddy").exists())
 
     def test_first_row_certificate_failure_restores_private_file(self):
+        # A first-time row: no web key yet for the publisher to reconstruct after a failed apply.
+        cfg = self.m.config()
+        cfg.pop("web", None)
+        settings.save_json(self.m.config_path, cfg)
         private = self.root / "sites/paylasim.caddy"
         old = private.read_bytes()
         with patch.object(tls, "wait_certificate", side_effect=settings.SettingsError("cert failed")):
@@ -271,8 +265,8 @@ class PublicationTests(unittest.TestCase):
         self.assertFalse(self.m.pending_path.exists())
 
     def test_duplicate_domains_and_mixed_writes_rejected(self):
-        with self.assertRaises(settings.SettingsError):
-            self.m.validate(self.payload(service="torrent"))
+        with self.assertRaisesRegex(settings.SettingsError, "aynı HTTPS alan adını"):
+            self.m.validate(self.panel(domain="dav.example.net"))
         payload = self.payload(); payload["dns"] = self.m.config()["dns"]
         with self.assertRaises(settings.SettingsError):
             self.m.validate(payload)
@@ -285,264 +279,106 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(self.m.config(), before)
         self.assertFalse(self.m.pending_path.exists())
 
-    def test_torrent_https_stops_with_module_and_keeps_own_auth(self):
-        before = self.qconf.read_bytes()
-        # Only the real network probe is mocked; static qBittorrent auth gates run below.
-        with patch.object(pubs, "security_check"):
-            self.m.apply(self.payload(service="torrent", domain="torrent.example.net"))
-        site = self.root / "sites/torrent-wan.caddy"
-        self.assertIn("https://torrent.example.net:443", site.read_text())
-        self.assertIn("reverse_proxy 127.0.0.1:61006", site.read_text())
-        self.assertNotIn("panel", site.read_text())
-        self.assertEqual(self.qconf.read_bytes(), before)
-        with patch.dict(self.env, SHARE_HTTPS_PORT="18443"):
-            custom = pubs.extra_sites(self.env)["torrent-wan.caddy"]
-        self.assertIn("header_up Host torrent.example.net\n", custom)
-        self.assertIn("header_up X-Forwarded-Host torrent.example.net:18443\n", custom)
-        (self.root / "modules").write_text("paylasim\tcalisiyor\ntorrent\tdurduruldu\n")
-        self.s.publish()
-        self.assertFalse(site.exists())
-        self.assertTrue(pubs.config(self.env)["torrent"]["enabled"])
-
-    def test_unsafe_native_auth_fails_closed(self):
-        original = self.qconf.read_text()
-        pubs.security_check(self.env, "torrent", "torrent.example.net")
-        for key, value in (("LocalHostAuth", "false"), ("AuthSubnetWhitelistEnabled", "true"),
-                           ("CSRFProtection", "false"), ("HostHeaderValidation", "false"),
-                           ("MaxAuthenticationFailCount", "0"), ("BanDuration", "0"), ("ServerDomains", "another.example.net")):
-            with self.subTest(key=key):
-                self.qconf.write_text(original + "WebUI\\%s=%s\n" % (key, value))
-                with self.assertRaises(settings.SettingsError):
-                    pubs.security_check(self.env, "torrent", "torrent.example.net")
-        self.qconf.write_text("[Preferences]\n")
-        with self.assertRaises(settings.SettingsError):
-            pubs.security_check(self.env, "torrent", "torrent.example.net")
-        # The check module is the package's; a missing or broken one closes the row instead of exposing the app.
-        self.qconf.write_text(original)
-        module_path = self.root / "templates/torrent/yayin.py"
-        module_original = module_path.read_bytes()
-        module_path.write_text("def security(env, name, probe=False):\n    raise RuntimeError('x')\n")
-        with self.assertRaises(RuntimeError):
-            pubs.security_check(self.env, "torrent", "torrent.example.net")
-        self.assertFalse(pubs.package_active(self.env, "torrent"))
-        module_path.write_text("this is not python\n")
-        with self.assertRaises(settings.SettingsError):
-            pubs.security_check(self.env, "torrent", "torrent.example.net")
-        module_path.unlink()
-        with self.assertRaises(settings.SettingsError) as err:
-            pubs.security_check(self.env, "torrent", "torrent.example.net")
-        self.assertIn("yayın denetimi yok", str(err.exception))
-        module_path.write_bytes(module_original)
-        pubs.security_check(self.env, "torrent", "torrent.example.net")
-        # A manifest without a loopback upstream never produces a row.
-        manifest = self.root / "templates/torrent/paket.env"
-        kept = manifest.read_text()
-        manifest.write_text(kept.replace('PAKET_YAYIN_UPSTREAM="127.0.0.1:61006"', 'PAKET_YAYIN_UPSTREAM="10.0.0.5:61006"'))
-        self.assertNotIn("torrent", pubs.packages(self.env))
-        self.assertNotIn("torrent", pubs.config(self.env))
-        manifest.write_text(kept)
-        self.assertEqual(pubs.packages(self.env)["torrent"]["upstream"], "127.0.0.1:61006")
-
-    def test_private_403_stub_uses_exactly_the_module_template_addresses(self):
-        # DD-193: no hard-coded host names; the real templates are the single source.
-        self.m.apply(self.payload(service="torrent", tail=False, enabled=False, domain=""))
+    def test_private_403_stub_uses_exactly_the_template_addresses(self):
+        # DD-193: no hard-coded host names; the real template is the single source.
         self.m.apply(self.payload(tail=False))
-        values = {"__LOCAL_DOMAIN__": "ev", "__SHARE_PORT__": "61010", "__TORRENT_UI_PORT__": "61006"}
-        for service in ("paylasim", "torrent"):
-            with self.subTest(service=service):
-                source = (settings.Path(__file__).resolve().parents[1] / "magaza" / service / (service + ".caddy")).read_text()
-                for key, value in values.items():
-                    source = source.replace(key, value)
-                first = next(line for line in source.splitlines() if line.startswith("http"))
-                stub = pubs.private_site(self.env, service, source)
-                self.assertEqual(stub.splitlines()[1], first)
-                self.assertIn("\trespond 403\n", stub)
-                self.assertNotIn("reverse_proxy", stub)
-        extra = "# x\nhttp://torrent.ev, http://torrent-alt.ev {\n\treverse_proxy 127.0.0.1:1\n}\n"
-        self.assertIn("http://torrent.ev, http://torrent-alt.ev {", pubs.private_site(self.env, "torrent", extra))
+        values = {"__LOCAL_DOMAIN__": "ev", "__SHARE_PORT__": "61010"}
+        source = (settings.Path(__file__).resolve().parents[1] / "templates/paylasim.caddy").read_text()
+        for key, value in values.items():
+            source = source.replace(key, value)
+        first = next(line for line in source.splitlines() if line.startswith("http"))
+        stub = pubs.private_site(self.env, "paylasim", source)
+        self.assertEqual(stub.splitlines()[1], first)
+        self.assertIn("\trespond 403\n", stub)
+        self.assertNotIn("reverse_proxy", stub)
+        extra = "# x\nhttp://paylas.ev, http://paylas-alt.ev {\n\treverse_proxy 127.0.0.1:1\n}\n"
+        self.assertIn("http://paylas.ev, http://paylas-alt.ev {", pubs.private_site(self.env, "paylasim", extra))
         with self.assertRaises(settings.SettingsError):
-            pubs.private_site(self.env, "torrent", "# no site block\n")
-
-    def test_stopped_or_unsafe_torrent_row_reports_the_actual_cause(self):
-        with patch.object(pubs, "security_check"):
-            self.m.apply(self.payload(service="torrent", domain="torrent.example.net"))
-        (self.root / "modules").write_text("paylasim\tcalisiyor\ntorrent\tdurduruldu\n")
-        row = next(r for r in pubs.status(self.env) if r["service"] == "torrent")
-        self.assertEqual(row["status"], "error")
-        self.assertIn("durdurulmuş", row["message"])
-        (self.root / "modules").write_text("paylasim\tcalisiyor\n")
-        row = next(r for r in pubs.status(self.env) if r["service"] == "torrent")
-        self.assertIn("kurulu değil", row["message"])
-        (self.root / "modules").write_text("paylasim\tcalisiyor\ntorrent\tcalisiyor\n")
-        self.qconf.write_text(self.qconf.read_text() + "WebUI\\AuthSubnetWhitelistEnabled=true\n")
-        row = next(r for r in pubs.status(self.env) if r["service"] == "torrent")
-        self.assertIn("giriş atlama", row["message"])
+            pubs.private_site(self.env, "paylasim", "# no site block\n")
 
     def test_unavailable_listener_fails_fast_without_certificate_wait(self):
         # DD-193: no minute-long certificate wait when no public listener could open.
         import master_shares
-        cases = (("paylasim", "dav.example.net", "WAN HTTPS dinleyicisi açılamadı",
-                  patch.object(master_shares.Manager, "wan_active", return_value=False)),
-                 ("torrent", "torrent.example.net", "qBittorrent internet yayını açılamadı",
-                  patch.object(pubs, "package_active", return_value=False)))
-        for service, domain, message, blocked in cases:
+        cases = (("paylasim", lambda: self.payload(domain="dav.example.net", tail=False), "WAN HTTPS dinleyicisi açılamadı",
+                  patch.object(master_shares.Manager, "wan_active", return_value=False)),)
+        for service, payload, message, blocked in cases:
             with self.subTest(service=service):
                 before = self.m.config()
                 tls.wait_certificate.reset_mock()
-                with blocked, patch.object(pubs, "security_check"), \
-                        self.assertRaises(settings.SettingsError) as error:
-                    self.m.apply(self.payload(service=service, domain=domain, tail=False))
+                with blocked, self.assertRaises(settings.SettingsError) as error:
+                    self.m.apply(payload())
                 self.assertIn(message, str(error.exception))
                 tls.wait_certificate.assert_not_called()
                 self.assertEqual(self.m.config(), before)
                 self.assertFalse(self.m.pending_path.exists())
 
-    def test_reapply_projects_saved_private_choice_and_uninstall_removes_site(self):
-        self.m.apply(self.payload(service="torrent", tail=False, enabled=False, domain=""))
-        original = (self.root / "templates/torrent/torrent.caddy").read_text()
-        self.assertIn("respond 403", pubs.private_site(self.env, "torrent", original))
-        (self.root / "sites/torrent.caddy").write_text(original)
+    def test_reapply_projects_saved_private_choice(self):
+        # A re-placed installer rendering returns to the saved Tailscale choice at the next publish.
+        self.m.apply(self.payload(tail=False))
+        original = Path(self.env["SHARE_CADDY_SOURCE"]).read_text()
+        self.assertIn("respond 403", pubs.private_site(self.env, "paylasim", original))
+        (self.root / "sites/paylasim.caddy").write_text(original)
         self.s.publish()
-        self.assertIn("respond 403", (self.root / "sites/torrent.caddy").read_text())
-        (self.root / "modules").write_text("paylasim\tcalisiyor\n")
-        self.s.publish()
-        self.assertFalse((self.root / "sites/torrent.caddy").exists())
+        self.assertIn("respond 403", (self.root / "sites/paylasim.caddy").read_text())
+        self.m.apply(self.payload())
+        self.assertEqual((self.root / "sites/paylasim.caddy").read_text(), original)
 
-    # --- DD-252: addresses the operator enters ----------------------------------
+    def test_unknown_saved_row_fails_closed(self):
+        # A row the table does not know (for example left by an older Obhut) is never ignored silently.
+        cfg = self.m.config()
+        cfg.setdefault("web", {})["medya"] = {"tail": True, "enabled": False, "domain": ""}
+        settings.save_json(self.m.config_path, cfg)
+        with self.assertRaisesRegex(settings.SettingsError, "Caddy yayın kaydında bilinmeyen satır: medya."):
+            pubs.config(self.env)
+        with self.assertRaises(settings.SettingsError):
+            pubs.extra_sites(self.env)
+        with self.assertRaises(settings.SettingsError):
+            self.m.validate(self.payload(enabled=False))
+        self.assertEqual(pubs.https_apps_active(self.env), [])
+        self.assertFalse(pubs.panel_active(self.env))
+        with self.assertRaises(fixtures.shares.ShareError):
+            self.s.publish()
 
-    def manual(self, local="gezgin", port=8090, tail=True, enabled=True, domain="gezgin.example.net", name="Gezgin"):
-        return self.payload(service="elle-" + local, tail=tail, enabled=enabled, domain=domain,
-                            elle={"name": name, "local": local, "upstream": "127.0.0.1:%d" % port})
-
-    def test_manual_address_opens_its_tailnet_and_public_names(self):
-        result = self.m.apply(self.manual())
-        self.assertEqual(result, {"pending": None, "committed": True})
-        saved = self.m.config()
-        self.assertEqual(saved["elle"], {"elle-gezgin": {"name": "Gezgin", "local": "gezgin", "upstream": "127.0.0.1:8090"}})
-        self.assertEqual(saved["web"]["elle-gezgin"], {"tail": True, "enabled": True, "domain": "gezgin.example.net"})
-        private = (self.root / "sites/elle-gezgin.caddy").read_text()
-        self.assertIn("http://gezgin.ayc {\n\treverse_proxy 127.0.0.1:8090\n}", private)
-        public = (self.root / "sites/elle-gezgin-wan.caddy").read_text()
-        self.assertIn("https://gezgin.example.net:443 {\n\tbind 8.8.8.8\n", public)
-        self.assertIn("reverse_proxy 127.0.0.1:8090 {", public)
-        self.assertIn("disable_http_challenge", public)
-        # The application's own login is the guard: no Konsol routes or session check.
-        self.assertNotIn("konsol", public.replace("# ", ""))
-        self.assertNotIn("forward_auth", public)
-        self.assertEqual((self.root / "dns/modul-elle.conf").read_text().splitlines()[1:],
-                         ["interface-name=gezgin.ayc,tailscale0/4"])
-        self.assertIn(["systemctl", "restart", "dnsmasq"], self.calls)
-        self.assertIn("Gezgin", pubs.https_apps_active(self.env))
-        tls.wait_certificate.assert_called_with(self.m.e, "gezgin.example.net")
-        row = next(r for r in pubs.status(self.env) if r["service"] == "elle-gezgin")
-        self.assertEqual((row["manual"], row["local"], row["upstream"]), (True, "gezgin.ayc", "127.0.0.1:8090"))
-        self.assertIn("yanıt vermiyor", row["message"])  # nothing listens on the fixture port
-        self.assertIs(row["answers"], False, "DD-259: Erişim reads the probe, not the message")
-
-    def test_plan_of_a_publication_writes_no_site_and_waits_for_no_certificate(self):
-        """DD-265: a publication row's plan runs its checks (DNS, the app's login probe) and writes nothing."""
+    def test_plan_of_a_fixed_row_writes_no_site_and_waits_for_no_certificate(self):
+        """DD-265: a fixed row's plan runs its checks (the DNS check) and writes nothing; decision 1 sets its window."""
         sites = sorted(p.name for p in (self.root / "sites").iterdir())
         calls = len(self.calls)
         tls.wait_certificate.reset_mock()  # setUp's own WebDAV name waited for one
-        plan = self.m.plan(self.manual())
-        self.assertEqual(plan["onay_sn"], 0)
-        self.assertEqual(plan["degisiklikler"], [{"alan": "yayin", "islem": "ekle", "nesne": "Gezgin", "once": None,
-                                                  "sonra": "gezgin.ayc açık · internet: gezgin.example.net · hedef 127.0.0.1:8090"}])
+        plan = self.m.plan(self.payload(domain="dav2.example.net"))
+        self.assertEqual(plan["onay_sn"], 60, "a rename is an opening")
+        self.assertEqual([(i["alan"], i["islem"], i["nesne"], i["once"], i["sonra"]) for i in plan["degisiklikler"]],
+                         [("erisim", "degistir", "WebDAV · internet adı", "dav.example.net", "dav2.example.net")])
         self.assertIn("İnternet adı için HTTPS sertifikası alınır (en çok 1 dakika).", plan["etkiler"])
         self.assertEqual(sorted(p.name for p in (self.root / "sites").iterdir()), sites)
         self.assertEqual(len(self.calls), calls, "no reload, no restart")
         tls.wait_certificate.assert_not_called()
-        self.assertNotIn("elle", self.m.config())
-        self.m.apply(self.manual())
-        plan = self.m.plan(self.manual(enabled=False, domain="gezgin.example.net"))
+        plan = self.m.plan(self.payload(enabled=False))
+        self.assertEqual(plan["onay_sn"], 0, "closing commits at once")
         self.assertEqual([(i["islem"], i["nesne"], i["once"], i["sonra"]) for i in plan["degisiklikler"]],
-                         [("kapat", "Gezgin · internet adı", "gezgin.example.net", "kapalı")])
-        plan = self.m.plan({"revision": self.m.revision(), "web": {"service": "elle-gezgin", "sil": True}})
-        self.assertEqual(plan["degisiklikler"][0]["islem"], "kaldir")
-        with patch.object(pubs, "security_check"):
-            plan = self.m.plan(self.payload(service="torrent", domain="torrent.example.net"))
-        self.assertEqual([(i["islem"], i["nesne"], i["sonra"]) for i in plan["degisiklikler"]],
-                         [("ac", "qBittorrent · internet adı", "torrent.example.net")])
+                         [("kapat", "WebDAV · internet adı", "dav.example.net", "kapalı")])
+        self.assertNotIn("İnternet adı için HTTPS sertifikası alınır (en çok 1 dakika).", plan["etkiler"])
+        plan = self.m.plan(self.payload(tail=False))
+        self.assertEqual((plan["onay_sn"], plan["degisiklikler"][0]["islem"]), (0, "kapat"))
+        self.commit(self.payload(tail=False))
+        self.assertEqual(self.m.plan(self.payload())["onay_sn"], 60, "the Tailscale name switched on is an opening")
         with patch.object(tls, "check_dns", side_effect=settings.SettingsError("DNS mismatch")), \
-                patch.object(pubs, "security_check"), self.assertRaisesRegex(settings.SettingsError, "DNS mismatch"):
-            self.m.plan(self.payload(service="torrent", domain="torrent.example.net"))
+                self.assertRaisesRegex(settings.SettingsError, "DNS mismatch"):
+            self.m.plan(self.payload(domain="dav2.example.net"))
+        # From the internet channel an opening cannot be confirmed; a closing can be applied.
+        self.assertFalse(self.m.plan(self.payload(domain="dav2.example.net"), kanal="internet")["uygulanabilir"])
+        self.assertTrue(self.m.plan(self.payload(tail=False, enabled=False), kanal="internet")["uygulanabilir"])
 
-    def test_manual_address_refuses_konsol_and_package_ports_and_foreign_upstreams(self):
-        bad = {"upstream": ("10.0.0.5:80", "localhost:8090", "127.0.0.1:0", "127.0.0.1:70000",
-                            "127.0.0.1:61009", "127.0.0.1:61010", "127.0.0.1:61006", "127.0.0.1:8090/x"),
-               "local": ("panel", "paylas", "torrent", "Gezgin", "1gezgin", "gez gin", "gezgin.ev"),
-               "name": ("", "x" * 41, "a\nb")}
-        for key, values in bad.items():
-            for value in values:
-                payload = self.manual()
-                payload["web"]["elle"][key] = value
-                if key == "local":
-                    payload["web"]["service"] = "elle-" + value
-                with self.subTest(key=key, value=value), self.assertRaises(settings.SettingsError):
-                    self.m.validate(payload)
-        renamed = self.manual()
-        renamed["web"]["service"] = "elle-baska"
-        with self.assertRaises(settings.SettingsError):
-            self.m.validate(renamed)
-        with self.assertRaises(settings.SettingsError):  # the gates alone need an existing address
-            self.m.validate(self.payload(service="elle-gezgin", enabled=False, domain=""))
-        self.assertNotIn("elle", self.m.config())
-
-    def test_manual_name_already_answered_by_dns_is_refused(self):
-        (self.root / "dns/modul-baska.conf").write_text("interface-name=gezgin.ayc,tailscale0/4\n")
-        with self.assertRaisesRegex(settings.SettingsError, "zaten kullanılıyor"):
-            self.m.validate(self.manual())
-
-    def test_manual_limit(self):
-        saved = {"elle": {"elle-a%d" % i: {"name": "A", "local": "a%d" % i, "upstream": "127.0.0.1:%d" % (9000 + i)}
-                          for i in range(pubs.MANUAL_LIMIT)}}
-        request = self.manual(enabled=False, domain="")["web"]
-        with self.assertRaisesRegex(settings.SettingsError, "En çok"):
-            pubs.validate(self.env, saved, request)
-
-    def test_manual_tailnet_off_then_removal_leaves_nothing(self):
-        self.m.apply(self.manual(enabled=False, domain=""))
-        self.assertTrue((self.root / "sites/elle-gezgin.caddy").exists())
-        self.assertFalse((self.root / "sites/elle-gezgin-wan.caddy").exists())
-        self.assertNotIn("Gezgin", pubs.https_apps_active(self.env))
-        self.m.apply(self.payload(service="elle-gezgin", tail=False, enabled=False, domain=""))
-        self.assertFalse((self.root / "sites/elle-gezgin.caddy").exists())
-        self.assertFalse((self.root / "dns/modul-elle.conf").exists())
-        self.m.apply({"revision": self.m.revision(), "web": {"service": "elle-gezgin", "sil": True}})
-        saved = self.m.config()
-        self.assertEqual((saved["elle"], "elle-gezgin" in saved["web"]), ({}, False))
-        self.assertEqual(sorted(p.name for p in (self.root / "sites").glob("elle-*")), [])
-        with self.assertRaisesRegex(settings.SettingsError, "bulunamadı"):
-            self.m.validate({"revision": self.m.revision(), "web": {"service": "elle-gezgin", "sil": True}})
-
-    def test_manual_dns_failure_rolls_back_sites_name_and_settings(self):
-        before = self.m.config()
-        self.fail_once = "restart dnsmasq"
-        with self.assertRaises(subprocess.CalledProcessError):
-            self.m.apply(self.manual())
-        self.assertEqual(self.m.config(), before)
+    def test_an_unconfirmed_opening_is_rolled_back(self):
+        result = self.m.apply(self.payload(domain="dav2.example.net"))
+        self.assertIn("https://dav2.example.net:443", (self.root / "sites/paylasim-wan.caddy").read_text())
+        pending = self.m.pending()
+        pending["until"] = 0
+        settings.save_json(self.m.pending_path, pending)
+        self.m.guard()
         self.assertFalse(self.m.pending_path.exists())
-        self.assertFalse((self.root / "dns/modul-elle.conf").exists())
-        self.assertEqual(sorted(p.name for p in (self.root / "sites").glob("elle-*")), [])
-        self.assertNotIn("Gezgin", pubs.https_apps_active(self.env))
-
-    def test_manual_names_follow_a_local_domain_change(self):
-        self.m.apply(self.manual(enabled=False, domain=""))
-        # The rename itself is under test, not the transaction's reload.
-        with patch.object(self.m, "domain_reload"), patch.object(self.m, "pending", return_value={"files_active": False}):
-            self.m.domain_apply(dict(self.m.config(), domain="ev"))
-        self.assertIn("http://gezgin.ev {", (self.root / "sites/elle-gezgin.caddy").read_text())
-        self.assertIn("interface-name=gezgin.ev,tailscale0/4", (self.root / "dns/modul-elle.conf").read_text())
-        self.assertEqual(pubs.manual_private_site(self.m.e, pubs.manual(self.m.e)["elle-gezgin"]).split("\n")[1],
-                         "http://gezgin.ev {")
-
-    def test_stale_manual_sites_are_removed_but_names_ending_in_wan_kept(self):
-        self.m.apply(self.manual(local="ev-wan", enabled=False, domain=""))
-        (self.root / "sites/elle-eski.caddy").write_text("http://eski.ayc {\n\trespond 200\n}\n")
-        (self.root / "sites/elle-eski-wan.caddy").write_text("# stale\n")
-        extras = pubs.extra_sites(self.env)
-        self.assertEqual((extras["elle-eski.caddy"], extras["elle-eski-wan.caddy"]), ("", ""))
-        self.assertIn("http://ev-wan.ayc {", extras["elle-ev-wan.caddy"])
+        self.assertEqual(pubs.config(self.env)["paylasim"]["domain"], "dav.example.net")
+        self.assertIn("https://dav.example.net:443", (self.root / "sites/paylasim-wan.caddy").read_text())
+        self.assertTrue(result["pending"]["web"])
 
     # --- DD-254: the operator sees the actual cause ------------------------------
 
@@ -550,8 +386,8 @@ class PublicationTests(unittest.TestCase):
         reason = fixtures.shares.output_reason
         caddy = ('{"level":"warn","msg":"Unnecessary header_up X-Forwarded-For"}\n'
                  '{"level":"error","ts":1,"msg":"adapting config using caddyfile: ambiguous site definition: '
-                 'https://gezgin.example.net:443"}\n')
-        self.assertEqual(reason(caddy), "adapting config using caddyfile: ambiguous site definition: https://gezgin.example.net:443")
+                 'https://notlar.example.net:443"}\n')
+        self.assertEqual(reason(caddy), "adapting config using caddyfile: ambiguous site definition: https://notlar.example.net:443")
         self.assertEqual(reason('{"level":"error","msg":"loading config","error":"bind: address already in use"}\n'
                                 'Error: sending configuration to instance: HTTP 400\n'),
                          "sending configuration to instance: HTTP 400")
@@ -569,18 +405,19 @@ class PublicationTests(unittest.TestCase):
 
     def test_invalid_caddy_configuration_is_named_and_rolled_back(self):
         before = self.m.config()
-        stderr = b'{"level":"error","msg":"adapting config using caddyfile: ambiguous site definition: https://gezgin.example.net:443"}'
+        site = (self.root / "sites/paylasim-wan.caddy").read_text()
+        stderr = b'{"level":"error","msg":"adapting config using caddyfile: ambiguous site definition: https://dav2.example.net:443"}'
         with self.failing("caddy validate", stderr=stderr), self.assertRaises(settings.SettingsError) as error:
-            self.m.apply(self.manual())
+            self.m.apply(self.payload(domain="dav2.example.net"))
         self.assertIn("(Caddy yapılandırması geçersiz: adapting config using caddyfile: ambiguous site definition: "
-                      "https://gezgin.example.net:443); önceki yayın geri yüklendi.", str(error.exception))
+                      "https://dav2.example.net:443); önceki yayın geri yüklendi.", str(error.exception))
         self.assertEqual(self.m.config(), before)
-        self.assertEqual(sorted(p.name for p in (self.root / "sites").glob("elle-*")), [])
+        self.assertEqual((self.root / "sites/paylasim-wan.caddy").read_text(), site)
 
     def test_firewall_failure_names_the_firewall_and_its_message(self):
         with self.failing("master-firewall", stderr="[12:00:01] HATA: zincir yazılamadı\n".encode()), \
                 self.assertRaises(settings.SettingsError) as error:
-            self.m.apply(self.manual())
+            self.m.apply(self.payload(domain="dav2.example.net"))
         self.assertIn("(güvenlik duvarı uygulanamadı: zincir yazılamadı)", str(error.exception))
 
     def test_reload_failure_reads_caddys_own_reason_from_its_journal(self):
@@ -593,7 +430,7 @@ class PublicationTests(unittest.TestCase):
             return self.command(argv, **kwargs)
         with patch.object(fixtures.shares.subprocess, "run", side_effect=command), \
                 self.assertRaises(settings.SettingsError) as error:
-            self.m.apply(self.manual())
+            self.m.apply(self.payload(domain="dav2.example.net"))
         self.assertIn("(Caddy yeniden yüklenemedi: loading new config: listen tcp 8.8.8.8:443: bind: cannot assign "
                       "requested address)", str(error.exception))
 

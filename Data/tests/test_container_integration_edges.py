@@ -1,17 +1,14 @@
-"""Independent inventory/broker/worker edge reproductions; no server or real Podman calls."""
+"""Independent inventory edge reproductions; no server or real Podman calls. The inventory offers no action:
+an application is managed on its own page (DD-271, phase 3), Gelişmiş's resources by their jobs."""
 import json
 from pathlib import Path
 import sys
 import tempfile
 import types
 import unittest
-import uuid
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "panel"))
-import master_container_config as config
 import master_container_manager as manager
-import master_container_worker as worker
 
 
 class IntegrationEdges(unittest.TestCase):
@@ -19,16 +16,12 @@ class IntegrationEdges(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="container-edges-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
-        self.env = {"KONTEYNER_STATE_DIR": str(self.root / "state"), "MODULES_FILE": str(self.root / "modules"),
-                    "MODULES_DIR": str(self.root / "packages"), "RUNTIME_DIR": str(self.root / "run"),
-                    "KONTEYNER_LOCK": str(self.root / "run/containers.lock"), "KONTEYNER_NETWORK": "konsol",
-                    "TAILSCALE_IPV4": "100.64.0.2"}
-        (self.root / "modules").write_text("")
+        self.env = {"KONTEYNER_STATE_DIR": str(self.root / "state"), "RUNTIME_DIR": str(self.root / "run"),
+                    "KONTEYNER_LOCK": str(self.root / "run/containers.lock"), "TAILSCALE_IPV4": "100.64.0.2"}
         self.state = self.root / "state.env"
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
         self.raw, self.networks, self.calls = {}, [], []
-        panel = types.SimpleNamespace(args=types.SimpleNamespace(state=str(self.state)), run_tool=self.fake_run,
-                                      env=lambda: {}, module_busy=lambda _: False)
+        panel = types.SimpleNamespace(args=types.SimpleNamespace(state=str(self.state)), run_tool=self.fake_run, env=lambda: {})
         self.service = manager.Service(panel)
 
     def fake_run(self, argv, timeout=30, **kwargs):
@@ -60,27 +53,20 @@ class IntegrationEdges(unittest.TestCase):
                           "HostConfig": {"NetworkMode": "bridge"}, "NetworkSettings": {}, "Mounts": [],
                           "Config": {"Labels": labels or {}, "Env": ["TOKEN=native-secret-value"], "Cmd": ["serve"]}}
 
-    def definition(self, name="owned"):
-        definition = {"schema": 1, "name": name, "revision": "a" * 32,
-                      "image": "docker.io/library/nginx@sha256:" + "b" * 64, "image_ref": "docker.io/library/nginx:alpine",
-                      "network": "bridge", "ports": [], "mounts": [], "command": [],
-                      "environment": [{"name": "TOKEN", "value": "saved-secret-value", "secret": True}],
-                      "autostart": True, "manual_stop": True, "restart": "on-failure", "cpus": "", "memory": ""}
-        config.Store(self.env).save(definition)
-        return definition
-
-    def test_paused_container_does_not_offer_start_as_if_it_were_stopped(self):
+    def test_a_paused_container_offers_nothing(self):
         self.container(status="paused")
-        detail = self.service.view().ayrinti("outside")
-        self.assertEqual(detail["state"], "paused")
-        self.assertNotIn("start", detail["actions"], "Start cannot resume a paused container; advertise a supported action or restriction")
+        row = self.service.view().liste()["containers"][0]
+        self.assertEqual(row["state"], "paused")
+        self.assertNotIn("actions", row, "no lifecycle action lives on a container row")
 
-    def test_saved_name_collision_with_foreign_owner_is_read_only(self):
-        self.definition()
-        self.container("owned", labels={"PODMAN_SYSTEMD_UNIT": "foreign-owner.service"})
-        row = self.service.view().ayrinti("owned")
-        self.assertEqual(row["actions"], [], "Saved names alone must not grant actions over a foreign runtime owner")
-        self.assertTrue(row["restricted_reason"])
+    def test_application_labels_with_a_foreign_unit_are_not_an_application(self):
+        labels = {"io.master-stack.managed": "uygulama", "io.master-stack.uygulama": "notlar"}
+        self.container("notlar_web", labels=dict(labels, PODMAN_SYSTEMD_UNIT="konsol-notlar_web.service"))
+        self.container("notlar_db", labels=dict(labels, PODMAN_SYSTEMD_UNIT="foreign-owner.service"))
+        rows = {r["name"]: r for r in self.service.view().liste()["containers"]}
+        self.assertEqual((rows["notlar_web"]["source"], rows["notlar_web"]["uygulama"]), ("uygulama", "notlar"))
+        self.assertEqual((rows["notlar_db"]["source"], rows["notlar_db"]["uygulama"]), ("external", None),
+                         "labels alone never make a container an application's")
 
     def test_list_health_uses_already_collected_native_inspection(self):
         self.container()
@@ -94,30 +80,11 @@ class IntegrationEdges(unittest.TestCase):
         row = self.service.view().liste()["networks"][0]
         self.assertEqual(row["subnets"], ["10.89.0.0/24"], "Console joins these rows as strings; objects display as [object Object]")
 
-    def test_external_name_advertised_by_broker_can_reach_the_actual_worker(self):
-        self.container("outside.web")
-        self.assertIn("stop", self.service.view().ayrinti("outside.web")["actions"])
-        payload = {"action": "stop", "name": "outside.web", "revision": None}
-        with patch.object(self.service, "_launch"):
-            self.assertEqual(self.service.submit(payload)["state"], "running")
-        actual = worker.Manager(str(self.state), run=self.fake_run)
-        try:
-            result = actual.execute("stop", {k: v for k, v in payload.items() if k != "action"}, uuid.uuid4().hex)
-        except config.ContainerConfigError as error:
-            self.fail("Broker-advertised standalone stop rejected by worker: " + str(error))
-        self.assertFalse(result["running"])
-
-    def test_missing_saved_definition_stays_visible_and_secret_values_stay_private(self):
-        self.definition()
-        row = self.service.view().ayrinti("owned")
-        self.assertEqual((row["state"], row["live"]), ("stopped", False))
-        self.assertIn("start", row["actions"])
-        self.assertNotIn("saved-secret-value", json.dumps(row))
-        self.assertEqual(row["config"]["environment"], [{"name": "TOKEN", "secret": True, "present": True}])
-
     def test_runtime_environment_values_are_not_returned_from_inspect(self):
         self.container()
-        self.assertNotIn("native-secret-value", json.dumps(self.service.view().ayrinti("outside")))
+        listing = self.service.view().liste()
+        self.assertTrue(any(c[:2] == ["podman", "inspect"] for c in self.calls), "the list inspects the container")
+        self.assertNotIn("native-secret-value", json.dumps(listing))
 
 
 if __name__ == "__main__":

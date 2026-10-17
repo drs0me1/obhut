@@ -8,7 +8,6 @@ import {
   type GuncellemeBasladi,
   type HesapSonucu,
   type KayitSatiri,
-  type Modul,
   type Onarim,
   type OnarimBasladi,
   type Oturum,
@@ -98,10 +97,4 @@ export async function readAudit(): Promise<KayitSatiri[]> {
   return value.items.filter((e): e is KayitSatiri =>
     isObject(e) && isNumber(e.at) && isText(e.source) && isText(e.action) && isText(e.detail) && typeof e.ok === "boolean" &&
     isText(e.user) && isText(e.client));
-}
-
-/** The packages with their konsol.json (names and the audit line templates, `gunluk`). */
-export async function readModules(): Promise<Modul[]> {
-  const value = shaped<{ items: unknown[] }>(await getJson(YOLLAR.moduller), (v) => Array.isArray(v.items));
-  return value.items.filter((m): m is Modul => isObject(m) && isText(m.id));
 }

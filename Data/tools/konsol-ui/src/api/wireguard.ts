@@ -1,68 +1,35 @@
-// The WireGuard package's own API (DD-200; magaza/wireguard/api.py), which the route table does not
-// describe: its shapes are written here and checked at run time. Every change goes through the package's
-// tool master-wg on the server. QR codes and device profiles carry a device's private key: they are fetched
-// only on an explicit click, never cached (getBlob), and the caller revokes their object URL after use.
+// WireGuard, a built-in of the base (DD-271): Erişim → WireGuard's reads and immediate writes under
+// /api/konsol/wireguard. Starting or stopping WireGuard and adding, removing, opening, closing or regenerating
+// a network are settings changes (DD-275): the tab sends them through the settings plan with the state's
+// `revizyon`, not from here. Paths and shapes come from sema.ts (generated from panel/master_api.py); a path's
+// {iface} and {name} are filled in encoded. Every change goes through master-wg on the server; numbers go
+// as integers. QR codes and device profiles carry a device's private key: they are fetched only on an
+// explicit click, never cached (getBlob), and the caller revokes their object URL after use.
+import {
+  YOLLAR,
+  type WireGuard,
+  type WireGuardAgAyarSonucu,
+  type WireGuardAgi,
+  type WireGuardCihazEklendi,
+  type WireGuardCihazi,
+} from "./sema";
 import { getBlob, getJson, postJson } from "./http";
 import { isObject, isText, shaped } from "./konsol";
-
-export interface WgPeer {
-  name: string;
-  ipv4: string;
-  ipv6: string;
-  /** Unix seconds of the last handshake; 0 when never. */
-  handshake: number;
-  rx: number;
-  tx: number;
-  /** Whether a profile (and so a QR code) exists on the server. */
-  profile: boolean;
-  dns: string;
-  provider: string;
-  keepalive: number;
-  mtu: number;
-  enabled: boolean;
-  online: boolean;
-  active_at: number | null;
-}
-
-export interface WgNetwork {
-  iface: string;
-  port: number;
-  server4: string;
-  subnet4: string;
-  server6: string;
-  subnet6: string;
-  dns: string;
-  label: string;
-  active: boolean;
-  count: number;
-  /** Guards the network's settings (64 hex digits); a stale one is refused with 409. */
-  revision: string;
-  peers: WgPeer[];
-}
-
-export interface WgState {
-  endpoint: string;
-  /** How many networks there may be (wg0 … wg<max-1>). */
-  max: number;
-  /** UDP ports a new network may not take (the base's and the packages'). */
-  reserved: number[];
-  defaults: { dns: string; keepalive: number; mtu: number; port: number };
-  now: number;
-  active_window: number;
-  networks: WgNetwork[];
-}
-
-export const WG_BASE = "/api/uygulama/wireguard";
 
 const isNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const isBool = (v: unknown): v is boolean => typeof v === "boolean";
 const num = (v: unknown, fallback = 0) => (isNumber(v) ? v : fallback);
 
-function isPeer(v: unknown): v is WgPeer {
+/** A route's path with its {iface} and {name} filled in. */
+function at(template: string, params: { iface: string; name?: string }): string {
+  return template.replace(/\{(iface|name)\}/g, (_: string, key: string) => encodeURIComponent((key === "iface" ? params.iface : params.name) ?? ""));
+}
+
+function isPeer(v: unknown): v is WireGuardCihazi {
   return isObject(v) && isText(v.name) && isText(v.ipv4) && isBool(v.enabled);
 }
 
-function peer(v: WgPeer): WgPeer {
+function peer(v: WireGuardCihazi): WireGuardCihazi {
   return {
     name: v.name, ipv4: v.ipv4, ipv6: isText(v.ipv6) ? v.ipv6 : "", handshake: num(v.handshake), rx: num(v.rx), tx: num(v.tx),
     profile: v.profile === true, dns: isText(v.dns) ? v.dns : "", provider: isText(v.provider) ? v.provider : "",
@@ -70,11 +37,11 @@ function peer(v: WgPeer): WgPeer {
   };
 }
 
-function isNetwork(v: unknown): v is WgNetwork {
+function isNetwork(v: unknown): v is WireGuardAgi {
   return isObject(v) && isText(v.iface) && /^wg[0-9]$/.test(v.iface) && isNumber(v.port) && isText(v.subnet4) && isBool(v.active) && Array.isArray(v.peers);
 }
 
-function network(v: WgNetwork): WgNetwork {
+function network(v: WireGuardAgi): WireGuardAgi {
   return {
     iface: v.iface, port: v.port, server4: isText(v.server4) ? v.server4 : "", subnet4: v.subnet4, server6: isText(v.server6) ? v.server6 : "",
     subnet6: isText(v.subnet6) ? v.subnet6 : "", dns: isText(v.dns) ? v.dns : "", label: isText(v.label) ? v.label : "", active: v.active,
@@ -82,10 +49,12 @@ function network(v: WgNetwork): WgNetwork {
   };
 }
 
-export async function readWgState(): Promise<WgState> {
-  const value = shaped<WgState>(await getJson(`${WG_BASE}/state`), (v) => Array.isArray(v.networks) && isObject(v.defaults));
+export async function readWgState(): Promise<WireGuard> {
+  const value = shaped<WireGuard>(await getJson(YOLLAR.wireguard), (v) => isBool(v.kurulu) && isBool(v.durduruldu) && Array.isArray(v.networks) && isObject(v.defaults));
   const d = value.defaults;
   return {
+    kurulu: value.kurulu,
+    durduruldu: value.durduruldu,
     endpoint: isText(value.endpoint) ? value.endpoint : "",
     max: num(value.max, 10),
     reserved: Array.isArray(value.reserved) ? value.reserved.filter(isNumber) : [],
@@ -93,61 +62,40 @@ export async function readWgState(): Promise<WgState> {
     now: num(value.now, Date.now() / 1000),
     active_window: num(value.active_window, 45),
     networks: value.networks.filter(isNetwork).map(network),
+    revizyon: isText(value.revizyon) ? value.revizyon : "",
   };
 }
 
-const net = (iface: string) => `${WG_BASE}/nets/${encodeURIComponent(iface)}`;
-const dev = (iface: string, name: string) => `${net(iface)}/peers/${encodeURIComponent(name)}`;
-const done = (data: unknown) => (isObject(data) ? data : {});
-
-export async function addNetwork(port: number, dns: string, label: string): Promise<{ iface: string; port: number }> {
-  return shaped(await postJson(`${WG_BASE}/nets`, { port: String(port), dns, label }), (v) => isText(v.iface));
+export async function saveNetworkSettings(iface: string, dns: string, revision: string, label: string): Promise<WireGuardAgAyarSonucu> {
+  return shaped(await postJson(at(YOLLAR.wireguard_ag_ayarlar, { iface }), { dns, revision, label }), (v) => isText(v.iface));
 }
 
-export async function saveNetworkSettings(iface: string, dns: string, revision: string, label: string): Promise<Record<string, unknown>> {
-  return done(await postJson(`${net(iface)}/ayarlar`, { dns, revision, label }));
+export async function addDevice(iface: string, name: string, dns: string, keepalive: number, mtu: number): Promise<WireGuardCihazEklendi> {
+  return shaped(await postJson(at(YOLLAR.wireguard_cihaz_ekle, { iface }), { name, dns, keepalive, mtu }), (v) => isText(v.name));
 }
 
-export async function setNetwork(iface: string, on: boolean): Promise<Record<string, unknown>> {
-  return done(await postJson(`${net(iface)}/durum`, { on }));
+export async function removeDevice(iface: string, name: string): Promise<void> {
+  await postJson(at(YOLLAR.wireguard_cihaz_kaldir, { iface, name }), {});
 }
 
-export async function removeNetwork(iface: string): Promise<{ peers: number }> {
-  const value = done(await postJson(`${net(iface)}/remove`, { confirm: "onayla" }));
-  return { peers: num(value.peers) };
+export async function setDevice(iface: string, name: string, on: boolean): Promise<void> {
+  await postJson(at(YOLLAR.wireguard_cihaz_durum, { iface, name }), { on });
 }
 
-export async function regenerateNetwork(iface: string): Promise<{ peers: number }> {
-  const value = done(await postJson(`${net(iface)}/reset`, { confirm: "onayla" }));
-  return { peers: num(value.peers) };
+export async function setDeviceKeepalive(iface: string, name: string, keepalive: number): Promise<void> {
+  await postJson(at(YOLLAR.wireguard_cihaz_keepalive, { iface, name }), { keepalive });
 }
 
-export async function addDevice(iface: string, name: string, dns: string, keepalive: number, mtu: number): Promise<Record<string, unknown>> {
-  return done(await postJson(`${net(iface)}/peers`, { name, dns, keepalive, mtu }));
-}
-
-export async function removeDevice(iface: string, name: string): Promise<Record<string, unknown>> {
-  return done(await postJson(`${dev(iface, name)}/remove`, {}));
-}
-
-export async function setDevice(iface: string, name: string, on: boolean): Promise<Record<string, unknown>> {
-  return done(await postJson(`${dev(iface, name)}/durum`, { on }));
-}
-
-export async function setDeviceKeepalive(iface: string, name: string, keepalive: number): Promise<Record<string, unknown>> {
-  return done(await postJson(`${dev(iface, name)}/keepalive`, { keepalive }));
-}
-
-export async function setDeviceDns(iface: string, name: string, dns: string): Promise<Record<string, unknown>> {
-  return done(await postJson(`${dev(iface, name)}/dns`, { dns }));
+export async function setDeviceDns(iface: string, name: string, dns: string): Promise<void> {
+  await postJson(at(YOLLAR.wireguard_cihaz_dns, { iface, name }), { dns });
 }
 
 /** The device's QR code (PNG); contains its private key. */
 export function fetchQr(iface: string, name: string): Promise<Blob> {
-  return getBlob(`${dev(iface, name)}/qr.png`);
+  return getBlob(at(YOLLAR.wireguard_qr, { iface, name }));
 }
 
 /** The device's profile (text); contains its private key. */
 export function fetchProfile(iface: string, name: string): Promise<Blob> {
-  return getBlob(`${dev(iface, name)}/profile`);
+  return getBlob(at(YOLLAR.wireguard_profil, { iface, name }));
 }

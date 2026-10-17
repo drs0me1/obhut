@@ -1,12 +1,16 @@
 <!-- The top bar's tools (DD-258): search (opens the command palette, ⌘K / Ctrl+K), the problem count that
-     leads to Sistem, and the running jobs. On a phone the bar is compact: icons, the count and, only while a
-     job runs, the activity button. -->
+     leads to where the most serious problem is (problems.ts: an access row, a tab, an application, Sistem →
+     Sağlık), the running jobs (İşlemler) and the theme (A7: sistem → açık → koyu, its new choice announced). On a
+     phone the bar is compact: icons, the count, the theme and, only while a job runs, the activity button. -->
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { RouterLink } from "vue-router";
 import { Icon } from "./icons";
-import { problems, runningJobs } from "../live";
+import { runningJobs } from "../live";
+import { problemSummary } from "../problems";
+import { systemRoute } from "../sections";
 import { openSurface, ui } from "../ui";
+import { nextTheme, setTheme, theme, themeText } from "../theme";
 
 const props = defineProps<{ compact?: boolean }>();
 
@@ -14,14 +18,22 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const shortcut = isMac ? "⌘K" : "Ctrl K";
 
 const chip = computed(() => {
-  const p = problems.value;
-  if (!p) return { level: "unknown", text: "Durum —", short: "—", label: "Sunucunun durumu bilinmiyor" };
-  if (p.count === 0) return { level: "ok", text: "Her şey yolunda", short: "", label: "Her şey yolunda" };
-  return { level: p.level, text: `${p.count} konu`, short: String(p.count), label: `${p.count} konu dikkat istiyor` };
+  const p = problemSummary.value;
+  if (!p) return { level: "unknown", text: "Durum —", short: "—", label: "Sunucunun durumu bilinmiyor", to: systemRoute("saglik") };
+  if (p.count === 0) return { level: "ok", text: "Her şey yolunda", short: "", label: "Her şey yolunda", to: p.to };
+  return { level: p.level, text: `${p.count} konu`, short: String(p.count), label: `${p.count} konu dikkat istiyor`, to: p.to };
 });
 
 const running = computed(() => runningJobs.value.length);
 const activityLabel = computed(() => (running.value ? `İşlemler, ${running.value} çalışıyor` : "İşlemler"));
+
+// The theme button names the current choice; a click takes the next one and says it.
+const themeLabel = computed(() => `${themeText(theme.value)}; değiştir`);
+const themeSaid = ref("");
+function stepTheme(): void {
+  setTheme(nextTheme(theme.value));
+  themeSaid.value = themeText(theme.value);
+}
 </script>
 
 <template>
@@ -52,7 +64,7 @@ const activityLabel = computed(() => (running.value ? `İşlemler, ${running.val
       <Icon name="search" />
     </button>
     <RouterLink
-      to="/sistem"
+      :to="chip.to"
       class="chip"
       :class="'chip-' + chip.level"
       :aria-label="props.compact ? chip.label : undefined"
@@ -75,5 +87,9 @@ const activityLabel = computed(() => (running.value ? `İşlemler, ${running.val
       <span v-if="!props.compact">İşlemler</span>
       <span v-if="running" class="count" aria-hidden="true">{{ running }}</span>
     </button>
+    <button type="button" class="icon-btn theme-btn" :data-tema="theme" :aria-label="themeLabel" :title="themeText(theme)" data-testid="theme" @click="stepTheme">
+      <Icon name="theme" :size="18" />
+    </button>
+    <span class="sr-only" role="status">{{ themeSaid }}</span>
   </div>
 </template>

@@ -1,472 +1,414 @@
 # Architecture
 
-**Status:** current architecture for the installer tree under `Data/`.
-Read [`contract.md`](contract.md) first — that document says *what* the installer
-does; this one says *where each part of it lives* and *how data moves*.
-Operator entry point: [`README.md`](../../README.md).
+**Status:** the layout and data flow of Obhut generation 2, as the tree under `Data/` builds it. Read
+[`contract.md`](contract.md) first: it says *what* Obhut does and refuses; this document says *where each
+part lives* and *how data moves*. Rationale is in [`design-decisions.md`](design-decisions.md). The
+newcomer's entry point is the repository's [`README.md`](../../README.md).
 
-**Konsol (DD-258, DD-267):** one admin interface at `/`, organised by task: Genel Bakış,
-Uygulamalar (with each application's page), Erişim, Dosyalar, Sistem and Gelişmiş. It is a
-Vue 3 + TypeScript build from `tools/konsol-ui`, committed in `console/yeni/` and placed by the
-installer at the root of `CONSOLE_WEB_DIR` beside the sign-in page, the editor bundle and the
-marks; nothing is built on the server ([`redesign.md`](redesign.md)). It talks to the route table
-of `panel/master_api.py`, the packages' own APIs and the two file backends (`/api/*` for the user
-area, `/api/sistem/*` for Sistem dosyaları), and follows live state through
-`/api/konsol/olaylar`. Host CPU sampling runs independently of WireGuard; the resources API
-(`/api/konsol/kaynaklar`) does not enumerate networks or ports or invoke external
-commands. An application's settings come from its package's declarations (`konsol.json`
-`form`) and go to its API, which runs the package worker directly (no draft, no confirmation;
-**DD-202**, **DD-266**); packages ship no page of their own (**DD-267**). Changes that can cut
-the operator off are shown as the settings plan first and keep their confirmation flow
-(**DD-265**).
+Bare paths are relative to `Data/`. Keys in capitals are declared once in `config/defaults.env`.
 
-**Built-ins (DD-159):** Files and folder WebDAV are built in, managed in Dosyalar (Sunucu
-klasörleri, Çöp kutusu, Paylaşımlar, Sistem dosyaları). Konsol's ZIP/RAR jobs
-(DD-166/170/183) were removed in **DD-267**: archives are Gezgin's (an App Store package).
-The App Store catalogue contains WireGuard, qBittorrent and Gezgin. `dosya`/`paylasim` are
-internal paths and registry IDs, not public lifecycle operations.
+## Contents
 
-The ownership rule: one owner per fact and one owner per decision. A port,
-path or chain name of the base is declared once (`config/defaults.env`); a
-package's own defaults are declared once in its `magaza/<id>/<id>.env`, and a
-durable Konsol override may replace only the keys the package allows
-(`PAKET_AYAR_ANAHTARLAR`, `PACKAGE_OVERRIDES_DIR`; **DD-203**, **DD-214**,
-**DD-220**). Each question (is this healthy? has the address changed?) has
-exactly one answerer (§6).
+1. [Layers](#1-layers)
+2. [One owner per fact](#2-one-owner-per-fact)
+3. [The repository](#3-the-repository)
+4. [Files and folders on the host](#4-files-and-folders-on-the-host)
+5. [Processes and units](#5-processes-and-units)
+6. [Data flows](#6-data-flows)
+7. [Locks and jobs](#7-locks-and-jobs)
+8. [Decision ownership](#8-decision-ownership)
+9. [OS-divergence inventory](#9-os-divergence-inventory)
+10. [Verification layers](#10-verification-layers)
 
 ---
 
-## 1. Data flow
+## 1. Layers
+
+| Layer | Contents |
+|---|---|
+| Who connects | This server (loopback and Konsol's sockets), Tailscale devices, WireGuard devices (to the internet only), the internet |
+| Gate | The firewall (`MASTER-SETTINGS`, `MASTER-INPUT`, WireGuard's `MASTER-FORWARD`/`MASTER-NAT`, the container guard's nft table), Caddy (names, certificates, Konsol's session check), dnsmasq (local names) |
+| Obhut | Konsol (the built interface, the root backend on a socket, `sudo obhut`), Files (the file backend and the system files view), folder WebDAV, WireGuard (`master-wg`), the access projection, health and repair (`master-onar`), update (`master-guncelle`) |
+| Application engine | YAML reader → Compose or Kubernetes reader → the model → inspector → generator → records; lifecycle jobs through the container broker and its root worker |
+| Applications | Podman containers under Quadlet units, each application on its own bridge `ksl-<app>` |
+| Base | Debian 13, Ubuntu 24.04 or 26.04; `kur.sh` → `install.sh`; Tailscale; Podman |
 
 ```
-                     operator input
-                   (SSH host, local domain)
-                            │
-                            ▼
-              ┌──────────────────────────────┐
-              │  /etc/master-stack/config.env│   persistent choices
-              │  (rendered from              │   survives re-runs
-              │   config/defaults.env)       │
-              └──────────────┬───────────────┘
-                             │
-                             ▼
-                    address detection
-                    (install.sh + refresh-tailnet-config)
-              WAN if + WAN IPv4, tailscale0
-                    IPv4 + IPv6
-                             │
-                             ▼
-              ┌──────────────────────────────┐
-              │  /etc/master-stack/state.env │   detected runtime facts
-              │  (regenerated every run and  │   never hand-edited
-              │   by refresh-tailnet-config) │
-              └──────────────┬───────────────┘
-                             │
-        ┌────────────┬───────┴────────┬──────────────┐
-        ▼            ▼                ▼              ▼
-    magaza/<id>   dnsmasq conf     Caddyfile     firewall
-                  (lo +          (TAILSCALE_    (in memory)
-                   tailscale0)    IPV4:80)
-        │            │                │              │
-        ▼            ▼                ▼              ▼
-   master-modul   dnsmasq         caddy         MASTER-INPUT
-   (from Konsol;   .service        .service      MASTER-FORWARD
-    on loopback)
+              operator (SSH: kur.sh, sudo obhut)          Tailscale devices          internet
+                         │                                       │                       │
+                         ▼                                       ▼                       ▼
+                 install.sh stages 0–7                  dnsmasq (lo, tailscale0)   MASTER-INPUT (SSH, UDP,
+                         │                                       │                 the one Caddy WAN port)
+     ┌───────────────────┼─────────────────────┐                 ▼                       │
+     ▼                   ▼                     ▼        Caddy :80 on TAILSCALE_IPV4 ◄────┘ :443 on WAN_IPV4
+ config.env          state.env           units, files          │  forward_auth (session check)
+ (choices)       (detected facts)        rendered once          ├─ /api/konsol/* ──► master-panel (Unix socket, root)
+                         │                                      ├─ /api/sistem/* ──► master-sistem-dosya (socket, root)
+                         ▼                                      ├─ /api/*        ──► master-files-panel (127.0.0.1)
+          firewall, Caddy, dnsmasq, backends                    ├─ pages         ──► CONSOLE_WEB_DIR
+                                                                ├─ paylas.       ──► master-paylasim (127.0.0.1)
+                                                                └─ <name>.       ──► 127.0.0.1:<pool port> ──► container
 ```
 
-Only Caddy binds the Tailscale address (including Infuse
-`${TAILSCALE_IPV4}:${SHARE_PORT}/s/<id>/`). dnsmasq and the firewall are written against
-the *interface name*, and WebDAV binds loopback only (**DD-98**, **DD-158**).
-That is what makes an address change a Caddy-only restart rather than a
-stack-wide one. The legacy WAN HTTP share site exists only while a WAN
-connection is enabled, unexpired and otherwise eligible. Configured HTTPS keeps
-its listener for renewal even with no active folders, subject to the global
-Caddy publication gate (**DD-179/190/191/192**).
+## 2. One owner per fact
 
-Panel choices have a separate owner: `master_settings.py` commits firewall,
-DNS and domain overrides to `/etc/master-stack/ayarlar.json`, which the installer
-and service renderers preserve on re-runs. A confirmed domain takes precedence
-over the installer input. qBittorrent account/path changes are the package worker's
-(`magaza/torrent/ayar.py`, run by the backend as a transient unit) and go straight to
-its own profile. The independent settings guard handles unconfirmed transactions;
-DNS-only applies commit directly. WebDAV credentials go through
-`master_shares.py` into a separate hash-only registry (§4).
+- **Ports, paths, chain names and limits of the base:** `config/defaults.env`, written into `state.env`.
+  A literal repeated elsewhere is a bug.
+- **Konsol's request and reply shapes:** the route table in `panel/master_api.py`; `docs/konsol-api.json`
+  and `tools/konsol-ui/src/api/sema.ts` are generated from it.
+- **An application:** its record under `UYGULAMA_STATE_DIR/<app>/` (the file, the answers, the checked
+  definition, the allocations, the access rows). Units, Caddy sites, DNS names and guard rules are derived
+  from it, never edited by hand.
+- **Confirmed choices** (operator firewall rules, DNS records and forwarding, the local domain, the fixed
+  rows of Konsol and Paylaşımlar): `SETTINGS_FILE`, written only by the settings transaction.
+- **Folder accounts and policies:** `SHARE_STATE_FILE`, written only by `master_shares.py`.
+- **The Konsol account and sessions:** `KONSOL_AUTH_DIR`, through `master_auth.py`.
+- **WireGuard:** `WG_CONF_DIR` (networks file, stopped marker, per-network configuration and profiles),
+  written only by `master-wg`.
+- **One home per object in the interface:** an application on its page, an address in Erişim, a folder in
+  Dosyalar; other places show a summary and a link.
 
----
+## 3. The repository
 
-## 2. `config.env` versus `state.env`
-
-Two files, two lifetimes, two owners.
-
-| | `config.env` | `state.env` |
-|---|---|---|
-| **Path** | `/etc/master-stack/config.env` | `/etc/master-stack/state.env` |
-| **Contains** | Effective local domain and timezone | Detected facts plus runtime constants: WAN interface/addresses, `TAILSCALE_IPV4/6`, install version, paths/ports, the firewall's `VPN_BLOCK_DEST4/6`; no package setting (WireGuard's live in its package, **DD-201**) |
-| **Source** | `config/defaults.env` + the domain answered in stage 0 (**DD-228**) | installer / `refresh-tailnet-config` at run time |
-| **Written by** | The installer, once per run | The installer, `refresh-tailnet-config` when an address changes, and `master_settings.py` (only `LOCAL_DOMAIN`) on a confirmed domain change |
-| **Lifetime** | Persistent; each run resolves defaults/input and any confirmed panel domain, then rewrites it | Regenerated from current constants and detected facts |
-| **Hand-editable** | No — initial domain comes from installer input; later domain changes use Erişim → Adresler | No — it will be overwritten |
-| **Read by** | The installer, template rendering | The installer, `master-firewall`, Caddy (`EnvironmentFile=`), `refresh-tailnet-config`, `wait-tailnet-addr`, `master-wg`, `master-modul` and the Konsol backends/workers (`master-panel`, `master_settings.py`, `master_shares.py`) |
-| **Contains secrets** | **No** | **No** |
-
-`config.env` is not a port editor. Constants live in `config/defaults.env`;
-WireGuard network ports live in `/etc/wireguard/networks`. Panel overrides live
-in `ayarlar.json`. Changing a detected address is not a human action.
-
-`state.env` holds *current* facts only. The public IPv4 is re-detected on every
-run; it is never recorded as an expectation that later checks compare against
-reality.
-
----
-
-## 3. File responsibilities
-
-### 3.1 Repository layout
+### 3.1 Layout
 
 ```
 .
-├── kur.sh                             server bootstrap: curl … | sudo bash downloads the repo and starts install.sh (DD-228)
-├── wireguard.command                  WireGuard peer menu (double-click; calls master-wg over SSH)
-├── onar.command                       check and repair over SSH (double-click; DD-239)
-├── kurulum/                           wireguard.command input: kurulum.env (SSH_HOST); wireguard/ (only profiles + QR .png that wireguard.command was asked to download; DD-143) (Git-ignored)
-├── README.md, CLAUDE.md               entry points
-├── .cursor/rules/master-stack.mdc     repository rules (not shipped to host)
+├── kur.sh                  server bootstrap: downloads the archive, places the runtime tree, starts install.sh (DD-228)
+├── wireguard.command       WireGuard peer menu over SSH (macOS; calls master-wg)
+├── onar.command            "Denetle ve onar" over SSH (macOS; DD-239)
+├── kurulum/                Git-ignored: kurulum.env (SSH_HOST) and downloaded device profiles
+├── README.md, CLAUDE.md    entry points
+├── .cursor/rules/          working rules for assistants (not shipped)
 └── Data/
-    ├── install.sh                     orchestration
-    ├── common.sh                      logging, guards, file writing, rendering
-    ├── config/defaults.env            single source of truth for constants
-    ├── templates/                     Caddyfile, dnsmasq.conf
-    ├── scripts/                       installed to /usr/local/sbin (firewall.sh → master-firewall, …)
-    ├── systemd/                       units, timers and drop-ins
-    ├── magaza/<id>/                   store packages: WebDAV (paylasim), qBittorrent (torrent), WireGuard (wireguard), Gezgin (gezgin) files
-    ├── panel/                         Konsol root backend (master-panel; loads package API modules), settings and share workers, WebDAV service
-    ├── files-panel/                   unprivileged file backend (Python), API only
-    ├── console/                       the sign-in page, the editor bundle, the marks and the committed build console/yeni/, placed at the console's root (one origin, no external loads; DD-267)
-    ├── tools/duzenleyici/             source and build of the bundled text editor console/duzenleyici.js (DD-249; not shipped)
-    ├── tools/konsol-ui/               sources of Konsol's interface, built into console/yeni/ (DD-258, DD-259, DD-267; not shipped)
-    ├── docs/                          contract, architecture, design decisions, feature notes; archive/
-    ├── tests/                         Bats, Python, browser and Linux suites (not shipped)
-    ├── CHANGELOG.md                   change log (not shipped; old working notes in docs/archive/)
-    └── OKUBENI.txt                    Turkish operator notes (not shipped)
+    ├── install.sh          orchestrator: gates, the domain, stages 0–7, summary
+    ├── common.sh           logging, die, root and OS gates, the lock, bounded retry, atomic writes, templates
+    ├── config/             defaults.env (single source of truth); kurulum.env.example (the Mac's SSH host)
+    ├── templates/          Caddyfile, dnsmasq.conf, paylasim.caddy, paylasim-dnsmasq.conf
+    ├── scripts/            firewall.sh (→ master-firewall), master-wg, refresh-tailnet-config, wait-tailnet-addr,
+    │                       tailscale-udp-gro, master-guncelle, master-onar, master-konsol, obhut
+    ├── systemd/            units, timers and the wg-quick@ drop-in
+    ├── panel/              the root backend master-panel and its modules (below)
+    ├── files-panel/        master-files-panel (the file backend and, with --sistem, the system files view)
+    ├── console/            the sign-in page, the editor bundle, the marks and yeni/ (Konsol's committed build)
+    ├── tools/konsol-ui/    Konsol's Vue 3 + TypeScript + Vite sources (not shipped)
+    ├── tools/duzenleyici/  the CodeMirror 6 editor bundle's sources (not shipped)
+    ├── tests/              bats, Python, browser and Linux suites (not shipped; tests/README.md)
+    ├── docs/               contract, architecture, design decisions, folder shares, rebuild plan, API, archive/
+    ├── CHANGELOG.md        change history (not shipped)
+    └── OKUBENI.txt         the operator's Turkish notes (not shipped)
 ```
 
-The root holds the server bootstrap `kur.sh` and what the operator double-clicks.
-Paths in the rest of this document are relative to `Data/`. `kur.sh` places only
-the runtime subset (§8) on the host, under `/root/debian-server-installer`.
-
-`.cursor/rules/` covers the repository tree. It describes how to build this
-installer and ships no runtime behaviour — nothing installs it,
-nothing reads it at run time — so it appears in the repository layout and
-nowhere in §3.4's host layout.
-
-One rule set, one active file:
-
-| Path | Role |
-|---|---|
-| `.cursor/rules/master-stack.mdc` | **The active source.** Plain text with repository-wide frontmatter. Edits to the rules go here and only here. |
-| `docs/archive/master-stack-rules-source.rtf` | **Archive.** The operator's original RTF, byte-for-byte, kept as the historical record. Never edited, never loaded. |
-
-Cursor never parses the `.rtf` as a rule, so it lives in the archive rather
-than beside the real rule file. There is deliberately **no synchronisation
-mechanism and no test** comparing the two: the archive is a snapshot of
-what was first written, not a second copy of the truth, and it is expected
-to fall behind as the `.mdc` evolves.
-
-Three documents govern the installer, and they are not interchangeable:
-
-| Source | Governs |
-|---|---|
-| `.cursor/rules/` | How to work: process, Bash conventions, per-phase verification, the hard "do not" list |
-| `docs/contract.md` | What the result must do, and the success criteria |
-| `docs/architecture.md` | Where each part lives and how data moves |
-
-The rules describe working constraints; the contract and its linked feature
-documents describe runtime behaviour. Settled questions are listed in §10.
-Update stale summaries instead of treating old wording as a new requirement.
+`kur.sh` places only `install.sh`, `common.sh`, `config`, `templates`, `scripts`, `systemd`, `panel`,
+`files-panel` and `console` on the host, under `/root/debian-server-installer`.
 
 ### 3.2 One sentence per file
 
-| File | Single responsibility | Deliberately does not know |
+| File | Job | Deliberately does not know |
 |---|---|---|
-| `.cursor/rules/master-stack.mdc` | Carry the working rules for any AI assistant editing this tree — the single active, editable rule source | Anything about runtime behaviour — it is never installed to the host and never read by the installer |
-| `install.sh` | Ask for the domain on a first install (**DD-228**), call the stages in order (including address detection), print the summary | What a firewall rule looks like, what Caddy syntax is |
-| `common.sh` | Logging, error trapping, the root/OS gates, the stack lock, bounded network retry, atomic file installation, template rendering | Any stack-specific fact |
-| `config/defaults.env` | Declare every constant exactly once: ports, paths, chain names, interface name, the WebDAV registry path | How any of them is used |
-| `templates/Caddyfile` | The base HTTP sites and their upstreams (loopback, root backend socket), the paths open before a session and the `/yeni` redirect (**DD-267**), the admin API socket (**DD-180**), the timeouts of the optional WAN share listeners (**DD-179/190**), scoped proxy logging (**DD-193**), plus `import CADDY_MODULES_DIR/*.caddy` for module sites (**DD-149**) | The Tailscale address (read as `{$TAILSCALE_IPV4}` from `state.env` at daemon start); which modules are installed |
-| `magaza/wireguard/master-wg` | Installed on the host only with the WireGuard package (**DD-196**). WireGuard networks and peers, profiles/QR, DNS settings; coordinate internet-only network firewall changes | Installer inputs or anything on the Mac |
-| `panel/master-panel` | Root `/api/konsol/*` and, for installed packages, `/api/uygulama/<id>/*` handed to the package's API module (**DD-200**) on a Unix socket only Caddy's group and root can open (**DD-180**), Host/CSRF gates, resources, read-only health checks (**DD-182**), audit/settings views and fixed worker dispatch | Static pages; module installation implementation; any TCP listener |
-| `panel/master_settings.py` | Validate/apply settings, snapshot/rollback/confirm with independent guard, render committed overrides; `prepare` holds apply's checks and `plan` runs them on a copy as the dry run (**DD-265**) | Arbitrary shell commands, client-visible password hashes |
-| `panel/master_shares.py`, `panel/master_webdav.py` | Root-owned folder-account registry with independent Tailscale/WAN policies, WAN site projection and its guard; separate unprivileged WebDAV data service (§4) | Shared plaintext credentials or a writable symlink share tree |
-| `panel/master_auth.py`, `scripts/master-konsol` | Konsol account (the public name's credential, **DD-205**), sessions, the per-address attempt limit and the shared public budget/bounded password checks (**DD-195**); the root CLI for reset/state/automation sessions (**DD-194**) | Passwords or tokens in clear text, multi-user roles, anything outside `KONSOL_AUTH_DIR` |
-| `console/giris.html`, `giris.js`, `giris.css` | The public name's sign-in page with its own styles in Konsol's colours and the interface's `/tema.js`; it returns to `/` with the kept view (**DD-194**; **DD-205**: the tailnet needs no sign-in and is sent back to Konsol; **DD-267**) | Any other Konsol data or API |
-| `panel/master_https.py`, `panel/master_publications.py` | Public-name validation, DNS check and pinned certificate probe; the fixed Panel/qBittorrent/WebDAV publication table, its private 403 stubs (address line taken from the module template) and the public qBittorrent and Konsol sites (**DD-190/191/193/195**); the operator's manual addresses for a loopback port: their sites and the `modul-elle.conf` lines the settings transaction writes (**DD-252**) | ACME keys or renewal (Caddy owns them), public DNS writes, upstreams other than `127.0.0.1` ports |
-| `panel/master_permissions.py` | Installer-only descriptor-pinned creation and selective owner/mode repair of the user data tree (**DD-187**) | Symlinks, special or hard-linked files and the retired `.arsiv` workspace (until stage 7 removes it, **DD-267**) |
-| `panel/master_containers.py`, `panel/master_container_manager.py` | The container inventory and operation broker behind Uygulamalar, an application's page and Gelişmiş → Podman: read-only Podman mapper plus ownership-aware inventory and resources (**DD-211**, **DD-266**); host-network listening sockets from `/proc` (**DD-215**); reads remain in the backend sandbox, writes dispatch a bounded root transient unit | Raw shell execution from the browser; secret environment values in responses; taking over another controller |
-| `panel/master_container_config.py`, `panel/master_container_worker.py` | Private definitions, validated Quadlet rendering, explicit generic lifecycle/recreation/adoption and resource operations under install/module/container locks (waited for up to 5 s, as `master-modul` does, **DD-266**); revision checks and durable operation results | Package lifecycle (uses `master-modul` and declared adapters); deleting bind data or volumes with a container; reconciliation |
-| `panel/master_container_binds.py` | A Konsol container's `ExecStartPre`/`ExecStopPost`: walk each bind source without following links, pin it through its descriptor onto `KONTEYNER_BAGLAMA_DIR/<name>/<hash>`, verify, release on stop (**DD-226**); stdlib only, no store, package code or lock | Package containers; deciding which folders may be bound (save-time validation) |
-| `panel/master_container_network.py` | Exact project-owned nftables forward guard for managed bridges (publications in; what a container may open out, **DD-224**), validated binding scopes and host-port conflicts; applied by the locked writers (firewall, worker, engine); container units only check it before they start (**DD-223**) | Netavark NAT, third-party chains, arbitrary host-network containers |
-| `scripts/master-modul` | Package lifecycle from manifests and hooks (apt, tools, drop-ins, a container application's quadlet and digest-pinned image (**DD-209**), names), the install form's private seed `RUNTIME_DIR/modul-<id>.kur` for packages with `PAKET_KUR_AYAR` (required, handed to hooks as `KUR_TOHUM`, always removed, **DD-210**), registry/progress/locks; installer-only `yerlesik` activates/checks built-in Files/WebDAV and their names, retaining accounts (**DD-159**, **DD-197**, **DD-200**) | Any application name; templates and inputs; user files; public removal of built-ins |
-| `magaza/<id>/` | One package: `paket.env` manifest and `kanca` hooks (**DD-197**), its Konsol files `konsol.json` (App Store texts, journal words) and `api.py` (the backend module behind `/api/uygulama/<id>/*`, **DD-200**; qBittorrent's runs its worker `ayar.py` through `ctx.worker`, **DD-202**), an optional install/settings form (`konsol.json` `form` with the manifest's `PAKET_KUR_AYAR` worker, **DD-210**), its own settings file `<id>.env` and the folders it writes into (`PAKET_KLASORLER`, optional `klasorler.py` report) plus the paths the root backend may write for it (`PAKET_ARKAUC_YOLLAR`, **DD-203**) and an optional traffic module for the overview's network card (`PAKET_TRAFIK`, `trafik.py`, **DD-206**), plus its files as templates, rendered by the installer to `MODULES_DIR/<id>/`: `paylasim/master-paylasim.service` (the folder WebDAV unit), `paylasim.caddy`, `dnsmasq.conf` (**DD-148**, **DD-158**); `torrent/qBittorrent.conf` (first settings only), `qbittorrent.container` (the Podman quadlet: pinned image, its own bridge with the interface published on loopback and the peer port on the WAN IPv4, two same-path mounts, **DD-209**, **DD-217**), `torrent.caddy`, `dnsmasq.conf` (**DD-151**); `gezgin/gezgin.container` (pinned image, its own bridge with the interface on loopback only and its WebDAV shares on the Tailscale address, **DD-264**, the user area as one mount with Konsol's trash covered, data in `/var/lib/gezgin`, the Files account with no capabilities), `ayar.py` (install form: the first administrator's bcrypt hash; image update), `yayin.py`, `gezgin.caddy`, `dnsmasq.conf` (**DD-262**); `wireguard/master-wg` and `wg-quick-master-stack.conf`, placed on the host by `master-modul kur`/`uygula` and removed by `kaldir` (**DD-196**) | Whether the package is installed |
-| `files-panel/master-files-panel` | File API as downloads uid; Host/CSRF gates, descriptor-safe paths, no-overwrite operations (the editor's version-checked atomic save the one exception, **DD-249**), `.cop` trash and text. In `--sistem` mode (unit `master-sistem-dosya`, root, **DD-235**): the same API under `/api/sistem/*` for `/`, tailnet peers only, permanent delete, no read-only roots (**DD-238**) | Anything outside `SERVER_ROOT` (the `/srv` unit); WebDAV credentials; WireGuard administration |
-| `panel/master_api.py` | Konsol's route table with request and reply shapes; the backend dispatches its routes, tests generate `docs/konsol-api.json` (OpenAPI 3.1) and `tools/konsol-ui/src/api/sema.ts` from it (**DD-259**) | The session check Caddy asks, the sign-in POST and the packages' own APIs, which stay outside it (**DD-267**) |
-| `panel/master_erisim.py` | `/api/konsol/erisim`: who reaches which service from where (this server, Tailscale, WireGuard, internet), projected from publications, share policies, container port scopes, VPN networks, the port catalogue and the operator's rules, with warnings (**DD-259**) | Probes or changes of its own |
-| `panel/master_olaylar.py` | `/api/konsol/olaylar`: one producer for every open Server-Sent Events stream, changed topics only (resources, health, operations, the pending change); the page reads it with fetch (**DD-259**) | An `X-Konsol` exception; a producer per stream |
-| `panel/master_uygulamalar.py` | `/api/konsol/uygulamalar`: packages, Konsol's containers and the built-ins in one list with state, running operation, access cells, resources, image update state, addresses, actions and revision, joined from the package list, the container inventory and the Erişim view; its detail, log and one action entry are routes of `master-panel` (**DD-261**) | Changes or probes of its own; waiting for a registry |
-| `panel/master_onar.py`, `scripts/master-onar` | Denetle ve onar (**DD-239**): 21 checks with their repairs, run from Sistem → Sağlık, `sudo master-onar`/`sudo obhut onar` or `onar.command`; one report at a time | Anything a check does not name; reconciliation beyond its steps |
-| `panel/master_update.py`, `scripts/master-guncelle` | Güncelle (**DD-233**): the newer version on GitHub (cached), and the root unit that downloads that pinned commit and re-runs the installer without a terminal; another generation (`OBHUT_NESIL`) only as a clean-install notice (**DD-277**) | First installs; any version but the pinned commit; another generation |
-| `panel/master_obhut.py`, `scripts/obhut` | `sudo obhut` (**DD-268**): the server's state and recovery over SSH through the backend's socket (the local caller), with master-onar and master-konsol for checks, repairs and the account; systemd's unit states when the backend is down | Any TCP access, a shell, actions the interface keeps for planned changes |
-| `panel/master_yayin.py` | `/api/konsol/yayinlar` and its plan: every publication row and every Konsol container that could have one, and the steps of one publication (an optional container save adding a loopback port from `YAYIN_PORT_ILK`–`YAYIN_PORT_SON`, then the row through the settings plan); the page sends the steps to the existing write routes (**DD-265**) | Writes of its own; one transaction across the container broker and the settings transaction |
-| `console/yeni/`, `tools/konsol-ui/` | Konsol's interface (Vue 3 + TypeScript + Vite): the six sections, the palette, the activity list, the pending-change banner, Dosyalar with Paylaşımlar, the app manifest `manifest.json` with `obhut-192.png`/`obhut-512.png` (no service worker, **DD-268**); committed in `console/yeni/` (the folder keeps its phase name), placed at the root of `CONSOLE_WEB_DIR` and served at `/`; `kaynak.sha256` ties it to its sources; local Outfit font (`font-src 'self'`) (**DD-258**, **DD-259**, **DD-267**) | Inline code or styles (CSP), external loads, runtime template compilation; any package script or application name of its own; keys — it asks for a QR or profile only when the operator does; file contents as HTML |
-| `console/duzenleyici.js`, `tools/duzenleyici/` | Dosyalar' text editor: a CodeMirror 6 bundle loaded when the first file opens, built reproducibly from pinned packages; `tools/` stays in the repository (**DD-249**) | Any request of its own; inline styles (CSP) |
-| `console/obhut.svg`, `obhut.png` | The Ô mark: the favicon and touch icon of the interface and the sign-in page (**DD-256**) | Anything else |
-| `templates/dnsmasq.conf` | Base `panel` name and fail-closed resolver on `lo` + `tailscale0`; built-in WebDAV and installed qBittorrent add their own files | The current address (`bind-dynamic` tracks it) |
-| `scripts/tailscale-udp-gro` | Set the two ethtool flags on the default-route interfaces | Tailscale itself |
-| `scripts/firewall.sh` → `master-firewall` | Project INPUT/FORWARD/NAT plus `MASTER-SETTINGS`, using installed apps, network registry and confirmed overrides; `--check` verifies critical policy | Other software's chain contents; the Tailscale address (matches its interface) |
-| `scripts/refresh-tailnet-config` | Detect Tailscale address changes, update state and restart Caddy; bounded failed-Caddy recovery, independent firewall check/reapply and reopening failed WireGuard networks once the firewall check passes (DD-87/94/180) | General module health, file drift, disk space or stack-wide reconciliation |
-| `scripts/wait-tailnet-addr` | Caddy `ExecStartPre`: wait until `tailscale0` carries the expected IPv4; fail fast on a stale one | Caddy configuration |
-| `systemd/` | Ordering, coupling, restart policy and schedules of units, timers and drop-ins | The contents of the scripts they start |
-| `../kur.sh` | Download the repository archive, place the runtime tree atomically and start `install.sh` on the terminal | Anything the installer does |
-| `tests/` | Assert the contract, once per fact | Implementation details of the scripts |
+| `install.sh` | The gates, the domain question, the stages in order, the summary | What a firewall rule or a Caddy directive looks like |
+| `common.sh` | Logging, `die`, `require_root`, `require_supported_os`, `acquire_lock`, `retry`, `atomic_write`, `render_template` | Any fact of the stack |
+| `config/defaults.env` | Every base constant once | How any of them is used |
+| `templates/Caddyfile` | The `(konsol)` routes (session check, sockets, file backend, pages and headers), the tailnet site, the WAN listener options, the admin socket, proxy logging, `import CADDY_MODULES_DIR/*.caddy` | The Tailscale address (read as `{$TAILSCALE_IPV4}` at start); applications |
+| `templates/dnsmasq.conf` | The resolver on `lo` and `tailscale0` and the base name `panel.` | The current address (`bind-dynamic` and `interface-name` follow it) |
+| `templates/paylasim.caddy`, `templates/paylasim-dnsmasq.conf` | WebDAV's tailnet site (`paylas.` and `TAILSCALE_IPV4:SHARE_PORT`) and its name | Folders, accounts, the internet side |
+| `scripts/firewall.sh` → `master-firewall` | `apply` and `--check` of the project chains, the operator's rules, WireGuard's rules from its registry and the container guard | Other software's chains; the Tailscale address (it matches the interface) |
+| `scripts/master-wg` | WireGuard networks and peers, profiles and QR codes, start and stop as a whole; the settings worker's caller mode | Installer input; anything on the Mac |
+| `scripts/refresh-tailnet-config` | Tailscale address changes into `state.env` and a Caddy restart; the firewall watchdog, failed Caddy and WireGuard recovery, the applications' address refresh | General health, file drift |
+| `scripts/wait-tailnet-addr` | Caddy's `ExecStartPre`: wait until `tailscale0` carries the state's IPv4, fail fast on a stale one | Caddy's configuration |
+| `scripts/tailscale-udp-gro` | The two ethtool flags on the default-route interfaces | Tailscale itself |
+| `scripts/master-guncelle` | The update unit's work: the pinned commit's `kur.sh` in update mode, its result file | Which version to offer |
+| `scripts/master-onar`, `panel/master_onar.py` | Denetle ve onar: 21 fixed steps, a report, journal lines | Anything a step does not name |
+| `scripts/master-konsol`, `panel/master_auth.py` | The Konsol account, sessions, sign-in budgets; the root CLI | Passwords or tokens in clear text; roles |
+| `scripts/obhut`, `panel/master_obhut.py` | `sudo obhut`: state and recovery through Konsol's socket | TCP, a shell, timed confirmations |
+| `panel/master-panel` | The root backend on `PANEL_SOCKET`: gates, the session check, the route table's handlers, read models, samplers, job and worker dispatch | Static pages; any TCP listener; system writes (workers do them) |
+| `panel/master_api.py` | The route table with request and reply shapes; OpenAPI and TypeScript generation | The handlers |
+| `panel/master_settings.py` | The settings transaction: validate, plan, apply, confirm, roll back, the guard; DNS projection and the operator's rules for the firewall | Arbitrary commands; secrets |
+| `panel/master_publications.py` | The access projection's content: the fixed rows, the applications' Caddy sites and DNS file; the `erisim` section's checks and plan text | ACME (Caddy owns it); public DNS writes |
+| `panel/master_https.py` | Internet-name validation, the bounded DNS check, the pinned certificate probe, WebDAV's internet site | Keys and renewal |
+| `panel/master_shares.py` | The folder-share registry and its changes; the projection's writer (`publish`) and its 30 s guard | Plain passwords |
+| `panel/master_webdav.py` | The unprivileged WebDAV server on two loopback listeners | The registry's writer |
+| `panel/master_erisim.py` | `GET /api/konsol/erisim`: who reaches what from where | Probes or changes of its own |
+| `panel/master_olaylar.py` | One producer for every Server-Sent Events stream | Topics' content |
+| `panel/master_update.py` | The update offer (GitHub, generation, build number) and the update unit's state | Installer code |
+| `panel/master_wireguard.py` | Konsol's WireGuard routes over `master-wg`; the `wireguard` settings section's checks and plan text | Keys in listings |
+| `panel/master_yaml.py` | The YAML subset reader | Compose or Kubernetes |
+| `panel/master_compose.py`, `panel/master_kube.py` | A file's documents → the one application model, refusals and notes with lines | Answers, the host |
+| `panel/master_inspector.py` | The model → questions, guesses, refusals; answers → the checked definition and the secret values | The server's state (names taken, folders) |
+| `panel/master_generator.py` | The definition and allocations → every unit, environment file, folder, bind and publication (pure) | Files, commands, clocks |
+| `panel/master_applications.py` | Records, the pool, the guard's input, access rows, names taken, read models, install summaries, drafts, sizes, the cleanup's items | Running anything that writes |
+| `panel/master_container_manager.py` | The inventory and the applications' read model in the backend; the job broker (transient units, at most four jobs) and the image update check | Writes (the worker does them) |
+| `panel/master_container_worker.py` | Every container write: install, start, stop, restart, update, edit, remove, drafts, the cleanup, access-row unit changes, `--adres-yenile` | Reconciliation |
+| `panel/master_container_network.py` | The container guard's nft table: apply and exact check | Netavark's NAT; other tables |
+| `panel/master_container_binds.py` | A unit's `ExecStartPre`/`ExecStopPost`: pin `/srv` bind sources onto anchors | Which folders may be bound (the inspector decides) |
+| `panel/master_containers.py` | Read-only Podman mapping, listening sockets, the manifest-only update check | Starting or stopping anything |
+| `panel/master_container_config.py` | Shared errors, private file helpers, systemd quoting, the managed label | Applications |
+| `panel/master_permissions.py` | The installer's descriptor-pinned folder creation and selective owner/mode repair (run from the tree) | Symlinks, special or multiply linked files |
+| `files-panel/master-files-panel` | The file API for `SERVER_ROOT` as the Files account; with `--sistem` the same API for `/` as root on a socket | Shares, credentials, WireGuard |
+| `console/giris.*` | The internet name's sign-in page, in Konsol's colours with `/tema.js` | Any other data |
+| `console/yeni/`, `tools/konsol-ui/` | Konsol's interface: six sections, palette, İşlemler, the pending banner; `kaynak.sha256` ties the build to the sources | Inline code, external loads, application names |
+| `console/duzenleyici.js`, `tools/duzenleyici/` | The text editor, loaded when the first file opens | Requests of its own |
+| `systemd/` | Ordering, coupling, restart and schedules | The scripts they start |
 
 ### 3.3 Placeholder convention
 
-Templates use `__NAME__` tokens, not `${NAME}` and not `{$NAME}`. Both of
-those already have meanings in the generated files: systemd expands
-`${…}` in unit command lines, and Caddy expands
-`{$TAILSCALE_IPV4}` from `state.env` at daemon start. A distinct install-time
-token makes it impossible to confuse "substituted once, by the installer"
-with "expanded later, by the consumer".
+Templates use `__NAME__` tokens, never `${NAME}` (systemd expands it) or `{$NAME}` (Caddy expands it at
+start from `state.env`). `render_template` substitutes, writes a temporary file, sets the mode and renames
+it; an unfilled token is a hard error.
 
-Rendering is a single function in `common.sh`; it substitutes tokens,
-writes to a temporary file, sets owner and mode, and renames atomically. A
-template with an unsubstituted `__…__` token left in the output is a hard
-error, not a warning.
+---
 
-### 3.4 Runtime layout on the host
+## 4. Files and folders on the host
 
-| Host path | Written by | Contents |
+### 4.1 `config.env` and `state.env`
+
+| | `config.env` (`CONFIG_FILE`) | `state.env` (`STATE_FILE`) |
 |---|---|---|
-| `/etc/master-stack/config.env` | installer | operator choices, `0600` |
-| `/etc/master-stack/state.env` | installer, `refresh-tailnet-config`, `master_settings.py` (domain) | detected addresses and identification, `0600` |
-| `/etc/master-stack/webdav.json` | `master_shares.py` | Schema 4: independent folder accounts, scrypt hashes and folder identity; each item's `connections.tailscale` and `connections.wan` owns enabled/permission/expiry; 0600 root, systemd credential (DD-158, DD-192) |
-| `/etc/master-stack/konsol/` (`KONSOL_AUTH_DIR`) | `master-panel`, `master-konsol` (installer creates it 0700) | `hesap.json` (user, scrypt hash), `oturumlar.json` (SHA-256 of tokens, expiry; at most 16); 0600 root (**DD-194**, **DD-205**). The retired `duzen.json` and `favoriler.json` (**DD-206**, **DD-250**) are removed by the installer (**DD-267**) |
-| `/etc/master-stack/ayarlar.json`, `ayarlar-bekleyen.json` | `master_settings.py` | Committed firewall/DNS/domain choices and pending transaction recovery; the independent guard rolls unconfirmed work back |
-| `/var/lib/qbittorrent/` | qBittorrent (module) | hidden from Files and WebDAV (`PRIVATE_STATE_ROOT`, **DD-225**); its profile, the container's `/config`: settings (seeded once by `master-modul`) and torrent list, owned by the downloads uid (**DD-151**, **DD-209**) |
-| `/etc/containers/systemd/qbittorrent.container` (`KONTEYNER_BIRIM_DIR`) | `master-modul` (qBittorrent) | the Podman quadlet; the generator writes `qbittorrent.service` from it; present only while the app is installed and not stopped (**DD-209**) |
-| `/etc/containers/systemd/qbittorrent.container.d/90-konsol.conf` | qBittorrent's worker `ayar.py` | one same-path bind mount for a download folder outside the downloads tree (**DD-209**) |
-| `/etc/master-stack/containers/` (`KONTEYNER_STATE_DIR`) | container worker (**DD-211**) | private definitions, environment files and operation results, 0700 directories/0600 files; no secret values returned by the broker |
-| `/run/master-stack/konteyner-baglama/<name>/<hash>` (`KONTEYNER_BAGLAMA_DIR`) | `master_container_binds.py` (unit `ExecStartPre`) | bind anchors of running Konsol containers; root-owned 0700, recreated at every start, detached on stop, gone at reboot (**DD-226**) |
-| `/etc/containers/systemd/konsol-<name>.container` | container worker | generated only on explicit operations; digest-pinned image, managed bridge, ports/mounts, startup policy; manual stop omits the boot target |
-| `/etc/master-stack/package-overrides/` (`PACKAGE_OVERRIDES_DIR`) | declared package adapter | private, allowlisted settings that survive installer rendering; qBittorrent listener port also projects to `85-konteyner.conf` and Caddy; its peer port (DD-221) to the Quadlet's WAN publications, `TORRENTING_PORT` and the container guard |
-| `/var/lib/containers/storage/` | Podman (base, **DD-208**) | images and container layers; qBittorrent's image is pinned by digest and removed by `kaldir --veri` |
-| `/etc/wireguard/networks` | `master-wg` | Networks wg0…wg9 (`WG_NETWORKS_MAX` in the package's `wireguard.env` is the highest slot index): port, fixed `inet` policy column, addresses, default DNS, label; `0600` |
-| `/etc/wireguard/wgN.conf` | `master-wg` (the installer writes none, **DD-143**) | that network's key, peer public keys, PSKs, `AllowedIPs` (**DD-124**), `0600` |
-| `/etc/wireguard/clients-wgN/<name>.conf` | `master-wg` | device profiles for `profile`/`qr`, `0600` in a `0700` directory |
-| `/etc/modules-load.d/master-stack-wireguard.conf` | `master-modul` (WireGuard) | `wireguard`, `0644`; removed with the module (**DD-150**) |
-| `/usr/local/sbin/master-wg` | `master-modul` (WireGuard package, `PAKET_ARACLAR`, **DD-196**) | peer list/add/remove/profile/qr, `0755`; removed with the package |
-| `/usr/local/sbin/master-panel`, `master_settings.py`, `master_shares.py`, `master_webdav.py`, `master_https.py`, `master_publications.py`, `master_auth.py`, `master_update.py`, `master_api.py`, `master_erisim.py`, `master_olaylar.py`, `master_uygulamalar.py`, `master_yayin.py`, `master_onar.py`, `master_obhut.py`, `master_containers.py`, `master_container_{config,network,worker,manager,binds}.py` | installer | Root API and its modules, settings/account/publication/container workers and unprivileged WebDAV handler; pages are separate |
-| `/usr/local/sbin/master-files-panel`; `/usr/local/share/master-stack/konsol/` (`CONSOLE_WEB_DIR`) | installer | file backend and the console files Caddy serves: the interface at the root with the sign-in page, the editor bundle and the marks, nothing else (**DD-139**, **DD-140**, **DD-267**); an earlier run's `master_archives.py`, `master_rar.py`, old interface and `konsol/uygulama/` are removed |
-| `/usr/local/sbin/master-modul`, `/usr/local/share/master-stack/moduller/<id>/` | installer | module helper and rendered module files, `0755` / `0644` (**DD-148**) |
-| `/etc/master-stack/moduller` | `master-modul` (installer creates it empty) | installed modules: `id<TAB>calisiyor\|durduruldu`, `0644` (**DD-148**) |
-| `/etc/master-stack/moduller-bekleyen/<id>` (`MODULES_PENDING_DIR`) | installer | empty marker: the package's rendered files (or a built-in's code) changed and have not been applied yet; removed after a successful `uygula`/`yerlesik` or when the package is not installed; `0700` directory (**DD-222**) |
-| `/run/master-stack/modul-<id>.ilerleme`, `modul.lock` | `master-modul` | the last operation's progress line; the module lock (**DD-148**) |
-| `/etc/caddy/moduller/<id>.caddy` | installer (directory), `master-modul` (files) | module sites imported by the base Caddyfile; WebDAV: `paylas.<domain>` and `TAILSCALE_IPV4:SHARE_PORT` (**DD-98**, **DD-158**) |
-| `/etc/caddy/moduller/paylasim-wan.caddy` | `master_shares.py` | Global-gated WAN WebDAV site, `/s/*` only: legacy `WAN_IPV4:SHARE_PORT` while an eligible WAN connection exists, or configured HTTPS on `SHARE_HTTPS_PORT` retained for renewal without active folders (**DD-179/190/191/192**); stale WAN binding fails closed (**DD-182**) |
-| `/etc/caddy/moduller/torrent-wan.caddy` | `master_shares.py` (via `master_publications.py`) | Public qBittorrent HTTPS on the shared `SHARE_HTTPS_PORT`, only while enabled, running and its native login gates pass (**DD-191**) |
-| `/etc/dnsmasq.d/modul-<id>.conf` | `master-modul` | module names; WebDAV: `interface-name=paylas.<domain>,tailscale0` (**DD-148**) |
-| `SERVER_ROOT/.cop/` | installer (folder), file panel (contents) | Trash: `<id>/<item>` plus `<id>.json` (origin, time); outside downloads and excluded from WebDAV/qBittorrent access |
-| `SERVER_ROOT/.arsiv/` (`RETIRED_ARCHIVE_DIR`) | nothing (retired, **DD-267**) | The removed archive jobs' private staging and history; skipped by permission repair and removed in stage 7 only while it is a real folder owned by the downloads uid with mode 0700 |
-| `SERVER_ROOT/.pay/` | nothing | The pre-v2-145 share tree; never created, and stage 0 stops while it exists (**DD-269**, retiring DD-171's reserved name) |
-| `/etc/apt/apt.conf.d/20auto-upgrades`, `52master-stack-unattended` | installer | periodic unattended upgrades on, automatic reboot off (**DD-113**), Tailscale and Caddy origins added (**DD-184**), `0644` |
-| `/etc/systemd/system/apt-daily-upgrade.timer.d/master-stack.conf` | installer | upgrade window at `APT_UPGRADE_TIME` (04:00, up to 30 min random delay) instead of 06:00 (**DD-184**) |
-| `/etc/dnsmasq.d/local-services.conf` | installer | Base `panel` record/resolver policy, `0644`; other names in separate managed files |
-| `/etc/caddy/Caddyfile` | installer | The `(konsol)` snippet (static/API routes, session check), the tailnet panel site importing it, and imported service sites, `0644`; `moduller/panel-wan.caddy` is the generated public Konsol site (**DD-195**) |
-| `/usr/local/sbin/{tailscale-udp-gro,master-firewall,refresh-tailnet-config,wait-tailnet-addr,master-konsol,master-onar,master-guncelle,obhut}` | installer | `0755` |
-| `/etc/systemd/system/{tailscale-udp-gro,master-firewall,refresh-tailnet-config,master-panel,master-settings-guard,master-share-network,master-duvar-denetim}.service`, `{refresh-tailnet-config,master-settings-guard,master-share-network,master-duvar-denetim}.timer` | installer | `0644`; the settings guard enforces rollback deadlines, the share-network timer runs the WebDAV WAN guard every 30 s (**DD-179**) |
-| `/etc/systemd/system/master-sistem-dosya.service` | installer (`ensure_system_files`) | Dosyalar' Sistem dosyaları view as root on `SYSTEM_FILES_SOCKET` (**DD-235**) |
-| `/etc/systemd/system/master-paylasim.service`, `master-files-panel.service` | `master-modul yerlesik`, from the installer's renders in `MODULES_DIR/paylasim/` and `MODULES_DIR/dosya/` | built-in WebDAV and file backends, always enabled (**DD-159**) |
-| `/etc/systemd/system/wg-quick@.service.d/master-stack.conf` | installer | a WireGuard network starts only after `master-firewall --check` passes (**DD-180**); `wg-quick@.service` comes from `wireguard-tools`; `master-wg` enables `wg-quick@wgN` |
-| `/etc/systemd/system/{caddy,dnsmasq}.service.d/master-stack.conf` | installer | drop-ins, `0644` |
-| `/run/master-stack/` | helpers | ephemeral runtime state (the stack lock) |
-| `/var/log/master-setup/` | installer | run logs, `0700` dir / `0600` files |
+| Holds | `LOCAL_DOMAIN`, `TIMEZONE` | Detected facts (WAN interface and addresses, Tailscale addresses, OS identity, kernel) and every runtime constant the tools read (ports, paths, chains, WireGuard defaults, limits, the generation, the versions) |
+| Written by | the installer, once per run | the installer each run; `refresh-tailnet-config` (Tailscale addresses only); the settings worker (`LOCAL_DOMAIN` only, on a confirmed rename) |
+| Read by | the installer | the firewall, Caddy (`EnvironmentFile=`), every backend, worker and tool |
+| Secrets | none | none |
 
-`/usr/local/share/master-stack` contains live static assets and module templates,
-not a canonical recovery copy. There is no generation pointer or runtime
-restore manifest.
+`state.env` must parse in bash and in systemd: plain `KEY=value`, lists in double quotes. It holds current
+facts only; the WAN address is detected again on every run.
 
-Two absences in that table are decisions rather than oversights.
+### 4.2 The host layout
 
-**There is no rendered Caddy environment file.** Caddy's drop-in reads
-`/etc/master-stack/state.env` directly as its `EnvironmentFile=`, so the
-address exists in exactly one place on disk and `refresh-tailnet-config`
-has one file to update instead of two. The cost is a formatting
-constraint: `state.env` must be parseable both by `source` in bash and by
-systemd's `EnvironmentFile=`, which means plain `KEY=value` lines with no
-unescaped shell expansion or spaces around `=`. Prefix lists use double quotes. That constraint is
-the writer's job to enforce, and the test suite asserts it.
-
-**No module needs Tailscale or WAN facts in its own files.** Web UIs and
-WebDAV bind loopback (**DD-151**, **DD-158**). The one exception is the opt-in
-WAN share site, which `master_shares.py` projects from `WAN_IPV4` in
-`state.env` (**DD-179**).
-
----
-
-## 4. Folder WebDAV ownership (DD-158/DD-192)
-
-Folder form / connection cards → root API → fixed master_shares.py worker
-(stdin) → 0600 root webdav.json (scrypt hashes, root identity, independent
-Tailscale/WAN enabled/permission/expiry policies) → systemd LoadCredential →
-unprivileged master_webdav.py → validated descriptors.
-
-Schema 4 has no authoritative shared permission/expiry/pause/networks fields.
-Valid schema 3 loads convert in memory; `prepare` persists the conversion.
-Both policies copy the exact old permission and absolute expiry; only previously
-selected networks on an unpaused share are enabled. IDs, account salt/hash,
-folder identity and creation/change timestamps stay unchanged. Schema 2 and
-schema-4 legacy-policy conflicts are rejected. Nested partial API updates merge
-under operation locks without resetting omitted policies or expiry; old global
-updates and the share worker's pause action return a refresh-page error (the old
-`paylasim/durum` route is gone, **DD-267**). Shared folder/account/password
-management is separate from connection controls.
-
-The file-manager backend sees no credential. Caddy's global publication gates
-control the tailnet name and `TAILSCALE_IPV4:SHARE_PORT`, and configured WAN HTTPS
-or consent-gated legacy `WAN_IPV4:SHARE_PORT`. `/s/<id>/` selects one folder/account
-shared by both connection policies. The WebDAV process listens
-on `127.0.0.1` (tailnet) and `SHARE_WAN_BACKEND` (WAN) on the same port; the
-listener, not a header, selects enabled/permission/expiry enforcement, including
-all DAV writes, live chunks and staged PUT/COPY final publication. Authentication
-cache hits never bypass that authorization. Share edits restart the active data
-service, cutting all existing transfers. Per-folder
-isolation is in the handler, not separate OS sandboxes. No per-share listener
-is needed.
-
-`master_shares.py` also owns the WAN projection: it writes or removes
-`paylasim-wan.caddy`, and `master-share-network.timer` runs its guard every
-30 s to close ineligible legacy HTTP WAN publications and finish interrupted
-changes. It retains configured HTTPS for renewal under the existing global gate.
-
-The public projection feeds two cards, each with switch, permission, expiry,
-address/copy and Infuse details. Each connection adds expired/available/active/reason
-and a candidate URL when its transport is available, even if locally off or expired.
-Global Caddy gates override both cards and explain unavailable routes; `row.urls`
-contains only active connections. A candidate address is not proof of reachability.
-
-See [folder-shares.md](folder-shares.md) for protocol limits, security boundaries
-and tests.
-
----
-
-## 5. Address change handling
-
-Each consumer of an address is handled according to what it actually binds:
-
-| Consumer | Binds to | On Tailscale address change |
+| Path (key) | Written by | Contents |
 |---|---|---|
-| dnsmasq | `lo` and `tailscale0` **by name** | Nothing — `interface-name` + `bind-dynamic` follow the interface, and the config is never regenerated |
-| Caddy | `{$TAILSCALE_IPV4}` read from `state.env`; the opt-in WAN share site binds `WAN_IPV4` | Restarted after `state.env` is updated |
-| WebDAV | `127.0.0.1` (tailnet) and `SHARE_WAN_BACKEND` (WAN), loopback only | Nothing — loopback listeners do not track Tailscale |
-| Module services | no Tailscale bind | Nothing — no App Store module binds a Tailscale address |
-| Konsol containers | a port with Tailscale scope is published on `TAILSCALE_IPV4` | `refresh-tailnet-config` leaves `RUNTIME_DIR/containers-tailnet.pending` and starts the bounded `master-container-tailnet-refresh` worker (`RuntimeMaxSec=900`); it recreates only containers whose Tailscale bindings changed, keeps stopped ones stopped, and the marker stays for the next round if it fails (**DD-211**) |
-| Firewall | `tailscale0` **by name**; configured service allowlist and registered WG ports; Self PeerAPI ports per family (DD-172) | Existing restart hook/watchdog regenerates changed PeerAPI ports; ordinary listener discovery never grants access |
+| `/root/debian-server-installer` | `kur.sh` | the runtime tree the installer runs from |
+| `/etc/master-stack/` (`STATE_DIR`) | installer | `config.env`, `state.env` (0600), `nesil` (`NESIL_FILE`) |
+| `SETTINGS_FILE` (`ayarlar.json`), `SETTINGS_PENDING_FILE` (`ayarlar-bekleyen.json`) | settings worker | confirmed choices; the pending change with its file snapshots (root only) |
+| `SHARE_STATE_FILE` (`webdav.json`, `.pending`) | `master_shares.py` | folder accounts (scrypt), both connection policies, folder identity; 0600 |
+| `KONSOL_AUTH_DIR` (`/etc/master-stack/konsol/`) | backend, `master-konsol` | `hesap.json`, `oturumlar.json`, `.kilit`; 0700/0600 |
+| `KONTEYNER_STATE_DIR` (`/etc/master-stack/containers/`) | container worker | `operations/<id>.json` (job records, never requests) |
+| `UYGULAMA_STATE_DIR/<app>/` | container worker, settings worker (rows) | `kaynak.yaml`, `kaynak.json`, `yanitlar.json`, `tanim.json`, `yerler.json`, `erisim.json`, `env/<service>.env`; 0700/0600 |
+| `UYGULAMA_VERI_DIR/<app>/<folder>/` (`/var/lib/master-stack/uygulamalar/`) | container worker | applications' data; 0700 root, the service's own user inside |
+| `KONTEYNER_BIRIM_DIR` (`/etc/containers/systemd/`) | container worker | `konsol-<app>.network`, `konsol-<app>_<service>.container`, `konsol-<app>.pod` |
+| `/var/lib/containers/storage/` | Podman | images (pinned by digest), layers, volumes; Podman's secret store (`obhut_<app>_<hex>`) |
+| `KONTEYNER_BAGLAMA_DIR/<container>/<hash>` | `master_container_binds.py` | bind anchors of running services; recreated at every start, gone at reboot |
+| `CADDYFILE` (`/etc/caddy/Caddyfile`) | installer | the base Caddyfile |
+| `CADDY_MODULES_DIR` (`/etc/caddy/moduller/`) | installer, the access projection | `paylasim.caddy`, `paylasim-wan.caddy`, `panel-wan.caddy`, `uygulama-<app>.caddy`, `uygulama-<app>-wan.caddy` |
+| `SHARE_CADDY_SOURCE` | installer | WebDAV's tailnet site, filled; the projection filters it into `CADDY_MODULES_DIR` |
+| `DNSMASQ_CONF_DIR` (`/etc/dnsmasq.d/`) | installer, settings worker, the projection | `local-services.conf` (`DNSMASQ_CONF_FILE`), `modul-paylasim.conf`, `modul-uygulama.conf`, `konsol.conf` (`SETTINGS_DNS_FILE`) |
+| `CONSOLE_WEB_DIR` (`/usr/local/share/master-stack/konsol/`) | installer | Konsol's pages, nothing else |
+| `SBIN_DIR` (`/usr/local/sbin/`) | installer | the scripts, `master-panel`, `master-files-panel` and every `master_*.py` module |
+| `UNIT_DIR` (`/etc/systemd/system/`) | installer | the units and timers of `systemd/`; drop-ins `caddy.service.d/`, `dnsmasq.service.d/`, `wg-quick@.service.d/`, `apt-daily-upgrade.timer.d/` (`APT_UPGRADE_TIMER_DROPIN`) |
+| `WG_CONF_DIR` (`/etc/wireguard/`, 0700) | installer (folder), `master-wg` | `networks` (`WG_NETWORKS_FILE`), `.durduruldu` (`WG_STOPPED_FILE`), `wgN.conf`, `clients-wgN/` |
+| `WG_MODULES_LOAD_FILE`, `TCP_MODULES_LOAD_FILE` | installer | kernel modules loaded at boot |
+| `SYSCTL_NETBUF_FILE`, `SYSCTL_FORWARD_FILE`, `SYSCTL_TCP_FILE` | installer | sysctl drop-ins sorting last |
+| `APT_PERIODIC_FILE`, `APT_UNATTENDED_POLICY_FILE`, the Tailscale and Caddy apt sources and keyrings | installer | update policy and repositories |
+| `/etc/systemd/resolved.conf.d/master-stack.conf` | installer (only where resolved runs) | `DNSStubListener=no` |
+| `SERVER_ROOT` (`/srv`) | installer (folders), the Files account's services | `downloads`, `media/{movies,series}`, `.cop/<id>/` + `<id>.json` (the trash) |
+| `RUNTIME_DIR` (`/run/master-stack/`) | every tool | the locks of §7, `share-network-applied.json` (the projection's marker), short-lived temporary files |
+| `PANEL_SOCKET`, `SYSTEM_FILES_SOCKET`, `CADDY_ADMIN_SOCKET` | their services | the three Unix sockets |
+| `LOG_DIR` (`/var/log/master-setup/`) | installer, `master-guncelle`, `master-onar` | `install.log`, `GUNCELLEME_DURUM_FILE`, `GUNCELLEME_LOG_FILE`, `ONARIM_DURUM_FILE` |
 
-`refresh-tailnet-config` owns the Tailscale side of this table, and its
-scope is bounded: read IPv4/IPv6, compare with `state.env`, and update it and
-restart Caddy when needed. Independently of address changes, it runs the
-firewall's own check and reapplies a broken firewall (DD-94), can recover a
-failed Caddy (DD-87), and reopens failed WireGuard networks once the firewall
-check passes (DD-180). It has no general module health, file drift, disk-space or
-binary-version reconciliation. The address-only rows above describe IP effects,
-not these separately bounded recovery paths.
-
-Two rows above say "nothing" for structural reasons worth naming, because
-they are what keep the helper small. dnsmasq and the firewall are both
-written against the *interface name* rather than the address it currently
-carries, so the address can change — or `tailscale0` can be destroyed and
-recreated — with no file to regenerate and no rule to reinstall.
-
-**A Tailscale address change never restarts an App Store module.** Modules
-publish on loopback or on the WAN address, so Caddy is the one service
-restarted. Konsol containers with a Tailscale-scope port are the one bounded
-exception (the hand-off in the table above, **DD-211**).
-
-**Public IPv4 change.** These name the WAN address:
-- the opt-in WAN share site and the public HTTPS sites of packages and Konsol
-  (**DD-191**, **DD-195**), which Caddy binds to `WAN_IPV4`;
-- qBittorrent's peer-port publication, rendered with `WAN_IPV4` into its
-  Quadlet (**DD-217**);
-- Konsol containers with a public-scope port, which listen on every address
-  while the container guard admits them only for the WAN interface's addresses
-  as of its last apply.
-
-If the provider changes the address, `master_shares.py` reports WAN as
-unavailable ("kurulumu yeniden çalıştırın"), the 30-second guard removes every
-WAN site, and a Caddy that could not start on the old address is started without
-it. qBittorrent's peer port stays closed, because the guard admits no stale
-address, until an installer run re-renders and re-applies the package. An
-installer re-run records the new `WAN_IPV4`, drops a site bound to the stale
-address before restarting Caddy, and stage 7 republishes it (**DD-182**).
-`master-firewall` re-applies on boot and on a Tailscale restart and reads
-current WAN facts from `state.env` / the interface.
-WireGuard profiles take `WAN_IPV4` from `state.env` as their endpoint at creation
-time; profiles that baked an old endpoint still need manual client updates
-(**DD-138**, **DD-201**). `refresh-tailnet-config` does not track the WAN address.
+Two absences are decisions: there is no rendered Caddy environment file (Caddy reads `state.env`, so the
+address is in one file, **DD-61**), and there is no canonical copy, generation pointer or restore manifest
+of any managed file (a re-run is the repair).
 
 ---
 
-## 6. Decision ownership
+## 5. Processes and units
 
-Each question has exactly one owner, so two implementations can never disagree.
+### 5.1 Long-running services
 
-| Question | Single owner |
+| Service | User | Listens | Notes |
+|---|---|---|---|
+| `tailscaled` | root | Tailscale's UDP port, `tailscale0` | the package's unit |
+| `caddy` | caddy | `TAILSCALE_IPV4`:80, `:SHARE_PORT`, Tailscale ports; `WAN_IPV4`:443 or `:SHARE_PORT` when published; admin socket | package unit + drop-in (§8 of the contract) |
+| `dnsmasq` | dnsmasq | `127.0.0.1:53`, the Tailscale address | package unit + drop-in |
+| `master-panel` | root | `PANEL_SOCKET` | threads: the request handlers, the resource sampler (CPU, WAN and each application bridge every 10 s), WireGuard's sampler, the event producer, the background image check |
+| `master-files-panel` | the Files account | `127.0.0.1:FILES_PANEL_PORT` | strict sandbox, loopback only |
+| `master-sistem-dosya` | root | `SYSTEM_FILES_SOCKET` | no network |
+| `master-paylasim` | the Files account | `127.0.0.1:SHARE_PORT`, `SHARE_WAN_BACKEND:SHARE_PORT` | the registry as a credential |
+| `konsol-<app>_<service>` | root (Podman) | the container's ports inside its bridge; publications per row | the service's own start mode inside |
+
+### 5.2 Oneshots and timers
+
+`master-firewall` (boot, tailscaled restarts, every writer that changes rules), `tailscale-udp-gro` (boot),
+`wg-quick@wgN` (each enabled network), `refresh-tailnet-config` (timer, Caddy's `OnFailure`,
+`master-onar`), `master-duvar-denetim` (hourly), `master-share-network` (every 30 s),
+`master-settings-guard` (every 2 s while a change is pending), and the distribution's `apt-daily` timers.
+
+### 5.3 Transient units
+
+| Unit | Started by | Runs | Limit |
+|---|---|---|---|
+| `master-container-<id>` | the broker | `master_container_manager.py … <action>` → the worker | 1800 s (cleanup 900 s) |
+| `master-container-adres-yenile` | `refresh-tailnet-config` | `master_container_worker.py --adres-yenile` | 1800 s |
+| settings worker (`systemd-run --wait --pipe`) | the backend | `master_settings.py apply|confirm|rollback|discard` | 150 s, 1800 s for an access row |
+| share worker (same) | the backend | `master_shares.py save|remove` | 150 s |
+| `GUNCELLEME_UNIT` | the backend | `master-guncelle uygula <commit> <version>` | — |
+| `ONARIM_UNIT` | the backend | `master-onar --kaynak konsol [--denetle]` | — |
+| `master-yeniden-baslat` | the backend | `systemctl reboot` after 5 s | — |
+
+Each worker gets its request as JSON on standard input, never in argv, the environment or the journal.
+The backend's own sandbox (`ProtectSystem=full`: `/usr`, `/boot` and `/etc` read-only except `WG_CONF_DIR` and
+`KONSOL_AUTH_DIR`) is why every system write leaves it for a worker unit.
+
+---
+
+## 6. Data flows
+
+### 6.1 An install
+
+```
+kur.sh ── archive ──► /root/debian-server-installer ──► install.sh (under systemd-inhibit)
+  stage 0  gates → domain → confirmation → NESIL_FILE, config.env
+  stage 1  apt: base, Podman, WireGuard tools
+  stage 2  Tailscale (repository, login, preferences)
+  stage 3  addresses → state.env; /srv folders and ownership
+  stage 4  modules and tools → SBIN_DIR; units; WireGuard's drop-in and module
+  stage 5  master-firewall (+ container guard)
+  stage 6  dnsmasq files → the operator's records (project-dns) → dnsmasq --test; Caddyfile, WebDAV's site → filter → caddy validate;
+           CONSOLE_WEB_DIR; master-panel, master-files-panel, master-sistem-dosya, master-paylasim
+  stage 7  built-ins proven → master_shares.py publish (the access projection) → WireGuard networks → checks
+```
+
+### 6.2 A request through Caddy
+
+A tailnet device asks dnsmasq for `panel.<domain>` and gets the Tailscale IPv4. Caddy's site imports the
+`(konsol)` routes with the channel `tailscale`:
+
+1. `forward_auth` (unless the path is one of the open sign-in files) asks `master-panel`'s socket
+   `GET /oturum-denetle`, with the original URI, the client address, `Host: panel.<domain>` and the
+   channel. The backend's gate checks the Host, that the client is another Tailscale device (or, on the
+   internet channel, that Konsol's internet row is active and the client is not the server), the path's
+   segments and `X-Konsol` on `/api/*`; the session gate answers 204, 302 or 401 (contract §6.3).
+2. `/api/konsol/*` goes to the same socket with `X-Forwarded-Host`; the backend matches the route table,
+   checks the body's shape and calls the handler. Reads come from read models; writes go to a worker
+   (§5.3).
+3. `/api/sistem/*` (tailnet site only) goes to `SYSTEM_FILES_SOCKET`; the view checks the channel and the
+   client again.
+4. Any other `/api/*` goes to `127.0.0.1:FILES_PANEL_PORT`.
+5. Everything else is a file of `CONSOLE_WEB_DIR` with the CSP and cache headers.
+
+An internet request arrives on `WAN_IPV4:443` for Konsol's internet name (`panel-wan.caddy`), passes
+`MASTER-SETTINGS`' connection limits and `MASTER-INPUT`'s single WAN port, and imports the same routes with
+the channel `internet`.
+
+An application's address: `<name>.<domain>` → Caddy (`uygulama-<app>.caddy`) → `127.0.0.1:<pool port>` →
+the host's output DNAT (Netavark) → the container port on `ksl-<app>`. Its internet name takes the same
+path from `WAN_IPV4:443` (`uygulama-<app>-wan.caddy`). A raw port takes no Caddy: the client reaches the
+Tailscale or WAN address on the host port, Netavark DNATs it in `PREROUTING`, and the container guard's
+forward chain lets in exactly that publication.
+
+### 6.3 Adding an application
+
+```
+Konsol "Uygulama ekle"
+  POST uygulamalar/kaynak         (address: fetched and checked here; image: a draft job; container: a draft)
+  POST uygulamalar/denetle        inspector: refusals, questions, the checked definition (nothing written)
+  POST uygulamalar/kur {plan}     the worker's install checks in the backend, read-only commands only
+  POST uygulamalar/kur            checks again → broker → systemd-run master-container-<id> (request on stdin)
+     worker (install.lock + KONTEYNER_LOCK): record → guard apply → folders → pull and pin → Podman secrets
+       → generator → env files → Quadlet dry run → units → daemon-reload → start in order → ready (300 s)
+       → master_shares publish (Caddy sites, DNS names, firewall, Caddy reload) → [takeover: old container removed]
+     on failure: everything the job made is undone in reverse; the job record names the step
+  GET konsol/islem?id=… and the event stream's "islemler" follow the job
+```
+
+### 6.4 An access change
+
+```
+Erişim sheet ─ POST ayarlar/plan ─► master_settings.plan (in the backend: checks on a copy)
+             ─ POST ayarlar/uygula ─► systemd-run master_settings.py apply (stdin; install/settings/state locks)
+                 prepare (validate, master_publications.section) → guard timer on → pending file + snapshots
+                 → erisim: master_container_worker.Manager.row_change (KONTEYNER_LOCK): units, restart, ready
+                 → master-firewall (+ guard) → publish (paylasim.lock) → certificate wait for a new internet name
+                 → closing change: commit at once │ opening change: phase "awaiting", 60 s
+Pending banner ─ POST ayarlar/onayla (Tailscale only) ─► commit (SETTINGS_FILE, pending file removed)
+master-settings-guard.timer (2 s) ─ deadline passed / reboot ─► rollback: files back, row_restore,
+                 firewall, publish, files back again
+```
+
+A fixed row (`web`) goes the same way without the container side; WireGuard's actions run `master-wg` in
+its caller mode with the held `install.lock` descriptor; DNS-only changes project `konsol.conf`, test and
+restart dnsmasq and commit at once; a domain rename rewrites its tokens and waits 300 s for confirmation
+through the new name.
+
+### 6.5 The container guard
+
+`master-firewall apply` (and the container worker and settings worker, under their locks) run
+`master_container_network.py apply`: it reads every application record (`guard_input`: each bridge, its
+pool publications on `127.0.0.1` and its open raw publications), reads the host's current Tailscale and
+WAN addresses when a raw publication needs them, builds the table (input chain: the host closed to
+bridges except replies and gateway DNS; forward chain: egress to the internet only, same-bridge traffic,
+one DNAT-exact permit per raw publication on an address the host has, then drop), replaces the table in one
+nft transaction and compares the result exactly. `master-firewall --check` and every application unit's
+`ExecStartPre` run the same comparison without writing; a unit that finds the guard missing fails and is
+retried every 10 s.
+
+### 6.6 Address changes
+
+`refresh-tailnet-config` reads `tailscale0`'s addresses after `tailscale wait`, rewrites only
+`TAILSCALE_IPV4`/`TAILSCALE_IPV6` in `state.env` under `state.lock`, restarts Caddy and starts
+`--adres-yenile`, which rewrites the units of applications whose raw Tailscale or internet ports publish on
+an older address. dnsmasq and the firewall match the interface by name and need nothing. The WAN address is
+not tracked live (contract §5.6).
+
+### 6.7 Folder WebDAV
+
+```
+Dosyalar → Paylaşımlar ─ POST paylasim/kaydet|kaldir ─► systemd-run master_shares.py (stdin;
+    install.lock + paylasim.lock; refused while a settings change is pending)
+  → registry .pending snapshot → webdav.json (0600) → restart master-paylasim (wait for its 401)
+  → publish (WebDAV's internet site, firewall) → snapshot removed; on failure the old registry comes back
+master-paylasim (Files account) ◄─ LoadCredential registry ─ systemd
+  127.0.0.1:SHARE_PORT          ◄─ Caddy paylas.<domain>, TAILSCALE_IPV4:SHARE_PORT  (Tailscale policy)
+  SHARE_WAN_BACKEND:SHARE_PORT  ◄─ Caddy WAN_IPV4:443 /s/* (or legacy :SHARE_PORT)  (internet policy)
+```
+
+---
+
+## 7. Locks and jobs
+
+| Lock | Taken by | Wait |
+|---|---|---|
+| `RUNTIME_DIR/install.lock` | the installer (the whole run); the settings worker; the share manager and its guard; container jobs and the address refresh; `master-wg` (unless in caller mode); probed by `kur.sh` | installer 5 s; settings and shares fail at once ("biraz sonra yeniden deneyin"; the guard skips its round); container jobs 5 s; `master-wg` 10 s; `kur.sh` refuses |
+| `RUNTIME_DIR/settings.lock`, `state.lock` | the settings worker; `state.lock` also `refresh-tailnet-config` | non-blocking; the refresh leaves the round |
+| `RUNTIME_DIR/paylasim.lock` | the share manager (change, guard); the settings worker around `publish` | non-blocking |
+| `KONTEYNER_LOCK` (`containers.lock`) | container jobs; the settings worker's container side of a row change | 5 s |
+| `RUNTIME_DIR/firewall.lock` | `master-firewall` | 5 s |
+| `RUNTIME_DIR/onarim.lock` | `master-onar` | 120 s for a requested run, none for the hourly check |
+| `KONSOL_AUTH_DIR/.kilit` | `master_auth` (backend and `master-konsol`) | blocking, short |
+
+Order: `install.lock` first, then the specific lock. The pending settings change is itself a gate: the
+installer, share changes, application jobs and every `master-wg` verb that changes WireGuard's state or the
+files the plan restores (`net-add`, `net-remove`, `net ac|kapat`, `net-settings`, `reset`, `durdur`, `baslat`;
+outside the caller mode, which accepts only the worker's own change while it is applied or rolled back)
+refuse while it exists; the peer verbs do not.
+
+Jobs: at most four container jobs at once and one per target; a job's record lives in
+`KONTEYNER_STATE_DIR/operations/` and the broker keeps at most 256 records in memory; İşlemler shows running
+jobs and those finished in the last two minutes, with the update and the repair.
+
+---
+
+## 8. Decision ownership
+
+| Question | Single answerer |
 |---|---|
-| What is the WAN interface / WAN IPv4 / WAN IPv6 / Tailscale IPv4 / IPv6? | `install.sh` (write) / `refresh-tailnet-config` (update) |
-| Is the firewall policy in force? | `scripts/firewall.sh` installed as `/usr/local/sbin/master-firewall --check` |
-| Has the Tailscale address changed? | `scripts/refresh-tailnet-config` |
-| Is a module healthy? | **Nobody.** systemd's `Restart=` handles crashes; `master-modul` checks only when it installs, starts or re-applies |
-| Has a managed file drifted? | **Nobody.** Re-running the installer is the repair |
-| Is the stack working end to end? | The final verification stage, once |
-| Is a port number correct? | `config/defaults.env` |
-
-A check that appears in two of these rows is an installer bug, not defence in
-depth. Konsol's health card (**DD-182**) only reads and reports; it answers
-none of these questions for the installer.
-
----
-
-## 7. Installer stage outline
-
-| Stage | Work | Owns |
-|---|---|---|
-| 0 | Gates (root, tty, supported OS, nft `iptables`, ufw inactive, lock, inhibit); detect release change; reject pending Settings transaction, keep the confirmed or previous domain, ask it only on a first install (no default), one confirmation; write `config.env` | operator input |
-| 1 | Suspend third-party restart managers (**DD-103**); remove the retired RAR source file an earlier run added (**DD-267**); `apt update`; `full-upgrade` on every run (**DD-228**); base packages — only what the base uses (**DD-153**: no gnupg, gawk or apache2-utils); `podman netavark aardvark-dns` without recommends and a `podman info` check (**DD-208**); timezone; unattended-upgrade policy and its 04:00 window (**DD-113**, **DD-184**) | `apt` |
-| 2 | Tailscale: repository, package, sysctls, UDP GRO, login with 410 recovery, exit-node and SSH preferences | `tailscaled` |
-| 3 | Address detection → `state.env`; selective downloads ownership/mode repair (**DD-84**) | installer |
-| 4 | Install scripts and workers; render module files, units, timers and the firewall-first `wg-quick@` drop-in (**DD-180**); enable the settings guard timer | templates |
-| 5 | Apply `master-firewall` (WireGuard rules come from the registry, and only while the WireGuard module is installed; none when it is empty), which also applies the container forward guard (`master_container_network.py`, **DD-211**, **DD-217**); enable refresh timer. The WireGuard layer (`wireguard-tools`, `qrencode`, kernel module, `/etc/wireguard`, starting the registry's networks) belongs to the WireGuard module since **DD-150** | firewall |
-| 6 | dnsmasq/Caddy, Konsol root backend (then the retired `duzen.json`/`favoriler.json` are deleted) and its files at the console's root (everything else there is removed), Files code and staged unit (the old archive helpers are deleted); drop a WAN share site bound to a stale address (**DD-182**); restart changed services only | DNS/HTTP |
-| 7 | `master-modul yerlesik` enables/checks Files/WebDAV; publish the WAN share site and enable its guard timer (**DD-179**); reapply changed optional apps (including changes a failed earlier run left pending, **DD-222**) and installed WireGuard; remove the retired `SERVER_ROOT/.arsiv` workspace (**DD-267**); `master-firewall --check` (with the container guard) and the `podman info` check; core contracts, Caddy/API gates and optional network checks (**DD-159**) | verification |
-| — | Print summary and the manual Tailscale admin steps | operator guidance |
-
-**Addresses are detected once, in stage 3, into `state.env`**, and every later
-stage reads them from there instead of re-deriving them.
+| What are the WAN and Tailscale addresses? | `install.sh` (write), `refresh-tailnet-config` (Tailscale update) |
+| Is the firewall policy in force? | `master-firewall --check` |
+| Is the container guard in force? | `master_container_network.py --check` (inside `master-firewall --check`) |
+| Has the Tailscale address changed? | `refresh-tailnet-config` |
+| May this port be taken? | `config/defaults.env` for the base; `master_publications.port_problem` and `master_applications.row_conflict` for rows |
+| Is this Tailscale name free? | `master_applications.taken_names` |
+| What is an application's state? | its record (`master_applications.Records`) and systemd's units |
+| Is a service healthy? | nobody continuously: systemd's `Restart=`; Konsol's health card only reports; `master-onar` on request |
+| Has a managed file drifted? | nobody: a re-run is the repair |
+| Is the stack working end to end? | stage 7, once per run |
 
 ---
 
-## 7.1 OS-divergence inventory
+## 9. OS-divergence inventory
 
-Every point where behaviour depends on the host distribution is marked in the
-source with `# OS-DIVERGENCE: <slug>` and listed here. The two sets are
-asserted equal by `bats`, so a divergence cannot be added to the code without
-appearing here, or removed from here while it still exists in the code.
-
-`grep -n 'OS-DIVERGENCE:' install.sh` prints the live inventory.
-
-The list is short on purpose. Prefer capability probes; use distribution
-identity when selecting repository suites/components.
-See **DD-102** and **DD-104**, and `archive/os-aware-review.md` for why the tree is not
-forked into per-distribution paths.
+Every point where behaviour depends on the distribution is marked in `install.sh` with
+`# OS-DIVERGENCE: <slug>` and listed here; `bats` asserts that the two sets are equal. Prefer capability
+probes; use distribution identity only to pick repository suites (**DD-102**, **DD-104**).
 
 <!-- OS-DIVERGENCE-INVENTORY:BEGIN -->
 
@@ -481,88 +423,21 @@ forked into per-distribution paths.
 
 <!-- OS-DIVERGENCE-INVENTORY:END -->
 
-The Caddy cloudsmith repository line (`any-version`, distro-agnostic) is
-**deliberately not** a divergence and must not become a branch.
-
-## 8. Implementation status
-
-The `Data/` tree is executable: `install.sh` runs the seven stages on a
-Debian 13 or Ubuntu 24.04/26.04 LTS host. The repository-root `kur.sh`, run on
-the server with `curl … | sudo bash`, downloads the public repository archive and
-copies only the runtime tree — `install.sh`, `common.sh` and the runtime
-directories (`config`, `templates`, `scripts`, `systemd`, `panel`,
-`files-panel`, `console`, `magaza`) — to `/root/debian-server-installer`, then
-starts `install.sh` on the terminal (**DD-228**).
-
-Static checks for this tree:
-
-```bash
-bats tests
-bash -n install.sh common.sh scripts/*
-shellcheck -x -s bash install.sh common.sh scripts/*
-```
-
-There is no root `scripts/check-all.sh` wrapper; run the three workstation
-commands above directly. A missing tool must fail visibly — never report a
-silent pass.
+The Caddy repository line (`any-version`, distribution-agnostic) is deliberately not a divergence.
 
 ---
 
-## 9. Per-phase verification
+## 10. Verification layers
 
-Use checks appropriate to the changed layer. Do not report a missing Linux
-validator or an unrun fresh-host acceptance test as a pass:
-
-| Check | Scope | Available on the dev workstation? |
+| Check | Scope | On the workstation |
 |---|---|---|
-| `bash -n` | Root `*.sh`, `scripts/*` and the `.command` files | **yes** |
-| `shellcheck -x` | Same set; `-x` so sourced libraries are followed | **yes** |
-| `bats tests/` | Shell/unit contracts; some require Linux tools | **yes**, with explicit skips for unavailable tools |
-| Python unittest / browser suites | Backend and production UI with isolated fixtures | **yes** |
-| `caddy validate` | The rendered `Caddyfile` | **no** — runs on the target, in stage 6, with the real env (**DD-106**) |
-| `dnsmasq --test -C` | The rendered dnsmasq config | **no** — runs on the target, in stage 6 (**DD-106**) |
-| `systemd-analyze verify` | Generated units and drop-ins | **no** — Linux suites only (`tests/settings-systemd.py`); the installer does not run it (**DD-106**) |
+| `bash -n`, `shellcheck -x` | `install.sh`, `common.sh`, `scripts/*`, `kur.sh`, the `.command` files | yes |
+| `bats tests` | shell and contract checks | yes, with explicit skips for missing Linux tools |
+| Python unit tests, browser suites with the layout audit (**DD-270**) | backends, engine, interface against fixtures | yes |
+| TypeScript build and `kaynak.sha256` | Konsol's sources and the committed build | yes |
+| `caddy validate`, `dnsmasq --test` | the rendered files | no: stage 6 runs them on the target with real values (**DD-106**) |
+| `systemd-analyze verify`, nft, iptables | units and rules | no: the Linux suites only |
+| Live checks on the test host | everything above, installed | no |
 
-The split matters: workstation checks and Linux renderer checks are distinct.
-A phase that changes a rendered template is
-**not** verifiable on the workstation alone, and claiming otherwise is the
-failure mode those host-only checks exist to prevent (a missing tool must
-report *doğrulanamadı*, never a pass).
-
-`install.sh` runs `caddy validate` and `dnsmasq --test` on the target, against
-the file it just rendered, before the unit that consumes it is restarted
-(**DD-106**). A bad render therefore fails with a line number and a directive
-name instead of a failed `systemctl restart`. `refresh-tailnet-config` never
-re-renders a config; on an address change it only rewrites `state.env` and
-restarts Caddy (§5).
-
-## 10. Settled questions and open checks
-
-### 10.1 Settled questions
-
-Where the working rules and the design once disagreed, the answer below is
-current. Each has a full entry in `docs/design-decisions.md`.
-
-| # | Question | Answer |
-|---|---|---|
-| **DD-58** | Single file or tree? | A repository tree; DD-9 is superseded. |
-| **DD-59** | Chain names | `MASTER-INPUT`, `MASTER-FORWARD`/`MASTER-NAT` (WireGuard), `MASTER-SETTINGS` (Konsol overrides) and the `MASTER-NEXT-` staging prefix, declared only in `config/defaults.env`. |
-| **DD-60** | Does dnsmasq listen on loopback? | Yes — `lo` and `tailscale0`, `bind-dynamic`, nothing else, no DHCP. |
-| **DD-61** | Does the refresh helper re-render configs? | No. Address changes update `state.env` and restart Caddy; DD-87/94/180 add bounded Caddy, firewall and WireGuard recovery (§5), not general reconciliation. |
-| **DD-158** | Where does WebDAV run? | Host unit `master-paylasim.service` (`master_webdav.py`) on loopback only, behind Caddy `reverse_proxy`. |
-| **DD-98** | Apple TV without MagicDNS? | Caddy listens on `${TAILSCALE_IPV4}:${SHARE_PORT}` → loopback WebDAV; the service has no Tailscale bind. Folder URLs include `/s/<id>/`. |
-
-### 10.2 Live checks
-
-1. **`systemd-resolved` vs dnsmasq on `127.0.0.1:53`.** Stage 6 writes
-   `DNSStubListener=no` when resolved is active. Confirmed on noble and
-   resolute: dnsmasq owns loopback/Tailscale DNS, host DNS survives, and on
-   resolute Tailscale can legitimately replace the uplink symlink with its
-   direct-mode MagicDNS file after restart/reboot. Unusual images still need
-   the same live check.
-2. **What a loopback query actually answers.** `interface-name` is
-   expected to return the `tailscale0` address regardless of the arrival
-   interface, which is the entire reason the loopback listener is useful
-   for testing. Stage 7 measures it on the live host: `dig +short NAME
-   @127.0.0.1` and `dig +short NAME @${TAILSCALE_IPV4}` must agree, and must
-   both return `${TAILSCALE_IPV4}`.
+A missing validator is reported as not verified, never as a pass. Commands and what each suite covers are
+in [`../tests/README.md`](../tests/README.md).

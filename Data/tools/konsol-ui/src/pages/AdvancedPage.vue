@@ -1,17 +1,16 @@
-<!-- Gelişmiş (DD-258, phase 4a; DD-266): the technical views, read-only except Podman's resources. Tabs in the
-     address (?sekme=): Caddy (the effective sites and the raw files), DNS (dnsmasq's names and files), Güvenlik
-     duvarı (a way to Erişim's technical rules, which are not repeated here) and Podman (images, volumes,
-     networks). Caddy and DNS share one read of GET /api/konsol/gelismis; "Yenile" asks past its cache. -->
+<!-- Gelişmiş (DD-258; K8): the technical views, read-only; the only write is Podman's cleanup. Tabs in the address
+     (?sekme=): Caddy (the effective sites and the raw files), DNS (dnsmasq's names and files), Güvenlik duvarı (the
+     technical rules and the listeners) and Podman (the inventory and the cleanup). Caddy and DNS share one read of
+     GET /api/konsol/gelismis; "Yenile" asks past its cache. Each view leads to where its source is changed. -->
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { RouterLink } from "vue-router";
 import { Icon } from "../components/icons";
-import Card from "../components/ui/Card.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import Tabs from "../components/ui/Tabs.vue";
 import CaddyTab from "./gelismis/CaddyTab.vue";
 import DnsTab from "./gelismis/DnsTab.vue";
 import PodmanTab from "./gelismis/PodmanTab.vue";
+import RulesTab from "./gelismis/RulesTab.vue";
 import { readAdvanced, type Advanced } from "../api/gelismis";
 import { ADVANCED_TABS, type AdvancedTab } from "../sections";
 import { useQueryParam } from "../query";
@@ -41,8 +40,6 @@ const tab = useQueryParam<AdvancedTab>("sekme", ADVANCED_TABS.map((t) => t.id), 
 watch(tab, (id) => {
   if ((id === "caddy" || id === "dns") && !asked) void load();
 }, { immediate: true });
-
-const firewall = "/erisim?sekme=guvenlik-duvari";
 </script>
 
 <template>
@@ -65,20 +62,7 @@ const firewall = "/erisim?sekme=guvenlik-duvari";
             <EmptyState title="Yapılandırma okunuyor" icon="sliders" />
           </section>
         </template>
-        <div v-else-if="active === 'guvenlik-duvari'" class="advanced-tab" data-testid="advanced-firewall">
-          <Card title="Güvenlik duvarı kuralları">
-            <p class="card-text">
-              Güvenlik duvarının canlı kuralları (INPUT, FORWARD ve NAT dahil her tablo), sayaçları, sahipleri ve dinleyiciler Erişim → Güvenlik
-              duvarı'ndadır. Port izinleri de orada, plan ve süreli onayla değiştirilir; aynı şey burada tekrarlanmaz.
-            </p>
-            <div class="action-line">
-              <RouterLink :to="firewall + '&kurallar=1'" class="btn btn-primary" data-testid="firewall-rules">
-                <Icon name="shield" :size="16" />Teknik kuralları aç
-              </RouterLink>
-              <RouterLink :to="firewall" class="btn btn-secondary" data-testid="firewall-ports">Port izinleri</RouterLink>
-            </div>
-          </Card>
-        </div>
+        <RulesTab v-else-if="active === 'guvenlik-duvari'" />
         <PodmanTab v-else-if="active === 'podman'" />
       </template>
     </Tabs>

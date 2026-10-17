@@ -1,4 +1,7 @@
-"""HTTPS changes are atomic settings transactions, never plaintext fallbacks."""
+"""WebDAV's internet name (its fixed row web.paylasim) is an atomic settings transaction, never a plaintext fallback.
+
+Rebuild phase 4: the old WebDAV-only "https" section is gone; the row is WebDAV's only writer. Decision 1: opening
+or renaming the name waits for the confirmation from Tailscale, closing it commits at once."""
 import copy
 import json
 import os
@@ -23,22 +26,24 @@ class HttpsSettingsTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(prefix="https-settings-")
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name).resolve()
-        for name in ("run", "dns", "sites", "templates", "profile", "units", "srv/downloads", "srv/media/alpha"):
+        for name in ("run", "dns", "sites", "share", "units", "srv/downloads", "srv/media/alpha"):
             (self.root / name).mkdir(parents=True)
         self.env = {"SETTINGS_FILE": "settings.json", "SETTINGS_PENDING_FILE": "pending.json",
                     "SETTINGS_DNS_FILE": "dns/settings.conf", "DNSMASQ_CONF_FILE": "dns/base.conf",
-                    "DNSMASQ_CONF_DIR": "dns", "TORRENT_PROFILE_DIR": "profile", "UNIT_DIR": "units",
-                    "MODULES_DIR": "templates", "MODULES_FILE": "modules", "RUNTIME_DIR": "run",
+                    "DNSMASQ_CONF_DIR": "dns", "UNIT_DIR": "units", "RUNTIME_DIR": "run",
                     "SERVER_ROOT": "srv", "DOWNLOADS_PATH": "srv/downloads", "CADDYFILE": "Caddyfile",
-                    "CADDY_MODULES_DIR": "sites", "SBIN_DIR": "bin",
+                    "CADDY_MODULES_DIR": "sites", "SHARE_CADDY_SOURCE": "share/paylasim.caddy", "SBIN_DIR": "bin",
                     "SHARE_STATE_FILE": "shares.json"}
         self.env = {key: str(self.root / value) for key, value in self.env.items()}
         self.env.update(LOCAL_DOMAIN="ayc", TAILSCALE_IF="tailscale0", WAN_INTERFACE="eth0", WAN_IPV4="8.8.8.8",
                         TAILSCALE_IPV4="100.64.0.2", DOWNLOADS_UID=str(os.getuid()), DOWNLOADS_GID=str(os.getgid()),
                         MEDIA_SUBDIR="media", SHARE_PORT="61010", SHARE_HTTPS_PORT="443", SHARE_WAN_BACKEND="127.0.0.2",
-                        TORRENT_TEMP_DIR="incomplete", FILES_PANEL_TRASH=".cop", DNS_PORT="53", CADDY_HTTP_PORT="80")
-        (self.root / "modules").write_text("paylasim\tcalisiyor\n")
+                        FILES_PANEL_TRASH=".cop", DNS_PORT="53", CADDY_HTTP_PORT="80")
         (self.root / "Caddyfile").write_text("{\n auto_https disable_redirects\n}\n")
+        # WebDAV's tailnet site as the installer leaves it: rendered to SHARE_CADDY_SOURCE and placed.
+        source = "# fixture\nhttp://paylas.ayc, http://{$TAILSCALE_IPV4}:61010 {\n\trespond 401\n}\n"
+        (self.root / "share/paylasim.caddy").write_text(source)
+        (self.root / "sites/paylasim.caddy").write_text(source)
         self.state = self.root / "state.env"
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
         self.m = settings.Manager(self.state)
@@ -71,7 +76,20 @@ class HttpsSettingsTests(unittest.TestCase):
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     def payload(self, name="dav.example.net"):
-        return {"revision": self.m.revision(), "https": {"domain": name}}
+        return {"revision": self.m.revision(), "web": {"service": "paylasim", "tail": True, "enabled": bool(name), "domain": name}}
+
+    def confirm(self, result):
+        """Confirms an opening from Tailscale (decision 1); a closing has committed already."""
+        if result.get("pending"):
+            self.assertEqual(result["pending"]["phase"], "awaiting")
+            self.m.confirm({"id": result["pending"]["id"], "client": "100.64.0.9", "kanal": "tailscale"})
+        return result
+
+    def commit(self, payload):
+        return self.confirm(self.m.apply(payload))
+
+    def row(self):
+        return self.m.config().get("web", {}).get("paylasim")
 
     def test_folder_share_save_names_the_publication_failure(self):
         # DD-254: the folder page names why the publication failed, not only that it did.
@@ -84,9 +102,13 @@ class HttpsSettingsTests(unittest.TestCase):
     def test_save_commits_verified_https_and_preserves_accounts_local_domain(self):
         original = Path(self.env["SHARE_STATE_FILE"]).read_bytes()
         result = self.m.apply(self.payload())
-        self.assertEqual(result, {"pending": None, "committed": True})
+        # Decision 1: a new internet name waits for the 60 s confirmation from Tailscale.
+        self.assertEqual((result["pending"]["phase"], result["pending"]["web"]), ("awaiting", True))
+        self.assertIsNone(self.row())
+        self.confirm(result)
         self.assertFalse(self.m.pending_path.exists())
-        self.assertEqual(self.m.config()["https"], {"domain": "dav.example.net"})
+        self.assertEqual(self.row(), {"tail": True, "enabled": True, "domain": "dav.example.net"})
+        self.assertNotIn("https", self.m.config())
         site = (self.root / "sites/paylasim-wan.caddy").read_text()
         self.assertIn("https://dav.example.net:443", site)
         self.assertIn("reverse_proxy 127.0.0.2:61010", site)
@@ -100,12 +122,12 @@ class HttpsSettingsTests(unittest.TestCase):
         self.assertTrue(public["items"][0]["urls"]["tailscale"].startswith("http://100.64.0.2:61010/"))
 
     def test_certificate_failure_restores_previous_https_domain(self):
-        self.m.apply(self.payload())
+        self.commit(self.payload())
         old = (self.root / "sites/paylasim-wan.caddy").read_bytes()
         with patch.object(tls, "wait_certificate", side_effect=settings.SettingsError("certificate failure")):
             with self.assertRaises(settings.SettingsError):
                 self.m.apply(self.payload("new.example.net"))
-        self.assertEqual(self.m.config()["https"]["domain"], "dav.example.net")
+        self.assertEqual(self.row()["domain"], "dav.example.net")
         self.assertEqual((self.root / "sites/paylasim-wan.caddy").read_bytes(), old)
         self.assertFalse(self.m.pending_path.exists())
 
@@ -116,19 +138,21 @@ class HttpsSettingsTests(unittest.TestCase):
                 self.m.apply(self.payload())
         self.assertEqual(len(self.calls), before)
         self.assertFalse(self.m.pending_path.exists())
-        self.assertNotIn("https", self.m.config())
+        self.assertIsNone(self.row())
 
     def test_publication_failure_rolls_back_and_can_retry(self):
         self.fail_once = "caddy validate"
         with self.assertRaises(settings.SettingsError):
             self.m.apply(self.payload())
-        self.assertNotIn("https", self.m.config())
+        self.assertIsNone(self.row())
         self.assertFalse(self.m.pending_path.exists())
-        self.assertTrue(self.m.apply(self.payload())["committed"])
+        self.commit(self.payload())
+        self.assertEqual(self.row()["domain"], "dav.example.net")
 
     def test_remove_closes_wan_without_http_fallback_or_deleting_accounts(self):
-        self.m.apply(self.payload())
-        self.m.apply(self.payload(""))
+        self.commit(self.payload())
+        # Decision 1: closing commits at once.
+        self.assertEqual(self.m.apply(self.payload("")), {"pending": None, "committed": True})
         self.assertFalse((self.root / "sites/paylasim-wan.caddy").exists())
         self.assertFalse(self.s.wan_active())
         public = self.s.public()
@@ -139,7 +163,7 @@ class HttpsSettingsTests(unittest.TestCase):
         self.assertFalse((self.root / "sites/paylasim-wan.caddy").exists())
 
     def test_certificate_renewal_listener_survives_last_share_pause(self):
-        self.m.apply(self.payload())
+        self.commit(self.payload())
         item = self.s.read()["items"][0]
         public = self.s.change("save", {"id": item["id"], "connections": {
             "tailscale": {"enabled": False}, "wan": {"enabled": False}}})
@@ -148,16 +172,16 @@ class HttpsSettingsTests(unittest.TestCase):
         self.assertIn("https://dav.example.net", (self.root / "sites/paylasim-wan.caddy").read_text())
 
     def test_https_share_does_not_need_plaintext_consent(self):
-        self.m.apply(self.payload())
+        self.commit(self.payload())
         (self.root / "srv/media/beta").mkdir()
         public = self.s.change("save", {"path": "media/beta", "username": "second", "password": "fixture-password",
                                         "connections": {"tailscale": {"enabled": False}, "wan": {"enabled": True}}})
         self.assertEqual(len(public["items"]), 2)
 
     def test_corrupt_pending_is_controlled_and_never_http_fallback(self):
-        self.m.apply(self.payload())
+        self.commit(self.payload())
         for change in ({"changes": []}, {"until": "bad"}, {"candidate": []}):
-            pending = dict(changes={"https": True}, phase="applying", until=time.monotonic()+60,
+            pending = dict(changes={"web": True}, phase="applying", until=time.monotonic()+60,
                            candidate=self.m.config(), boot="boot-test")
             pending.update(change)
             settings.save_json(self.m.pending_path, pending)
@@ -165,15 +189,15 @@ class HttpsSettingsTests(unittest.TestCase):
                 self.s.wan_info()
 
     def test_https_address_preserves_nondefault_port(self):
-        self.m.apply(self.payload())
+        self.commit(self.payload())
         self.s.env["SHARE_HTTPS_PORT"] = "8443"
         self.assertIn(":8443/s/", self.s.public()["items"][0]["urls"]["wan"])
 
-    def test_status_port_is_share_port_in_legacy_http_mode_and_the_https_port_after(self):
-        # DD-193: legacy HTTP reports SHARE_PORT as "port"; a saved domain the HTTPS port.
+    def test_status_port_is_share_port_in_plain_http_mode_and_the_https_port_after(self):
+        # DD-193: plain HTTP reports SHARE_PORT as "port"; a saved domain the HTTPS port.
         env = dict(self.env, SHARE_HTTPS_PORT="8443")
         self.assertEqual(tls.status(env)["port"], 61010)
-        self.m.apply(self.payload())
+        self.commit(self.payload())
         with patch.object(tls, "certificate", return_value=1900000000):
             self.assertEqual(tls.status(env)["port"], 8443)
 
@@ -187,23 +211,33 @@ class HttpsSettingsTests(unittest.TestCase):
         with patch.object(settings, "boot_id", return_value="new-boot"), patch.object(tls, "boot_id", return_value="new-boot"):
             self.m.guard()
         self.assertFalse(self.m.pending_path.exists())
-        self.assertNotIn("https", self.m.config())
+        self.assertIsNone(self.row())
         self.assertIn("http://:61010", (self.root / "sites/paylasim-wan.caddy").read_text())
 
     def test_read_status_never_claims_success_without_verified_certificate(self):
-        self.m.apply(self.payload())
+        self.commit(self.payload())
         with patch.object(tls, "certificate", side_effect=ssl.SSLError("bad certificate")):
             self.assertEqual(self.m.status()["https"]["status"], "error")
         with patch.object(tls, "certificate", return_value=1900000000):
             self.assertEqual(self.m.status()["https"]["expires"], 1900000000)
 
     def test_mixed_stale_and_shared_pending_changes_are_rejected(self):
-        for change in ({"domain": "ev"}, {"firewall": []}, {"revision": "stale"}, {"https": {"domain": "dav.example.net", "extra": True}}):
+        for change in ({"domain": "ev"}, {"firewall": []}, {"revision": "stale"},
+                       {"web": {"service": "paylasim", "tail": True, "enabled": True, "domain": "dav.example.net", "extra": True}}):
             with self.subTest(change=change), self.assertRaises(settings.SettingsError):
                 self.m.validate(dict(self.payload(), **change))
         Path(self.env["SHARE_STATE_FILE"] + ".pending").write_text("{}")
         with self.assertRaises(settings.SettingsError):
             self.m.validate(self.payload())
+
+
+    def test_the_old_https_section_is_gone(self):
+        # Rebuild phase 4: WebDAV's name has one writer, its row; the old section is an unknown field.
+        with self.assertRaisesRegex(settings.SettingsError, "Bilinmeyen ayar alanı"):
+            self.m.validate({"revision": self.m.revision(), "https": {"domain": "dav.example.net"}})
+        # A stored key of that shape is not read either: only the row decides the mode.
+        settings.save_json(self.m.config_path, dict(settings.DEFAULT, https={"domain": "dav.example.net"}))
+        self.assertEqual(tls.config(self.env)["mode"], "http")
 
 
 class HttpsValidationTests(unittest.TestCase):

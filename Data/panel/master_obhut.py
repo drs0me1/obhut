@@ -10,8 +10,8 @@ backend does not answer, `durum` reads the units from systemd and says how to re
     sudo obhut denetle | onar
     sudo obhut guncelle [--evet]
     sudo obhut hesap durum | sifirla
-    sudo obhut uygulama liste [--json] | baslat|durdur|yeniden-baslat <id>
-    sudo obhut yayin liste [--json] | kapat <id>|--hepsi
+    sudo obhut uygulama liste [--json] | baslat|durdur|yeniden-baslat <ad>
+    sudo obhut erisim liste [--json] | kapat <satır>|--hepsi
     sudo obhut geri-al
 
 Python standard library only; operator text is Turkish.
@@ -70,8 +70,8 @@ class Konsol:
         self.host = "panel.%s" % env.get("LOCAL_DOMAIN", "")
         self.timeout = timeout
 
-    def call(self, method, route, data=None):
-        conn = Socket(self.path, self.timeout)
+    def call(self, method, route, data=None, timeout=None):
+        conn = Socket(self.path, timeout or self.timeout)
         headers = {"Host": self.host, "X-Konsol": "1", "Connection": "close"}
         body = None
         if data is not None:
@@ -97,8 +97,8 @@ class Konsol:
     def get(self, route):
         return self.call("GET", route)
 
-    def post(self, route, data):
-        return self.call("POST", route, data)
+    def post(self, route, data, timeout=None):
+        return self.call("POST", route, data, timeout)
 
 
 def run_tool(name, *args):
@@ -148,9 +148,7 @@ def cmd_durum(konsol, args):
     lines = ["Obhut %s (yapı %s) · %s" % (res.get("surum") or "?", res.get("version") or "?", res.get("host") or "?"),
              "Konsol: http://panel.%s (Tailscale)" % (res.get("domain") or "?"),
              "Adresler: Tailscale %s · internet %s" % (net.get("tailscale") or "yok", net.get("wan") or "yok")]
-    if update.get("yeni_nesil"):
-        lines.append("Obhut'un yeni bir nesli çıktı; yalnız temiz bir işletim sistemine kurulur (ayrıntı: sudo obhut guncelle)")
-    elif update.get("yeni"):
+    if update.get("yeni"):
         lines.append("Yeni sürüm var: %s (sudo obhut guncelle)" % (update.get("son_surum") or update.get("son")))
     word = {"ok": "sorunsuz", "warn": "dikkat", "bad": "sorun var"}
     lines.append("Sağlık: %s" % word.get(health.get("status"), health.get("status")))
@@ -159,7 +157,7 @@ def cmd_durum(konsol, args):
             lines.append("  ! %s: %s" % (check.get("name"), check.get("detail")))
     lines.append("Uygulamalar:")
     for item in apps.get("items") or []:
-        lines.append("  %-28s %s" % (item.get("id"), item.get("durum")))
+        lines.append("  %-28s %s" % (item.get("ad"), item.get("durum")))
     if pending.get("bekleyen"):
         lines.append("Onay bekleyen bir ayar değişikliği var (geri almak için: sudo obhut geri-al).")
     show(data, args.json, lines)
@@ -184,10 +182,6 @@ def cmd_guncelle(konsol, args):
     if job.get("durum") == "calisiyor":
         print("Güncelleme zaten sürüyor: %s" % (job.get("asama") or ""))
         return 0
-    if update.get("yeni_nesil"):
-        # DD-277: another generation is a clean install, never an update; the backend refuses it too.
-        print(update["yeni_nesil"].get("metin") or "Obhut'un yeni bir nesli çıktı; yalnız temiz bir işletim sistemine kurulur.")
-        return 0
     if not update.get("son") or not update.get("commit"):
         raise ObhutError(update.get("hata") or "En son sürüm okunamadı; ağ bağlantısını denetleyin.")
     if not update.get("yeni"):
@@ -211,49 +205,88 @@ def cmd_uygulama(konsol, args):
     apps = konsol.get("/api/konsol/uygulamalar")
     items = apps.get("items") or []
     if args.eylem == "liste":
-        lines = ["%-28s %-12s %s" % (i.get("id"), i.get("durum"), i.get("ad")) for i in items]
+        lines = ["%-30s %-12s %s" % (i.get("ad"), i.get("durum"),
+                                     ", ".join("%s %s" % (s.get("ad"), s.get("durum")) for s in i.get("servisler") or []))
+                 for i in items]
         show(apps, args.json, lines or ["Kurulu uygulama yok."])
         return 0
-    item = next((i for i in items if i.get("id") == args.id or i.get("modul") == args.id or i.get("konteyner") == args.id), None)
+    item = next((i for i in items if i.get("ad") == args.id), None)
     if item is None:
         raise ObhutError("Uygulama bulunamadı: %s (sudo obhut uygulama liste)" % args.id)
     if args.eylem not in (item.get("eylemler") or []):
         verb = {"baslat": "başlatılamaz", "durdur": "durdurulamaz", "yeniden-baslat": "yeniden başlatılamaz"}[args.eylem]
         raise ObhutError("%s şu an %s (durum: %s)." % (item.get("ad"), verb, item.get("durum")))
-    body = {"id": item["id"], "eylem": args.eylem}
-    if item.get("revizyon"):
-        body["revizyon"] = item["revizyon"]
-    konsol.post("/api/konsol/uygulamalar/islem", body)
+    konsol.post("/api/konsol/uygulamalar/%s/islem" % item["ad"], {"eylem": args.eylem, "revizyon": item.get("revizyon", "")})
     print("%s: %s isteği gönderildi; durumu: sudo obhut uygulama liste" % (item.get("ad"), args.eylem))
     return 0
 
 
-def cmd_yayin(konsol, args):
-    view = konsol.get("/api/konsol/yayinlar")
-    rows = [r for r in view.get("adaylar") or [] if r.get("servis")]
+ACCESS_ROW_KINDS = ("konsol", "paylasim", "uygulama")
+
+
+def access_rows(view):
+    """Erişim's access rows: Konsol, WebDAV and every application port (rebuild phase 4)."""
+    return [r for r in view.get("hizmetler") or [] if r.get("tur") in ACCESS_ROW_KINDS]
+
+
+def cell_text(cell):
+    cell = cell or {}
+    if cell.get("durum") in ("acik", "kismen", "hata"):
+        text = ", ".join(cell.get("adresler") or []) or "açık"
+        return text + (" (hata)" if cell.get("durum") == "hata" else "")
+    return "kapalı"
+
+
+def closing(row):
+    """The settings request that closes a row's internet side (decision 1: it commits at once), or None when the row
+    is not open to the internet: Konsol's or WebDAV's internet name switched off (the name is remembered), an
+    application's internet name removed, a raw port open to the internet closed."""
+    web, access = row.get("web"), row.get("satir")
+    if row.get("tur") in ("konsol", "paylasim"):
+        if not web or not web.get("enabled"):
+            return None
+        return {"web": {"service": row["id"], "tail": bool(web.get("tail")), "enabled": False, "domain": web.get("domain") or ""}}
+    if not access or not row.get("uygulama") or not row.get("anahtar"):
+        return None
+    if access.get("tur") == "adres" and access.get("internet"):
+        new = dict(access, internet="")
+    elif access.get("tur") == "ham" and access.get("kapsam") == "internet":
+        new = dict(access, kapsam="kapali")
+    else:
+        return None
+    return {"erisim": {"uygulama": row["uygulama"], "anahtar": row["anahtar"], "satir": new}}
+
+
+def cmd_erisim(konsol, args):
+    view = konsol.get("/api/konsol/erisim")
+    rows = access_rows(view)
     if args.eylem == "liste":
-        lines = []
-        for r in rows:
-            internet = r.get("alan_adi") if r.get("internet") and r.get("alan_adi") else ("açık" if r.get("internet") else "kapalı")
-            lines.append("%-24s Tailscale %-6s internet %s" % (r.get("id"), "açık" if r.get("tailscale") else "kapalı", internet))
-        show(view, args.json, lines or ["Yayın yok."])
+        lines = ["%-44s Tailscale %s · internet %s" % (r.get("id"), cell_text(r.get("tailscale")), cell_text(r.get("internet")))
+                 for r in rows]
+        lines += ["! %s" % e for e in view.get("hatalar") or []]
+        show({"satirlar": rows, "hatalar": view.get("hatalar") or []}, args.json, lines or ["Erişim satırı yok."])
         return 0
-    targets = [r for r in rows if r.get("internet")] if args.hepsi else [r for r in rows if r.get("id") == args.id or r.get("servis") == args.id]
-    if not args.hepsi and not targets:
-        raise ObhutError("Yayın bulunamadı: %s (sudo obhut yayin liste)" % args.id)
-    targets = [r for r in targets if r.get("internet")]
+    if args.hepsi:
+        targets = rows
+    else:
+        targets = [r for r in rows if r.get("id") == args.id]
+        if not targets:
+            raise ObhutError("Erişim satırı bulunamadı: %s (sudo obhut erisim liste)" % args.id)
+    targets = [(r, closing(r)) for r in targets]
+    targets = [(r, request) for r, request in targets if request]
     if not targets:
-        print("İnternete açık yayın yok; değişen bir şey olmadı.")
+        print("İnternete açık erişim satırı yok; değişen bir şey olmadı.")
         return 0
-    revision = view.get("revizyon")
-    for index, r in enumerate(targets):
+    # An application row's change may restart its container and wait for it: the settings worker's limit.
+    from master_settings import ERISIM_WORKER_SECONDS
+    revision = view.get("revizyon") or ""
+    for index, (row, request) in enumerate(targets):
         # Each write changes the revision; the next one reads it again.
         if index:
-            revision = konsol.get("/api/konsol/yayinlar").get("revizyon")
-        # The internet name closes; the Tailscale name stays as it is (Konsol's own always stays on).
-        web = {"service": r["servis"], "tail": bool(r.get("tailscale")), "enabled": False, "domain": r.get("alan_adi") or ""}
-        konsol.post("/api/konsol/ayarlar/uygula", {"revision": revision, "web": web})
-        print("%s: internet adı kapatıldı." % r.get("ad"))
+            revision = konsol.get("/api/konsol/erisim").get("revizyon") or ""
+        konsol.post("/api/konsol/ayarlar/uygula", dict(request, revision=revision),
+                    timeout=ERISIM_WORKER_SECONDS + 10 if "erisim" in request else None)
+        print("%s: internet erişimi kapatıldı." % row.get("id"))
     return 0
 
 
@@ -269,7 +302,6 @@ def cmd_geri_al(konsol, args):
 
 def parser():
     p = argparse.ArgumentParser(prog="obhut", description="Sunucunun durumu ve kurtarma (root).")
-    p.add_argument("--state", default=STATE, help=argparse.SUPPRESS)
     sub = p.add_subparsers(dest="komut", required=True, metavar="komut")
     s = sub.add_parser("durum", help="sürüm, sağlık, uygulamalar ve bekleyen değişiklik")
     s.add_argument("--json", action="store_true")
@@ -287,12 +319,12 @@ def parser():
     s.add_argument("id", nargs="?", default="")
     s.add_argument("--json", action="store_true")
     s.set_defaults(run=cmd_uygulama)
-    s = sub.add_parser("yayin", help="yayınlar: liste; bir internet adını ya da hepsini kapat")
+    s = sub.add_parser("erisim", help="erişim satırları: liste; bir satırın ya da hepsinin internet erişimini kapat")
     s.add_argument("eylem", choices=("liste", "kapat"))
     s.add_argument("id", nargs="?", default="")
     s.add_argument("--hepsi", action="store_true")
     s.add_argument("--json", action="store_true")
-    s.set_defaults(run=cmd_yayin)
+    s.set_defaults(run=cmd_erisim)
     sub.add_parser("geri-al", help="onay bekleyen ayar değişikliğini geri alır").set_defaults(run=cmd_geri_al)
     return p
 
@@ -300,16 +332,16 @@ def parser():
 def main(argv=None):
     args = parser().parse_args(argv)
     if getattr(args, "eylem", None) in ("baslat", "durdur", "yeniden-baslat") and not args.id:
-        print("obhut: uygulamanın kimliğini yazın (sudo obhut uygulama liste).", file=sys.stderr)
+        print("obhut: uygulamanın adını yazın (sudo obhut uygulama liste).", file=sys.stderr)
         return 2
-    if args.komut == "yayin" and args.eylem == "kapat" and not (args.id or args.hepsi):
-        print("obhut: yayının kimliğini ya da --hepsi yazın (sudo obhut yayin liste).", file=sys.stderr)
+    if args.komut == "erisim" and args.eylem == "kapat" and not (args.id or args.hepsi):
+        print("obhut: erişim satırının kimliğini ya da --hepsi yazın (sudo obhut erisim liste).", file=sys.stderr)
         return 2
     if os.geteuid() != 0:
         print("obhut: root olarak çalıştırın: sudo obhut %s" % " ".join(argv if argv is not None else sys.argv[1:]), file=sys.stderr)
         return 2
     try:
-        konsol = Konsol(read_env(args.state))
+        konsol = Konsol(read_env(STATE))
         return args.run(konsol, args)
     except ObhutError as err:
         print("obhut: %s" % err, file=sys.stderr)

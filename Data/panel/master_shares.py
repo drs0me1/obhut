@@ -182,41 +182,27 @@ def validate_connection(value):
     return value
 
 
+REGISTRY_KEYS = {"schema", "limits", "root", "items", "blocked"}
+ITEM_KEYS = {"id", "created", "changed", "path", "identity", "name", "username", "connections", "salt", "hash"}
+
+
 def normalize_registry(data):
-    """DD-192: one policy per trusted listener; schema-3 access is never widened."""
+    """DD-192: schema 4 only, one policy per trusted listener; any other schema, and any key this
+    version does not write, fails closed (DD-271)."""
     if (not isinstance(data, dict) or type(data.get("schema")) is not int
-            or data["schema"] not in (3, 4) or not isinstance(data.get("items"), list)):
+            or data["schema"] != 4 or not isinstance(data.get("items"), list)
+            or not set(data) <= REGISTRY_KEYS):
         raise ShareError("Paylaşım kaydı desteklenmiyor.")
     for item in data["items"]:
-        if not isinstance(item, dict):
+        if not isinstance(item, dict) or set(item) != ITEM_KEYS:
             raise ShareError("Paylaşım kaydı desteklenmiyor.")
-        if data["schema"] == 3:
-            networks = validate_networks(item.get("networks"))
-            if "connections" in item or "expires" not in item or type(item.get("paused")) is not bool:
-                raise ShareError("Paylaşım kaydı desteklenmiyor.")
-            item["connections"] = {scope: validate_connection({
-                "enabled": scope in networks and not item["paused"],
-                "permission": item.get("permission"), "expires": item.get("expires")})
-                for scope in SCOPES}
-            for key in ("networks", "paused", "permission", "expires"):
-                item.pop(key, None)
-        elif any(k in item for k in ("networks", "paused", "permission", "expires")):
-            raise ShareError("Paylaşım kaydı çelişkili bağlantı ayarları içeriyor.")
         connections = item.get("connections")
         if not isinstance(connections, dict) or set(connections) != set(SCOPES):
             raise ShareError("Paylaşımın iki bağlantı kaydı da gerekli.")
         for policy in connections.values():
             validate_connection(policy)
-    data.update(schema=4, limits=dict(DEFAULT_LIMITS))
+    data["limits"] = dict(DEFAULT_LIMITS)
     return data
-
-
-def validate_networks(value):
-    if (not isinstance(value, list) or not value or len(value) > 2
-            or any(n not in ("tailscale", "wan") for n in value)
-            or len(set(value)) != len(value)):
-        raise ShareError("En az bir erişim ağı seçin: Tailscale veya WAN.")
-    return [n for n in ("tailscale", "wan") if n in value]
 
 
 def atomic(path, data):
@@ -238,6 +224,12 @@ def atomic(path, data):
             os.unlink(temp)
 
 
+def dns_check(env):
+    """dnsmasq's configuration check (the distribution's helper when it has one, as master_settings.dns_test)."""
+    helper = "/usr/share/dnsmasq/systemd-helper"
+    return [helper, "checkconfig"] if os.path.exists(helper) else ["dnsmasq", "--test", "--conf-dir=" + env["DNSMASQ_CONF_DIR"]]
+
+
 class Manager:
     def __init__(self, state):
         self.state = str(state)
@@ -257,72 +249,13 @@ class Manager:
     def initial(self):
         e = self.env
         return {"schema": 4, "limits": dict(DEFAULT_LIMITS), "root": e["SERVER_ROOT"], "items": [],
-                "blocked": [e["FILES_PANEL_TRASH"]], "protected": self.protected_folders()}
+                "blocked": [e["FILES_PANEL_TRASH"]]}
 
     def read(self):
         try:
-            data = load(self.path)
+            return load(self.path)
         except FileNotFoundError:
             return self.initial()
-        # DD-203: the folders packages write into follow the catalogue and the packages' own reports,
-        # not the saved file; the WebDAV server hides and refuses them inside shares. A report that
-        # cannot be read leaves the list at the declarations here (path validation fails closed itself).
-        data["protected"] = self.protected_folders()
-        try:
-            data["protected"] += [p for p in self.written_folders() if p not in data["protected"]]
-        except ShareError:
-            pass
-        return data
-
-    def relative_folders(self, paths):
-        root = self.env["SERVER_ROOT"].rstrip("/")
-        out = []
-        for value in paths:
-            value = os.path.normpath(value)
-            if value.startswith(root + "/") and value != root:
-                rel = os.path.relpath(value, root)
-                if rel not in out:
-                    out.append(rel)
-        return out
-
-    def protected_folders(self):
-        """DD-203: every catalogued package's declared folders (PAKET_KLASORLER, absolute), root-relative."""
-        from master_settings import read_manifests
-        paths = []
-        for manifest in read_manifests(self.env).values():
-            paths.extend(manifest.get("PAKET_KLASORLER", "").split())
-        return self.relative_folders(paths)
-
-    def written_folders(self):
-        """DD-203: what the packages' own modules (PAKET_KLASOR_MODUL) report they write into right now,
-        e.g. a temporary folder the user chose in the application; fail closed on an unreadable report."""
-        from master_settings import SettingsError, load_package_module, read_manifests
-        paths = []
-        for mid, manifest in read_manifests(self.env).items():
-            name = manifest.get("PAKET_KLASOR_MODUL", "")
-            if not name:
-                continue
-            label = (manifest.get("PAKET_AD") or mid) + " klasör bildirimi"
-            try:
-                module = load_package_module(self.env, mid, name, "yazilan", label)
-                reported = module.yazilan(dict(self.env))
-                require_list = isinstance(reported, list) and all(isinstance(x, str) for x in reported)
-                if not require_list:
-                    raise ShareError("%s geçersiz; paylaşım değiştirilmedi." % label)
-                paths.extend(reported)
-            except ShareError:
-                raise
-            except (OSError, SettingsError, UnicodeError, ValueError, TypeError, KeyError, RecursionError) as err:
-                raise ShareError("%s güvenli okunamadı; paylaşım değiştirilmedi." % label) from err
-        return self.relative_folders(paths)
-
-    def module_state(self):
-        try:
-            with open(self.env["MODULES_FILE"], encoding="utf-8") as stream:
-                return next((line.rstrip().split("\t")[1] for line in stream
-                             if line.startswith("paylasim\t")), "")
-        except FileNotFoundError:
-            return ""
 
     def tail_available(self):
         """DD-191 global gate: Erişim → Adresler can close WebDAV on Tailscale."""
@@ -338,7 +271,6 @@ class Manager:
         result = []
         base = "http://%s:%s" % (self.env["TAILSCALE_IPV4"], self.env["SHARE_PORT"])
         wan = self.wan_info()
-        state = self.module_state()
         tail_enabled = self.tail_available()
         for item in data["items"]:
             row = {k: item[k] for k in ("id", "path", "name", "username", "created", "changed")}
@@ -356,8 +288,6 @@ class Manager:
                 expired = bool(saved["expires"] and time.time() >= saved["expires"])
                 if not row["available"]:
                     reason = "Klasör bulunamadı veya değiştirildi."
-                elif state != "calisiyor":
-                    reason = "WebDAV hizmeti çalışmıyor."
                 elif not transport:
                     reason = "Erişim → Adresler bölümünde Tailscale erişimi kapalı." if scope == "tailscale" else wan["reason"]
                 elif expired:
@@ -377,8 +307,8 @@ class Manager:
                     row["urls"][scope] = url
             row["url"] = next(iter(row["urls"].values()), "")
             result.append(row)
-        return {"enabled": bool(state), "running": state == "calisiyor", "host": base,
-                "items": result, "max": 32, "wan": wan, "tail_enabled": tail_enabled, "limits": dict(DEFAULT_LIMITS)}
+        return {"host": base, "items": result, "max": 32, "wan": wan, "tail_enabled": tail_enabled,
+                "limits": dict(DEFAULT_LIMITS)}
 
     def wan_info(self):
         from master_https import config
@@ -393,8 +323,7 @@ class Manager:
             available = ip.is_global and not ip.is_multicast and not ip.is_reserved
         except ValueError:
             available = False
-        available = available and bool(self.env.get("SHARE_WAN_BACKEND"))
-        reason = "" if available else "WAN paylaşımı için sunucuya atanmış genel IPv4 ve güncel kurulum gerekli."
+        reason = "" if available else "WAN paylaşımı için sunucuya atanmış genel IPv4 gerekli."
         # DD-182: the provider can take the address away; Caddy could then not bind it.
         if available and not assigned(address):
             available = False
@@ -402,8 +331,8 @@ class Manager:
         if cfg["mode"] == "off":
             available, reason = False, "İnternet paylaşımı kapalı. Erişim → Adresler bölümünde HTTPS alan adı kaydedin."
         elif available and cfg["mode"] == "http":
-            # One WAN port for Caddy publications (contract §3.1): while a package or Konsol is
-            # published over HTTPS (TCP 443), legacy plaintext WebDAV on SHARE_PORT stays closed.
+            # One WAN port for Caddy publications (contract §3.1): while Konsol or an application's internet
+            # name is published over HTTPS (TCP 443), plaintext WebDAV on SHARE_PORT stays closed.
             from master_publications import https_apps_enabled
             try:
                 conflict = https_apps_enabled(self.env)
@@ -411,14 +340,14 @@ class Manager:
                 raise ShareError("HTTPS yapılandırması okunamadı; WAN erişimi uygulanmadı.") from err
             if conflict:
                 available = False
-                reason = ("Bir uygulamanın veya Panel'in internet yayını açıkken WebDAV internet erişimi için HTTPS alan adı gerekir; "
-                          "Erişim → Adresler bölümünde kaydedin.")
+                reason = ("Konsol'un ya da bir uygulamanın internet adı açıkken WebDAV internet erişimi için HTTPS alan adı "
+                          "gerekir; Erişim → Adresler bölümünde kaydedin.")
         return {"available": available, "address": address if available else "",
                 **cfg, "reason": reason}
 
     def wan_active(self):
         wan = self.wan_info()
-        if not wan["available"] or self.module_state() != "calisiyor":
+        if not wan["available"]:
             return False
         data = self.read()
         # TLS-ALPN issuance/renewal needs the HTTPS listener even with no active
@@ -443,10 +372,8 @@ class Manager:
     def validate_path(self, data, path, exclude=""):
         pp = parts(path)
         path = "/".join(pp)
-        # DD-203: the base's own reserved names, every package's declared folders and what the
-        # packages report they write into right now (a folder the user chose in the application).
-        blocked = list(data["blocked"]) + list(data.get("protected", [])) + self.written_folders()
-        for p in blocked:
+        # The base's own reserved names (the trash).
+        for p in data["blocked"]:
             if path == p or path.startswith(p + "/") or p.startswith(path + "/"):
                 raise ShareError("Bu klasör iç/geçici alan “%s” ile çakışıyor. Bu alanı içermeyen bir klasör seçin." % p)
         for item in data["items"]:
@@ -462,14 +389,12 @@ class Manager:
     def change(self, action, request):
         if not isinstance(request, dict) or action not in ("save", "remove"):
             raise ShareError("Geçersiz paylaşım işlemi.")
-        if any(k in request for k in ("permission", "days", "expires", "networks", "paused", "ack_write")):
-            raise ShareError("Paylaşım ayarları bağlantı bazında değişti; sayfayı yenileyin.")
         allowed = {"id", "path", "username", "password", "connections", "ack_wan_http"} if action == "save" else {"id"}
         if set(request) - allowed:
             raise ShareError("Geçersiz paylaşım alanı.")
         with contextlib.ExitStack() as stack:
-            # Same ordering as settings; no module lifecycle/installer race.
-            for name in ("install.lock", "modul.lock", "paylasim.lock"):
+            # Same ordering as settings; no installer race.
+            for name in ("install.lock", "paylasim.lock"):
                 stream = stack.enter_context(open(os.path.join(self.env["RUNTIME_DIR"], name), "a"))
                 try:
                     fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -477,8 +402,6 @@ class Manager:
                     raise ShareError("Başka bir kurulum/ayar işlemi sürüyor; yeniden deneyin.")
             if os.path.exists(self.env["SETTINGS_PENDING_FILE"]):
                 raise ShareError("Önce bekleyen ayar değişikliğini onaylayın veya geri alın.")
-            if not self.module_state():
-                raise ShareError("Yerleşik WebDAV kurulumu tamamlanmamış; kurulumu yeniden çalıştırın.")
             if os.path.exists(self.pending):
                 raise ShareError("Önceki paylaşım işlemi kurtarılıyor; biraz sonra yeniden deneyin.")
             old = self.read()
@@ -556,27 +479,28 @@ class Manager:
                 raise ShareError("Geçersiz paylaşım işlemi.")
             atomic(self.pending, old)
             atomic(self.path, data)
-            if self.module_state() == "calisiyor":
+            try:
+                self.restart()
+                self.publish()
+            except (subprocess.SubprocessError, OSError, ShareError) as err:
+                cause = str(err) if isinstance(err, ShareError) else "WebDAV yeniden başlatılamadı: " + failure_reason(err)
+                atomic(self.path, old)
                 try:
                     self.restart()
                     self.publish()
-                except (subprocess.SubprocessError, OSError, ShareError) as err:
-                    cause = str(err) if isinstance(err, ShareError) else "WebDAV yeniden başlatılamadı: " + failure_reason(err)
-                    atomic(self.path, old)
-                    try:
-                        self.restart()
-                        self.publish()
-                    except (subprocess.SubprocessError, OSError, ShareError):
-                        raise ShareError("Önceki kayıt geri yüklendi ancak WebDAV başlamadı. Sunucuda master-paylasim günlüğünü kontrol edin.")
-                    os.unlink(self.pending)
-                    raise ShareError("Paylaşım/ağ ayarı uygulanamadı; önceki kayıt geri yüklendi. Neden: %s" % cause)
+                except (subprocess.SubprocessError, OSError, ShareError):
+                    raise ShareError("Önceki kayıt geri yüklendi ancak WebDAV başlamadı. Sunucuda master-paylasim günlüğünü kontrol edin.")
+                os.unlink(self.pending)
+                raise ShareError("Paylaşım/ağ ayarı uygulanamadı; önceki kayıt geri yüklendi. Neden: %s" % cause)
             os.unlink(self.pending)
             return self.public()
 
     def publish(self):
-        """DAV, package and Konsol projections (DD-199). Caller owns install/module/share locks."""
-        if not self.env.get("SHARE_WAN_BACKEND"):
-            return  # Legacy fixture/installation without the new listener capability.
+        """The access projection (DD-191, DD-195; rebuild phase 4): WebDAV's internet site, the fixed rows' and the
+        applications' Caddy sites (master_publications.extra_sites) and the applications' local names
+        (master_publications.dns_text, DNSMASQ_CONF_DIR/modul-uygulama.conf), then caddy validate, the firewall,
+        dnsmasq's restart when the names changed and Caddy's reload. Any failure puts every previous file back
+        and names its step (DD-254). The caller owns the installer and share locks."""
         e = self.env
         active = self.wan_active()
         target = os.path.join(e["CADDY_MODULES_DIR"], "paylasim-wan.caddy")
@@ -585,31 +509,38 @@ class Manager:
         if active:
             from master_https import site
             text = site(e, self.wan_info())
-        from master_publications import extra_sites, https_apps_active
+        from master_publications import dns_path, dns_text, extra_sites, https_apps_active
         from master_settings import SettingsError, atomic as atomic_text, read_regular
         try:
             extras = extra_sites(e)
             apps_wan = https_apps_active(e)
+            names_path, names = dns_path(e), dns_text(e)
             previous_extras = {}
             for name in extras:
                 try:
                     previous_extras[name] = read_regular(os.path.join(e["CADDY_MODULES_DIR"], name))[0].decode()
                 except FileNotFoundError:
                     previous_extras[name] = ""
+            try:
+                previous_names = read_regular(names_path)[0].decode()
+            except FileNotFoundError:
+                previous_names = ""
         except (SettingsError, OSError, ValueError, KeyError) as err:
-            raise ShareError("Caddy yayın kaydı uygulanamadı.") from err
+            raise ShareError("Caddy yayın kaydı uygulanamadı%s." % (": " + str(err) if isinstance(err, SettingsError) else "")) from err
         try:
             with open(target, encoding="utf-8") as stream:
                 previous = stream.read()
         except FileNotFoundError:
             previous = ""
-        signature = {"config": text, "wan": active, "extra": extras, "apps_wan": apps_wan}
+        # A removed file is an empty entry only until it is gone; the signature holds the files that exist.
+        signature = {"config": text, "wan": active, "extra": {k: v for k, v in extras.items() if v}, "apps_wan": apps_wan,
+                     "names": names}
         try:
             with open(marker, encoding="utf-8") as stream:
                 applied = json.load(stream)
         except (OSError, ValueError):
             applied = None
-        if previous == text and previous_extras == extras and applied == signature:
+        if previous == text and previous_extras == extras and previous_names == names and applied == signature:
             return
         # Always remove the success marker first: interrupted reloads retry, even
         # when the disk projection already matches. Credential rollback is separate.
@@ -640,11 +571,25 @@ class Manager:
                 else:
                     with contextlib.suppress(FileNotFoundError):
                         os.unlink(path)
+        def write_names(content):
+            if content:
+                atomic_text(names_path, content, 0o644)
+            else:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(names_path)
+        # dnsmasq reads its names at start: restart it when the file changes, and when the last applied projection
+        # had other names (a settings rollback puts the previous file back before it publishes again).
+        names_changed = previous_names != names or (isinstance(applied, dict) and applied.get("names", names) != names)
+        names_restarted = False
         # DD-254: the operator sees which step failed and the reason its tool printed.
         step = "Caddy dosyaları yazılamadı"
         try:
             write_config(text)
             write_extras(extras)
+            write_names(names)
+            if names_changed:
+                step = "yerel ad yapılandırması geçersiz"
+                subprocess.run(dns_check(e), check=True, timeout=15, capture_output=True)
             step = "Caddy yapılandırması geçersiz"
             subprocess.run(["caddy", "validate", "--config", e["CADDYFILE"], "--adapter", "caddyfile"],
                            check=True, timeout=15, capture_output=True, env=env)
@@ -652,6 +597,10 @@ class Manager:
             # stay ahead of the base permission. Caddy reload never opens panel ports.
             step = "güvenlik duvarı uygulanamadı"
             subprocess.run([os.path.join(e["SBIN_DIR"], "master-firewall")], check=True, timeout=30, capture_output=True, env=env)
+            if names_changed:
+                step = "yerel adlar (dnsmasq) yeniden başlatılamadı"
+                names_restarted = True
+                subprocess.run(["systemctl", "restart", "dnsmasq"], check=True, timeout=20, capture_output=True)
             step = "Caddy yeniden yüklenemedi"
             reload_started = int(time.time())
             try:
@@ -674,13 +623,18 @@ class Manager:
         except (OSError, SettingsError, subprocess.SubprocessError) as err:
             write_config(previous)
             write_extras(previous_extras)
+            write_names(previous_names)
+            if names_restarted:
+                # dnsmasq answers the previous names again (best effort; the error below names the step).
+                with contextlib.suppress(OSError, subprocess.SubprocessError):
+                    subprocess.run(["systemctl", "restart", "dnsmasq"], timeout=20, capture_output=True)
             reason = failure_reason(err)
             raise ShareError("WAN dinleyicisi/güvenlik duvarı uygulanamadı (%s%s); önceki yayın geri yüklendi."
                              % (step, ": " + reason if reason else "")) from err
 
     def guard(self):
         with contextlib.ExitStack() as stack:
-            for name in ("install.lock", "modul.lock", "paylasim.lock"):
+            for name in ("install.lock", "paylasim.lock"):
                 stream = stack.enter_context(open(os.path.join(self.env["RUNTIME_DIR"], name), "a"))
                 try:
                     fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -690,8 +644,7 @@ class Manager:
                 return
             if os.path.exists(self.pending):
                 atomic(self.path, load(self.pending))
-                if self.module_state() == "calisiyor":
-                    self.restart()
+                self.restart()
                 self.publish()
                 os.unlink(self.pending)
             else:
@@ -720,8 +673,7 @@ class Manager:
     def prepare(self):
         if os.path.exists(self.pending):
             atomic(self.path, load(self.pending))
-            if self.module_state() == "calisiyor":
-                self.restart()
+            self.restart()
             os.unlink(self.pending)
         if not os.path.exists(self.path):
             atomic(self.path, self.initial())
@@ -741,11 +693,10 @@ def main():
     try:
         manager = Manager(args.state)
         if args.action == "wan-firewall":
-            # Published packages and Konsol (DD-195/199) share the HTTPS port with WebDAV and its budgets.
-            https_apps = False
-            if manager.env.get("SHARE_WAN_BACKEND"):
-                from master_publications import https_apps_active
-                https_apps = bool(https_apps_active(manager.env))
+            # Konsol and the applications' internet names (DD-195, rebuild phase 4) share the HTTPS port with
+            # WebDAV and its budgets.
+            from master_publications import https_apps_active
+            https_apps = bool(https_apps_active(manager.env))
             print(int(manager.wan_active() or https_apps), WAN_SOCKET_PER_IP, WAN_SOCKET_TOTAL,
                   int(manager.env["SHARE_HTTPS_PORT"]) if https_apps else manager.wan_info()["port"])
             return

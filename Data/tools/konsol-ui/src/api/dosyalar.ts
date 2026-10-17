@@ -20,20 +20,11 @@ function at(tree: Tree, route: string, params?: Record<string, string>): string 
 const isNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const numberOrNull = (v: unknown): number | null => (isNumber(v) ? v : null);
 
-export interface ProtectedFolder {
-  /** Relative to the root. */
-  path: string;
-  /** The package that writes there ("qBittorrent"). */
-  owner: string;
-}
-
 export interface FilesState {
   root: string;
   writable: boolean;
   textLimit: number;
   disk: { total: number | null; free: number | null; used: number | null; mount: boolean };
-  /** The packages' folders (DD-203): not selectable, not shared, not changed here. None in the root view. */
-  protected: ProtectedFolder[];
   /** The trash's count and size; null in the root view (it has none). */
   trash: { count: number; size: number } | null;
 }
@@ -107,15 +98,11 @@ export async function readState(tree: Tree): Promise<FilesState> {
   const v = shaped<Record<string, unknown>>(await getJson(at(tree, "/state")), (s) => isText(s.root) && isObject(s.disk));
   const disk = v.disk as Record<string, unknown>;
   const trash = isObject(v.trash) && isNumber(v.trash.count) ? { count: v.trash.count, size: isNumber(v.trash.size) ? v.trash.size : 0 } : null;
-  const guarded = Array.isArray(v.protected)
-    ? v.protected.filter((p): p is ProtectedFolder => isObject(p) && isText(p.path) && p.path !== "" && isText(p.owner))
-    : [];
   return {
     root: v.root as string,
     writable: v.writable !== false,
     textLimit: isNumber(v.textLimit) ? v.textLimit : 0,
     disk: { total: numberOrNull(disk.total), free: numberOrNull(disk.free), used: numberOrNull(disk.used), mount: disk.mount === true },
-    protected: tree === "srv" ? guarded.map((p) => ({ path: p.path, owner: p.owner })) : [],
     trash: tree === "srv" ? trash : null,
   };
 }
@@ -253,12 +240,25 @@ export function sendFile(tree: Tree, folder: string, file: File, progress: (sent
   return { done, abort: () => xhr.abort() };
 }
 
-/** Who uses which folder of the user area: applications' bind mounts and the folder shares (DD-267). */
-export async function readStorage(): Promise<Depolama> {
-  const v = shaped<Depolama>(await getJson(YOLLAR.depolama), (d) => isText(d.kok) && Array.isArray(d.kullananlar));
+/** Who uses which folder of the user area (applications' bind mounts and the folder shares, DD-267) and each
+    application's data folders with their sizes (K7; `fresh` measures them again instead of the server's cache). */
+export async function readStorage(fresh = false): Promise<Depolama> {
+  const v = shaped<Depolama>(await getJson(YOLLAR.depolama + (fresh ? "?yenile=1" : "")), (d) => isText(d.kok) && Array.isArray(d.kullananlar));
+  const size = (n: unknown) => (isNumber(n) && n >= 0 ? n : null);
   return {
     ...v,
     kullananlar: v.kullananlar.filter((u) => isObject(u) && isText(u.yol) && isText(u.id) && isText(u.ad) && isText(u.tur)),
+    uygulamalar: (Array.isArray(v.uygulamalar) ? v.uygulamalar : [])
+      .filter((a) => isObject(a) && isText(a.ad) && isText(a.yol))
+      .map((a) => ({
+        ...a,
+        boyut: size(a.boyut),
+        neden: isText(a.neden) ? a.neden : "",
+        olculdu: isNumber(a.olculdu) ? a.olculdu : null,
+        klasorler: (Array.isArray(a.klasorler) ? a.klasorler : [])
+          .filter((k) => isObject(k) && isText(k.ad))
+          .map((k) => ({ ...k, yol: isText(k.yol) ? k.yol : "", boyut: size(k.boyut), neden: isText(k.neden) ? k.neden : "", hedefler: Array.isArray(k.hedefler) ? k.hedefler.filter(isText) : [] })),
+      })),
     hatalar: Array.isArray(v.hatalar) ? v.hatalar.filter(isText) : [],
   };
 }

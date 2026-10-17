@@ -18,42 +18,22 @@ class HealthTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory(prefix="stage4-health-")
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name).resolve()
-        self.modules = self.root / "modules"
-        self.modules.write_text("")
         self.networks = self.root / "networks"
-        self.env = {"MODULES_FILE": str(self.modules), "WG_NETWORKS_FILE": str(self.networks),
+        self.stopped = self.root / "wg.stopped"
+        self.env = {"WG_NETWORKS_FILE": str(self.networks), "WG_STOPPED_FILE": str(self.stopped),
                     "DOWNLOADS_UID": "1000", "SERVER_ROOT": str(self.root)}
         self.state = self.root / "state.env"
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
-        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), state_env=False, master_modul="/fixture/master-modul"))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state)))
         self.props = {}
-        # DD-198: the engine's saglik output is derived from the fixture registry files, like the real hooks.
-        self.saglik_rc = 0
         self.failed = (0, "")
         self.show = None
         self.calls = []
         self.outputs = {"tailscale": (0, json.dumps({"BackendState": "Running", "Self": {"Online": True}})),
                         "master-firewall": (0, ""), "timedatectl": (0, "yes\n")}
 
-    def saglik(self):
-        if self.saglik_rc:
-            return self.saglik_rc, ""
-        lines = []
-        registry = self.modules.read_text() if self.modules.exists() else ""
-        if "torrent\tcalisiyor" in registry.splitlines():
-            lines.append("torrent\tqbittorrent-nox@downloads.service\tgerekli")
-        if "wireguard\tcalisiyor" in registry.splitlines() and self.networks.exists():
-            for line in self.networks.read_text().splitlines():
-                f = line.split("\t")
-                if len(f) != 9 or f[2] != "inet":
-                    return 1, "wireguard\thata\tbozuk\n"
-                lines.append("wireguard\twg-quick@%s.service\tag" % f[0])
-        return 0, "".join(l + "\n" for l in lines)
-
     def cmd(self, argv, timeout=10):
         self.calls.append((argv, timeout))
-        if argv == ["/fixture/master-modul", "saglik"]:
-            return self.saglik()
         if argv[:2] == ["systemctl", "list-units"]:
             return self.failed
         if argv[:2] == ["systemctl", "show"]:
@@ -67,10 +47,10 @@ class HealthTests(unittest.TestCase):
             return 0, "\n\n".join(blocks)
         return self.outputs[argv[0]]
 
-    def units(self):
+    def units(self, env=None):
         with patch.object(self.p, "health_cmd", side_effect=self.cmd), \
                 patch.object(panel.pwd, "getpwuid", return_value=types.SimpleNamespace(pw_name="downloads")):
-            return self.p.health_units(self.env)
+            return self.p.health_units(self.env if env is None else env)
 
     def test_core_units_are_required_even_with_no_failed_units(self):
         expected = {"tailscaled.service", "dnsmasq.service", "caddy.service", "master-firewall.service",
@@ -80,6 +60,8 @@ class HealthTests(unittest.TestCase):
         shown = set(self.calls[-1][0][4:])
         self.assertEqual(shown, expected)
         self.assertNotIn("master-settings-guard.timer", shown)
+        # Only systemd is asked; no other tool lists units.
+        self.assertEqual({argv[0] for argv, _ in self.calls}, {"systemctl"})
         for unit in expected:
             with self.subTest(unit=unit):
                 self.props = {unit: {"ActiveState": "inactive"}}
@@ -100,6 +82,15 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(status, "bad")
         self.assertIn("example.service", detail)
 
+    def test_a_failed_application_unit_is_listed_like_any_failed_unit(self):
+        # DD-271 (phase 3): an application's units are ordinary units; a stopped application's are inactive, not failed.
+        self.failed = (0, "konsol-notlar_web.service loaded failed failed Konsol uygulaması notlar: web\n")
+        status, detail = self.units()
+        self.assertEqual(status, "bad")
+        self.assertIn("konsol-notlar_web.service", detail)
+        self.assertFalse([u for argv, _ in self.calls if argv[:2] == ["systemctl", "show"] for u in argv if u.startswith("konsol-")],
+                         "only the base's own units are required to run")
+
     def test_nonzero_missing_malformed_and_timeout_probes_never_pass(self):
         for response in ((1, ""), (None, ""), (0, ""), (0, "Id=caddy.service\nActiveState=active\n")):
             with self.subTest(response=response):
@@ -110,23 +101,7 @@ class HealthTests(unittest.TestCase):
             self.failed = response
             self.assertEqual(self.units()[0], "warn")
 
-    def test_optional_qbit_is_required_only_when_registered_running(self):
-        unit = "qbittorrent-nox@downloads.service"
-        self.props[unit] = {"ActiveState": "inactive"}
-        for registry, expected in (("", "ok"), ("torrent\tdurduruldu\n", "ok"), ("torrent\tcalisiyor\n", "bad")):
-            with self.subTest(registry=registry):
-                self.modules.write_text(registry)
-                self.assertEqual(self.units()[0], expected)
-                self.assertEqual(unit in self.calls[-1][0], expected == "bad")
-        self.props[unit]["ActiveState"] = "active"
-        self.assertEqual(self.units()[0], "ok")
-        # The engine failing to list package units is "unknown", never healthy.
-        self.saglik_rc = 1
-        self.assertEqual(self.units()[0], "warn")
-        self.saglik_rc = 0
-
     def test_wg_enabled_networks_required_disabled_networks_stay_stopped(self):
-        self.modules.write_text("wireguard\tcalisiyor\n")
         self.networks.write_text("wg0\t61001\tinet\t10.8.0.1\t10.8.0.0/24\tfd00::1\tfd00::/112\t1.1.1.1\tTest\n")
         unit = "wg-quick@wg0.service"
         for enabled, active, expected in (("enabled", "active", "ok"), ("enabled", "inactive", "bad"),
@@ -135,26 +110,51 @@ class HealthTests(unittest.TestCase):
             with self.subTest(enabled=enabled, active=active):
                 self.props[unit] = dict(UnitFileState=enabled, ActiveState=active)
                 self.assertEqual(self.units()[0], expected)
+                self.assertIn(unit, self.calls[-1][0])
         self.props[unit] = dict(UnitFileState="disabled", ActiveState="failed")
         self.failed = (0, unit + " loaded failed failed WireGuard\n")
         self.assertEqual(self.units()[0], "bad")
         self.failed = (0, "")
-        self.modules.write_text("")  # Removing the module leaves its network registry.
+        # DD-229: stopping WireGuard keeps its networks file; their units are not required.
+        self.props[unit] = dict(UnitFileState="enabled", ActiveState="inactive")
+        self.stopped.touch()
         self.assertEqual(self.units()[0], "ok")
         self.assertNotIn(unit, self.calls[-1][0])
+        self.stopped.unlink()
+        self.assertEqual(self.units()[0], "bad")
+
+    def test_every_registered_network_is_checked_in_file_order(self):
+        self.networks.write_text("".join(
+            "%s\t%d\tinet\t10.8.%d.1\t10.8.%d.0/24\t-\t-\t1.1.1.1\t-\n" % (iface, 61001 + n, n, n)
+            for n, iface in enumerate(("wg0", "wg3", "wg1"))))
+        self.assertEqual(self.units()[0], "ok")
+        self.assertEqual(self.calls[-1][0][-3:], ["wg-quick@wg0.service", "wg-quick@wg3.service", "wg-quick@wg1.service"])
 
     def test_empty_network_registry_is_valid_but_corruption_is_unknown(self):
-        self.modules.write_text("wireguard\tcalisiyor\n")
         self.assertEqual(self.units()[0], "ok")  # No networks created yet.
         self.networks.write_text("")
         self.assertEqual(self.units()[0], "ok")
-        self.networks.write_text("wg0\tbroken\n")
+        line = "wg0\t61001\tinet\t10.8.0.1\t10.8.0.0/24\t-\t-\t1.1.1.1\t-\n"
+        for content in ("wg0\tbroken\n", line.replace("inet", "inet6"), line.replace("wg0", "eth0"),
+                        line + line, "broken\n"):
+            with self.subTest(content=content):
+                self.networks.write_text(content)
+                status, detail = self.units()
+                self.assertEqual(status, "warn")
+                self.assertIn("WireGuard ağ kaydı okunamadı", detail)
+                self.assertFalse(any(u.startswith("wg-quick@") for u in self.calls[-1][0]))
+        # A stopped WireGuard does not read its networks file at all.
+        self.stopped.touch()
+        self.assertEqual(self.units()[0], "ok")
+        self.stopped.unlink()
+        self.networks.unlink()
+        self.networks.mkdir()  # Unreadable file: unknown, never healthy.
         self.assertEqual(self.units()[0], "warn")
-        for content in ("torrent\tunknown\n", "torrent\tcalisiyor\ntorrent\tdurduruldu\n", "broken\n"):
-            self.modules.write_text(content)
-            self.assertEqual(self.units()[0], "warn")
-        self.modules.unlink()
-        self.assertEqual(self.units()[0], "warn")
+        env = dict(self.env)
+        del env["WG_STOPPED_FILE"]  # An unfinished install's state.env.
+        status, detail = self.units(env)
+        self.assertEqual(status, "warn")
+        self.assertIn("WireGuard ağ kaydı okunamadı", detail)
 
     def compute(self, settings_error=None, shares_error=None, disk_error=False):
         with contextlib.ExitStack() as stack:
@@ -188,7 +188,7 @@ class HealthTests(unittest.TestCase):
         self.assertIn((["master-firewall", "--check"], 30), self.calls)
 
     def test_corrupt_registry_cannot_hide_a_failed_core_firewall(self):
-        self.modules.write_text("wireguard\tcorrupt\n")
+        self.networks.write_text("wg0\tcorrupt\n")
         self.props["master-firewall.service"] = {"ActiveState": "failed"}
         self.outputs["master-firewall"] = (1, "degraded; invalid registry")
         data, checks = self.compute()

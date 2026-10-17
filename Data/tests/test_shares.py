@@ -14,7 +14,6 @@ import threading
 import time
 import unittest
 
-import test_share_manager_networks as fixture
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "panel"))
@@ -29,26 +28,25 @@ class SharesTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="webdav-test-")
         self.addCleanup(self.tmp.cleanup)
         self.base = Path(self.tmp.name).resolve()
-        for folder in ("srv/alpha", "srv/beta", "srv/downloads/incomplete", "srv/.pay", "srv/.cop", "run", "profile"):
+        for folder in ("srv/alpha", "srv/beta", "srv/.cop", "run"):
             (self.base / folder).mkdir(parents=True, exist_ok=True)
         self.root = self.base / "srv"
         (self.root / "alpha/movie.txt").write_bytes(b"abcdefghij")
         (self.root / "beta/private.txt").write_bytes(b"beta-only")
-        # DD-203: downloads/incomplete is reserved because the torrent package declares it.
-        fixture.torrent_package(self.base / "mods", self.root / "downloads", self.base / "profile")
-        self.env = {"SHARE_STATE_FILE": str(self.base / "webdav.json"), "MODULES_FILE": str(self.base / "modules"),
-                    "MODULES_DIR": str(self.base / "mods"),
+        self.env = {"SHARE_STATE_FILE": str(self.base / "webdav.json"),
                     "RUNTIME_DIR": str(self.base / "run"), "SERVER_ROOT": str(self.root),
-                    "FILES_PANEL_TRASH": ".cop", "DOWNLOADS_PATH": str(self.root / "downloads"),
+                    "FILES_PANEL_TRASH": ".cop",
                     "SETTINGS_PENDING_FILE": str(self.base / "pending"),
                     "TAILSCALE_IPV4": "100.64.0.2", "SHARE_PORT": "61010"}
         self.state = self.base / "state.env"
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
-        (self.base / "modules").write_text("paylasim\tdurduruldu\n")
         self.manager = shares.Manager(self.state)
         self.mock = patch.object(shares.subprocess, "run", return_value=subprocess.CompletedProcess([], 1))
         self.mock.start()
         self.addCleanup(self.mock.stop)
+        # Every saved change restarts WebDAV and republishes Caddy; neither runs a host command here.
+        self.restart = self.enterContext(patch.object(self.manager, "restart"))
+        self.publish = self.enterContext(patch.object(self.manager, "publish"))
         self.save("alpha", "reader", "ro")
         self.save("beta", "writer", "rw")
         self.config = self.manager.read()
@@ -110,14 +108,6 @@ class SharesTests(unittest.TestCase):
                 self.assertEqual(self.request(method, self.b, "private.txt", headers={"Destination": destination})[0], 403)
         for path in ("../beta/private.txt", "%2e%2e/beta/private.txt", "..%2fbeta/private.txt", "x%00", "a//b", ".hidden"):
             self.assertIn(self.request("GET", leaf=path)[0], (400, 403))
-        # DD-203: a folder a package reports it writes into (root-relative) is refused and hidden
-        # inside the share that contains it; a same-named folder elsewhere is ordinary.
-        (self.root / "alpha/incomplete").mkdir()
-        (self.root / "alpha/incomplete/x").write_bytes(b"half")
-        self.assertEqual(self.request("GET", leaf="incomplete/x")[0], 200)
-        self.config["protected"].append("alpha/incomplete")
-        self.assertEqual(self.request("GET", leaf="incomplete/x")[0], 403)
-        self.assertNotIn(b"incomplete", self.request("PROPFIND", leaf="", headers={"Depth": "1"})[1])
 
     def test_symlink_hardlink_and_hidden_entries_not_served(self):
         os.symlink(self.root / "beta", self.root / "alpha/link")
@@ -187,7 +177,7 @@ class SharesTests(unittest.TestCase):
 
     def test_overlap_reserved_user_and_input_validation(self):
         (self.root / "alpha/sub").mkdir()
-        for path in ("", ".cop", ".pay", "downloads", "downloads/incomplete", "alpha/sub", "../elsewhere"):
+        for path in ("", ".cop", ".cop/old", "alpha/sub", "../elsewhere"):
             with self.subTest(path=path), self.assertRaises((shares.ShareError, OSError)):
                 self.save(path, "third", "ro")
         for change in ({"username": "writer"}, {"connections": {"tailscale": {"permission": "rw", "ack_write": False}}},
@@ -197,12 +187,14 @@ class SharesTests(unittest.TestCase):
             with self.assertRaises(shares.ShareError):
                 self.manager.change("save", request)
 
-    def test_remove_never_deletes_data_and_stopped_service_stays_stopped(self):
-        with patch.object(shares.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)) as run:
-            self.manager.change("remove", {"id": self.a["id"]})
+    def test_remove_never_deletes_data_and_restarts_webdav_once(self):
+        self.restart.reset_mock()
+        self.publish.reset_mock()
+        self.manager.change("remove", {"id": self.a["id"]})
         self.assertTrue((self.root / "alpha/movie.txt").exists())
         self.assertEqual(len(self.manager.read()["items"]), 1)
-        self.assertFalse(any("restart" in call.args[0] for call in run.call_args_list))
+        self.restart.assert_called_once_with()
+        self.publish.assert_called_once_with()
 
     def test_password_length_boundaries_create_edit_and_blank_preservation(self):
         (self.root / "gamma").mkdir()
@@ -236,11 +228,14 @@ class SharesTests(unittest.TestCase):
         with self.assertRaises(shares.ShareError):
             self.manager.change("remove", {"id": self.a["id"]})
         Path(self.env["SETTINGS_PENDING_FILE"]).unlink()
-        with open(self.base / "run/install.lock", "a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            with self.assertRaisesRegex(shares.ShareError, "Başka bir kurulum/ayar işlemi"):
-                self.manager.change("save", {"id": self.a["id"], "connections": {"tailscale": {"enabled": False}}})
+        for name in ("install.lock", "paylasim.lock"):
+            with self.subTest(lock=name), open(self.base / "run" / name, "a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                with self.assertRaisesRegex(shares.ShareError, "Başka bir kurulum/ayar işlemi"):
+                    self.manager.change("save", {"id": self.a["id"], "connections": {"tailscale": {"enabled": False}}})
         self.assertEqual(Path(self.env["SHARE_STATE_FILE"]).read_bytes(), before)
+        # The installer's lock and the shares' own; no other lock is taken.
+        self.assertEqual(sorted(p.name for p in (self.base / "run").glob("*.lock")), ["install.lock", "paylasim.lock"])
 
     def test_inline_access_and_duration_preserve_other_fields(self):
         sid = self.a["id"]
@@ -271,7 +266,6 @@ class SharesTests(unittest.TestCase):
             with self.subTest(fields=fields), self.assertRaises(shares.ShareError):
                 self.manager.change("save", dict(id=self.a["id"], connections={"tailscale": fields}))
         self.assertEqual(Path(self.env["SHARE_STATE_FILE"]).read_bytes(), before)
-        (self.base / "modules").write_text("paylasim\tcalisiyor\n")
         with patch.object(self.manager, "restart", side_effect=[shares.ShareError("injected"), None]), self.assertRaises(shares.ShareError):
             self.manager.change("save", {"id": self.a["id"], "connections": {"tailscale": {"days": 1}}})
         self.assertEqual(Path(self.env["SHARE_STATE_FILE"]).read_bytes(), before)
@@ -300,7 +294,6 @@ class SharesTests(unittest.TestCase):
 
     def test_failed_service_restart_rolls_back_registry(self):
         before = Path(self.env["SHARE_STATE_FILE"]).read_bytes()
-        (self.base / "modules").write_text("paylasim\tcalisiyor\n")
         results = [subprocess.CalledProcessError(1, "systemctl"), None]
         with patch.object(self.manager, "restart", side_effect=results), self.assertRaises(shares.ShareError):
             self.manager.change("save", {"id": self.a["id"], "connections": {"tailscale": {"enabled": False}}})
@@ -309,7 +302,7 @@ class SharesTests(unittest.TestCase):
     def test_explicit_restarts_reset_the_crash_counter_and_wait_for_http(self):
         self.manager.env["SHARE_PORT"] = str(self.server.server_address[1])
         with patch.object(shares.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
-            self.manager.restart()
+            shares.Manager.restart(self.manager)
         self.assertEqual([c.args[0][1] for c in run.call_args_list], ["reset-failed", "restart"])
 
     def test_chunked_upload_and_unsupported_operations_are_explicit(self):

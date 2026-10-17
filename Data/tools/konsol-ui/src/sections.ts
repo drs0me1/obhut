@@ -1,6 +1,5 @@
-// The six sections of Konsol (DD-258, redesign.md): Genel Bakış and Uygulamalar (phase 2), Erişim
-// (phase 3), Sistem and Gelişmiş (phase 4a), Dosyalar (phase 4b); each section's tabs and add flows, and
-// where the addresses of the Konsol before phase 4b lead (oldHome).
+// The six sections of Konsol (DD-258, docs/archive/redesign.md): Genel Bakış and Uygulamalar (phase 2), Erişim
+// (phase 3), Sistem and Gelişmiş (phase 4a), Dosyalar (phase 4b); each section's tabs and add flows.
 import type { IconName } from "./components/icons";
 
 export type SectionId = "genel" | "uygulamalar" | "erisim" | "dosyalar" | "sistem" | "gelismis";
@@ -21,94 +20,96 @@ export const SECTIONS: readonly Section[] = [
     id: "genel",
     title: "Genel Bakış",
     short: "Genel",
-    description: "Sağlık, uygulamalar, kaynaklar ve sunucu bir bakışta.",
+    description: "Sağlık, uygulamalar, erişim ve sunucu bir bakışta.",
     icon: "home",
-    keywords: "ana menü özet durum sağlık kaynaklar",
+    keywords: "ana menü özet durum sağlık dikkat kaynaklar ağ erişim özeti",
   },
   {
     id: "uygulamalar",
     title: "Uygulamalar",
     short: "Uygulamalar",
-    description: "App Store paketleri, konteynerler ve yerleşik hizmetler tek listede.",
+    description: "Uygulamalar ve servisleri tek listede.",
     icon: "apps",
-    keywords: "app store mağaza paket konteyner podman kur kaldır",
+    keywords: "uygulama servis konteyner podman imaj compose kubernetes başlat durdur kaldır",
   },
   {
     id: "erisim",
     title: "Erişim",
     short: "Erişim",
-    description: "Kim, neye, nereden erişebilir.",
+    description: "Kim, neye, nereden erişir.",
     icon: "globe",
-    keywords: "yayın yayınla adres alan adı tailscale wireguard internet https sertifika caddy dns güvenlik duvarı",
+    keywords: "adres ham port alan adı tailscale wireguard internet https sertifika caddy dns güvenlik duvarı",
   },
   {
     id: "dosyalar",
     title: "Dosyalar",
     short: "Dosyalar",
-    description: "Dosyalar, depolama ve sistem dosyaları.",
+    description: "Sunucunun klasörleri ve paylaşımları.",
     icon: "folder",
-    keywords: "klasör dosya depolama disk paylaşım çöp kutusu",
+    keywords: "klasör dosya depolama disk paylaşım çöp kutusu uygulama verileri",
   },
   {
     id: "sistem",
     title: "Sistem",
     short: "Sistem",
-    description: "Sağlık, güncellemeler, hesap, sunucu, görünüm ve günlük.",
+    description: "Obhut'un kendisi: sağlık, sürüm, hesap ve sunucu.",
     icon: "server",
-    keywords: "sağlık onarım güncelleme sürüm hesap oturum görünüm tema günlük",
+    keywords: "sağlık onarım kaydı güncelleme sürüm hesap oturum sunucu işlem geçmişi",
   },
   {
     id: "gelismis",
     title: "Gelişmiş",
     short: "Gelişmiş",
-    description: "Teknik görünümler: Caddy, DNS, güvenlik duvarı ve Podman.",
+    description: "Salt okunur teknik görünümler; tek işlem temizlik.",
     icon: "sliders",
-    keywords: "teknik caddy dns kayıt güvenlik duvarı kural port podman imaj ağ",
+    keywords: "teknik caddy dns kayıt güvenlik duvarı kural port podman imaj ağ temizlik",
   },
 ];
 
 export const sectionById = (id: unknown): Section =>
   SECTIONS.find((s) => s.id === id) ?? (SECTIONS[0] as Section);
 
-/** Erişim's tabs (phase 3), in the address as ?sekme=; the palette lists each one. */
+/** Erişim's tabs (rebuild phase 5, A7), in the address as ?sekme=; the palette lists each one. */
 export const ACCESS_TABS = [
-  { id: "genel", label: "Genel", keywords: "erişim matris kim nereden uyarı sertifika özet" },
-  { id: "adresler", label: "Adresler", keywords: "adres yayın alan adı caddy https sertifika dns dnsmasq yerel ad kayıt yönlendirme elle" },
+  { id: "genel", label: "Genel", keywords: "erişim matris kim nereden sertifika özet" },
+  { id: "adresler", label: "Adresler", keywords: "adres aç ham port tailscale adı tailscale portu internet adı caddy https sertifika" },
+  { id: "adlar", label: "Yerel adlar", keywords: "yerel ad dns dnsmasq kayıt yönlendirme üst dns yerel alan adı" },
   { id: "tailscale", label: "Tailscale", keywords: "tailnet cihaz anahtar çıkış düğümü exit node" },
   { id: "wireguard", label: "WireGuard", keywords: "vpn ağ cihaz peer qr profil" },
-  { id: "guvenlik-duvari", label: "Güvenlik duvarı", keywords: "firewall port kural iptables dinleyici" },
+  { id: "guvenlik-duvari", label: "Güvenlik duvarı", keywords: "firewall port kural izin" },
 ] as const;
 
 export type AccessTab = (typeof ACCESS_TABS)[number]["id"];
 
-/** The address of an Erişim tab; `yayinla` opens the Yayınla flow over it (a candidate's id, "sec" to choose
-    first, "yeni" for another port on this server). */
-export function accessRoute(tab: AccessTab = "genel", yayinla = ""): string {
+/** The address of an Erişim tab; on Adresler `satir` opens an access row's sheet (its id: panel, paylasim or
+    uygulama:<app>:<service>:<port>/<proto>, rebuild phase 4) and `kip` "adres-ac" opens it as "Adres aç". */
+export function accessRoute(tab: AccessTab = "genel", satir = "", kip: "" | "adres-ac" = ""): string {
   const query = new URLSearchParams();
   if (tab !== "genel") query.set("sekme", tab);
-  if (yayinla) query.set("yayinla", yayinla);
+  if (satir) query.set("satir", satir);
+  if (kip) query.set("kip", kip);
   const text = query.toString();
   return "/erisim" + (text ? "?" + text : "");
 }
 
-/** Sistem's tabs (phase 4a), in the address as ?sekme=; the palette lists each one. */
+/** Sistem's tabs (A7), in the address as ?sekme=; the palette lists each one. The theme is the top bar's and the
+    palette's, not a tab's. */
 export const SYSTEM_TABS = [
-  { id: "saglik", label: "Sağlık", keywords: "sağlık denetim onarım denetle onar master-onar günlük" },
-  { id: "guncellemeler", label: "Güncellemeler", keywords: "güncelleme sürüm yeni sürüm github yükselt" },
+  { id: "saglik", label: "Sağlık", keywords: "sağlık denetim onarım denetle onar master-onar onarım kaydı" },
+  { id: "guncellemeler", label: "Güncellemeler", keywords: "güncelleme sürüm yeni sürüm github yükselt imaj uygulama güncellemesi" },
   { id: "hesap", label: "Hesap", keywords: "hesap oturum parola giriş çıkış kullanıcı" },
   { id: "sunucu", label: "Sunucu", keywords: "sunucu çekirdek işletim sistemi yeniden başlat reboot açık kalma" },
-  { id: "gorunum", label: "Görünüm", keywords: "görünüm tema renk" },
-  { id: "gunluk", label: "Günlük", keywords: "günlük kayıt işlem geçmişi log denetim kaydı" },
+  { id: "gecmis", label: "İşlem geçmişi", keywords: "işlem geçmişi kayıt log denetim kaydı kim ne yaptı" },
 ] as const;
 
 export type SystemTab = (typeof SYSTEM_TABS)[number]["id"];
 
-/** Gelişmiş's tabs (phase 4a), in the address as ?sekme=. */
+/** Gelişmiş's tabs (K8), in the address as ?sekme=: read-only views; Podman's cleanup is the only write. */
 export const ADVANCED_TABS = [
   { id: "caddy", label: "Caddy", keywords: "caddy site yapılandırma caddyfile ham yönlendirme proxy" },
   { id: "dns", label: "DNS", keywords: "dns dnsmasq kayıt ad dinleme dhcp" },
-  { id: "guvenlik-duvari", label: "Güvenlik duvarı", keywords: "güvenlik duvarı iptables teknik kural zincir" },
-  { id: "podman", label: "Podman", keywords: "podman imaj birim volume ağ network çek" },
+  { id: "guvenlik-duvari", label: "Güvenlik duvarı", keywords: "güvenlik duvarı iptables nftables teknik kural zincir dinleyici" },
+  { id: "podman", label: "Podman", keywords: "podman imaj birim volume ağ network temizlik temizle kullanılmayan sahipsiz konteyner" },
 ] as const;
 
 export type AdvancedTab = (typeof ADVANCED_TABS)[number]["id"];
@@ -147,66 +148,3 @@ export const SECTION_TABS: Partial<Record<SectionId, readonly { id: string; labe
   gelismis: ADVANCED_TABS.map((t) => ({ ...t, to: advancedRoute(t.id) })),
   dosyalar: FILES_TABS.map((t) => ({ ...t, to: filesRoute(t.id) })),
 };
-
-/** Uygulamalar' add flows (phase 4a), opened over the list with ?ekle= (a package's install with &paket=,
-    one container's adoption with &ad=); the palette lists each one. */
-export const ADD_FLOWS = [
-  { id: "katalog", label: "Katalogdan uygulama kur", keywords: "app store mağaza paket kur katalog ekle" },
-  { id: "imaj", label: "İmajdan konteyner oluştur", keywords: "konteyner podman imaj yeni oluştur docker ekle" },
-  { id: "sahiplen", label: "Var olan konteyneri yönetime al", keywords: "benimse sahiplen konteyner podman dışarıda yönet" },
-] as const;
-
-export type AddFlow = (typeof ADD_FLOWS)[number]["id"];
-
-/** The address of an add flow over Uygulamalar. */
-export function addRoute(flow: AddFlow, extra: Record<string, string> = {}): string {
-  return "/uygulamalar?" + new URLSearchParams({ ekle: flow, ...extra }).toString();
-}
-
-/** A folder path from an old address's parts, each URI-encoded ("Filmler%20Yeni", "Diziler"); "" when a part
-    cannot be decoded or would leave the folder (".", ".."), so the view opens at its top. */
-function oldFolder(parts: readonly string[]): string {
-  try {
-    const decoded = parts.map((p) => decodeURIComponent(p));
-    return decoded.some((p) => !p || p === "." || p === ".." || p.includes("/") || p.includes("\0")) ? "" : decoded.join("/");
-  } catch {
-    return "";
-  }
-}
-
-const OLD_SETTINGS = new Map<string, string>([
-  ["fw", accessRoute("guvenlik-duvari")],
-  ["web", accessRoute("adresler")],
-  ["dns", accessRoute("adresler")],
-  ["log", systemRoute("gunluk")],
-  ["konteynerler", advancedRoute("podman")],
-]);
-
-/** Where an address of the Konsol before phase 4b leads (its hash route, "/ayarlar/fw"): App Store and the
-    Podman page to Uygulamalar, Settings' tabs to Erişim, Sistem and Gelişmiş, Files' views to Dosyalar' tabs,
-    WireGuard's page to Erişim. Null when the new home depends on what is installed (a package's own page
-    "/torrent", "/moduller/<id>", a container "/konteynerler/<ad>") or the address is not an old one. */
-export function oldHome(path: string): string | null {
-  const [head, sub, ...rest] = path.split("/").filter(Boolean);
-  switch (head) {
-    case "moduller":
-      return sub ? null : addRoute("katalog");
-    case "konteynerler":
-      return sub ? null : "/uygulamalar";
-    case "ayarlar":
-      if (sub === "konteynerler" && rest.length) return null;
-      return OLD_SETTINGS.get(sub ?? "") ?? systemRoute();
-    case "dosyalar": {
-      if (sub === "klasor" || sub === "sistem") {
-        const yol = oldFolder(rest);
-        return filesRoute(sub === "klasor" ? "srv" : "sistem", yol ? { yol } : {});
-      }
-      if (sub === "cop") return filesRoute("cop");
-      if (sub === "paylasim") return filesRoute("paylasimlar");
-      return "/dosyalar";
-    }
-    case "wireguard":
-      return sub ? null : accessRoute("wireguard");
-  }
-  return null;
-}

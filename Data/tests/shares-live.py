@@ -51,7 +51,7 @@ def http(method, path, data=None, item=None, password=None, extra=None):
         headers["Content-Type"] = "application/json"
         data = json.dumps(data)
     headers.update(extra or {})
-    root_api = not item and path.startswith(("/api/konsol/", "/api/uygulama/"))
+    root_api = not item and path.startswith("/api/konsol/")
     conn = UnixConnection(env["PANEL_SOCKET"], 45) if root_api else HTTPConnection(address, port, timeout=45)
     try:
         conn.request(method, path, data, headers)

@@ -7,17 +7,13 @@ import { RouterLink } from "vue-router";
 import EmptyState from "../../components/ui/EmptyState.vue";
 import RawFiles from "./RawFiles.vue";
 import { accessRoute } from "../../sections";
-import { live } from "../../live";
 import { UNKNOWN } from "../../format";
 import type { Advanced, DnsName } from "../../api/gelismis";
 
 const props = defineProps<{ data: Advanced }>();
 const dns = computed(() => props.data.dnsmasq);
 
-function owner(source: string): string {
-  if (source === "base") return "Temel";
-  return live.uygulamalar?.items.find((a) => a.modul === source)?.ad ?? source;
-}
+const owner = (source: string): string => (source === "base" ? "Temel" : source);
 const answer = (n: DnsName) => n.address || (n.iface ? `${n.iface} arayüzünün adresi` : UNKNOWN);
 const family = (n: DnsName) => (n.family === 4 ? "IPv4" : n.family === 6 ? "IPv6" : "IPv4 + IPv6");
 const fileCount = computed(() => `${dns.value.raw.length} dosya`);
@@ -65,7 +61,7 @@ const fileCount = computed(() => `${dns.value.raw.length} dosya`);
       </div>
       <EmptyState v-else title="Kayıt yok" text="dnsmasq'ın dosyalarında bir ad bulunamadı." icon="globe" />
       <p class="meter-note">DNS önbellekleri hemen silinmez. Yeni bir ad eklemek Caddy sitesi oluşturmaz.</p>
-      <RouterLink :to="accessRoute('adresler')" class="section-link">Yerel adları Erişim'de değiştir</RouterLink>
+      <RouterLink :to="accessRoute('adlar')" class="section-link">Yerel adları Erişim'de değiştir</RouterLink>
     </section>
     <RawFiles :files="dns.raw" :summary="`dnsmasq · ${fileCount}`" />
   </div>

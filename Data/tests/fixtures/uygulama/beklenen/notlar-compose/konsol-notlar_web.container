@@ -1,0 +1,47 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: notlar uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması notlar: web
+After=network-online.target master-firewall.service
+Wants=network-online.target master-firewall.service
+Requires=konsol-notlar_db.service
+After=konsol-notlar_db.service
+RequiresMountsFor="/srv/media/notlar"
+
+[Container]
+ContainerName=notlar_web
+Image=ghcr.io/example/notlar@sha256:4b5e57f6eb2f42b9039b3d1e13929295f231749c510cbe341cd68036d9af97e2
+Pull=never
+Network=konsol-notlar.network
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=notlar
+Label=org.example.role=web
+LogDriver=journald
+User=1000:1000
+DropCapability=all
+NoNewPrivileges=true
+EnvironmentFile="/etc/master-stack/containers/uygulamalar/notlar/env/web.env"
+Secret=obhut_notlar_6f2a69a7,type=env,target=DATABASE_URL
+Secret=obhut_notlar_c764202a,type=env,target=DB_PASSWORD
+PublishPort=127.0.0.1:62100:3000/tcp
+Volume=/var/lib/master-stack/uygulamalar/notlar/uploads:/app/uploads:rw,U
+Volume=/run/master-stack/konteyner-baglama/notlar_web/3c88617f6c126603:/media/notlar:ro
+HealthCmd=["wget", "-qO-", "http://localhost:3000/health"]
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=20s
+HealthRetries=3
+Exec=serve --listen 0.0.0.0:3000 --base http://notlar.example
+PodmanArgs=--network-alias=web
+
+[Service]
+Restart=always
+RestartSec=10s
+TimeoutStartSec=180
+TimeoutStopSec=75
+UMask=0077
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_network.py" --state "/etc/master-stack/state.env" --check
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_binds.py" --state "/etc/master-stack/state.env" bagla "notlar_web" "/srv/media/notlar"
+ExecStopPost=-/usr/bin/python3 "/usr/local/sbin/master_container_binds.py" --state "/etc/master-stack/state.env" birak "notlar_web"
+
+[Install]
+WantedBy=multi-user.target

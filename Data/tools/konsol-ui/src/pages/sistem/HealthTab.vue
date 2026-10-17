@@ -2,7 +2,7 @@
      detail, problems first; then "Denetle ve onar" (DD-239): the last report (who ran it, which mode, when,
      each step), "Denetle" at once and "Onar" after a confirmation, both only from the tailnet. While a run
      goes on its report is read every 2 s (the run may restart Caddy or Konsol: a failed read just waits)
-     and the steps appear as they finish. "Günlük" opens master-onar's log (?gunluk=72s|7g). -->
+     and the steps appear as they finish. "Onarım kaydı" (A7) opens master-onar's log (?kayit=72s|7g). -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Icon } from "../../components/icons";
@@ -148,8 +148,8 @@ const head = computed(() => {
   return `Son ${r.kip === "denetle" ? "denetim" : "onarım"}: ${dateTime(r.bitis || r.baslangic)}`;
 });
 
-// ---- the log sheet
-const logSpan = useQueryParam<"" | "72s" | "7g">("gunluk", ["", "72s", "7g"], "");
+// ---- the repair log's sheet (Onarım kaydı)
+const logSpan = useQueryParam<"" | "72s" | "7g">("kayit", ["", "72s", "7g"], "");
 
 onMounted(() => {
   void loadRepair();
@@ -205,7 +205,7 @@ watch(() => live.offset, () => (now.value = serverNow()));
         </div>
         <div class="card-actions repair-actions">
           <button type="button" class="btn btn-secondary btn-sm" data-testid="repair-log" @click="logSpan = '72s'">
-            <Icon name="lines" :size="16" />Günlük
+            <Icon name="lines" :size="16" />Onarım kaydı
           </button>
           <button type="button" class="btn btn-secondary btn-sm" :disabled="disabled" :aria-describedby="lock ? 'onarim-kilit' : undefined" data-testid="repair-check" @click="start('denetle')">
             <Icon name="search" :size="16" />{{ starting === "denetle" ? "Başlatılıyor…" : "Denetle" }}

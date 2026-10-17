@@ -27,7 +27,7 @@ class HttpsPanelTests(unittest.TestCase):
                     "SERVER_ROOT": str(self.root), "SETTINGS_FILE": str(self.root / "settings.json")}
         self.state = self.root / "state.env"
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
-        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[], state_env=False))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state)))
         self.now = 1800000000
         self.https = {"domain": "files.example.com", "mode": "https", "status": "ready",
                       "message": "Sertifika yerelde doğrulandı", "expires": self.now + 90 * 86400,
@@ -142,8 +142,7 @@ class HttpsPanelTests(unittest.TestCase):
         for scheme, port in (("https", 443), ("http", 61010), ("http", 62010)):
             with self.subTest(scheme=scheme, port=port):
                 self.wan.update(mode=scheme, scheme=scheme, port=port)
-                with patch.object(panel.master_settings, "tailnet_ports", return_value=tailnet), \
-                        patch.object(self.p, "module_state", return_value="calisiyor"):
+                with patch.object(panel.master_settings, "tailnet_ports", return_value=tailnet):
                     rows = self.p.settings_ports(self.env, [], listeners=[])
                 wan_rows = [r for r in rows if r["scope"] == "wan"]
                 self.assertEqual(wan_rows, [{"name": "Paylaşım WebDAV %s · WAN" % scheme.upper(),
@@ -155,8 +154,7 @@ class HttpsPanelTests(unittest.TestCase):
     def test_disabled_listener_has_no_wan_permission_even_if_socket_exists(self):
         self.shares.wan_active.return_value = False
         self.wan.update(mode="off", scheme="", port=0)
-        with patch.object(panel.master_settings, "tailnet_ports", return_value=[]), \
-                patch.object(self.p, "module_state", return_value=""):
+        with patch.object(panel.master_settings, "tailnet_ports", return_value=[]):
             rows = self.p.settings_ports(self.env, [], listeners=[dict(family=4, proto="tcp", port=443)])
         self.assertFalse(any(r["scope"] == "wan" for r in rows))
         self.assertTrue(any(r["scope"] == "lo" and r["port"] == 443 for r in rows))
@@ -176,7 +174,7 @@ class HttpsPanelTests(unittest.TestCase):
         for address in ("panel.test", "paylas.test", "100.64.0.2:61010"):
             self.assertEqual((rows[address]["access"], rows[address]["scheme"]), ("tailscale", "http"))
 
-    def test_caddy_legacy_http_and_https_source_do_not_imply_public_access(self):
+    def test_caddy_plain_http_and_https_source_do_not_imply_public_access(self):
         (self.modules / "paylasim-wan.caddy").write_text("http://:61010 {\n reverse_proxy 127.0.0.2:61010\n}\n")
         (self.modules / "other.caddy").write_text("https://private.example.com {\n respond 404\n}\n")
         rows = {r["source"]: r for r in self.p.web_view(self.env)["entries"]}
@@ -185,8 +183,7 @@ class HttpsPanelTests(unittest.TestCase):
         self.assertEqual((rows["other"]["scheme"], rows["other"]["access"]), ("https", "tailscale"))
 
     def test_settings_returns_manager_https_metadata_unchanged(self):
-        with patch.object(self.p, "package_networks", return_value=[]), \
-                patch.object(self.p, "module_state", return_value=""), \
+        with patch.object(self.p.wireguard, "networks", return_value=[]), \
                 patch.object(self.p, "firewall_check", return_value={}), \
                 patch.object(self.p, "web_view", return_value={}), \
                 patch.object(self.p, "dns_view", return_value={}), \
@@ -203,7 +200,11 @@ class HttpsPanelTests(unittest.TestCase):
         Handler.panel = self.p
         _server, sock = resources.start_unix(self, Handler)
         headers = {"X-Konsol": "1", "Content-Type": "application/json"}
-        payload = {"revision": "test-revision", "https": {"domain": self.https["domain"]}}
+        # Rebuild phase 4: WebDAV's internet name is its row (web.paylasim); the old "https" section is no shape
+        # of the route's request and never reaches the worker.
+        payload = {"revision": "test-revision",
+                   "web": {"service": "paylasim", "tail": True, "enabled": True, "domain": self.https["domain"]}}
+        old = {"revision": "test-revision", "https": {"domain": self.https["domain"]}}
         with patch.object(self.p, "settings_run", return_value=(200, {"committed": True})) as worker:
             for extra in ({"X-Konsol": ""}, {"Host": "evil.test"}, {"Sec-Fetch-Site": "cross-site"},
                           {"X-Forwarded-For": "192.0.2.50"}):
@@ -215,9 +216,13 @@ class HttpsPanelTests(unittest.TestCase):
                 code, _, _ = resources.unix_get(sock, path, headers, "POST", "{}")
                 self.assertEqual(code, 404)
             worker.assert_not_called()
+            code, _, _ = resources.unix_get(sock, "/api/konsol/ayarlar/uygula", headers, "POST", json.dumps(old))
+            self.assertEqual(code, 400)
+            worker.assert_not_called()
             code, _, _ = resources.unix_get(sock, "/api/konsol/ayarlar/uygula", headers, "POST", json.dumps(payload))
             self.assertEqual(code, 200)
-            worker.assert_called_once_with("apply", payload)
+            # The worker also gets the channel Caddy named (here the host itself; master_settings.TIMED_FROM_INTERNET).
+            worker.assert_called_once_with("apply", dict(payload, kanal="yerel"), seconds=panel.master_settings.WORKER_SECONDS)
         # DD-267: the old shell's settings reads are gone; the gate still answers first.
         code, response_headers, _ = resources.unix_get(sock, "/api/konsol/ayarlar/durum", headers)
         self.assertEqual(code, 404)

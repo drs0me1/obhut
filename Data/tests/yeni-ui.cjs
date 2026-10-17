@@ -1,17 +1,20 @@
-/* Konsol's shell at / (DD-258, phase 1; DD-267; phase 2 pages in yeni-uygulamalar-ui.cjs): the committed
-   build under Data/console/yeni with the real CSP from Data/templates/Caddyfile on every page response,
-   fixture APIs, and the event stream served by the suite's own static server (yeni-harness.cjs) so that
-   it can stay open and push events. Fails on any console error, CSP violation or page error. Never
-   contacts a server.
+/* Konsol's shell at / (DD-258, phase 1; DD-267) and Genel Bakış (rebuild phase 5): the committed build under
+   Data/console/yeni with the real CSP from Data/templates/Caddyfile on every page response, fixture APIs, and the
+   event stream served by the suite's own static server (yeni-harness.cjs) so that it can stay open and push
+   events. Genel Bakış: Dikkat with each problem's place (a health check → Sistem → Sağlık, an Erişim warning →
+   its row, an application → its page; a newer image listed, not counted), the calm state, the applications
+   (state, address, Aç, Ayrıntı), the access summary with a chip per opening to the internet, resources, the
+   network with the busiest applications (read every 5 s only while shown and visible), the server; the top
+   bar's chip goes where the most serious problem is. The frame (rebuild phase 5): the palette (sections, tabs,
+   applications, access rows by name, "Uygulama ekle", "Adres aç", the theme), İşlemler (application and cleanup
+   jobs, the pending change), the pending banner naming every timed change, and the top bar's theme button (A7: no
+   Görünüm tab). Fails on any console error, CSP violation or page error. Never contacts a server.
    PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-ui.cjs */
 const assert = require("node:assert/strict");
 
 // Documentation values only (RFC 5737/6598 addresses, the DD examples' host and domain); shapes as in
 // tools/konsol-ui/src/api/sema.ts.
-const cell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
-const app = (id, ad, extra) => ({ id, ad, tur: "paket", aciklama: "", modul: id.split(":")[1], konteyner: null, simge: null, durum: "calisiyor", islem: null,
-  tailscale: cell("yok"), internet: cell("yok"), kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null },
-  eylemler: ["durdur", "yeniden-baslat", "kaldir"], revizyon: null, hesap: false, ...extra });
+const { uygulama, uygulamalar, ayrinti } = require("./yeni-harness.cjs").fixtures;
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.08.06-v2-242", surum: "1.0.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
     cores: 4, read_at: 1791845000, sampled_at: 1791845000, cpu: 2.0, mem: { total: 8300000000, used: 700000000 },
@@ -19,22 +22,16 @@ const data = {
   saglik: { status: "bad", read_at: 1791845000, checks: [
     { id: "units", name: "Servisler", status: "bad", detail: "Çalışmayan: konsol-eski.service" },
     { id: "tailscale", name: "Tailscale", status: "ok", detail: "çalışıyor" }] },
-  // Files (yerlesik:dosya) is not counted: it has its own section.
-  uygulamalar: { read_at: 1791845000, katalog: [], hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 1, kullanilmayan_imaj: 0, birim: 0, ag: 1 },
-    items: [
-      app("paket:wireguard", "WireGuard", { simge: "shield" }),
-      app("paket:torrent", "qBittorrent", { konteyner: "torrent", simge: "download", tailscale: cell("acik", ["torrent.ev"]), adres: { tailscale: "http://torrent.ev", internet: null },
-        revizyon: "r1" }),
-      app("yerlesik:dosya", "Dosyalar", { tur: "yerlesik", modul: null, eylemler: [] })] },
-  ag: { read_at: 1791845000, sampled_at: 1791845000, rx: 1024, tx: 2048, apps: [] },
-  onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
+  // Two applications; the sidebar counts every item of the list.
+  uygulamalar: uygulamalar([uygulama("notlar"), uygulama("medya")]),
+  ag: { read_at: 1791845000, sampled_at: 1791845000, rx: 1024, tx: 2048, uygulamalar: [] },
   guncelleme: { kurulu: "2026.08.06-v2-242", kurulu_surum: "1.0.0", son: "2026.08.06-v2-242", son_surum: "1.0.0", commit: "0".repeat(40), yeni: false, denetlendi: 1791845000, hata: "",
     is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true },
   bekleyen: { bekleyen: null },
   etkinlik: { items: [] },
   erisim: { read_at: 1791845000, alan: "ev", hizmetler: [], hatalar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null }, internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
-      wireguard: { kurulu: true, not: "", aglar: [] }, sertifikalar: [] },
+      wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] },
     uyarilar: [{ seviye: "warn", hizmet: "paylasim", metin: "Paylaşımlar internete şifresiz HTTP ile açık" }] },
 };
 let expectedFailures = [];  // URL fragments whose failed loads (401/404/502/503) are part of the scenario
@@ -43,14 +40,20 @@ const h = require("./yeni-harness.cjs").create({ name: "konsol-yeni-ui", url: pr
 const { base, shots, status, calls, errors, stream, push, waitFor, newPage, count, noHorizontalScroll, shot } = h;
 // Gelişmiş (phase 4a) reads the effective configuration when it opens; yeni-sistem-ui.cjs covers the page.
 h.handlers["/api/konsol/gelismis"] = () => ({ body: { read_at: 1791845000, caddy: { entries: [], raw: [] }, dnsmasq: { listen: [], domains: [], dhcp: false, names: [], raw: [] } } });
-// Phase 4a: Uygulamalar reads Podman's own counts (yeni-uygulama-ekle-ui.cjs covers them); not a Genel read.
-h.handlers["/api/konsol/konteynerler/liste"] = () => ({ body: { read_at: 1791845000, runtime: { version: "5.4.2", ok: true, error: "" }, containers: [],
-  images: [], volumes: [], networks: [], storage: { images: 1, containers: 1, size: null }, resource_errors: {} } });
 // Phase 4b: Dosyalar' Depolama reads the files backend and who uses which folder (yeni-dosyalar-ui.cjs covers it).
-h.handlers["/api/state"] = () => ({ body: { root: "/srv", writable: true, textLimit: 1048576, protected: [], trash: { count: 0, size: 0 },
+h.handlers["/api/state"] = () => ({ body: { root: "/srv", writable: true, textLimit: 1048576, trash: { count: 0, size: 0 },
   disk: { total: 250700000000, free: 238000000000, used: 0, mount: false } } });
 h.handlers["/api/list"] = () => ({ body: { path: "", entries: [], skipped: 0 } });
 h.handlers["/api/konsol/depolama"] = () => ({ body: { read_at: 1791845000, kok: "/srv", kullananlar: [], hatalar: [] } });
+// Sistem → Sağlık reads the last repair report (yeni-sistem-ui.cjs covers it); Genel Bakış does not.
+h.handlers["/api/konsol/onarim"] = () => ({ body: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null } });
+// Erişim → Adresler reads the local names (the palette's access rows lead there; yeni-erisim-ui.cjs covers it).
+h.handlers["/api/konsol/adlar"] = () => ({ body: { revizyon: "rev-1", alan: "ev", hatalar: [], adlar: [], kayitlar: [], yonlendirme: false, sunucular: [] } });
+// An application's page (Genel Bakış' links lead there; yeni-uygulamalar-ui.cjs covers the page).
+h.dynamic.push([/^\/api\/konsol\/uygulamalar\/([a-z][a-z0-9-]*)$/, (req, m) => {
+  const item = data.uygulamalar.items.find((a) => a.ad === m[1]);
+  return item ? { body: ayrinti(item) } : { status: 404, body: { error: "Uygulama bulunamadı." } };
+}]);
 const clippedBarLabels = (page) => page.locator(".bottom-bar .bb-item span").evaluateAll((els) => els.filter((e) => e.scrollWidth > e.clientWidth + 0.5).map((e) => e.textContent));
 const badge = (page, id) => page.locator(`.sidebar [data-badge="${id}"]`);
 const optionLabels = (page) => page.locator(".palette-option .palette-label").allInnerTexts();
@@ -83,12 +86,12 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     const chip = page.locator(".desktop-tools .chip");
     assert.equal(await chip.innerText(), "2 konu", "one health error and one Erişim warning");
     assert.match(await chip.getAttribute("class"), /chip-danger/);
-    assert.equal(await chip.getAttribute("href"), "#/sistem");
+    assert.equal(await chip.getAttribute("href"), "#/sistem", "the most serious problem's place");
     assert.equal(await page.getByTestId("tailscale").innerText(), "Tailscale bağlı");
     assert.match(await page.getByTestId("tailscale").getAttribute("class"), /is-ok/);
     assert.equal(await page.getByTestId("version").innerText(), "Obhut 1.0.0 · güncel");
-    // Phase 2: Genel Bakış is built (yeni-uygulamalar-ui.cjs covers it) and starts with health.
-    assert.equal(await page.locator("#saglik-baslik").innerText(), "2 konu dikkat istiyor", "the same two topics as the chip");
+    // Genel Bakış starts with what needs attention (covered below).
+    assert.equal(await page.locator("#saglik-baslik").innerText(), "Dikkat · 2", "the same two topics as the chip");
     assert.equal(await page.locator(".pending").count(), 0);
     assert.equal(await page.getByRole("button", { name: "İşlemler", exact: true }).count(), 1);
     assert.deepEqual(await page.locator("body *").evaluateAll((els) => els.filter((e) => e.hasAttribute("style")).map((e) => e.tagName)), [], "no style attributes");
@@ -124,6 +127,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await badge(page, "sistem").waitFor({ state: "detached" });
     await chip.filter({ hasText: /^1 konu$/ }).waitFor();
     assert.match(await chip.getAttribute("class"), /chip-warning/, "only Erişim's warning is left");
+    assert.equal(await chip.getAttribute("href"), "#/erisim", "a warning without its own place leads to Erişim");
     push("kaynaklar", { ...data.kaynaklar, domain: "ev2" });
     await page.locator(".brand-host").filter({ hasText: "sunucu · panel.ev2" }).waitFor();
     // Unknown events and comments are ignored; data split over several lines is joined.
@@ -131,7 +135,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await page.locator(".brand-host").filter({ hasText: /^sunucu · panel\.ev$/ }).waitFor();
 
     // Running jobs and the activity drawer.
-    const job = { tur: "modul", id: "torrent", ad: "qBittorrent", durum: "calisiyor", adim: "İmaj indiriliyor", bitis: null };
+    const job = { tur: "uygulama", id: "a".repeat(32), ad: "notlar · İmaj güncelleme", durum: "calisiyor", adim: "İmaj indiriliyor", bitis: null };
     push("islemler", { items: [job] });
     const activity = page.getByRole("button", { name: "İşlemler, 1 çalışıyor" });
     await activity.waitFor();
@@ -140,7 +144,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await drawer.waitFor();
     assert.equal(await page.evaluate(() => document.querySelector(".app").inert), true, "the page behind the drawer is inert");
     assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), "Kapat");
-    assert.equal(await drawer.locator(".job-name").innerText(), "qBittorrent");
+    assert.equal(await drawer.locator(".job-name").innerText(), "notlar · İmaj güncelleme");
     assert.equal(await drawer.locator(".job-meta").innerText(), "Uygulama · İmaj indiriliyor");
     assert.equal(await drawer.locator(".pill").innerText(), "Çalışıyor");
     assert.equal(await drawer.getByTestId("connection").innerText(), "Canlı bağlantı açık.");
@@ -150,9 +154,9 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await page.keyboard.press("Escape");
     await drawer.waitFor({ state: "detached" });
     assert.equal(await page.evaluate(() => document.activeElement.classList.contains("activity-btn")), true, "focus returns to İşlemler");
-    const modulesBefore = count("uygulamalar");
+    const appsBefore = count("uygulamalar");
     push("islemler", { items: [{ ...job, durum: "tamam", adim: "", bitis: 1791845100 }] });
-    await waitFor(() => count("uygulamalar") > modulesBefore, "a finished job reloads the applications");
+    await waitFor(() => count("uygulamalar") > appsBefore, "a finished job reloads the applications");
     await page.getByRole("button", { name: "İşlemler", exact: true }).click();
     await drawer.locator(".empty").filter({ hasText: "Şu an çalışan işlem yok" }).waitFor();
     assert.equal(await drawer.locator('.job[data-durum="tamam"] .pill').innerText(), "Tamamlandı");
@@ -163,7 +167,8 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     push("bekleyen", { bekleyen: { id: "p1", phase: "awaiting", seconds: 45 } });
     const banner = page.locator(".pending");
     await banner.waitFor();
-    assert.equal(await banner.locator("strong").innerText(), "Bekleyen bir ayar değişikliği var");
+    assert.equal(await banner.getByTestId("pending-title").innerText(), "Bekleyen değişiklik: Güvenlik duvarı ya da yerel adlar",
+      "a change that names no row, network or domain is the firewall's or the local names'");
     assert.match(await page.getByTestId("countdown").innerText(), /^0:4[45]$/);
     // Since phase 3 the banner confirms and rolls back itself (yeni-erisim-ui.cjs drives both).
     assert.deepEqual(await banner.locator(".pending-actions button").allInnerTexts(), ["Onayla", "Geri al"]);
@@ -190,14 +195,16 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await palette.waitFor();
     const input = palette.getByRole("combobox");
     assert(await input.evaluate((el) => el === document.activeElement), "the field has focus");
-    assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Eylemler"], "no group for the old interface (phase 4b)");
-    assert.deepEqual(await palette.locator('[aria-labelledby="palet-grup-1"] .palette-label').allInnerTexts(), ["WireGuard", "qBittorrent"]);
-    assert.equal(await palette.locator('[data-key="uygulama-paket:wireguard"] .palette-hint').innerText(), "Uygulama", "an application opens its own page (phase 2)");
+    assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Eylemler"], "no access row read yet, no old-interface group");
+    assert.deepEqual(await palette.locator('[aria-labelledby="palet-grup-2"] .palette-label').allInnerTexts(),
+      ["Uygulama ekle", "Tema: sistem", "Tema: açık", "Tema: koyu", "İşlemleri göster"], "no Adres aç without a raw TCP port");
+    assert.deepEqual(await palette.locator('[aria-labelledby="palet-grup-1"] .palette-label').allInnerTexts(), ["notlar", "medya"]);
+    assert.equal(await palette.locator('[data-key="uygulama-notlar"] .palette-hint').innerText(), "Uygulama", "an application opens its own page (phase 2)");
     await shot(page, "1440-light-palette.png");
     await input.fill("İŞ");
     let labels = await optionLabels(page);
     assert(labels.includes("Erişim") && labels.includes("Gelişmiş"), "İŞ finds iş: " + labels);
-    assert(!labels.includes("Sistem"), "İŞ does not find is");
+    assert(!labels.includes("Dosyalar → Sistem dosyaları"), "İŞ does not find is: " + labels);
     await input.fill("ıs");
     labels = await optionLabels(page);
     assert(!labels.some((l) => /is/i.test(l.toLocaleLowerCase("tr-TR")) && !l.toLocaleLowerCase("tr-TR").includes("ıs")), "ıs does not match is: " + labels);
@@ -212,7 +219,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert.equal(await input.getAttribute("aria-activedescendant"), await palette.locator('[aria-selected="true"]').getAttribute("id"));
     await page.keyboard.press("ArrowUp");
     await page.keyboard.press("ArrowUp");
-    assert.equal(await selected(), "Çalışan işlemleri göster", "↑ from the first wraps to the last");
+    assert.equal(await selected(), "İşlemleri göster", "↑ from the first wraps to the last");
     await input.fill("gel");
     assert.equal(await selected(), "Gelişmiş");
     await page.keyboard.press("Enter");
@@ -247,39 +254,53 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await page.keyboard.press("Control+K");
     await input.fill("caddy");
     assert.deepEqual(await optionLabels(page), ["Erişim", "Erişim → Adresler", "Gelişmiş"], "Caddy's addresses are Erişim's (phase 3)");
-    await input.fill("günlük");
-    assert.deepEqual(await optionLabels(page), ["Sistem", "Sistem → Günlük"], "the log is Sistem's (phase 4a)");
+    await input.fill("işlem geçmişi");
+    assert.deepEqual(await optionLabels(page), ["Sistem", "Sistem → İşlem geçmişi"], "the audit log is Sistem's İşlem geçmişi (A7)");
+    await input.fill("görünüm");
+    assert.deepEqual(await optionLabels(page), ["Tema: sistem", "Tema: açık", "Tema: koyu"], "no Görünüm tab: the theme is an action");
     await input.fill("dosya çöp");
     assert.deepEqual(await optionLabels(page), ["Dosyalar", "Dosyalar → Çöp kutusu"], "the trash is Dosyalar' tab (phase 4b)");
     await page.keyboard.press("Escape");
     await palette.waitFor({ state: "detached" });
-    await page.goto(new URL("/#/sistem?sekme=gorunum", base).href);
 
-    // Theme on the Sistem page, kept across a reload.
+    // The top bar's theme button (A7): it names the choice and steps sistem → açık → koyu, kept across a reload.
+    await page.goto(new URL("/#/sistem", base).href);
     await h1.filter({ hasText: "Sistem" }).waitFor();
-    const radios = page.getByRole("radiogroup", { name: "Tema" }).getByRole("radio");
-    assert.deepEqual(await radios.allInnerTexts(), ["Sistem", "Açık", "Koyu"]);
-    assert.equal(await page.getByRole("radio", { name: "Koyu" }).getAttribute("aria-checked"), "true", "the palette's choice is kept");
-    await page.getByRole("radio", { name: "Açık" }).click();
+    const themeButton = page.locator(".desktop-tools").getByTestId("theme");
+    assert.equal(await themeButton.getAttribute("aria-label"), "Tema: koyu; değiştir", "the palette's choice is kept");
+    assert.equal(await page.getByRole("tab", { name: "Görünüm" }).count(), 0, "no Görünüm tab");
+    await themeButton.click();
+    assert.equal(await page.evaluate(() => document.documentElement.hasAttribute("data-theme")), false, "Sistem follows the system");
+    assert.equal(await page.evaluate(() => localStorage.getItem("konsol.tema")), "sistem");
+    assert.equal(await page.locator(".desktop-tools [role=status]").innerText(), "Tema: sistem", "the new choice is said");
+    await themeButton.click();
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "light");
-    await page.getByRole("radio", { name: "Koyu" }).click();
+    assert.equal(await themeButton.getAttribute("title"), "Tema: açık");
+    await themeButton.click();
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "dark");
     assert.equal(await page.evaluate(() => localStorage.getItem("konsol.tema")), "koyu");
     await page.reload();
     await h1.filter({ hasText: "Sistem" }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "dark");
-    assert.equal(await page.getByRole("radio", { name: "Koyu" }).getAttribute("aria-checked"), "true");
+    assert.equal(await themeButton.getAttribute("aria-label"), "Tema: koyu; değiştir");
     await shot(page, "1440-dark-sistem-chosen.png", true);
-    await page.getByRole("radio", { name: "Koyu" }).focus();
-    await page.keyboard.press("ArrowRight");
-    assert.equal(await page.getByRole("radio", { name: "Sistem" }).getAttribute("aria-checked"), "true", "arrow keys move and choose");
-    assert(await page.getByRole("radio", { name: "Sistem" }).evaluate((el) => el === document.activeElement));
-    assert.equal(await page.evaluate(() => document.documentElement.hasAttribute("data-theme")), false, "Sistem follows the system");
+    await themeButton.click();
     assert.equal(await page.evaluate(() => localStorage.getItem("konsol.tema")), "sistem");
-    // Every section is built (phase 4b); an old address lands on its new home (yeni-paylasim-ui.cjs covers them all).
-    await page.evaluate(() => { location.hash = "#/ayarlar"; });
-    await page.waitForFunction(() => location.hash === "#/sistem");
-    await page.getByTestId("checks").waitFor();
+    // An old tab address shows the section's own page; no address is redirected for it.
+    await page.goto(new URL("/#/sistem?sekme=gorunum", base).href);
+    await page.getByRole("tab", { name: "Sağlık", selected: true }).waitFor();
+    // Only the six sections and an application's page exist: any other address (an old one too) lands on Genel Bakış.
+    for (const unknown of ["#/moduller/x", "#/bilinmeyen"]) {
+      await page.evaluate(() => { location.hash = "#/sistem"; });
+      await h1.filter({ hasText: "Sistem" }).waitFor();
+      await page.evaluate((hash) => { location.hash = hash; }, unknown);
+      await page.waitForFunction(() => location.hash === "#/genel");
+      await h1.filter({ hasText: "Genel Bakış" }).waitFor();
+      assert.deepEqual(await page.locator('.sidebar .nav-item[aria-current="page"]').allInnerTexts(), ["Genel Bakış"], unknown);
+    }
     // The skip link is the first stop and focuses the page.
+    await page.evaluate(() => { location.hash = "#/sistem"; });
+    await h1.filter({ hasText: "Sistem" }).waitFor();
     await page.reload();
     await h1.filter({ hasText: "Sistem" }).waitFor();
     await page.keyboard.press("Tab");
@@ -287,6 +308,309 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await page.keyboard.press("Enter");
     assert.equal(await page.evaluate(() => document.activeElement.id), "icerik");
     await page.context().close();
+
+    // ================= Genel Bakış: Dikkat with each problem's place, the applications, the access summary, the cards
+    {
+      const saved = { saglik: data.saglik, uygulamalar: data.uygulamalar, erisim: data.erisim, ag: data.ag };
+      const NOTLAR = "uygulama:notlar:web:8080/tcp", MEDYA = "uygulama:medya:web:8096/tcp", KUTU = "uygulama:kutu:app:9000/udp";
+      const enc = (id) => new URLSearchParams({ satir: id }).toString().slice("satir=".length);
+      const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
+      const row = (id, ad, tur, o = {}) => ({ id, ad, tur, aciklama: "", uygulama: null, servis: null, anahtar: null, calisiyor: true, yerel: cell("yok"),
+        tailscale: cell("kapali"), wireguard: cell("kapali"), internet: cell("kapali"), satir: null, web: null, ayrinti: [], ...o });
+      const appRow = (id, satir, o) => {
+        const [, app, service, port] = id.split(":");
+        return row(id, `${app} · ${service}`, "uygulama", { uygulama: app, servis: service, anahtar: `${service}:${port}`, satir, ...o });
+      };
+      const BAD = { id: "units", name: "Servisler", status: "bad", detail: "Çalışmayan: konsol-eski.service" };
+      const OK = [{ id: "tailscale", name: "Tailscale", status: "ok", detail: "çalışıyor" }, { id: "dns", name: "DNS", status: "ok", detail: "yanıt veriyor" }];
+      const WARNINGS = [
+        { seviye: "warn", hizmet: "paylasim", metin: "İnternetten gelen WebDAV bağlantıları şifresiz.", duzelt: { bolum: "adresler", hedef: "paylasim" } },
+        { seviye: "warn", hizmet: MEDYA, metin: "medya · web: 8096/tcp doğrudan internete açık.", duzelt: { bolum: "adresler", hedef: MEDYA } }];
+      const erisim = (o = {}) => ({ read_at: 1791845000, alan: "ev", revizyon: "rev-1", hatalar: [], uyarilar: WARNINGS,
+        hizmetler: [
+          row("panel", "Konsol", "konsol", { tailscale: cell("acik", ["panel.ev"]), web: { tail: true, enabled: false, domain: "" } }),
+          appRow(NOTLAR, { tur: "adres", ad: "notlar", tailscale_portu: null, internet: "notlar.example.org" },
+            { yerel: cell("acik"), tailscale: cell("acik", ["notlar.ev"]), internet: cell("acik", ["notlar.example.org"]) }),
+          appRow(MEDYA, { tur: "ham", kapsam: "internet", port: 8096 }, { internet: cell("acik", ["203.0.113.10:8096/tcp"], "Ham port", "Şifreleme ve giriş uygulamanın kendisinde.") }),
+          appRow(KUTU, { tur: "ham", kapsam: "tailscale", port: 9000 }, { tailscale: cell("acik", ["100.64.0.2:9000/udp"], "Ham port") }),
+          row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"]), internet: cell("acik", ["http://203.0.113.10:61010"], "1 klasör", "Şifresiz HTTP"),
+            web: { tail: true, enabled: false, domain: "" } }),
+          row("sistem:ssh", "SSH", "sistem", { tailscale: cell("acik"), internet: cell("acik", ["203.0.113.10:22/tcp"]) })],
+        ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "sunucu", surum: "1.88.3", adresler: ["100.64.0.2"], cikis_dugumu: true },
+          internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
+          wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [{ arayuz: "wg0", ad: "", etkin: true, port: 61001 }, { arayuz: "wg1", ad: "", etkin: false, port: 61002 }] },
+          sertifikalar: [{ ad: "notlar.example.org", hizmet: NOTLAR, durum: "gecerli", bitis: 1791845000 + 60 * 86400 }] },
+        ...o });
+      const apps = () => [
+        uygulama("notlar", { adres: "http://notlar.ev", guncelleme: "yeni", uyari: 1, servisler: [{ ad: "web", durum: "calisiyor", imaj: "registry.example/notlar:2", guncelleme: "yeni" }] }),
+        uygulama("medya", { durum: "kismen", adres: "http://medya.ev" }),
+        uygulama("kutu", { durum: "hata" }),
+        uygulama("yedek", { durum: "durduruldu", durduruldu: true, adres: "http://yedek.ev" })];
+      data.saglik = { status: "bad", read_at: 1791844900, checks: [BAD, ...OK] };
+      data.erisim = erisim();
+      data.uygulamalar = uygulamalar(apps());
+      data.ag = { read_at: 1791845000, sampled_at: 1791845000, rx: 3145728, tx: 348160, uygulamalar: [{ ad: "medya", indirme: 2097152, yukleme: 20480 },
+        { ad: "notlar", indirme: 4096, yukleme: 1024 }] };
+      page = await newPage();
+      await page.goto(new URL("/#/genel", base).href);
+      await page.locator("#saglik-baslik").filter({ hasText: "Dikkat · 6" }).waitFor();
+      const problems = page.locator(".problem");
+      await page.locator('.problem[data-kind="uygulama"]').first().waitFor();
+      assert.deepEqual(await problems.evaluateAll((els) => els.map((e) => [e.dataset.kind, e.className.replace("problem problem-", "")])), [
+        ["saglik", "danger"], ["uygulama", "danger"], ["erisim", "warning"], ["erisim", "warning"], ["uygulama", "warning"], ["uygulama", "accent"]],
+        "the most serious first, news last");
+      assert.deepEqual(await problems.locator("strong").allInnerTexts(), ["Servisler", "kutu çalışmıyor", WARNINGS[0].metin, WARNINGS[1].metin,
+        "medya kısmen çalışıyor", "notlar için yeni imaj var"]);
+      assert.equal(await problems.nth(0).locator(".problem-text span").innerText(), BAD.detail);
+      assert.equal(await problems.nth(3).locator(".problem-text span").innerText(), "Erişim · medya", "a warning is named after its application");
+      assert.equal(await problems.nth(5).locator(".problem-text span").innerText(), "registry.example/notlar:2 etiketinin yeni yapısı yayımlandı.");
+      assert.deepEqual(await problems.locator('[data-eylem="duzelt"]').evaluateAll((as) => as.map((a) => [a.textContent.trim(), a.getAttribute("href")])), [
+        ["Sağlık'ta incele", "#/sistem"], ["Uygulamaya git", "#/uygulamalar/kutu"],
+        ["Erişim'de incele", "#/erisim?sekme=adresler&satir=paylasim"], ["Erişim'de incele", `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`],
+        ["Uygulamaya git", "#/uygulamalar/medya"], ["Uygulamaya git", "#/uygulamalar/notlar"]]);
+      assert.equal(await page.getByRole("link", { name: "Tüm denetimler" }).getAttribute("href"), "#/sistem");
+      assert.equal(await page.getByRole("button", { name: "Denetle ve onar" }).count(), 0, "the repair is Sistem → Sağlık's");
+      const topChip = page.locator(".desktop-tools .chip");
+      assert.equal(await topChip.innerText(), "5 konu", "news is not counted");
+      // Applications: state, address, Aç for one that runs with an address, Ayrıntı.
+      assert.deepEqual(await page.locator(".app-card").evaluateAll((els) => els.map((e) => e.dataset.uygulama)), ["notlar", "medya", "kutu", "yedek"]);
+      assert.equal(await page.getByTestId("all-apps").innerText(), "Tümü (4)");
+      assert.equal(await page.getByTestId("all-apps").getAttribute("href"), "#/uygulamalar");
+      const card = (ad) => page.locator(`.app-card[data-uygulama="${ad}"]`);
+      assert.deepEqual(await page.locator(".app-card .pill").allInnerTexts(), ["Çalışıyor", "Kısmen çalışıyor", "Sorun var", "Durdurulmuş"]);
+      assert.equal(await card("notlar").locator(".app-line").innerText(), "notlar.ev · 1 uyarı · yeni imaj var");
+      assert.equal(await card("kutu").locator(".app-line").innerText(), "Dışarıya açık adresi yok");
+      assert.equal(await card("yedek").locator(".app-line").innerText(), "yedek.ev");
+      assert.deepEqual(await page.locator('.app-card [data-eylem="ac"]').evaluateAll((as) => as.map((a) => [a.closest(".app-card").dataset.uygulama,
+        a.getAttribute("href"), a.getAttribute("target"), a.getAttribute("rel")])),
+      [["notlar", "http://notlar.ev", "_blank", "noopener noreferrer"], ["medya", "http://medya.ev", "_blank", "noopener noreferrer"]], "a stopped one has nothing to open");
+      assert.equal(await card("notlar").getByRole("link", { name: "notlar ayrıntıları" }).getAttribute("href"), "#/uygulamalar/notlar");
+      // The access summary: counts and a chip for whatever is open to the internet, each leading to its row.
+      const summary = page.getByTestId("access-summary");
+      assert.deepEqual(await summary.locator(".stat").evaluateAll((els) => els.map((e) => [e.querySelector("dt").textContent, e.querySelector("dd").textContent])), [
+        ["Tailscale adresi", "3"], ["internet adı", "1"], ["internete açık ham port", "1"], ["Tailscale'de ham port", "1"], ["WireGuard ağı açık", "1"]]);
+      assert.deepEqual(await summary.locator(".access-chip").evaluateAll((as) => as.map((a) => [a.textContent.trim(), a.getAttribute("href"), a.className.replace("access-chip ", "")])), [
+        ["notlar · notlar.example.org", `#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`, "access-chip-accent"],
+        ["medya · 8096/TCP ham", `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`, "access-chip-warning"],
+        ["Paylaşımlar · http://203.0.113.10:61010", "#/erisim?sekme=adresler&satir=paylasim", "access-chip-warning"]], "SSH has no row: no chip");
+      assert.equal(await summary.getByRole("link", { name: "Erişim'e git" }).getAttribute("href"), "#/erisim");
+      // Resources, the network with the busiest applications, the server.
+      assert.equal(await page.getByTestId("cpu").innerText(), "%2");
+      assert.equal(await page.getByTestId("memory").innerText(), "668 MB / 7,7 GB");
+      assert.equal(await page.getByTestId("disk").innerText(), "11,8 GB / 233,5 GB");
+      await page.getByTestId("rx").filter({ hasText: "3 MB/s" }).waitFor();
+      assert.equal(await page.getByTestId("tx").innerText(), "340 KB/s");
+      assert.equal(await page.getByTestId("network").locator(".pill").innerText(), "Canlı");
+      const busiest = page.getByTestId("net-apps");
+      assert.deepEqual(await busiest.locator("li").evaluateAll((els) => els.map((e) => e.dataset.uygulama)), ["medya", "notlar"]);
+      assert.deepEqual(await busiest.locator('li[data-uygulama="medya"] .net-app-rate').evaluateAll((els) => els.map((e) => e.textContent)), ["↓İndirme 2 MB/s", "↑Yükleme 20 KB/s"]);
+      assert.equal(await busiest.getByRole("link", { name: "medya" }).getAttribute("href"), "#/uygulamalar/medya");
+      assert.deepEqual(await page.getByTestId("server").locator("dd").allInnerTexts(), ["Debian GNU/Linux 13 (trixie)", "5 gün", "100.64.0.2", "203.0.113.10", "1.0.0 · güncel"]);
+      assert.deepEqual(await page.locator("body *").evaluateAll((els) => els.filter((e) => e.hasAttribute("style")).map((e) => e.tagName)), [], "no style attributes");
+      assert(await noHorizontalScroll(page));
+      await shot(page, "1440-light-genel-dikkat.png", true);
+      // The chip goes where the most serious problem is.
+      await topChip.click();
+      await page.waitForURL((u) => u.hash === "#/sistem");
+      await page.goto(new URL("/#/genel", base).href);
+      await problems.nth(1).locator('[data-eylem="duzelt"]').click();
+      await page.waitForURL((u) => u.hash === "#/uygulamalar/kutu");
+      await page.context().close();
+      // Without a health problem the chip leads to the failed application.
+      data.saglik = { status: "ok", read_at: 1791844900, checks: [{ ...BAD, status: "ok" }, ...OK] };
+      page = await newPage();
+      await page.goto(new URL("/#/genel", base).href);
+      await page.locator("#saglik-baslik").filter({ hasText: "Dikkat · 5" }).waitFor();
+      await page.locator(".desktop-tools .chip").filter({ hasText: "4 konu" }).waitFor();
+      assert.equal(await page.locator(".desktop-tools .chip").getAttribute("href"), "#/uygulamalar/kutu");
+      await page.context().close();
+
+      // The frame with access rows: the palette names each row (an address by its Tailscale name, a raw port by its
+      // application and port) and opens its sheet; "Uygulama ekle" and "Adres aç" open their flows.
+      page = await newPage();
+      await page.goto(new URL("/#/genel", base).href);
+      await page.locator(".access-chip").first().waitFor();
+      await page.keyboard.press("Control+K");
+      const pal = page.getByRole("dialog", { name: "Komut paleti" });
+      const palInput = pal.getByRole("combobox");
+      await pal.waitFor();
+      assert.deepEqual(await pal.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Adresler", "Eylemler"]);
+      const rowOptions = pal.locator('[aria-labelledby="palet-grup-2"] .palette-option');
+      assert.deepEqual(await rowOptions.locator(".palette-label").allInnerTexts(), ["panel.ev", "notlar.ev", "medya · 8096/TCP", "kutu · 9000/UDP", "paylas.ev"],
+        "SSH has no row");
+      assert.deepEqual(await rowOptions.locator(".palette-hint").allInnerTexts(), ["Konsol · Adres", "notlar · Adres", "medya · Ham port", "kutu · Ham port",
+        "Paylaşımlar · Adres"]);
+      assert.deepEqual(await pal.locator('[aria-labelledby="palet-grup-3"] .palette-label').allInnerTexts(),
+        ["Uygulama ekle", "Adres aç", "Tema: sistem", "Tema: açık", "Tema: koyu", "İşlemleri göster"]);
+      await palInput.fill("notlar.example");
+      assert.deepEqual(await optionLabels(page), ["notlar.ev"], "a row is found by its internet name too");
+      await page.keyboard.press("Enter");
+      await page.waitForURL((u) => u.hash === `#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`);
+      await page.locator("main h1").filter({ hasText: "Erişim" }).waitFor();
+      await page.getByRole("dialog", { name: "notlar · web" }).waitFor();
+      await page.keyboard.press("Escape");
+      await page.getByRole("dialog", { name: "notlar · web" }).waitFor({ state: "detached" });
+      await page.keyboard.press("Control+K");
+      await palInput.fill("adres aç");
+      assert.deepEqual(await optionLabels(page), ["Erişim → Adresler", "Adres aç"]);
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("Enter");
+      await page.waitForURL((u) => u.hash === `#/erisim?sekme=adresler&satir=${enc(MEDYA)}&kip=adres-ac`, { timeout: 3000 });
+      await page.keyboard.press("Escape");
+      await page.keyboard.press("Control+K");
+      await palInput.fill("uygulama ekle");
+      await page.keyboard.press("Enter");
+      await page.waitForURL((u) => u.hash === "#/uygulamalar?ekle=1");
+      await page.getByRole("dialog", { name: "Uygulama ekle" }).waitFor();
+      await page.keyboard.press("Escape");
+      await page.getByRole("dialog", { name: "Uygulama ekle" }).waitFor({ state: "detached" });
+
+      // Every timed change is named in the banner and in İşlemler: an access row, WireGuard, the local domain, a fixed row.
+      const pendingTitle = page.getByTestId("pending-title");
+      const NAMED = [
+        [{ erisim: NOTLAR }, "Erişim değişikliği · notlar.ev"],
+        [{ erisim: MEDYA }, "Erişim değişikliği · medya · 8096/TCP"],
+        [{ wireguard: { eylem: "baslat", iface: null } }, "WireGuard'ı aç"],
+        [{ wireguard: { eylem: "ag-kapat", iface: "wg1" } }, "wg1 ağını kapat"],
+        [{ wireguard: { eylem: "ag-ekle", iface: null } }, "WireGuard ağı ekle"],
+        [{ domain: { old: "ev", new: "evim" } }, "Yerel alan adı · ev → evim"],
+        [{ web: true }, "Erişim değişikliği · Konsol ya da Paylaşımlar"]];
+      for (const [i, [subject, title]] of NAMED.entries()) {
+        push("bekleyen", { bekleyen: { id: "n" + i, phase: "awaiting", seconds: 58, ...subject } });
+        await pendingTitle.filter({ hasText: "Bekleyen değişiklik: " + title }).waitFor();
+      }
+      push("bekleyen", { bekleyen: { id: "n9", phase: "awaiting", seconds: 58, erisim: NOTLAR } });
+      await pendingTitle.filter({ hasText: "notlar.ev" }).waitFor();
+      push("islemler", { items: [
+        { tur: "uygulama", id: "b".repeat(32), ad: "notlar · Kurulum", durum: "calisiyor", adim: "İmaj indiriliyor", bitis: null },
+        { tur: "konteyner", id: "c".repeat(32), ad: "Podman · Temizlik", durum: "hata", bitis: 1791845100,
+          adim: "1 öge kaldırılmadı (1 kaldırıldı): eski: Birim bir konteynerde kullanılıyor." }] });
+      await page.getByRole("button", { name: "İşlemler, 1 çalışıyor" }).click();
+      const jobs = page.getByRole("dialog", { name: "İşlemler" });
+      const drawerPending = jobs.getByTestId("drawer-pending");
+      await drawerPending.waitFor();
+      assert.equal(await drawerPending.locator(".job-name").innerText(), "Erişim değişikliği · notlar.ev");
+      assert.equal(await drawerPending.locator(".pill").innerText(), "Onay bekliyor");
+      assert.equal(await drawerPending.locator(".job-meta").innerText(), "Bekleyen ayar değişikliği · onay ve geri alma sayfanın üstündeki bantta");
+      assert.equal(await jobs.locator('.job[data-durum="calisiyor"] .job-meta').innerText(), "Uygulama · İmaj indiriliyor");
+      const cleanupJob = jobs.locator('.job[data-durum="hata"]');
+      assert.equal(await cleanupJob.locator(".job-name").innerText(), "Podman · Temizlik");
+      assert.match(await cleanupJob.locator(".job-meta").innerText(), /^Gelişmiş · 1 öge kaldırılmadı \(1 kaldırıldı\): eski: Birim bir konteynerde kullanılıyor\. · \d\d:\d\d$/,
+        "what stayed and why");
+      assert.equal(await cleanupJob.locator(".pill").innerText(), "Hata");
+      await shot(page, "1440-light-islemler-bekleyen.png");
+      push("bekleyen", { bekleyen: { id: "n9", phase: "stuck", seconds: 0, attempts: 5, error: "dnsmasq başlamadı", erisim: NOTLAR } });
+      await drawerPending.locator(".pill").filter({ hasText: "Geri alma takıldı" }).waitFor();
+      push("bekleyen", { bekleyen: null });
+      await drawerPending.waitFor({ state: "detached" });
+      push("islemler", { items: [] });
+      await page.keyboard.press("Escape");
+      await page.context().close();
+
+      // The calm state: nothing to fix; nothing open to the internet; WireGuard off.
+      // WebDAV's internet switch on with no name configured (as a fresh install has it) is not an internet name.
+      data.erisim = erisim({ uyarilar: [], hizmetler: [...erisim().hizmetler.filter((h) => h.id === "panel"),
+        row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"]), web: { tail: true, enabled: true, domain: "" } })],
+        ozet: { ...erisim().ozet, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } });
+      data.uygulamalar = uygulamalar([uygulama("notlar")]);
+      data.ag = { read_at: 1791845000, sampled_at: 1791845000, rx: 1024, tx: 2048, uygulamalar: [] };
+      page = await newPage();
+      await page.goto(new URL("/#/genel", base).href);
+      await page.locator("#saglik-baslik").filter({ hasText: "Her şey yolunda" }).waitFor();
+      await page.getByTestId("health-sub").filter({ hasText: "3 denetim sorunsuz · son denetim 1 dakika önce" }).waitFor();
+      assert.equal(await page.locator(".problem").count(), 0);
+      assert.equal(await page.locator(".desktop-tools .chip").innerText(), "Her şey yolunda");
+      assert.equal(await page.locator(".desktop-tools .chip").getAttribute("href"), "#/sistem");
+      assert.equal(await page.getByTestId("nothing-open").innerText(), "İnternete açık hiçbir şey yok.");
+      assert.deepEqual(await page.getByTestId("access-summary").locator(".stat dd").allInnerTexts(), ["2", "0", "0", "0", "—"]);
+      assert.equal(await page.getByTestId("access-summary").locator('[data-stat="wireguard"] dt').innerText(), "WireGuard kapalı");
+      assert.equal(await page.getByTestId("net-apps").count(), 0, "no busy application");
+      await shot(page, "1440-light-genel-sakin.png");
+      await page.context().close();
+
+      // The network card reads every 5 s only while Genel Bakış is shown and the tab visible.
+      page = await newPage({}, { clock: true });
+      await page.goto(new URL("/#/genel", base).href);
+      await page.getByTestId("rx").filter({ hasText: "1 KB/s" }).waitFor();
+      await page.waitForTimeout(100);
+      const n0 = count("ag");
+      await page.clock.runFor(5000);
+      await waitFor(() => count("ag") === n0 + 1, "a read after 5 s");
+      await page.clock.runFor(5000);
+      await waitFor(() => count("ag") === n0 + 2, "another after 10 s");
+      const visibility = (hidden) => page.evaluate((value) => {
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => value });
+        document.dispatchEvent(new Event("visibilitychange"));
+      }, hidden);
+      await visibility(true);
+      await page.clock.runFor(15000);
+      await page.waitForTimeout(150);
+      assert.equal(count("ag"), n0 + 2, "no reads while the tab is hidden");
+      await visibility(false);
+      await waitFor(() => count("ag") === n0 + 3, "a read as soon as the tab is visible again");
+      // A failed read says so and is no longer live; the next one that answers clears it.
+      expectedFailures = ["/api/konsol/ag"];
+      status["/api/konsol/ag"] = 503;
+      await page.clock.runFor(5000);
+      await page.getByTestId("net-error").filter({ hasText: "Ağ bilgisi okunamadı." }).waitFor();
+      assert.equal(await page.getByTestId("network").locator(".pill").count(), 0, "not live while the reads fail");
+      delete status["/api/konsol/ag"];
+      await page.clock.runFor(5000);
+      await page.getByTestId("net-error").waitFor({ state: "detached" });
+      await page.getByTestId("network").locator(".pill").filter({ hasText: "Canlı" }).waitFor();
+      expectedFailures = [];
+      const n1 = count("ag");
+      await page.locator('.sidebar [data-nav="uygulamalar"]').click();
+      await page.waitForURL((u) => u.hash === "#/uygulamalar");
+      await page.clock.runFor(15000);
+      await page.waitForTimeout(150);
+      assert.equal(count("ag"), n1, "no reads on another page");
+      await page.context().close();
+
+      // A clean server: no applications yet.
+      data.uygulamalar = uygulamalar([]);
+      page = await newPage();
+      await page.goto(new URL("/#/genel", base).href);
+      const overviewApps = page.getByTestId("overview-apps");
+      await overviewApps.locator(".empty-title").filter({ hasText: "Henüz uygulama yok." }).waitFor();
+      assert.equal(await overviewApps.locator(".empty-text").innerText(), "Uygulamalar bölümünden bir Compose ya da Kubernetes dosyasıyla eklenir.");
+      assert.equal(await page.getByTestId("all-apps").innerText(), "Tümü (0)");
+      await shot(page, "1440-light-genel-bos.png", true);
+      await page.context().close();
+
+      // A phone: two tiles per row; a tap anywhere on a tile opens its page. 390 and 320 in both themes.
+      data.saglik = { status: "bad", read_at: 1791844900, checks: [BAD, ...OK] };
+      data.erisim = erisim();
+      data.uygulamalar = uygulamalar(apps());
+      for (const colorScheme of ["light", "dark"]) {
+        page = await newPage({ colorScheme });
+        await page.goto(new URL("/#/genel", base).href);
+        await page.locator(".access-chip").first().waitFor();
+        assert(await noHorizontalScroll(page));
+        await shot(page, `1440-${colorScheme}-genel-tam.png`, true);
+        await page.context().close();
+        page = await newPage({ colorScheme, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
+        await page.goto(new URL("/#/genel", base).href);
+        await page.locator(".access-chip").first().waitFor();
+        const tiles = await page.locator(".app-card").evaluateAll((els) => els.slice(0, 2).map((e) => Math.round(e.getBoundingClientRect().top)));
+        assert.equal(tiles[0], tiles[1], "two tiles per row");
+        assert(await noHorizontalScroll(page), "390 genel");
+        await shot(page, `390-${colorScheme}-genel-tam.png`, true);
+        const tile = page.locator('.app-card[data-uygulama="kutu"]');
+        const tileBox = await tile.boundingBox();
+        await tile.tap({ position: { x: tileBox.width - 14, y: 14 } });
+        await page.waitForURL((u) => u.hash === "#/uygulamalar/kutu");
+        await page.goto(new URL("/#/genel", base).href);
+        await page.locator(".access-chip").first().waitFor();
+        await page.setViewportSize({ width: 320, height: 640 });
+        await page.waitForFunction(() => innerWidth === 320);
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert(await noHorizontalScroll(page), "320 genel");
+        await shot(page, `320-${colorScheme}-genel-tam.png`, true);
+        await page.context().close();
+      }
+      Object.assign(data, saved);
+    }
 
     // ================= desktop and phone, both themes (system setting), screenshots and geometry
     for (const colorScheme of ["light", "dark"]) {
@@ -309,6 +633,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       assert.equal(await page.locator(".mobile-top .chip").getAttribute("aria-label"), "2 konu dikkat istiyor");
       assert(await page.locator(".mobile-top .wordmark").isVisible());
       assert(await page.getByRole("button", { name: "Ara", exact: true }).isVisible());
+      assert(await page.locator(".mobile-top").getByTestId("theme").isVisible(), "the theme on a phone's top bar too");
       const bar = page.getByRole("navigation", { name: "Alt menü" });
       assert.deepEqual(await bar.locator(".bb-item").allInnerTexts(), ["Genel", "Uygulamalar", "Erişim", "Dosyalar", "Daha fazla"]);
       for (const box of await bar.locator(".bb-item").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height))) assert(box >= 44, "touch target " + box);
@@ -471,9 +796,14 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
 
     assert.deepEqual(errors, []);
     console.log("PASS: Konsol shell (build matches its sources, licence banner) under the production CSP — sidebar counts (Uygulamalar 2, Sistem 1 danger, Erişim 1 warning), problem chip, " +
-      "Tailscale and version card, event stream (X-Konsol fetch, multi-line data, unknown events, kapat → immediate reconnect), activity drawer " +
-      "(focus trap, Esc, focus return, finished job reloads the applications), pending banner with local countdown and phases, palette (Ctrl+K/Meta+K, groups, " +
-      "İŞ/ıs/is, ↑↓, Enter to a page, no old-interface group, theme action, Esc and focus return), theme radios kept across a reload, an old address, " +
+      "Tailscale and version card, Genel Bakış (Dikkat ordered with each problem's place and the chip following the most serious one, news " +
+      "not counted, the calm state, applications with their address, Aç and Ayrıntı, the access summary's counts and chips to their rows, the " +
+      "busiest applications, network reads every 5 s only while shown and visible, a failed read, no applications, phone tiles), event stream (X-Konsol fetch, multi-line data, unknown events, kapat → immediate reconnect), activity drawer " +
+      "(focus trap, Esc, focus return, finished job reloads the applications, the pending change named with its phase, a cleanup job's reason), " +
+      "pending banner naming every timed change (an access row, WireGuard, the local domain, a fixed row, the firewall or names) with local " +
+      "countdown and phases, palette (Ctrl+K/Meta+K, groups, İŞ/ıs/is, ↑↓, Enter to a page, access rows by name opening their sheet, Uygulama " +
+      "ekle, Adres aç, theme actions, no Görünüm, Esc and focus return), the top bar's theme button stepping sistem → açık → koyu kept across a " +
+      "reload, an unknown address → Genel Bakış, " +
       "skip link, phone bottom bar and sheet, 1440/390/320 in light and dark, polling without a stream (404/503: 5/10/60 s, no settings status), " +
       "a failing stream (502: 3 s, 6 s, polling after the third failure, polling ends when the stream is back), " +
       "unknown values as —, 401 → sign-in, local Outfit font. Screenshots: " + shots);

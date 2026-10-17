@@ -26,6 +26,8 @@ import sys
 import syslog
 import time
 
+import master_wireguard
+
 STATE_FILE = os.environ.get("STATE_FILE", "/etc/master-stack/state.env")
 BASE_UNITS = ("caddy.service", "dnsmasq.service", "master-panel.service", "master-files-panel.service",
               "master-sistem-dosya.service", "master-paylasim.service", "tailscale-udp-gro.service")
@@ -38,7 +40,6 @@ ON_DEMAND_TIMERS = ("master-settings-guard.timer",)
 FIREWALL_UNIT = "master-firewall.service"
 # The hourly firewall check takes at most about a minute (master-firewall --check, 30 s).
 LOCK_WAIT_SECONDS = 120
-UNIT_RE = re.compile(r"^[A-Za-z0-9@._-]+\.service$")
 MARK = {"ok": "✓", "onarildi": "↻", "sorun": "!", "hata": "✗", "atlandi": "–", "calisiyor": "…"}
 JOURNAL_TAG = "master-onar"
 GiB = 1024 ** 3
@@ -305,25 +306,18 @@ class Repair:
             return "hata", "Açılamadı: " + ", ".join(broken)
         return "onarildi", "Yeniden açıldı: " + ", ".join(off)
 
-    def package_units(self):
-        """Required units of the installed, running packages (master-modul saglik); a stopped package is left alone."""
-        stopped = set()
+    def network_units(self):
+        """The units of WireGuard's registered networks; none while WireGuard is stopped (DD-229)."""
         try:
-            with open(self.env.get("MODULES_FILE", "/etc/master-stack/moduller"), encoding="utf-8") as fh:
-                stopped = {f[0] for f in (line.rstrip("\n").split("\t") for line in fh) if len(f) == 2 and f[1] == "durduruldu"}
-        except OSError:
-            pass
-        rc, out, _ = run([os.path.join(self.sbin, "master-modul"), "saglik"], timeout=30)
-        units, networks = [], []
-        for line in out.splitlines() if rc == 0 else []:
-            f = line.split("\t")
-            if len(f) == 3 and f[0] not in stopped and UNIT_RE.match(f[1]):
-                (networks if f[2] == "ag" else units).append(f[1])
-        return units, networks
+            if master_wireguard.stopped(self.env):
+                return []
+            return ["wg-quick@%s.service" % iface for iface in master_wireguard.registered(self.env)]
+        except (OSError, ValueError, KeyError):
+            return []
 
     def services(self):
-        units, networks = self.package_units()
-        wanted = list(dict.fromkeys(list(BASE_UNITS) + units + networks))
+        networks = self.network_units()
+        wanted = list(dict.fromkeys(list(BASE_UNITS) + networks))
         props = unit_props(wanted)
         down = []
         for unit in wanted:
@@ -546,12 +540,14 @@ class Repair:
 
     def wireguard(self):
         try:
-            with open(self.env.get("MODULES_FILE", "/etc/master-stack/moduller"), encoding="utf-8") as fh:
-                running = any(line.rstrip("\n").split("\t") == ["wireguard", "calisiyor"] for line in fh)
-        except OSError:
-            running = False
-        if not running:
-            return "atlandi", "WireGuard kurulu değil ya da durdurulmuş"
+            if master_wireguard.stopped(self.env):
+                return "atlandi", "WireGuard kapalı"
+            if not master_wireguard.registered(self.env):
+                return "atlandi", "WireGuard ağı yok"
+        except (OSError, KeyError):
+            return "sorun", "WireGuard ayarı okunamadı; kurulumu yeniden çalıştırın"
+        except ValueError:
+            return "sorun", "WireGuard ağ kaydı okunamadı"
         rc, out, _ = run(["wg", "show", "all", "latest-handshakes"], timeout=15)
         if rc != 0:
             return "sorun", "wg okunamadı"
@@ -626,7 +622,8 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--denetle", action="store_true", help="yalnız denetle, hiçbir şeyi değiştirme")
     mode.add_argument("--duvar", action="store_true", help="yalnız güvenlik duvarı (saatlik zamanlayıcı)")
-    parser.add_argument("--kaynak", choices=("konsol", "terminal"), default="terminal", help=argparse.SUPPRESS)
+    parser.add_argument("--kaynak", choices=("konsol", "terminal"), default="terminal",
+                        help="raporda başlatan: konsol (Konsol → Sistem → Sağlık) ya da terminal (varsayılan)")
     args = parser.parse_args()
     if os.geteuid() != 0:
         print("HATA: root gerekli (sudo master-onar)", file=sys.stderr)

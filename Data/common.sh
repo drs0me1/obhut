@@ -10,6 +10,8 @@ fi
 
 V2_LOG_FILE="${V2_LOG_FILE:-}"
 V2_LAST_ATOMIC_CHANGED="${V2_LAST_ATOMIC_CHANGED:-0}"
+# Dağıtım kimliğinin okunduğu dosya; ortamdan alınmaz (testler source ettikten sonra kendi dosyasını verir).
+V2_OS_RELEASE_PATH="/etc/os-release"
 
 log() {
     local level="$1"
@@ -41,7 +43,7 @@ require_root() {
 # OS_VERSION_ID/OS_ARCH yalnız state.env kaydı ve sürüm değişimi tespiti
 # içindir; kapı kararını değiştirmez (DD-104).
 require_supported_os() {
-    local f="${V2_OS_RELEASE_PATH:-/etc/os-release}"
+    local f="$V2_OS_RELEASE_PATH"
     [[ -r "$f" ]] || die "işletim sistemi okunamıyor: $f"
     local id="" codename="" version_id="" line=""
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -87,8 +89,6 @@ acquire_lock() {
     exec {V2_LOCK_FD}>"$lock_file"
     flock -w "$wait_seconds" "$V2_LOCK_FD" ||
         die "kilit alınamadı (${wait_seconds}s): $lock_file"
-    # Child module operations reuse this exact open file description, not a bypass flag.
-    export V2_LOCK_FD
 }
 
 # retry LABEL ATTEMPTS TIMEOUT -- cmd args...

@@ -12,9 +12,10 @@ import tempfile
 import threading
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import test_resources as resources
+import test_stage3_files as stage3
 
 SOURCE = Path(__file__).resolve().parents[1] / "files-panel" / "master-files-panel"
 loader = importlib.machinery.SourceFileLoader("files_panel_system", str(SOURCE))
@@ -54,8 +55,8 @@ class SystemFilesTests(unittest.TestCase):
         self.assertEqual(self.files.listing(["proc"], False)["entries"], [])
 
     def test_new_items_are_root_style(self):
-        self.files.mkdir(["etc"], "yeni")
-        self.assertEqual((self.root / "etc/yeni").stat().st_mode & 0o777, 0o755)
+        self.files.mkdir(["etc"], "klasor")
+        self.assertEqual((self.root / "etc/klasor").stat().st_mode & 0o777, 0o755)
         with patch.object(fp, "disk_room"):
             self.files.upload(["etc"], "a.conf", io.BytesIO(b"x=1\n"), 4)
         self.assertEqual((self.root / "etc/a.conf").stat().st_mode & 0o777, 0o644)
@@ -151,8 +152,7 @@ class SystemGateTests(unittest.TestCase):
         (self.root / "etc/hosts").write_text("127.0.0.1 localhost\n")
         self.sock = str(Path(tmp.name).resolve() / "s.sock")
         args = types.SimpleNamespace(root=str(self.root), sistem=True, domain="ornek.lan", version="t",
-                                     allow_host=[], trash="", share="", downloads_dir="",
-                                     protected=[])
+                                     trash="", downloads_dir="")
         handler = type("H", (fp.SystemHandler,), {"panel": fp.Panel(args)})
         self.server = fp.UnixServer(self.sock, handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -191,10 +191,28 @@ class SystemGateTests(unittest.TestCase):
     def test_only_system_routes_exist(self):
         self.assertEqual(self.call("GET", "/api/list?path=")[0], 404)
         self.assertEqual(self.call("GET", "/api/sistem/trash")[0], 404)
-        self.assertEqual(self.call("GET", "/api/sistem/archives")[0], 404)
         self.assertEqual(self.call("POST", "/api/sistem/trash", {"path": "", "names": ["etc"]})[0], 404)
         code, listing = self.call("GET", "/api/sistem/list?path=etc")
         self.assertEqual((code, [e["name"] for e in listing["entries"]]), (200, ["hosts"]))
+
+    def test_nothing_outside_its_routes_answers(self):
+        # Rebuild §2.3 and §7.4: the system view answers its own routes under /api/sistem/ and nothing else, the
+        # same routes without the prefix included; no file operation runs for any other path.
+        def system(path):
+            return "/api/sistem/" + path[len("/api/"):] if path.startswith("/api/") else path
+        cases = [(m, system(p)) for m, p in stage3.unanswered(stage3.SYSTEM_GET_ROUTES, stage3.SYSTEM_POST_ROUTES)]
+        cases += [(m, p) for m in ("GET", "HEAD", "POST")
+                  for p in sorted(stage3.SYSTEM_GET_ROUTES | stage3.SYSTEM_POST_ROUTES)]
+        panel = self.server.RequestHandlerClass.panel
+        files = Mock(spec=panel.files)
+        with patch.object(panel, "files", files):
+            for method, path in cases:
+                with self.subTest(method=method, path=path):
+                    self.assertEqual(self.call(method, path + "?path=etc/hosts", {} if method == "POST" else None)[0], 404)
+        self.assertEqual(files.mock_calls, [], "no file operation runs for a path outside the routes")
+        for method in ("PUT", "DELETE"):
+            with self.subTest(method=method):
+                self.assertEqual(self.call(method, "/api/sistem/list?path=etc")[0], 501)
 
     def test_text_save_through_the_handler(self):
         # DD-249: the editor's round trip on the root view: read with a version, save, a stale version is refused,

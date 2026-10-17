@@ -1,0 +1,42 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: kasa uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması kasa: kasa
+After=network-online.target master-firewall.service
+Wants=network-online.target master-firewall.service
+
+[Container]
+ContainerName=kasa_kasa
+Image=docker.io/example/kasa@sha256:92776d532b0b89c41dbdb5bc8243f9c05e8d02bff8a360becb21608228602114
+Pull=never
+Network=konsol-kasa.network
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=kasa
+LogDriver=journald
+User=1000:1000
+DropCapability=all
+NoNewPrivileges=true
+ReadOnly=true
+RunInit=true
+HostName=kasa
+ShmSize=67108864
+PidsLimit=200
+EnvironmentFile="/etc/master-stack/containers/uygulamalar/kasa/env/kasa.env"
+PublishPort=127.0.0.1:62100:80/tcp
+Tmpfs=/tmp
+Volume=/var/lib/master-stack/uygulamalar/kasa/kasa-data:/data:rw,U
+PodmanArgs=--network-alias=kasa
+PodmanArgs=--cpus=0.5
+PodmanArgs=--memory=268435456
+PodmanArgs=--ulimit=nofile=20000:40000
+PodmanArgs=--ulimit=nproc=512:512
+
+[Service]
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=180
+TimeoutStopSec=75
+UMask=0077
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_network.py" --state "/etc/master-stack/state.env" --check
+
+[Install]
+WantedBy=multi-user.target

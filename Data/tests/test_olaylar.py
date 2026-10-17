@@ -101,51 +101,32 @@ class JobsTests(Fixture):
         with self.state.open("a") as fh:
             fh.write("GUNCELLEME_UNIT=master-guncelle.service\nGUNCELLEME_DURUM_FILE=%s\nGUNCELLEME_LOG_FILE=%s\n"
                      "ONARIM_UNIT=master-onar.service\nONARIM_DURUM_FILE=%s\n" % (self.update_state, self.update_log, self.repair_state))
-        self.package("torrent", manifest_extra="")
         self.active = set()
         patch.object(self.p, "unit_active", side_effect=lambda unit: unit in self.active).start()
         self.addCleanup(patch.stopall)
 
-    def jobs(self, busy=(), modules=(), now=None):
-        with patch.object(self.p, "busy_units", return_value=set(busy)), \
-             patch.object(self.p, "modules", return_value=list(modules)) as listed, \
-             patch.object(panel.time, "time", return_value=now or time.time()):
+    def jobs(self, now=None):
+        with patch.object(panel.time, "time", return_value=now or time.time()):
             result = self.p.jobs()
         master_api.check(master_api.ref("Islemler"), result)
-        self.listed = listed.called
         return result["items"]
 
-    def test_an_app_store_operation_runs_finishes_and_is_dropped(self):
-        now = 1767225600
-        running = {"id": "torrent", "busy": True, "progress": {"action": "kur", "step": "2", "total": 5, "text": "İmaj indiriliyor"}}
-        self.assertEqual(self.jobs(["master-modul-torrent.service"], [running], now), [
-            {"tur": "modul", "id": "torrent", "ad": "Deneme torrent · Kurulum", "durum": "calisiyor",
-             "adim": "Adım 2/5 · İmaj indiriliyor", "bitis": None}])
-        done = {"id": "torrent", "busy": False, "progress": {"action": "kur", "step": "bitti", "total": 0, "text": "kuruldu"}}
-        self.assertEqual(self.jobs([], [done], now + 3)[0], {"tur": "modul", "id": "torrent", "ad": "Deneme torrent · Kurulum",
-                                                             "durum": "tamam", "adim": "", "bitis": now + 3})
-        self.assertEqual(len(self.jobs([], [], now + 3 + panel.JOB_KEEP_SECONDS)), 1)
-        self.assertFalse(self.listed, "the engine list runs only while an operation is open")
-        self.assertEqual(self.jobs([], [], now + 4 + panel.JOB_KEEP_SECONDS), [])
-        self.jobs(["master-modul-torrent.service"], [running], now + 200)
-        failed = {"id": "torrent", "busy": False, "progress": {"action": "kur", "step": "hata", "total": 0, "text": "imaj indirilemedi"}}
-        self.assertEqual(self.jobs([], [failed], now + 201)[0]["durum"], "hata")
-        self.assertEqual(self.jobs([], [failed], now + 202)[0]["adim"], "imaj indirilemedi")
-
-    def test_container_operations_from_the_dispatch_records(self):
+    def test_application_and_resource_jobs_from_the_dispatch_records(self):
         now = int(time.time())
         self.p.containers.jobs.update({
-            "a" * 32: {"id": "a" * 32, "action": "image-pull", "name": "docker.io/library/nginx:alpine", "state": "running",
-                       "step": "İndiriliyor", "updated_at": now - 5},
-            "b" * 32: {"id": "b" * 32, "action": "restart", "name": "gezgin", "state": "done", "updated_at": now - 10},
-            "c" * 32: {"id": "c" * 32, "action": "remove", "name": "eski", "state": "failed", "error": "Konteyner kaldırılamadı.",
+            "a" * 32: {"id": "a" * 32, "action": "temizlik", "name": "Podman", "state": "running",
+                       "step": "Kaldırılıyor: ornek-veri", "updated_at": now - 5},
+            "b" * 32: {"id": "b" * 32, "action": "uygulama-yeniden-baslat", "name": "notlar", "state": "done", "updated_at": now - 10},
+            "c" * 32: {"id": "c" * 32, "action": "uygulama-kaldir", "name": "eski", "state": "failed", "error": "Kaldırma başarısız.",
                        "updated_at": now - 20},
-            "d" * 32: {"id": "d" * 32, "action": "start", "name": "dun", "state": "done", "updated_at": now - 3600}})
+            "d" * 32: {"id": "d" * 32, "action": "uygulama-baslat", "name": "dun", "state": "done", "updated_at": now - 3600}})
         items = self.jobs(now=now)
-        self.assertEqual([(i["ad"], i["durum"], i["adim"], i["bitis"]) for i in items], [
-            ("eski · Kaldırma", "hata", "Konteyner kaldırılamadı.", now - 20),
-            ("gezgin · Yeniden başlatma", "tamam", "", now - 10),
-            ("docker.io/library/nginx:alpine · İmaj indirme", "calisiyor", "İndiriliyor", None)])
+        self.assertEqual([(i["tur"], i["ad"], i["durum"], i["adim"], i["bitis"]) for i in items], [
+            ("uygulama", "eski · Kaldırma", "hata", "Kaldırma başarısız.", now - 20),
+            ("uygulama", "notlar · Yeniden başlatma", "tamam", "", now - 10),
+            ("konteyner", "Podman · Temizlik", "calisiyor", "Kaldırılıyor: ornek-veri", None)])
+        self.assertEqual([i["durum"] for i in self.jobs(now=now + panel.JOB_KEEP_SECONDS)], ["calisiyor"],
+                         "a finished operation is dropped in time; a running one stays")
 
     def test_the_update_and_the_repair(self):
         now = int(time.time())

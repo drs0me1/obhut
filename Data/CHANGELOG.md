@@ -6,6 +6,121 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-10-18
+
+The second generation of Obhut (DD-271 to DD-278). Applications run from their own Compose or Kubernetes files: an
+inspector reads each file and asks what only the operator can answer, and Obhut writes its own Quadlet units. Each
+application port has one access row in Erişim, and every change to access is shown as a plan; an opening waits for a
+confirmation, a closing applies at once. WireGuard is built in and off until turned on. The App Store and its packages
+are gone. This generation installs only on a clean operating system: a server with Obhut 1.x stops at the first
+stage, and 1.2.0 tells such a server so instead of offering an update. The build numbers v2-255 to v2-259 and v2-261
+to v2-263 are this generation's; v2-260 is 1.2.0.
+
+### 2026-10-18 — Documents, sweep and the clean-server test (v2-261, v2-262, branch `yeni-yapi`)
+
+- The documents describe the new generation only (DD-278): the contract, the architecture, the folder-share
+  guide, README, OKUBENI and the test guide; old interface documents and superseded decisions are archived.
+- A WireGuard network closed in Konsol stays closed after a re-run or an update, and its internet port is
+  closed with it; adding, removing, opening, closing or renewing a network from the terminal waits while a
+  Konsol change is pending.
+- A change that waits for confirmation cannot be applied from the internet address (it could not be confirmed
+  there); restarting the server or running the repair waits until an application job or a cleanup ends.
+- Yerel adlar shows Konsol's, Paylaşımlar' and the applications' names read-only, each changed where it
+  belongs; the switch that hid such a name is gone. Your own DNS records work as before.
+- Opening an internet name for an application says that only the application's own login guards it; a
+  password written in a Compose file is pointed out on its line (it is not used, but it stays in the file).
+- The installed programs no longer carry options that only tests used.
+- An application's Tanım plan lists a start mode only when it really changes; an unchanged definition plans
+  nothing (found on the clean-server test, v2-262).
+
+### 2026-10-17 — Konsol's new screens (v2-259, branch `yeni-yapi`)
+
+- Uygulamalar → "Uygulama ekle" (DD-276): paste or upload a Compose or Kubernetes file, or start from an
+  https address, an image name or a container already on the server; the inspector marks the file line by
+  line and asks its questions; the plan shows everything that will be created before anything is written;
+  the install runs as a job and opens the application's page.
+- An application's page has Özet, Erişim, Depolama, Tanım and Günlük. Tanım shows the file and the answers
+  and edits them: the change is shown as a plan first and applied as a job; secrets stay unless renewed; an
+  application added from an address can be refreshed from it.
+- Each application's live download and upload rate is shown in the list, on its page and in Genel Bakış'
+  network card (read from the application's own network).
+- Genel Bakış shows what needs attention, the applications with an "Aç" button, an access summary and what
+  is open to the internet. Erişim has its own Yerel adlar tab.
+- Dosyalar → Depolama shows each application's data folders with their sizes. Sistem: "Günlük" is now
+  "İşlem geçmişi", Güncellemeler counts application image updates, and the Görünüm tab is gone (the theme
+  switch is in the top bar and the command palette).
+- Gelişmiş is read-only; its only action is a cleanup of unused images, networks, volumes and the folders of
+  removed applications. Pulling images and creating Podman volumes or networks by hand are gone.
+
+### 2026-10-17 — Each application port has its own access row (v2-258, branch `yeni-yapi`)
+
+- Erişim → Adresler lists Konsol, Paylaşımlar and every port of every application (DD-275). A port is
+  either an address (a Tailscale name, optionally a Tailscale port on the server's Tailscale address and an
+  internet name with HTTPS) or a raw port that is closed, open on Tailscale or open on the internet. An
+  application's address answers on Tailscale as soon as it is installed; raw ports start closed.
+- Every change is shown as a plan first. Opening or widening access waits 60 seconds for a confirmation from
+  Tailscale and is undone if it does not come; closing applies at once and never reopens by itself.
+- "Adres aç" gives a raw TCP port a name, "Adresi kaldır" takes it away; both restart that service for a
+  few seconds. Opening a raw port to the internet asks for an explicit consent, and the port number on the
+  server can differ from the container's.
+- The firewall view shows application ports as fixed rows that link to their access row; a firewall rule
+  cannot be put on such a port.
+- WireGuard: turning it on, adding a network and opening one are plans with the 60 second confirmation;
+  stopping, closing and removing apply at once; renewing a network's key needs the typed word. Devices and
+  their settings change at once as before.
+- Removed: Yayınla and manually added addresses (an application port's row replaces them), and the old
+  WebDAV-only HTTPS setting. `sudo obhut yayin` is now `sudo obhut erisim liste|kapat`.
+
+### 2026-10-17 — Applications run from their own Compose or Kubernetes files (v2-257, branch `yeni-yapi`)
+
+- An application is installed from its own Compose or Kubernetes file and the operator's answers
+  (DD-274): Obhut writes its Quadlet units, pulls and pins its images, creates its secrets as Podman
+  secrets, gives each address port a local port, starts its containers in order and waits until they are
+  running and healthy. Anything that fails is taken back, and the job says which service stopped and where
+  its journal is. Konsol's screens for adding and editing arrive in a later phase; the routes are in place.
+- Each application has its own network; Compose services reach each other by name, a Kubernetes Pod's
+  containers share `localhost`. A Pod with several containers and a Compose `service_healthy` need
+  Podman 5 (Debian 13, Ubuntu 26.04); on Ubuntu 24.04 such a file is refused before anything is written.
+- A container starts either directly as its own user (no privileges at all) or as root with Podman's
+  usual privileges minus a few; a root start, or a start as another user, that can write to `/srv` is
+  shown with a warning.
+- Uygulamalar lists the applications with their services, resources and update state. Each application's
+  page shows its services, ports, folders, file and answers (never a secret's value) and its logs per
+  service, and starts, stops, restarts, updates or removes it; removal keeps the data unless the
+  application's name is typed.
+- A draft file can be made from an `https` address, an image name or a container that already runs on
+  the server; taking over a container moves its data into the new application.
+- Removed: Konsol's single-container definitions, "Bir imajdan", "Yönetime al", the definition editor and
+  the container settings tab, and Yayınla's step that added a local port to a container.
+- The base installs `catatonit`, which Podman needs for pods and for `init: true`.
+
+### 2026-10-17 — Konsol reads Compose and Kubernetes files (v2-256, branch `yeni-yapi`)
+
+- Konsol can read an application's own Compose or Kubernetes YAML file and inspect it without changing
+  anything on the server (DD-273): what it refuses and why, line by line; what it asks (each port, each
+  variable and secret, each folder, how each container starts); and, once answered, the definition the
+  next phase will install. Nothing in the interface uses it yet.
+- Obhut reads YAML itself, with no new package: what Compose and Kubernetes files use is read, anything
+  else (anchors, tags, multi-line plain text...) is shown with its line instead of being guessed.
+
+### 2026-10-17 — A new generation: a clean base without the App Store (v2-255, branch `yeni-yapi`)
+
+- This build starts Obhut's second generation (DD-271, DD-272). It installs only on a clean operating
+  system: a server that ran an older Obhut stops at the first stage with "Bu sunucuda eski nesil bir
+  Obhut var; bu sürüm yalnız temiz bir işletim sistemine kurulur", before anything is written. There is no
+  upgrade path from 1.x.
+- The App Store is gone: the catalogue, the qBittorrent and Gezgin packages, the store engine
+  (`master-modul`) and every package form, page and setting. Uygulamalar lists the containers Konsol
+  manages; adding applications from their own Compose or Kubernetes files arrives in a later phase.
+- WireGuard is part of the base: it is installed with Obhut and turned off. Erişim → WireGuard turns it on
+  by creating the first network, and stops or starts it as a whole; there is nothing to install.
+- Files and folder WebDAV are installed directly; Paylaşımlar is no longer listed as an application.
+- Genel Bakış' network card shows the internet rates only; per-application totals are gone with the
+  packages.
+- Leftovers kept for older installs are removed: old folder-share records (schema 3) are refused, and a
+  share record with a field this version does not write is refused too; old Konsol addresses no longer
+  redirect and land on Genel Bakış; `/yeni` no longer redirects.
+
 ## [1.2.0] — 2026-10-17
 
 The last release of the 1.x line. Konsol's redesign is complete: Erişim with Yayınla, Sistem, Gelişmiş and
@@ -1915,7 +2030,8 @@ builds that make up 1.0.0; earlier builds are in
 
 Older entries (v2-144 and earlier) are archived verbatim in [`docs/archive/CHANGELOG-before-v2-145.md`](docs/archive/CHANGELOG-before-v2-145.md).
 
-[Unreleased]: https://github.com/drs0me1/obhut/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/drs0me1/obhut/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/drs0me1/obhut/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/drs0me1/obhut/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/drs0me1/obhut/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/drs0me1/obhut/releases/tag/v1.0.0

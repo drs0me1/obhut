@@ -1,13 +1,7 @@
-/* Phase 4a (DD-258): Uygulamalar' add flows (the catalogue, a container from an image, adoption), the
-   container editor and its review, an application's settings, account and ports, the log's search and the
-   folder picker. Colours only from tokens.css; nothing needs a style attribute (the CSP allows none). */
-
-/* ---- a sheet that holds a form with rows (the container editor) is wider on a wide screen */
-@media (min-width: 761px) {
-  .modal-sheet:has(.uyg-wide) {
-    width: min(720px, 100%);
-  }
-}
+/* Uygulamalar (rebuild phase 5): the list, Uygulama ekle's steps, the inspector's questions, an application's file
+   with its line numbers and marks, an application's page and its tabs; the /srv folder picker (Dosyalar →
+   Paylaşımlar and an application's folders); the log's search. Colours only from tokens.css; nothing needs a style
+   attribute (the CSP allows none). */
 
 /* ---- the folder picker */
 .folder-picker {
@@ -105,25 +99,7 @@
   transform: scaleX(-1);
 }
 
-/* ---- form sections and editable rows */
-.container-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  min-width: 0;
-  container-type: inline-size;
-}
-
-.form-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
+/* ---- a titled group of fields (a share's connections) */
 .form-section-title {
   display: flex;
   align-items: center;
@@ -134,225 +110,32 @@
   font-weight: 650;
 }
 
-.form-section-title .icon {
-  color: var(--muted);
+/* ---- Uygulamalar' list */
+.apps-toolbar .apps-add {
+  margin-left: auto;
 }
 
-.edit-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.edit-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px 12px;
-  align-items: start;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-}
-
-.edit-row .row-wide {
-  grid-column: 1 / -1;
-}
-
-.edit-row .row-remove {
-  justify-self: end;
-}
-
-.edit-row .field-error {
-  margin: 0;
-}
-
-.port-row {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
-.mount-row,
-.env-row {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
-.mount-row .folder-picker,
-.mount-row .field:has(.folder-picker) {
-  grid-column: 1 / -1;
-}
-
-.adopt-row {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-@container (min-width: 560px) {
-  .port-row {
-    grid-template-columns: minmax(150px, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(88px, 0.8fr) auto;
-  }
-
-  .mount-row {
-    grid-template-columns: minmax(160px, 0.8fr) minmax(0, 1.6fr) minmax(0, 1.2fr) auto auto;
-  }
-
-  .mount-row .field:has(.folder-picker) {
-    grid-column: auto;
-  }
-
-  /* An open folder panel needs the whole row. */
-  .mount-row .field:has(.folder-panel) {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-
-  /* Beside fields with a label above them, a checkbox and a remove button line up with the controls. */
-  .edit-row > .check-row,
-  .edit-row > .row-remove {
-    margin-top: 26px;
-  }
-
-  .env-row {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto auto;
-  }
-
-  .edit-row .row-remove {
-    justify-self: auto;
-  }
-}
-
-.edit-row .check-row {
-  min-height: var(--tap);
-}
-
-.public-ack {
-  border-color: var(--danger-line);
-  background: var(--danger-tint);
-}
-
-.check-calm input {
-  accent-color: var(--accent);
-}
-
-/* A long line of text is easier to read than a field across the whole page. */
-.form-section > .field,
-.form-section > .form-row,
-.settings-tab .form-stack > .field,
-.package-form > .field {
-  max-width: 640px;
-}
-
-.textarea {
-  min-height: 84px;
-  padding: 10px 14px;
-  line-height: 1.5;
-  resize: vertical;
-}
-
-.form-actions {
-  display: flex;
+.state-cell {
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 8px;
-}
-
-/* ---- the review */
-.review-facts dd {
-  overflow-wrap: anywhere;
-}
-
-.plan-removed {
-  text-decoration: line-through;
-}
-
-.plan-warning[data-ton="ok"] .icon {
-  color: var(--ok);
-}
-
-/* ---- the catalogue */
-.catalog-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.catalog-item {
-  display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-}
-
-.catalog-text {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  font-size: 13.5px;
-}
-
-.catalog-text strong {
-  font-size: 14.5px;
-}
-
-.catalog-item .btn {
-  flex: none;
-}
-
-.catalog-head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.catalog-head-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.catalog-name {
-  font-family: var(--font-head);
-  font-size: 19px;
-}
-
-.catalog-facts {
-  display: flex;
-  flex-wrap: wrap;
   gap: 6px;
 }
 
-.fact-chip {
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--sunken);
-  color: var(--ink-2);
-  font-size: 12.5px;
-  font-weight: 600;
+.col-net {
+  white-space: nowrap;
 }
 
-/* ---- Uygulamalar' add card and infrastructure */
-.add-option .warn-text {
-  font-size: 13px;
+/* ---- an application's page: tabs with several cards stack them; Tanım stays mounted (hidden) under another tab */
+.definition-view {
+  grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr));
+  align-items: start;
 }
 
-.infra-counts {
-  font-size: 13.5px;
+.tab-keep[hidden] {
+  display: none;
 }
 
-.infra-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-/* ---- an application's page: tabs with several cards stack them */
 .app-page .tabpanel {
   display: flex;
   flex-direction: column;
@@ -361,21 +144,19 @@
 }
 
 .summary-tab,
-.settings-tab {
+.definition-tab,
+.definition-edit,
+.storage-tab {
   display: flex;
   flex-direction: column;
   gap: 14px;
   min-width: 0;
 }
 
-.settings-tab[hidden] {
-  display: none;
-}
-
-.summary-notes {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.sub-title {
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 650;
 }
 
 .secret-note {
@@ -386,42 +167,583 @@
   font-size: 13px;
 }
 
-.mount-flag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 12.5px;
+/* Özet: each service with its pills and facts */
+.service-list {
+  display: flex;
+  flex-direction: column;
 }
 
-.settings-tab .card {
-  padding: 18px 20px;
-  border-radius: var(--r-lg);
+.service-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line-soft);
 }
 
-.settings-tab .draft-bar {
-  position: static;
-  box-shadow: none;
+.service-item:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
-.settings-tab .draft-bar:has(.btn-primary:disabled) {
-  border-color: var(--line);
-}
-
-/* ---- the first-login account */
-.cred-value {
+.service-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
+  gap: 8px 10px;
 }
 
-.cred-facts dt {
+.service-name {
+  font-size: 15.5px;
+  overflow-wrap: anywhere;
+}
+
+.facts.service-facts {
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+  font-size: 13.5px;
+}
+
+/* Tanım → Yanıtlar: a long question ("Klasör /var/lib/db · db") sits above its answer. */
+.facts.answer-facts {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px 0;
+}
+
+.facts.answer-facts dd + dt {
+  margin-top: 10px;
+}
+
+.unit-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.unit-chips li {
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--sunken);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.edit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 10px;
+}
+
+.remove-keep .mono {
+  display: block;
+}
+
+/* ---- an application's file: line numbers and marks beside a plain text area. The gutter is laid over the editor's
+   left edge (two digits wide, wider with .code-d3 … .code-d6), so only the text area sets the height. */
+.code-editor {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-muted);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 20px;
+}
+
+.code-editor:focus-within {
+  border-color: var(--focus);
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+.code-invalid {
+  border-color: var(--danger);
+}
+
+.code-gutter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  width: calc(2ch + 20px);
+  overflow: hidden;
+  padding: 10px 8px 60px 0;
+  border-right: 1px solid var(--line-soft);
+  background: var(--sunken);
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+
+.code-area {
+  position: relative;
+  min-width: 0;
+  margin-left: calc(2ch + 20px);
+}
+
+.code-d3 .code-gutter {
+  width: calc(3ch + 20px);
+}
+
+.code-d3 .code-area {
+  margin-left: calc(3ch + 20px);
+}
+
+.code-d4 .code-gutter {
+  width: calc(4ch + 20px);
+}
+
+.code-d4 .code-area {
+  margin-left: calc(4ch + 20px);
+}
+
+.code-d5 .code-gutter,
+.code-d6 .code-gutter {
+  width: calc(6ch + 20px);
+}
+
+.code-d5 .code-area,
+.code-d6 .code-area {
+  margin-left: calc(6ch + 20px);
+}
+
+.code-num {
+  flex: none;
+  height: 20px;
+}
+
+.code-num-refuse {
+  color: var(--danger-ink);
+  font-weight: 700;
+}
+
+.code-num-question {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.code-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  padding: 10px 0 60px;
+  white-space: pre;
+  pointer-events: none;
+}
+
+.code-line {
+  width: max-content;
+  min-width: 100%;
+  height: 20px;
+  padding: 0 12px;
+}
+
+.code-line-question {
+  background: var(--accent-soft);
+}
+
+.code-line-refuse {
+  background: var(--danger-soft);
+}
+
+.code-line-note {
+  background: var(--warn-tint);
+}
+
+.code-text {
+  color: transparent;
+}
+
+.code-mark {
+  display: inline-block;
+  margin-left: 12px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--accent-strong);
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 18px;
+  vertical-align: top;
+  margin-top: 1px;
+}
+
+.code-line-refuse .code-mark {
+  color: var(--danger-ink);
+}
+
+.code-line-note .code-mark {
+  color: var(--warn-ink);
+}
+
+.code-input {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  caret-color: var(--ink);
+  font: inherit;
+  line-height: 20px;
+  white-space: pre;
+  resize: vertical;
+  tab-size: 2;
+}
+
+.code-input:focus-visible {
+  outline: none;
+}
+
+.code-readonly .code-input {
+  resize: none;
+}
+
+/* ---- Uygulama ekle */
+.modal-sheet:has(.app-flow) {
+  width: 640px;
+}
+
+.app-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.flow-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flow-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px 3px 4px;
+  border-radius: 999px;
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.flow-step-num {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.flow-steps .flow-step-on {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 650;
+}
+
+.flow-step-on .flow-step-num {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.flow-step-done .flow-step-num {
+  background: var(--ok);
+  color: var(--on-accent);
+}
+
+.flow-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.flow-confirm-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.src-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.src-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.src-card:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.src-card:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The radio covers its card, so the whole card is its click target. */
+.src-card input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.src-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.src-text span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.flow-file-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.flow-paste {
+  min-height: 220px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 20px;
+  white-space: pre;
+  resize: vertical;
+}
+
+.flow-progress {
+  align-items: center;
+}
+
+.flow-boxes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.flow-boxes > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.flow-boxes dt {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.flow-boxes dd {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.flow-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.flow-problems {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.flow-problems li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  overflow-wrap: anywhere;
+}
+
+.flow-foot-text {
+  flex: 1 1 auto;
   align-self: center;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13.5px;
 }
 
-.masked {
-  letter-spacing: 2px;
+.flow-foot-text:empty {
+  display: none;
+}
+
+/* ---- the inspector's questions */
+.questions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.q-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.q-card:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.q-need {
+  border-color: var(--warn-line);
+  background: var(--warn-tint);
+}
+
+.q-invalid {
+  border-color: var(--danger-line);
+}
+
+.q-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+}
+
+.q-title {
+  font-size: 15px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.q-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.q-line {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.q-line:hover {
+  text-decoration: underline;
+}
+
+.q-why,
+.q-guess {
+  color: var(--ink-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.q-guess {
+  color: var(--muted);
+}
+
+.q-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+}
+
+.q-stay {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.q-kept {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.q-secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.q-secret .input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+/* ---- Tanım's difference */
+.diff {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
 /* ---- the log's tools and matches */

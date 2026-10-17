@@ -1,30 +1,24 @@
-<!-- Uygulamalar (DD-258, phase 2): App Store packages, Konsol's containers and the built-ins in one list
-     (GET /api/konsol/uygulamalar, DD-261). The filter (?suzgec=) and the search (?ara=) are in the address.
+<!-- Uygulamalar (rebuild phase 5, the prototype): every application in one list (GET /api/konsol/uygulamalar), each
+     from its record with its live state: its name and where its file came from, its state and warnings, how it
+     is reached (Erişim's rows: a Tailscale name, an internet name, each open raw port), its resources, the live
+     rate of its own bridge (read again every 10 s while the page is shown), its image's update state, "Aç" (its
+     first address, while it runs) and its page. The filter (?suzgec=) and the search (?ara=) are in the address.
      A table on wide screens, cards on narrow ones (a container query, so the sidebar's width counts).
-     "Uygulama ekle" (phase 4a) opens its flows over the list, each in the address: the catalogue
-     (?ekle=katalog, a package with &paket=), a container from an image (?ekle=imaj) and adopting one made
-     outside Konsol (?ekle=sahiplen, one with &ad=). Altyapı counts what Podman holds (GET
-     /api/konsol/konteynerler/liste) and leads to its images, volumes and networks in Gelişmiş. -->
+     "Uygulama ekle" opens the add flow (AddAppSheet), which has its own address: #/uygulamalar?ekle=1. -->
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { Icon } from "../components/icons";
 import AppIcon from "../components/AppIcon.vue";
-import AccessChips from "../components/AccessChips.vue";
-import Card from "../components/ui/Card.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import StatusPill from "../components/ui/StatusPill.vue";
-import CatalogFlow from "./uygulama/CatalogFlow.vue";
-import CreateFlow from "./uygulama/CreateFlow.vue";
-import AdoptFlow from "./uygulama/AdoptFlow.vue";
+import AddAppSheet from "./app/AddAppSheet.vue";
 import { apps, live, refreshApps } from "../live";
-import { KIND_TEXT, appState, hasUpdateState, needsAttention, openTarget, podmanRoute, resourceText, updateText } from "../apps";
+import { accessChips, appLine, appState, needsAttention, openAddress, rateText, resourceText, updateText, warningText } from "../apps";
 import { appRoute } from "../router";
-import { addRoute } from "../sections";
 import { usePageHead } from "../page";
-import { useQueryParam } from "../query";
-import { UNKNOWN, bytes, fold } from "../format";
-import { readInventory, type Inventory } from "../api/podman";
+import { useQueryFlag, useQueryParam } from "../query";
+import { UNKNOWN, fold } from "../format";
 import type { Uygulama } from "../api/sema";
 
 type Filter = "tumu" | "calisan" | "durmus" | "dikkat";
@@ -41,6 +35,7 @@ const TESTS: Record<Filter, (a: Uygulama) => boolean> = {
   dikkat: needsAttention,
 };
 
+const adding = useQueryFlag("ekle");
 const filter = useQueryParam<Filter>("suzgec", FILTERS.map((f) => f.id), "tumu");
 const searchParam = useQueryParam<string>("ara", null, "");
 // The field keeps exactly what was typed; the address follows it, and Back/Forward set it again.
@@ -53,30 +48,25 @@ watch(search, (value) => (searchParam.value = value));
 const list = computed(() => apps.value ?? []);
 const counts = computed(() => Object.fromEntries(FILTERS.map((f) => [f.id, list.value.filter(TESTS[f.id]).length])) as Record<Filter, number>);
 
-const description = (a: Uygulama) => {
-  const text = a.aciklama.replace(/\.\s*$/, "");
-  return a.tur === "paket" ? [text, KIND_TEXT.paket].filter(Boolean).join(" · ") : text || KIND_TEXT[a.tur];
-};
-
 const rows = computed(() => {
   const tokens = fold(search.value).split(/\s+/).filter(Boolean);
+  const access = live.erisim?.hizmetler ?? null;
   return list.value
     .filter(TESTS[filter.value])
     .filter((a) => {
       if (!tokens.length) return true;
-      const hay = fold(`${a.ad} ${a.aciklama} ${a.id}`);
+      const hay = fold(`${a.ad} ${a.servisler.map((s) => `${s.ad} ${s.imaj}`).join(" ")}`);
       return tokens.every((t) => hay.includes(t));
     })
-    .map((app) => {
-      const open = openTarget(app);
-      return {
-        app,
-        description: description(app),
-        state: appState(app),
-        resources: resourceText(app),
-        open: open && { ...open, label: open.external ? `${app.ad} uygulamasını yeni sekmede aç` : `${app.ad} sayfasını aç` },
-      };
-    });
+    .map((app) => ({
+      app,
+      line: appLine(app),
+      state: appState(app),
+      access: access ? accessChips(access, app.ad) : null,
+      resources: resourceText(app),
+      rate: rateText(app),
+      open: openAddress(app),
+    }));
 });
 
 const emptyText = computed(() => {
@@ -97,69 +87,17 @@ const summary = computed(() => {
 });
 usePageHead(() => ({ description: summary.value }));
 
-const catalogue = computed(() => live.uygulamalar?.katalog ?? []);
-const infra = computed(() => {
-  const a = live.uygulamalar?.altyapi;
-  if (!a) return null;
-  if (!a.calisiyor) return a.podman ? `Podman ${a.podman} · çalışmıyor` : "Podman çalışmıyor";
-  return [
-    a.podman ? `Podman ${a.podman}` : "Podman",
-    `${a.imaj} imaj`,
-    `${a.birim} birim`,
-    `${a.ag} ağ`,
-    a.kullanilmayan_imaj ? `${a.kullanilmayan_imaj} kullanılmayan imaj` : "kullanılmayan imaj yok",
-  ].join(" · ");
-});
 const errors = computed(() => live.uygulamalar?.hatalar ?? []);
-const podmanUp = computed(() => live.uygulamalar?.altyapi.calisiyor !== false);
 
-// Podman's own counts (health, updates, storage) and the containers made outside Konsol: read with the page
-// and again when a job ends (not with every minute's list: the inventory inspects every container).
-const inventory = ref<Inventory | null>(null);
-const inventoryError = ref("");
-let inventorySeq = 0;
-async function loadInventory(): Promise<void> {
-  const mine = ++inventorySeq;
-  try {
-    const value = await readInventory();
-    if (mine !== inventorySeq) return;
-    inventory.value = value;
-    inventoryError.value = "";
-  } catch (err) {
-    if (mine === inventorySeq) inventoryError.value = err instanceof Error ? err.message : String(err);
-  }
-}
-watch(
-  () => (live.islemler ?? []).filter((j) => j.durum !== "calisiyor").map((j) => `${j.tur}:${j.id}:${j.bitis}`).join("|"),
-  (now, before) => {
-    if (now !== before) void loadInventory();
-  },
-);
-const counts2 = computed(() => {
-  const inv = inventory.value;
-  if (!inv || !inv.runtime.ok) return null;
-  const cs = inv.containers;
-  return {
-    unhealthy: cs.filter((c) => c.health === "unhealthy").length,
-    updates: cs.filter((c) => c.update?.state === "var").length,
-    size: inv.storage.size,
-  };
-});
-const adoptable = computed(() => (inventory.value?.containers ?? []).filter((c) => c.source === "external" && c.actions.includes("adopt")).length);
-
-const addPanel = ref<InstanceType<typeof Card> | null>(null);
-function showAdd(): void {
-  const el = (addPanel.value?.$el as HTMLElement | undefined)?.querySelector<HTMLElement>("h2");
-  if (!el) return;
-  el.tabIndex = -1;
-  el.focus({ preventScroll: true });
-  el.scrollIntoView({ block: "start", behavior: "smooth" });
-}
-
+// The live rate: the list again every 10 s while this page is shown and the browser tab is visible.
+let timer: number | undefined;
 onMounted(() => {
   void refreshApps();
-  void loadInventory();
+  timer = window.setInterval(() => {
+    if (!document.hidden) void refreshApps();
+  }, 10000);
 });
+onBeforeUnmount(() => clearInterval(timer));
 </script>
 
 <template>
@@ -174,7 +112,7 @@ onMounted(() => {
       </div>
     </section>
 
-    <div class="toolbar">
+    <div class="toolbar apps-toolbar">
       <div class="filters" role="group" aria-label="Süzgeç">
         <button
           v-for="f in FILTERS"
@@ -193,7 +131,7 @@ onMounted(() => {
         <Icon name="search" :size="18" class="search-icon" />
         <input id="uyg-ara" v-model="search" class="input" type="search" placeholder="Uygulama ara" autocomplete="off" spellcheck="false" />
       </div>
-      <button type="button" class="btn btn-primary toolbar-add" @click="showAdd"><Icon name="plus" :size="18" />Uygulama ekle</button>
+      <button type="button" class="btn btn-primary apps-add" data-eylem="ekle" @click="adding = true"><Icon name="plus" :size="16" />Uygulama ekle</button>
     </div>
     <p class="sr-only" role="status">{{ apps ? `${rows.length} uygulama gösteriliyor` : "" }}</p>
 
@@ -205,47 +143,58 @@ onMounted(() => {
             <th scope="col">Durum</th>
             <th scope="col">Erişim</th>
             <th scope="col">Kaynak</th>
-            <th scope="col">Sürüm</th>
+            <th scope="col">Ağ</th>
+            <th scope="col">Güncelleme</th>
             <th scope="col"><span class="sr-only">Eylemler</span></th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="r in rows" :key="r.app.id" :data-uygulama="r.app.id">
+          <tr v-for="r in rows" :key="r.app.ad" :data-uygulama="r.app.ad">
             <th scope="row" class="col-app">
               <AppIcon :app="r.app" size="sm" />
               <span class="app-cell">
-                <RouterLink :to="appRoute(r.app.id)" class="app-name">{{ r.app.ad }}</RouterLink>
-                <span class="app-desc">{{ r.description }}</span>
+                <RouterLink :to="appRoute(r.app.ad)" class="app-name">{{ r.app.ad }}</RouterLink>
+                <span class="app-desc">{{ r.line }}</span>
               </span>
             </th>
             <td class="col-state" data-label="Durum">
-              <StatusPill :tone="r.state.tone" :dot="r.app.durum === 'calisiyor'">{{ r.state.text }}</StatusPill>
+              <span class="state-cell">
+                <StatusPill :tone="r.state.tone" :dot="r.app.durum === 'calisiyor'">{{ r.state.text }}</StatusPill>
+                <StatusPill v-if="r.app.uyari" tone="warning" data-testid="app-warnings">{{ warningText(r.app.uyari) }}</StatusPill>
+              </span>
             </td>
-            <td class="col-access" data-label="Erişim"><AccessChips :app="r.app" /></td>
+            <td class="col-access" data-label="Erişim">
+              <span v-if="r.access" class="state-cell" data-testid="app-access">
+                <StatusPill v-for="c in r.access" :key="c.text" :tone="c.tone" :dot="c.tone !== 'neutral'">{{ c.text }}</StatusPill>
+              </span>
+              <span v-else class="muted">{{ UNKNOWN }}</span>
+            </td>
             <td class="col-res" :class="{ 'cell-empty': r.resources === UNKNOWN }" data-label="Kaynak">{{ r.resources }}</td>
-            <td class="col-ver" :class="{ 'cell-empty': !hasUpdateState(r.app.guncelleme) }" data-label="Sürüm">
-              <StatusPill v-if="r.app.guncelleme === 'yeni'" tone="accent">{{ updateText("yeni") }}</StatusPill>
-              <span v-else :class="{ muted: r.app.guncelleme !== 'guncel' }" :data-surum="r.app.guncelleme">{{ updateText(r.app.guncelleme) }}</span>
+            <td class="col-net" :class="{ 'cell-empty': r.rate === UNKNOWN }" data-label="Ağ" data-testid="app-rate">{{ r.rate }}</td>
+            <td class="col-ver" :class="{ 'cell-empty': updateText(r.app.guncelleme) === UNKNOWN }" data-label="Güncelleme">
+              <StatusPill v-if="r.app.guncelleme === 'yeni'" tone="accent" :dot="true">{{ updateText("yeni") }}</StatusPill>
+              <span v-else :class="{ muted: r.app.guncelleme !== 'guncel', 'warn-text': r.app.guncelleme === 'denetlenemedi' }" :data-surum="r.app.guncelleme">{{ updateText(r.app.guncelleme) }}</span>
             </td>
             <td class="col-act">
               <span class="row-actions">
-                <a
-                  v-if="r.open"
-                  class="btn btn-secondary btn-sm"
-                  :href="r.open.href"
-                  :target="r.open.external ? '_blank' : undefined"
-                  :rel="r.open.external ? 'noopener noreferrer' : undefined"
-                  :aria-label="r.open.label"
-                  data-eylem="ac"
-                >
-                  Aç<Icon v-if="r.open.external" name="open" :size="15" />
+                <a v-if="r.open" :href="r.open" class="btn btn-secondary btn-sm" target="_blank" rel="noopener noreferrer" :aria-label="`${r.app.ad} uygulamasını aç`" data-eylem="ac">
+                  Aç<Icon name="open" :size="14" />
                 </a>
-                <RouterLink :to="appRoute(r.app.id)" class="icon-btn" :aria-label="`${r.app.ad} ayrıntıları`"><Icon name="chevron" :size="18" /></RouterLink>
+                <RouterLink :to="appRoute(r.app.ad)" class="icon-btn" :aria-label="`${r.app.ad} ayrıntıları`"><Icon name="chevron" :size="18" /></RouterLink>
               </span>
             </td>
           </tr>
         </tbody>
       </table>
+      <EmptyState
+        v-else-if="apps && !apps.length"
+        title="Henüz uygulama yok."
+        text="Bir Compose ya da Kubernetes dosyasından, bir adresten, bir imaj adından ya da var olan bir konteynerden eklenir."
+        icon="apps"
+        data-testid="apps-empty"
+      >
+        <button type="button" class="btn btn-primary" data-eylem="ekle" @click="adding = true"><Icon name="plus" :size="16" />Uygulama ekle</button>
+      </EmptyState>
       <EmptyState v-else-if="apps" :title="emptyText" :icon="search.trim() ? 'search' : 'apps'">
         <button v-if="search.trim() || filter !== 'tumu'" type="button" class="btn btn-secondary" @click="(search = ''), (filter = 'tumu')">
           Tüm uygulamaları göster
@@ -254,53 +203,6 @@ onMounted(() => {
       <EmptyState v-else title="Uygulamalar henüz okunamadı" text="Sunucu yanıt verince liste burada görünür." icon="unknown" />
     </section>
 
-    <div class="apps-more">
-      <Card ref="addPanel" title="Uygulama ekle" data-testid="add-app">
-        <div class="add-option" data-secenek="katalog">
-          <strong>Katalogdan</strong>
-          <span v-if="catalogue.length">{{ catalogue.length }} uygulama kurulabilir.</span>
-          <span v-else>Katalogdaki uygulamaların hepsi kurulu.</span>
-          <ul v-if="catalogue.length" class="catalog">
-            <li v-for="k in catalogue" :key="k.id">
-              <RouterLink :to="addRoute('katalog', { paket: k.id })">{{ k.ad }}</RouterLink><span v-if="k.aciklama"> · {{ k.aciklama }}</span>
-            </li>
-          </ul>
-          <RouterLink class="btn btn-secondary btn-sm" :to="addRoute('katalog')" data-testid="open-catalog">Kataloğu aç</RouterLink>
-        </div>
-        <div class="add-option" data-secenek="imaj">
-          <strong>Bir imajdan</strong>
-          <span>Bir kayıt defterindeki imajı Konsol tanımıyla, sabitlenmiş özetle çalıştırır.</span>
-          <RouterLink v-if="podmanUp" class="btn btn-secondary btn-sm" :to="addRoute('imaj')" data-testid="open-create">Konteyner oluştur</RouterLink>
-          <span v-else class="warn-text">Podman çalışmıyor; önce Sistem'deki onarımı deneyin.</span>
-        </div>
-        <div class="add-option" data-secenek="benimse">
-          <strong>Var olanı yönetime al</strong>
-          <span>{{ inventory ? (adoptable ? `Podman'da Konsol dışında kurulmuş ${adoptable} konteyner yönetime alınabilir.` : "Konsol dışında kurulmuş, yönetime alınabilecek konteyner yok.") : "Podman'da Konsol dışında kurulmuş bir konteyneri Konsol'un yönetimine alır." }}</span>
-          <RouterLink v-if="podmanUp" class="btn btn-secondary btn-sm" :to="addRoute('sahiplen')" data-testid="open-adopt">Konteyner seç</RouterLink>
-        </div>
-      </Card>
-      <Card title="Altyapı" data-testid="infra">
-        <p class="card-text" data-testid="infra-line">{{ infra ?? UNKNOWN }}</p>
-        <dl v-if="counts2" class="facts infra-counts" data-testid="infra-counts">
-          <dt>Sağlıksız</dt>
-          <dd data-testid="infra-unhealthy" :class="{ 'warn-text': counts2.unhealthy }">{{ counts2.unhealthy }}</dd>
-          <dt>Güncelleme var</dt>
-          <dd data-testid="infra-updates">{{ counts2.updates }}</dd>
-          <dt>Depolama</dt>
-          <dd data-testid="infra-size">{{ bytes(counts2.size) }}</dd>
-        </dl>
-        <p v-else-if="inventoryError" class="meter-note warn-text">{{ inventoryError }}</p>
-        <p class="meter-note">İmajlar, birimler ve ağlar günlük kullanımda gerekmez; Gelişmiş'te durur.</p>
-        <div class="infra-links">
-          <RouterLink class="btn btn-secondary btn-sm" :to="podmanRoute('imajlar')">İmajlar</RouterLink>
-          <RouterLink class="btn btn-secondary btn-sm" :to="podmanRoute('birimler')">Birimler</RouterLink>
-          <RouterLink class="btn btn-secondary btn-sm" :to="podmanRoute('aglar')">Ağlar</RouterLink>
-        </div>
-      </Card>
-    </div>
-
-    <CatalogFlow />
-    <CreateFlow />
-    <AdoptFlow />
+    <AddAppSheet :open="adding" @close="adding = false" />
   </div>
 </template>

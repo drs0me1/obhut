@@ -1,0 +1,46 @@
+{
+  "environment": {
+    "web": "LOG_LEVEL=\nPRICE_NOTE=$5 per month\n",
+    "db": "POSTGRES_USER=notlar\nPOSTGRES_DB=notlar\n"
+  },
+  "folders": [
+    "/var/lib/master-stack/uygulamalar/notlar/db-data",
+    "/var/lib/master-stack/uygulamalar/notlar/uploads"
+  ],
+  "binds": {
+    "web": [
+      "/srv/media/notlar"
+    ],
+    "db": []
+  },
+  "start": [
+    "konsol-notlar_db.service",
+    "konsol-notlar_web.service"
+  ],
+  "stop": [
+    "konsol-notlar_web.service",
+    "konsol-notlar_db.service"
+  ],
+  "containers": {
+    "web": "notlar_web",
+    "db": "notlar_db"
+  },
+  "network": {
+    "name": "ksl-notlar",
+    "interface": "ksl9928e97df3",
+    "unit": "konsol-notlar-network.service"
+  },
+  "pod": null,
+  "publications": [
+    {
+      "service": "web",
+      "port": 3000,
+      "protocol": "tcp",
+      "host_ip": "127.0.0.1",
+      "host_port": 62100
+    }
+  ],
+  "needs_podman5": [
+    "web, db servisinin sağlıklı olmasını bekliyor (Notify=healthy)"
+  ]
+}

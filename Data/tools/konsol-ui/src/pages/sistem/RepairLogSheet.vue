@@ -1,6 +1,6 @@
-<!-- The repair log (DD-241): master-onar's lines (Konsol, SSH, the hourly firewall check's findings) and the
+<!-- Onarım kaydı (DD-241; A7): master-onar's lines (Konsol, SSH, the hourly firewall check's findings) and the
      address refresh's (boot, nightly 03–04, Caddy failures) for the last 72 hours or the last week, as the
-     server's plain text (GET /api/konsol/onarim/gunluk?sure=). Open while ?gunluk= is in the address; the
+     server's plain text (GET /api/konsol/onarim/gunluk?sure=). Open while ?kayit= is in the address; the
      text scrolls inside the sheet, starts at its newest line and can be copied whole. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
@@ -45,17 +45,17 @@ const title = computed(() => SPANS.find((s) => s.id === props.span)?.title ?? ""
 </script>
 
 <template>
-  <Modal :open="span !== ''" variant="sheet" title="Denetim ve onarım günlüğü" :description="title" @close="emit('close')">
+  <Modal :open="span !== ''" variant="sheet" title="Onarım kaydı" :description="title" @close="emit('close')">
     <div class="log-toolbar">
       <div class="filters" role="group" aria-label="Süre">
         <button v-for="s in SPANS" :key="s.id" type="button" class="filter-chip" :aria-pressed="span === s.id" :data-sure="s.id" @click="emit('span', s.id)">
           {{ s.label }}
         </button>
       </div>
-      <CopyButton v-if="text" :text="text" label="Günlük" />
+      <CopyButton v-if="text" :text="text" label="Onarım kaydı" />
     </div>
     <p v-if="error" class="form-error" role="alert" data-testid="repair-log-error">{{ error }}</p>
     <p v-else-if="text === null" class="meter-note" role="status">Okunuyor…</p>
-    <pre v-else ref="box" class="log repair-log" tabindex="0" aria-label="Günlük metni" data-testid="repair-log-text">{{ text || "Bu sürede kayıt yok." }}</pre>
+    <pre v-else ref="box" class="log repair-log" tabindex="0" aria-label="Onarım kaydının metni" data-testid="repair-log-text">{{ text || "Bu sürede kayıt yok." }}</pre>
   </Modal>
 </template>

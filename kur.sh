@@ -14,12 +14,13 @@ set -Eeuo pipefail
 main() {
     local repo="drs0me1/obhut"
     local ref="${KUR_REF:-main}"
-    # KUR_URL yalnız testler içindir (yerel arşiv); kurulumda boş kalır.
+    # KUR_URL, GitHub'a henüz gönderilmemiş bir ağacı arşiv olarak kurar (https:// ya da sunucudaki
+    # file:// yolu; arşivin içinde <klasör>/Data/install.sh). Boşsa GitHub'daki KUR_REF indirilir.
     local url="${KUR_URL:-https://codeload.github.com/$repo/tar.gz/$ref}"
-    local root="${KUR_ROOT:-/root/debian-server-installer}"
+    local root="/root/debian-server-installer"
     local update="${KUR_GUNCELLE:-}"
     # Kurulumun çalışma dosyaları; dokümanlar ve testler sunucuya gitmez.
-    local items="install.sh common.sh config templates scripts systemd panel files-panel console magaza"
+    local items="install.sh common.sh config templates scripts systemd panel files-panel console"
 
     printf '\n=== Obhut — kurulum ===\n'
     [[ "$(id -u)" -eq 0 ]] || {

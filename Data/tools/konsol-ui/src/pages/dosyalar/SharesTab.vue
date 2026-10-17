@@ -1,9 +1,8 @@
 <!-- Dosyalar → Paylaşımlar (phase 4b, DD-267; DD-158, DD-179, DD-190, DD-192): every folder share with its
      two independent connections (Tailscale, İnternet), each switched, given a permission and a duration
      at once; turning read/write on and the internet on over plain HTTP ask first (the server needs the
-     acknowledgement), removal takes the typed word. The boundary notice (?sinir=1 opens its detail), the
-     service-not-running warning, n/max, the transports and where they are published (Erişim keeps the
-     publication and the HTTPS name). A new share opens with ?yeni=<folder> (a folder list links here),
+     acknowledgement), removal takes the typed word. The boundary notice (?sinir=1 opens its detail), n/max,
+     the transports and where they are published (Erişim keeps the publication and the HTTPS name). A new share opens with ?yeni=<folder> (a folder list links here),
      a share's sheet with ?paylasim=<id>. One change at a time; every reply is the whole view. -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
@@ -15,7 +14,7 @@ import Modal from "../../components/ui/Modal.vue";
 import ShareCard from "./paylasim/ShareCard.vue";
 import ShareSheet from "./paylasim/ShareSheet.vue";
 import { readShares, removeShare, saveShare, type ConnectionPatch, type ShareDays, type ShareSave, type ShareScope } from "../../api/paylasim";
-import { live, refreshAccess, refreshApps } from "../../live";
+import { live, refreshAccess } from "../../live";
 import { updateQuery, useQueryFlag } from "../../query";
 import { accessRoute } from "../../sections";
 import { fullPath, scopeName, transportText, wanMode } from "./paylasim/share";
@@ -77,9 +76,8 @@ async function write(run: () => Promise<Paylasimlar>, done: string, where: strin
     view.value = await run();
     loadError.value = "";
     note.value = done;
-    // The WebDAV row in Erişim and the built-in Paylaşımlar follow the shares.
+    // The WebDAV row in Erişim follows the shares.
     void refreshAccess();
-    void refreshApps();
     return true;
   } catch (err) {
     failure.value = { where, text: message(err) };
@@ -268,13 +266,6 @@ const counts = computed(() => (view.value ? `${items.value.length}/${view.value.
         </button>
       </div>
     </section>
-
-    <p v-if="view && !view.enabled" class="notice notice-danger" role="alert" data-testid="share-missing">
-      <Icon name="xcircle" class="notice-icon" /><span>Yerleşik WebDAV kurulumu tamamlanmamış; kurulumu yeniden çalıştırın.</span>
-    </p>
-    <p v-else-if="view && !view.running" class="notice notice-warning" role="alert" data-testid="share-stopped">
-      <Icon name="alert" class="notice-icon" /><span>WebDAV hizmeti çalışmıyor. Hesaplar korunuyor; sunucuda master-paylasim hizmetini kontrol edin.</span>
-    </p>
 
     <section class="card share-head" aria-labelledby="paylasim-baslik" data-testid="share-head">
       <div class="card-head">

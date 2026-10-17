@@ -1,7 +1,8 @@
-<!-- Erişim (DD-258, phase 3): who reaches what, from where. Tabs in the address (?sekme=): Genel (the
-     reachability matrix, summaries and warnings), Adresler (publications, local names, the local domain),
-     Tailscale, WireGuard and Güvenlik duvarı. "Yayınla" opens the Yayınla flow over the page (?yayinla=sec);
-     the flow itself is part of the shell (App.vue), so an application's page opens it too. -->
+<!-- Erişim (DD-258; rebuild phase 5, A7): who reaches what, from where. Tabs in the address (?sekme=): Genel (the
+     summaries and the reachability matrix), Adresler (every access row with its sheet, ?satir=<row id>), Yerel adlar
+     (the local names, the upstream DNS and the local domain), Tailscale, WireGuard and Güvenlik duvarı (the
+     operator's port rules beside the locked rows). "Adres aç" beside the tabs gives an application's raw TCP port a
+     Tailscale name: it opens the first such port's sheet on Adresler, where another port can be chosen. -->
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
@@ -9,30 +10,33 @@ import { Icon } from "../components/icons";
 import Tabs from "../components/ui/Tabs.vue";
 import OverviewTab from "./erisim/OverviewTab.vue";
 import AddressesTab from "./erisim/AddressesTab.vue";
+import NamesTab from "./erisim/NamesTab.vue";
 import TailscaleTab from "./erisim/TailscaleTab.vue";
 import WireGuardTab from "./erisim/WireGuardTab.vue";
 import FirewallTab from "./erisim/FirewallTab.vue";
-import { ACCESS_TABS } from "../sections";
+import { ACCESS_TABS, accessRoute } from "../sections";
+import { accessCounts, addressCandidates } from "../access";
 import { live, refreshAccess } from "../live";
 import { usePageHead } from "../page";
-import { updateQuery } from "../query";
 
-const router = useRouter();
 const TABS = ACCESS_TABS.map((t) => ({ id: t.id, label: t.label }));
+const router = useRouter();
 
 const summary = computed(() => {
   const e = live.erisim;
   if (!e) return null;
-  const internet = e.hizmetler.filter((h) => h.internet.durum === "acik" || h.internet.durum === "kismen").length;
-  const tailnet = e.hizmetler.filter((h) => h.tailscale.durum === "acik").length;
-  const parts = [`${tailnet} hizmet Tailscale'de`, internet ? `${internet} hizmet internette` : "internete açık hizmet yok"];
+  const c = accessCounts(e.hizmetler);
+  const parts = [`${c.tailscale} adres Tailscale'de`, `${c.internet} internet adı`];
   if (e.uyarilar.length) parts.push(`${e.uyarilar.length} uyarı`);
   return parts.join(" · ");
 });
 usePageHead(() => ({ description: summary.value }));
 
-function publish(): void {
-  updateQuery(router, { yayinla: "sec" });
+const candidates = computed(() => addressCandidates(live.erisim?.hizmetler ?? []));
+const locked = computed(() => Boolean(live.bekleyen));
+function openAddress(): void {
+  const first = candidates.value[0];
+  if (first) void router.push(accessRoute("adresler", first.id, "adres-ac"));
 }
 
 onMounted(() => void refreshAccess());
@@ -42,11 +46,21 @@ onMounted(() => void refreshAccess());
   <div class="page-body access-page">
     <Tabs :tabs="TABS" label="Erişim bölümleri" param="sekme">
       <template #end>
-        <button type="button" class="btn btn-primary btn-sm" data-testid="publish" @click="publish"><Icon name="globe" :size="16" />Yayınla</button>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm"
+          :disabled="!candidates.length || locked"
+          :title="candidates.length ? undefined : 'Adresi olmayan bir TCP portu yok'"
+          data-testid="adres-ac"
+          @click="openAddress"
+        >
+          <Icon name="plus" :size="16" />Adres aç
+        </button>
       </template>
       <template #default="{ active }">
         <OverviewTab v-if="active === 'genel'" />
         <AddressesTab v-else-if="active === 'adresler'" />
+        <NamesTab v-else-if="active === 'adlar'" />
         <TailscaleTab v-else-if="active === 'tailscale'" />
         <WireGuardTab v-else-if="active === 'wireguard'" />
         <FirewallTab v-else-if="active === 'guvenlik-duvari'" />

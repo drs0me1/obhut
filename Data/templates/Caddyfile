@@ -30,8 +30,7 @@
 		}
 	}
 }
-# Konsol (DD-140, DD-148, DD-200): /api/konsol/* ve /api/uygulama/* root arka uca (sistem,
-# modüller ve kurulu paketlerin API'leri; DD-180: Unix soketi), öbür /api/* dosya arka ucuna
+# Konsol (DD-140): /api/konsol/* root arka uca (DD-180: Unix soketi), öbür /api/* dosya arka ucuna
 # gider. Sayfaları Caddy doğrudan sunar: Konsol arayüzü kökte (DD-267), yanında giriş sayfası ve
 # düzenleyici. CSRF ve Host denetimi arka uçlarda (DD-147), başlıklar burada.
 # DD-195: yollar tek parçada; Tailscale sitesi ve isteğe bağlı internet (HTTPS) sitesi aynı
@@ -42,9 +41,6 @@
 	# akışı sıkıştırılmaz; sıkıştırıcı küçük olayları biriktirip geciktirmesin.
 	@sikistir not path /api/konsol/olaylar
 	encode @sikistir zstd gzip
-	# DD-267: arayüz /yeni/'den köke taşındı; eski bağlantı aynı görünüme düşer (#parçayı tarayıcı korur).
-	redir /yeni / 308
-	redir /yeni/* / 308
 	# DD-194/DD-205: giriş sayfasının dosyaları ve giriş API'si açıktır. Geri kalan her istek
 	# (giriş sayfası dahil sayfalar, Dosyalar ve tüm API) önce root arka uca sorar: Tailscale
 	# sitesinde yanıt hep "geç"tir ve /giris.html Konsol'a yönlenir (cihazı Tailscale doğrular);
@@ -63,7 +59,7 @@
 			max_conns_per_host 16
 		}
 	}
-	@kok path /api/uygulama/* /api/konsol/*
+	@kok path /api/konsol/*
 	handle @kok {
 		reverse_proxy unix/__PANEL_SOCKET__ {
 			header_up Host panel.__LOCAL_DOMAIN__
@@ -113,7 +109,7 @@
 http://panel.__LOCAL_DOMAIN__ {
 	import konsol tailscale
 }
-# Modüllerin siteleri (DD-149): master-modul buraya <id>.caddy koyar ve kaldırır (ör. Paylaşım:
-# paylas. adı ve Infuse için Tailscale IP:port). Eşleşmeyen kalıp geçerlidir; nokta ile başlayan
-# geçici dosyalar okunmaz. Genel seçenek bloğundan sonra gelmeli.
+# Ek siteler (DD-149): kurulum Paylaşım'ın sitesini (paylasim.caddy: paylas. adı ve Infuse için
+# Tailscale IP:port), Konsol internet adreslerini (*-wan.caddy) buraya koyar. Eşleşmeyen kalıp geçerlidir;
+# nokta ile başlayan geçici dosyalar okunmaz. Genel seçenek bloğundan sonra gelmeli.
 import __CADDY_MODULES_DIR__/*.caddy

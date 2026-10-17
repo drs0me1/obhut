@@ -1,0 +1,41 @@
+{
+  "environment": {
+    "kasa": "",
+    "yedek": ""
+  },
+  "folders": [
+    "/var/lib/master-stack/uygulamalar/kasa/kasa-data"
+  ],
+  "binds": {
+    "kasa": [],
+    "yedek": []
+  },
+  "start": [
+    "konsol-kasa_kasa.service",
+    "konsol-kasa_yedek.service"
+  ],
+  "stop": [
+    "konsol-kasa_yedek.service",
+    "konsol-kasa_kasa.service"
+  ],
+  "containers": {
+    "kasa": "kasa_kasa",
+    "yedek": "kasa_yedek"
+  },
+  "network": {
+    "name": "ksl-kasa",
+    "interface": "ksl0d2e5318ec",
+    "unit": "konsol-kasa-network.service"
+  },
+  "pod": null,
+  "publications": [
+    {
+      "service": "kasa",
+      "port": 80,
+      "protocol": "tcp",
+      "host_ip": "127.0.0.1",
+      "host_port": 62100
+    }
+  ],
+  "needs_podman5": []
+}

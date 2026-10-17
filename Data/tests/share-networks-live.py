@@ -4,7 +4,7 @@
 Run on the operator Mac: python3 Data/tests/share-networks-live.py --host nrm
 Uses SSH only for fixture/API management; DAV requests use the actual WAN/tail IP.
 Secrets remain in process memory and SSH stdin, never argv/output.
-Legacy HTTP WAN mode only (no HTTPS setting); other hosts exit 3 before any change.
+Plain HTTP WAN mode only (no HTTPS setting); other hosts exit 3 before any change.
 """
 import argparse
 import base64
@@ -36,7 +36,7 @@ d=json.load(sys.stdin)
 """
 mode=remote(BOOT+"print(json.dumps(m.wan_info()['mode']))",{})
 if mode!="http":
-    print("SKIP: legacy HTTP WAN mode required; this host's WAN mode is %r. "
+    print("SKIP: plain HTTP WAN mode required; this host's WAN mode is %r. "
           "Use share-connections-live.py or https-live.py instead." % mode, file=sys.stderr)
     sys.exit(3)
 root="wan-test-"+secrets.token_hex(5)
@@ -125,14 +125,14 @@ try:
     assert request('tail','both',leaf='new.txt')[1]==b'test'
     request('wan','both','DELETE','new.txt',expected=204)
     print('PASS: Tailscale-only / WAN-only / both, PROPFIND, ranges, RO/RW and forged-header isolation',flush=True)
-    for path in ('/','/api/state','/api/konsol/paylasim','/api/v2/app/preferences'):
-        for host in (metadata['wan'],'panel.ayc','torrent.ayc','paylas.ayc'):
+    for path in ('/','/api/state','/api/konsol/paylasim'):
+        for host in (metadata['wan'],'panel.ayc','paylas.ayc'):
             c=http.client.HTTPConnection(metadata['wan'],metadata['port'],timeout=5)
             try:
                 c.request('GET',path,headers={'Host':host}); r=c.getresponse(); r.read()
                 assert r.status in (404,421),(path,host,r.status)
             finally:c.close()
-    print('PASS: public port cannot route console, Files API or qBittorrent even with forged Host',flush=True)
+    print('PASS: public port cannot route console or Files API even with forged Host',flush=True)
     idle=[]; rejected=0
     try:
         for _ in range(20):

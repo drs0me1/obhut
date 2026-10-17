@@ -1,72 +1,116 @@
-// How Erişim (DD-258, phase 3) names things everywhere: where a warning's "Düzelt" leads, what kind of
-// thing a publication candidate is, a publication's state in words, and the name rules the Yayınla flow
-// checks before it asks the server (the server checks them again).
+// How Erişim (DD-258; access rows since rebuild phase 4) names things everywhere: where a warning's fix leads,
+// which rows are access rows and how many of them are open where (Erişim's head, Genel Bakış' Erişim özeti),
+// what is open to the internet, an access row in words, and the name rules the row sheet checks before it asks
+// the server (the server checks them again).
 import { accessRoute } from "./sections";
-import type { Uyari, YayinAdayi } from "./api/sema";
+import type { ErisimSatiri, Hizmet, Uyari } from "./api/sema";
 
-/** An Erişim row's id as an application's id: the rows of packages and containers are the same ids;
-    WebDAV's row is the built-in "Paylaşımlar". */
-export function appIdOfRow(id: string): string {
-  return id === "paylasim" ? "yerlesik:paylasim" : id;
-}
-
-/** A Yayınla candidate's id for an application (the reverse of appIdOfRow). */
-export function candidateOfApp(id: string): string {
-  return id === "yerlesik:paylasim" ? "paylasim" : id;
-}
-
-/** Where a warning is fixed: its publication in the Yayınla flow (Adresler), the application's page or
-    the Tailscale tab; without a target, Erişim itself. */
+/** Where a warning is fixed: its access row's sheet in Adresler (the target is the row id), the application's
+    page (the target is the application's name) or the Tailscale tab; without a target, Erişim itself. */
 export function fixRoute(fix: Uyari["duzelt"]): string {
   if (!fix) return accessRoute();
-  if (fix.bolum === "uygulama" && fix.hedef) return "/uygulamalar/" + appIdOfRow(fix.hedef);
+  if (fix.bolum === "uygulama" && fix.hedef) return "/uygulamalar/" + encodeURIComponent(fix.hedef);
   if (fix.bolum === "tailscale") return accessRoute("tailscale");
-  return accessRoute("adresler", fix.hedef || "sec");
+  return accessRoute("adresler", fix.hedef);
 }
 
-export const CANDIDATE_KIND: Record<YayinAdayi["tur"], string> = {
-  konsol: "Konsol",
-  paket: "App Store paketi",
-  konteyner: "Konteyner",
-  elle: "Elle adres",
-  paylasim: "WebDAV",
+/** A raw port's scope in words. */
+export const SCOPE_TEXT: Record<Extract<ErisimSatiri, { tur: "ham" }>["kapsam"], string> = {
+  kapali: "Kapalı",
+  tailscale: "Tailscale",
+  internet: "İnternet",
 };
 
-/** A publication row's state (master_publications.status) in words. */
-export function publicationState(c: Pick<YayinAdayi, "durum" | "servis" | "internet">): string {
-  if (!c.servis) return "Yayımlanmadı";
-  switch (c.durum) {
-    case "ready":
-      return "Sertifika hazır";
-    case "pending":
-      return "Sertifika hazırlanıyor…";
-    case "error":
-      return "Yayın doğrulanamadı";
-    case "http":
-      return "Eski HTTP erişimi";
-    case "disabled":
-      return "İnternet kapalı";
-    default:
-      return c.internet ? "Durum bilinmiyor" : "İnternet kapalı";
-  }
+/** A raw port's scope as Erişim offers the choice (its segmented control and the row's sheet). */
+export const SCOPE_CHOICES: readonly { id: Extract<ErisimSatiri, { tur: "ham" }>["kapsam"]; text: string }[] = [
+  { id: "kapali", text: "Kapalı" },
+  { id: "tailscale", text: "Yalnız Tailscale" },
+  { id: "internet", text: "İnternet" },
+];
+
+/** A row whose home is Erişim → Adresler: Konsol, Paylaşımlar and each application port with its stored row. */
+export function isAccessRow(h: Hizmet): boolean {
+  if (h.tur === "konsol" || h.tur === "paylasim") return true;
+  return h.tur === "uygulama" && h.satir !== null && Boolean(h.uygulama) && portKey(h.anahtar ?? "") !== null;
 }
 
+/** How many Tailscale names and internet names the access rows have, and how many raw ports are open where. */
+export function accessCounts(rows: readonly Hizmet[]): { tailscale: number; internet: number; rawInternet: number; rawTailscale: number } {
+  const out = { tailscale: 0, internet: 0, rawInternet: 0, rawTailscale: 0 };
+  for (const h of rows) {
+    if (!isAccessRow(h)) continue;
+    if (h.tur === "konsol" || h.tur === "paylasim") {
+      if (h.tur === "konsol" || h.web?.tail) out.tailscale += 1;
+      // An internet name is one with a name: WebDAV's switch can be on with no name configured.
+      if (h.web?.enabled && h.web.domain) out.internet += 1;
+    } else if (h.satir?.tur === "adres") {
+      out.tailscale += 1;
+      if (h.satir.internet) out.internet += 1;
+    } else if (h.satir?.kapsam === "internet") out.rawInternet += 1;
+    else if (h.satir?.kapsam === "tailscale") out.rawTailscale += 1;
+  }
+  return out;
+}
+
+/** The ports "Adres aç" can give a Tailscale name: an application's raw TCP ports. */
+export function addressCandidates(rows: readonly Hizmet[]): Hizmet[] {
+  return rows.filter((h) => isAccessRow(h) && h.satir?.tur === "ham" && portKey(h.anahtar ?? "")?.protokol === "tcp");
+}
+
+/** Whose row it is: Konsol, Paylaşımlar or the application. */
+export const rowOwner = (h: Hizmet): string => (h.tur === "uygulama" ? h.uygulama ?? h.ad : h.ad);
+
+/** An access row by its name (the palette, the pending banner): an address by its Tailscale name (<ad>.<alan>;
+    Konsol's panel, Paylaşımlar' paylas), a raw port by its application and port. */
+export function rowName(h: Hizmet, domain: string): string {
+  const key = portKey(h.anahtar ?? "");
+  if (h.satir?.tur === "ham" && key) return `${rowOwner(h)} · ${key.port}/${key.protokol.toUpperCase()}`;
+  const label = h.tur === "konsol" ? "panel" : h.tur === "paylasim" ? "paylas" : h.satir?.tur === "adres" ? h.satir.ad : "";
+  return label && domain ? `${label}.${domain}` : rowOwner(h);
+}
+
+/** Everything open to the internet that has a row in Adresler, in words, with whether it deserves a warning (a raw
+    port, an unencrypted connection, a name whose certificate is not ready). */
+export function internetOpenings(rows: readonly Hizmet[]): { id: string; text: string; warn: boolean }[] {
+  const out: { id: string; text: string; warn: boolean }[] = [];
+  for (const h of rows) {
+    const c = h.internet;
+    if (!isAccessRow(h) || !["acik", "kismen", "hata"].includes(c.durum)) continue;
+    const key = portKey(h.anahtar ?? "");
+    let detail = c.adresler[0] ?? "internet";
+    if (h.satir?.tur === "ham" && key) detail = `${h.satir.port}/${key.protokol.toUpperCase()} ham`;
+    else if (h.satir?.tur === "adres" && h.satir.internet) detail = h.satir.internet;
+    else if (h.web?.enabled && h.web.domain) detail = h.web.domain;
+    out.push({ id: h.id, text: `${rowOwner(h)} · ${detail}`, warn: c.durum === "hata" || Boolean(c.uyari) || h.satir?.tur === "ham" });
+  }
+  return out;
+}
+
+/** An application port's row key ("<service>:<port>/<proto>") as its parts; null when it is not one. */
+export function portKey(key: string): { servis: string; port: number; protokol: "tcp" | "udp" } | null {
+  const match = /^(.+):([1-9][0-9]{0,4})\/(tcp|udp)$/.exec(key);
+  if (!match) return null;
+  return { servis: match[1] as string, port: Number(match[2]), protokol: match[3] as "tcp" | "udp" };
+}
+
+/** A Tailscale name's label (<ad>.<alan>): the inspector's TAILSCALE_NAME_RE. */
+export const TAILSCALE_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+/** Labels Obhut keeps for itself (Konsol's panel, WebDAV's paylas). */
+export const RESERVED_NAMES: readonly string[] = ["panel", "paylas"];
 /** A full public host name: no URL, IP, port or path. */
 export const HOST_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]+)$/;
-/** A tailnet name's first label (<ad>.<alan>). */
-export const LOCAL_RE = /^[a-z][a-z0-9-]{0,30}$/;
 /** A local domain (Konsol answers at panel.<alan>). */
 export const DOMAIN_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-/** The server's own choice of a tailnet name for a container (master_yayin.default_local), shown as the
-    starting value; the request leaves `yerel` out while it is unchanged, so the server's rule decides. */
-export function defaultLocal(name: string): string {
-  let text = name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
-  if (!text || !/^[a-z]/.test(text)) text = "k-" + text;
-  return text.slice(0, 31).replace(/-+$/, "") || "konteyner";
+/** Why a Tailscale name's label cannot be used, or "" when it can (taken: the labels other rows hold). */
+export function nameProblem(label: string, taken: readonly string[] = []): string {
+  if (!label) return "Tailscale adını yazın (ör. notlar).";
+  if (!TAILSCALE_NAME_RE.test(label)) return "Küçük harf, rakam ve tire; tireyle başlamaz ya da bitmez (en çok 63).";
+  if (RESERVED_NAMES.includes(label)) return `${label} adı Obhut'undur; başka bir ad seçin.`;
+  return taken.includes(label) ? `${label} adı başka bir satırda kullanılıyor.` : "";
 }
 
-/** A public name as the operator typed it: trimmed, lower case, without a final dot. */
+/** A name as the operator typed it: trimmed, lower case, without a final dot. */
 export const cleanHost = (text: string): string => text.trim().toLowerCase().replace(/\.$/, "");
 
 /** Why a public name cannot be used, or "" when it can. */
@@ -74,4 +118,10 @@ export function hostProblem(text: string): string {
   const host = cleanHost(text);
   if (!host) return "İnternet adını yazın (ör. uygulama.example.org).";
   return HOST_RE.test(host) ? "" : "Tam alan adını girin; URL, IP, port veya yol eklemeyin.";
+}
+
+/** Why a port number cannot be used, or "" when it can. */
+export function portProblem(text: string): string {
+  const value = /^\d+$/.test(text.trim()) ? Number(text.trim()) : NaN;
+  return value >= 1 && value <= 65535 ? "" : "1 ile 65535 arasında bir port yazın.";
 }

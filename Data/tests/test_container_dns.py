@@ -103,7 +103,7 @@ ICMP6_TYPES=()
                 self.assertNotEqual(result.returncode, 0, "health check accepted altered DNS permissions")
 
     def test_invalid_or_missing_prefix_fails_before_any_rule_is_written(self):
-        # DD-269: a state file without the prefix is no longer given the default; it fails closed.
+        # A state file without the prefix is not given a default; it fails closed.
         for prefix in (None, "+", "ksl+", "x", "toolong", "WG", "a b"):
             with self.subTest(prefix=prefix):
                 self.rules.write_text("")

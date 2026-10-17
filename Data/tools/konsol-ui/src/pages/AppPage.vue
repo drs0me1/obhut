@@ -1,17 +1,17 @@
-<!-- An application's page (DD-258, phase 2; #/uygulamalar/<id>, e.g. paket:torrent, konteyner:gezgin,
-     yerlesik:paylasim): its name, state and actions, then Özet · Erişim · Depolama · Ayarlar · Günlük
-     (?sekme=). Data from GET /api/konsol/uygulamalar/ayrinti; actions go to POST
-     /api/konsol/uygulamalar/islem (202: the job shows in the activity drawer through "islemler", and the
-     page reads the application again when that job ends). Durdur and Güncelle ask in a small dialog;
-     Kaldır in a sheet with the typed word "onayla". A container's own detail (GET
-     /api/konsol/konteynerler/ayrinti) is read beside it for the tabs: who manages it, its definition, its
-     ports and its update state. "İmajı güncelle" is offered whenever the container's actions include it
-     (Güncelle when a newer image is known) and says afterwards whether the image changed; a container made
-     outside Konsol offers "Yönetime al". -->
+<!-- An application's page (rebuild phase 5, the prototype; #/uygulamalar/<ad>): its name, state and the line of
+     where its file came from; "Aç" (its first address, while it runs) and its actions; its definition's warnings,
+     prominent; then Özet · Erişim · Depolama · Tanım · Günlük (?sekme=). Data from GET /api/konsol/uygulamalar/{app};
+     the live rate from the list, read again every 10 s while the page is shown. Başlat, Durdur, Yeniden başlat and
+     Güncelle (only those the backend's `eylemler` offers) go to POST …/{app}/islem with the revision; Kaldır to
+     POST …/{app}/kaldir, keeping the data by default and deleting it only after the application's name is typed;
+     Tanım's apply is POST …/{app}/tanim. Each answers with a job (202) followed through İşlemler: its end reads the
+     page again, a failure says why, an image update says whether anything changed, a finished removal leads back
+     to the list. Durdur and Güncelle ask first; Kaldır is a dialog. Tanım is kept while another tab is shown, so a
+     change being written there survives a look at Erişim. -->
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import { Icon, iconOf, type IconName } from "../components/icons";
+import { Icon, type IconName } from "../components/icons";
 import AppIcon from "../components/AppIcon.vue";
 import ConfirmWord from "../components/ui/ConfirmWord.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
@@ -21,31 +21,31 @@ import Tabs from "../components/ui/Tabs.vue";
 import SummaryTab from "./app/SummaryTab.vue";
 import AccessTab from "./app/AccessTab.vue";
 import StorageTab from "./app/StorageTab.vue";
-import SettingsTab from "./app/SettingsTab.vue";
+import DefinitionTab from "./app/DefinitionTab.vue";
 import LogTab from "./app/LogTab.vue";
+import { watchJob } from "./app/jobs";
 import { live, refreshApps } from "../live";
-import { KIND_TEXT, appState, openTarget, type AppAction } from "../apps";
+import { appLine, appState, openAddress, type AppAction } from "../apps";
 import { usePageHead } from "../page";
-import { updateQuery } from "../query";
-import { readAppDetail, startAppAction } from "../api/konsol";
-import { readContainer, readOperation, readUpdates, type ContainerDetail } from "../api/podman";
+import { useQueryParam } from "../query";
+import { readApp, readJob, removeApp, startAppAction } from "../api/konsol";
 import { ApiError } from "../api/http";
-import { addRoute } from "../sections";
-import type { Islem, Uygulama, UygulamaAyrinti, UygulamaIslemi } from "../api/sema";
+import type { Uygulama, UygulamaAyrinti } from "../api/sema";
 
 const TABS = [
   { id: "ozet", label: "Özet" },
   { id: "erisim", label: "Erişim" },
   { id: "depolama", label: "Depolama" },
-  { id: "ayarlar", label: "Ayarlar" },
+  { id: "tanim", label: "Tanım" },
   { id: "gunluk", label: "Günlük" },
 ] as const;
 
 const route = useRoute();
 const router = useRouter();
-const id = computed(() => (typeof route.params.id === "string" ? route.params.id : ""));
+const name = computed(() => (typeof route.params.ad === "string" ? route.params.ad : ""));
+const tab = useQueryParam<string>("sekme", TABS.map((t) => t.id), "ozet");
 
-// ---- the application: GET …/ayrinti, with the live list's item until it answers
+// ---- the application: GET …/uygulamalar/{app}, with the live list's item until it answers
 const detail = ref<UygulamaAyrinti | null>(null);
 const missing = ref("");
 const loadError = ref("");
@@ -53,14 +53,12 @@ let seq = 0;
 
 async function load(): Promise<void> {
   const mine = ++seq;
-  const wanted = id.value;
   try {
-    const value = await readAppDetail(wanted);
+    const value = await readApp(name.value);
     if (mine !== seq) return;
     detail.value = value;
     missing.value = "";
     loadError.value = "";
-    void loadBox();
   } catch (err) {
     if (mine !== seq) return;
     const message = err instanceof Error ? err.message : String(err);
@@ -71,59 +69,17 @@ async function load(): Promise<void> {
   }
 }
 
-// ---- the container's own detail, when the application's detail names a container
-const box = ref<ContainerDetail | null>(null);
-const boxLoading = ref(false);
-const boxError = ref("");
-let boxSeq = 0;
-
-async function loadBox(): Promise<void> {
-  const name = detail.value?.konteyner ? detail.value.uygulama.konteyner : null;
-  const mine = ++boxSeq;
-  if (!name) {
-    box.value = null;
-    boxLoading.value = false;
-    return;
-  }
-  boxLoading.value = true;
-  try {
-    const value = await readContainer(name);
-    if (mine !== boxSeq) return;
-    box.value = value;
-    boxError.value = "";
-  } catch (err) {
-    if (mine === boxSeq) boxError.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    if (mine === boxSeq) boxLoading.value = false;
-  }
-}
-
-// "Güncellemeleri denetle": the registries asked again (at most once a minute on the server).
-const checking = ref(false);
-const checkError = ref("");
-async function checkUpdates(): Promise<void> {
-  if (checking.value) return;
-  checking.value = true;
-  checkError.value = "";
-  try {
-    await readUpdates(true);
-    await loadBox();
-    void refreshApps();
-  } catch (err) {
-    checkError.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    checking.value = false;
-  }
-}
-
-const listItem = computed(() => live.uygulamalar?.items.find((a) => a.id === id.value) ?? null);
+const listItem = computed(() => live.uygulamalar?.items.find((a) => a.ad === name.value) ?? null);
 const app = computed<Uygulama | null>(() => (missing.value ? null : (detail.value?.uygulama ?? listItem.value)));
-const name = computed(() => app.value?.ad ?? listItem.value?.ad ?? id.value);
 const state = computed(() => (app.value ? appState(app.value) : null));
+const warnings = computed(() => detail.value?.uyarilar ?? []);
+/** The live rate comes with the list, which is read more often than the detail. */
+const rate = computed(() => listItem.value?.ag ?? detail.value?.uygulama.ag ?? null);
+const opening = computed(() => (app.value ? openAddress(listItem.value ?? app.value) : ""));
 
-// The live list is read again when a job starts or ends and every minute: a change in this application's
-// state there (started elsewhere, too) is a reason to read its detail again.
-const signature = (a: Uygulama | null) => (a ? JSON.stringify([a.durum, a.islem, a.eylemler, a.revizyon, a.guncelleme]) : "");
+// The live list is read again when a job starts or ends and every 10 s here: a change in this application there
+// (started elsewhere, too) is a reason to read its detail again.
+const signature = (a: Uygulama | null) => (a ? JSON.stringify([a.durum, a.eylemler, a.revizyon, a.guncelleme, a.is, a.uyari, a.servisler.map((s) => s.durum)]) : "");
 watch(
   () => signature(listItem.value),
   (now, before) => {
@@ -134,116 +90,81 @@ watch(
 const description = computed(() => {
   const a = app.value;
   if (!a) return missing.value ? "" : "Okunuyor…";
-  const parts = [a.aciklama.replace(/\.\s*$/, "")];
-  if (a.tur === "paket") parts.push(KIND_TEXT.paket);
-  if (a.guncelleme === "guncel") parts.push("güncel");
-  else if (a.guncelleme === "yeni") parts.push("yeni sürüm var");
-  else if (a.guncelleme === "denetlenemedi") parts.push("sürüm denetlenemedi");
-  return parts.filter(Boolean).join(" · ");
+  const parts = [appLine(a)];
+  if (a.guncelleme === "yeni") parts.push("yeni imaj var");
+  else if (a.guncelleme === "denetlenemedi") parts.push("güncelleme denetlenemedi");
+  return parts.join(" · ");
 });
 
 usePageHead(() => ({ title: name.value, parent: { label: "Uygulamalar", to: "/uygulamalar" } }));
 
 // ---- actions
-const open = computed(() => (app.value ? openTarget(app.value) : null));
+type Eylem = AppAction | "kaldir" | "tanim";
 const can = (action: AppAction) => Boolean(app.value?.eylemler.includes(action));
-// The container's image can be pulled again even when no newer one is known (the old "İmajı güncelle").
-const canImage = computed(() => !can("guncelle") && Boolean(box.value?.actions.includes("image-update")) && app.value?.durum !== "islemde");
-const canAdopt = computed(() => Boolean(box.value?.source === "external" && box.value.actions.includes("adopt")));
+// A job on the application holds every action back (the backend refuses a second one).
+const canRemove = computed(() => Boolean(app.value && !app.value.is && app.value.durum !== "islemde"));
 
-const acting = ref<AppAction | null>(null);
+const acting = ref<Eylem | null>(null);
 const actionError = ref("");
 const actionNote = ref("");
 const confirmAction = ref<"durdur" | "guncelle" | null>(null);
 const removeOpen = ref(false);
-const removeData = ref(false);
-const removeConfirmed = ref(false);
+const keepData = ref(true);
+const deleteTyped = ref(false);
 const dialogOpen = computed(() => confirmAction.value !== null || removeOpen.value);
 
-const DOING: Record<AppAction, string> = {
+const DOING: Record<Eylem, string> = {
   baslat: "Başlatılıyor",
   durdur: "Durduruluyor",
   "yeniden-baslat": "Yeniden başlatılıyor",
-  guncelle: "Güncelleniyor",
+  guncelle: "İmajlar denetleniyor",
   kaldir: "Kaldırılıyor",
+  tanim: "Tanım uygulanıyor",
 };
 
-// The job an action started: an App Store package's engine job ("modul", the package id) or the container
-// broker's ("konteyner", the job id in the reply). The page reads the application again when it ends.
-interface Tracked {
-  tur: Islem["tur"];
-  id: string;
-  eylem: AppAction;
-  seen: boolean;
-  /** A finished job of the same package from before this action (still listed for a while). */
-  before: number | null;
-}
-const tracked = ref<Tracked | null>(null);
+let stopJob: (() => void) | null = null;
 
-function track(a: Uygulama, job: string | null, eylem: AppAction): void {
-  const target = job ? { tur: "konteyner" as const, id: job } : a.modul ? { tur: "modul" as const, id: a.modul } : null;
-  if (!target) return;
-  const old = (live.islemler ?? []).find((j) => j.tur === target.tur && j.id === target.id);
-  tracked.value = { ...target, eylem, seen: false, before: old && old.durum !== "calisiyor" ? (old.bitis ?? 0) : null };
-}
-
-// An image update says how it went: the same image, or the new version (the operation's result).
-async function updateResult(t: Tracked, name: string): Promise<void> {
+// An image update says how it went: nothing new, or new images (the job's result).
+async function updateResult(id: string, who: string): Promise<void> {
   try {
-    const op = await readOperation(t.id);
-    const r = op.result ?? {};
-    const version = typeof r.version === "string" && r.version ? ` (${r.version})` : "";
-    actionNote.value = r.changed === false ? `${name}: imaj zaten güncel.` : `${name}: imaj güncellendi${version}.`;
+    const job = await readJob(id);
+    const changed = job.result?.changed;
+    actionNote.value = changed === false ? `${who}: imajlar zaten güncel.` : changed === true ? `${who}: imajlar güncellendi.` : `${who}: güncelleme bitti.`;
   } catch {
-    actionNote.value = `${name}: güncelleme bitti.`;
+    actionNote.value = `${who}: güncelleme bitti.`;
   }
 }
 
-watch(
-  () => live.islemler,
-  (jobs) => {
-    const t = tracked.value;
-    if (!t || !jobs) return;
-    const job = jobs.find((j) => j.tur === t.tur && j.id === t.id);
-    if (job?.durum === "calisiyor") {
-      t.seen = true;
-      return;
-    }
-    const ended = job ? t.seen || (job.bitis ?? 0) !== t.before : t.seen;
-    if (!ended) return;
-    tracked.value = null;
-    if (job?.durum === "hata") actionError.value = job.adim ? `İşlem başarısız: ${job.adim}` : "İşlem başarısız oldu.";
+/** Follows an application job until it ends: the page is read again, a failure says why. */
+function track(id: string, eylem: Eylem): void {
+  stopJob?.();
+  actionNote.value = `${DOING[eylem]}; ilerlemesi İşlemler'de görünür.`;
+  void refreshApps();
+  stopJob = watchJob(id, (job) => {
+    stopJob = null;
     actionNote.value = "";
-    if (job?.durum === "tamam" && t.eylem === "guncelle" && t.tur === "konteyner") void updateResult(t, app.value?.ad ?? id.value);
     void refreshApps();
+    if (job?.durum === "hata") actionError.value = job.adim ? `İşlem başarısız: ${job.adim}` : "İşlem başarısız oldu.";
+    if (job?.durum === "tamam" && eylem === "guncelle") void updateResult(id, name.value);
+    if (job?.durum === "tamam" && eylem === "tanim") actionNote.value = `${name.value}: tanım uygulandı.`;
     // A removed application has no page any more: back to the list (the drawer keeps the finished job).
-    if (job?.durum === "tamam" && t.eylem === "kaldir") {
+    if (job?.durum === "tamam" && eylem === "kaldir") {
       void router.replace("/uygulamalar");
       return;
     }
     void load();
-  },
-);
-
-function body(a: Uygulama, eylem: AppAction): UygulamaIslemi {
-  const out: UygulamaIslemi = { id: a.id, eylem };
-  if (a.revizyon !== null) out.revizyon = a.revizyon;
-  if (eylem === "kaldir") out.veri = a.tur === "paket" && removeData.value;
-  return out;
+  });
 }
 
-async function run(eylem: AppAction): Promise<boolean> {
+async function send(eylem: Eylem, start: (a: Uygulama) => Promise<{ is: string }>): Promise<boolean> {
   const a = app.value;
   if (!a || acting.value) return false;
   acting.value = eylem;
   actionError.value = "";
   actionNote.value = "";
   try {
-    const started = await startAppAction(body(a, eylem));
-    track(a, started.is, eylem);
-    actionNote.value = `${DOING[eylem]}; ilerlemesi İşlemler'de görünür.`;
-    void load();
-    void refreshApps();
+    const started = await start(a);
+    track(started.is, eylem);
     return true;
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : String(err);
@@ -252,6 +173,8 @@ async function run(eylem: AppAction): Promise<boolean> {
     acting.value = null;
   }
 }
+
+const run = (eylem: AppAction) => send(eylem, (a) => startAppAction(a.ad, { eylem, revizyon: a.revizyon }));
 
 function ask(action: "durdur" | "guncelle"): void {
   actionError.value = "";
@@ -266,14 +189,19 @@ async function confirm(): Promise<void> {
 
 function askRemove(): void {
   actionError.value = "";
-  removeData.value = false;
-  removeConfirmed.value = false;
+  keepData.value = true;
+  deleteTyped.value = false;
   removeOpen.value = true;
 }
 
+const removeReady = computed(() => keepData.value || deleteTyped.value);
+
 async function confirmRemove(): Promise<void> {
-  if (!removeConfirmed.value) return;
-  if (await run("kaldir")) removeOpen.value = false;
+  if (!removeReady.value) return;
+  const keep = keepData.value;
+  // The typed name is checked here; the request carries the application's own name.
+  const ok = await send("kaldir", (a) => removeApp(a.ad, keep ? { veri: "sakla", revizyon: a.revizyon } : { veri: "sil", onay: a.ad, revizyon: a.revizyon }));
+  if (ok) removeOpen.value = false;
 }
 
 function closeDialogs(): void {
@@ -283,107 +211,68 @@ function closeDialogs(): void {
   actionError.value = "";
 }
 
-const isPackage = computed(() => app.value?.tur === "paket");
-
 const confirmText = computed(() => {
   const a = app.value;
   if (!a || !confirmAction.value) return null;
-  const pkg = a.tur === "paket";
   if (confirmAction.value === "durdur") {
-    // A package says in its own words what stopping interrupts (konsol.json durdur_notu).
-    const note = pkg ? a.metinler?.durdur ?? "" : "";
-    const items: [IconName, string][] = [
-      ...(note ? ([["pulse", note]] as [IconName, string][]) : []),
-      ["stop", pkg ? "Açılışta da kapalı kalır; başlatılana kadar çalışmaz." : "Konteyner durur. Konsol'un yönettiği bir konteyner sunucu yeniden başlasa da kapalı kalır."],
-    ];
+    const items: [IconName, string][] = [["stop", "Servisler durur; sunucu yeniden başlasa da kapalı kalır."]];
     return { title: `${a.ad} durdurulsun mu?`, sub: "Kurulu kalır; istediğinizde başlatırsınız.", go: "Durdur", items };
   }
-  const u = box.value?.update;
-  const sub = u?.state === "var" ? `Yeni sürüm yayınlanmış${u.channel ? " · " + u.channel : ""}` : "Kendiliğinden güncelleme yoktur; yalnız siz onaylayınca.";
-  const items: [IconName, string][] = pkg
-    ? [
-        ["download", "Kanalın şu an gösterdiği imaj indirilir; birkaç dakika sürebilir."],
-        ["refresh", a.durum === "calisiyor" ? "Uygulama yeni imajla yeniden başlar; kısa bir kesinti olabilir." : "Uygulama durmuş; başlattığınızda yeni imajla açılır."],
-        ["shield", "Açılmazsa önceki imaja dönülür; uygulamanın verisi korunur."],
-      ]
-    : [
-        ["download", "İmajın etiketi yeniden çekilir ve yeni özetle karşılaştırılır."],
-        ["refresh", "Özet değiştiyse konteyner yeni imajla yeniden oluşturulur; kısa bir kesinti olabilir."],
-        ["folder", "Kalıcı veriler bağlamalarda kalır; konteynerin yazılabilir katmanı silinir."],
-      ];
+  const sub = a.guncelleme === "yeni" ? "Yeni imaj yayımlanmış." : "Kendiliğinden güncelleme yoktur; yalnız siz onaylayınca.";
+  const items: [IconName, string][] = [
+    ["download", "Her servisin imaj etiketi yeniden çekilir ve özeti karşılaştırılır."],
+    ["refresh", "Özet değişen servisler yeni imajla yeniden başlar; kısa bir kesinti olabilir."],
+    ["shield", "Bir servis başlamazsa eski imajlara geri dönülür."],
+    ["folder", "Veriler uygulamanın klasörlerinde kalır."],
+  ];
   return { title: `${a.ad} güncellensin mi?`, sub, go: "Güncelle", items };
 });
 
-// A package names what removal takes away and what its data switch deletes or keeps (konsol.json kaldir),
-// as App Store does; the general words stand in only when it says nothing.
-const removeTexts = computed(() => (isPackage.value ? app.value?.metinler ?? null : null));
-const removeItems = computed<[IconName, string][]>(() => {
-  if (!isPackage.value) {
-    return [
-      ["box", "Konteyner durdurulur ve kaldırılır; Konsol'da bir tanımı varsa o da silinir."],
-      ["folder", "Adlı birimler ve imaj kalır; Gelişmiş → Podman'dan silinir. Sunucu klasörlerine dokunulmaz."],
-    ];
-  }
-  const own = (removeTexts.value?.kaldir ?? []).filter((p) => p.length === 2 && p[1]);
-  return [
-    ...(own.length
-      ? own.map((p): [IconName, string] => [iconOf(p[0] ?? ""), p[1] ?? ""])
-      : ([["box", "Uygulama durur ve kaldırılır; sayfası ve açtığı adresler gider."]] as [IconName, string][])),
-    ["folder", "Kullanıcı alanındaki dosyalarınıza dokunulmaz."],
-  ];
-});
-const removeDataLabel = computed(() => removeTexts.value?.veri_etiket || "Verilerini de sil");
-const removeDataNote = computed(() => {
-  const t = removeTexts.value;
-  if (t?.veri_silinir && t.veri_kalir) return `${t.veri_silinir} İşaretlemezseniz: ${t.veri_kalir}`;
-  return "İşaretlerseniz uygulamanın kendi verisi de silinir. İşaretlemezseniz veri sunucuda kalır.";
-});
+// Tanım is mounted when first shown and kept while another tab is shown.
+const definitionShown = ref(false);
+watch(tab, (t) => {
+  if (t === "tanim") definitionShown.value = true;
+}, { immediate: true });
 
-function showAccess(): void {
-  updateQuery(router, { sekme: "erisim" });
-}
-
-// Ayarlar is kept mounted after its first visit (per application), so its draft outlives a tab switch.
-const settingsKept = ref(false);
-watch(
-  () => route.query.sekme,
-  (tab) => {
-    if (tab === "ayarlar") settingsKept.value = true;
-  },
-  { immediate: true },
-);
-
-function reloadAll(): void {
-  void load();
-  void refreshApps();
+function definitionJob(id: string): void {
+  actionError.value = "";
+  track(id, "tanim");
 }
 
 // Another application (the palette, Back): start over with its own data.
 watch(
-  id,
+  name,
   () => {
     detail.value = null;
-    settingsKept.value = route.query.sekme === "ayarlar";
-    box.value = null;
-    boxError.value = "";
-    checkError.value = "";
-    boxSeq += 1;
     missing.value = "";
     loadError.value = "";
-    tracked.value = null;
+    stopJob?.();
+    stopJob = null;
     actionError.value = "";
     actionNote.value = "";
     confirmAction.value = null;
     removeOpen.value = false;
+    definitionShown.value = tab.value === "tanim";
     void load();
   },
   { immediate: true },
 );
+
+let timer: number | undefined;
+onMounted(() => {
+  timer = window.setInterval(() => {
+    if (!document.hidden) void refreshApps();
+  }, 10000);
+});
+onBeforeUnmount(() => {
+  clearInterval(timer);
+  stopJob?.();
+});
 </script>
 
 <template>
   <div class="page-body app-page">
-    <header class="app-head" :data-uygulama="id">
+    <header class="app-head" :data-uygulama="name">
       <div class="app-head-main">
         <AppIcon v-if="app" :app="app" size="lg" />
         <div class="app-head-text">
@@ -394,46 +283,38 @@ watch(
           <p class="page-desc" data-testid="app-desc">{{ description }}</p>
         </div>
       </div>
-      <div v-if="app" class="app-actions" data-testid="app-actions">
-        <a
-          v-if="open"
-          class="btn btn-primary"
-          :href="open.href"
-          :target="open.external ? '_blank' : undefined"
-          :rel="open.external ? 'noopener noreferrer' : undefined"
-          :aria-label="open.external ? `${app.ad} uygulamasını yeni sekmede aç` : `${app.ad} sayfasını aç`"
-          data-eylem="ac"
-        >
-          Aç<Icon v-if="open.external" name="open" :size="16" />
-        </a>
-        <button v-if="can('yeniden-baslat')" type="button" class="btn btn-secondary" :disabled="acting !== null" data-eylem="yeniden-baslat" @click="run('yeniden-baslat')">
-          <Icon name="refresh" :size="16" />{{ acting === "yeniden-baslat" ? "Başlatılıyor…" : "Yeniden başlat" }}
-        </button>
-        <button v-if="can('durdur')" type="button" class="btn btn-secondary" :disabled="acting !== null" data-eylem="durdur" @click="ask('durdur')">
-          <Icon name="stop" :size="16" />Durdur
-        </button>
-        <button v-if="can('baslat')" type="button" class="btn btn-secondary" :disabled="acting !== null" data-eylem="baslat" @click="run('baslat')">
-          <Icon name="play" :size="16" />{{ acting === "baslat" ? "Başlatılıyor…" : "Başlat" }}
-        </button>
-        <button v-if="can('guncelle')" type="button" class="btn btn-secondary" :disabled="acting !== null" data-eylem="guncelle" @click="ask('guncelle')">
-          <Icon name="update" :size="16" />Güncelle
-        </button>
-        <button v-else-if="canImage" type="button" class="btn btn-secondary" :disabled="acting !== null" data-eylem="imaj-guncelle" @click="ask('guncelle')">
-          <Icon name="update" :size="16" />İmajı güncelle
-        </button>
-        <RouterLink v-if="canAdopt && box" :to="addRoute('sahiplen', { ad: box.name })" class="btn btn-secondary" data-eylem="yonetime-al">
-          <Icon name="key" :size="16" />Yönetime al
-        </RouterLink>
-        <button v-if="can('kaldir')" type="button" class="btn btn-danger-quiet" :disabled="acting !== null" data-eylem="kaldir" @click="askRemove">
-          <Icon name="trash" :size="16" />Kaldır…
-        </button>
-      </div>
     </header>
+    <div v-if="app" class="app-actions" data-testid="app-actions">
+      <a v-if="opening" :href="opening" class="btn btn-primary" target="_blank" rel="noopener noreferrer" :aria-label="`${app.ad} uygulamasını aç`" data-eylem="ac">
+        Aç<Icon name="open" :size="15" />
+      </a>
+      <button v-if="can('yeniden-baslat')" type="button" class="btn btn-secondary" :disabled="acting !== null" data-eylem="yeniden-baslat" @click="run('yeniden-baslat')">
+        <Icon name="refresh" :size="16" />{{ acting === "yeniden-baslat" ? "Başlatılıyor…" : "Yeniden başlat" }}
+      </button>
+      <button v-if="can('durdur')" type="button" class="btn btn-secondary" :disabled="acting !== null" data-eylem="durdur" @click="ask('durdur')">
+        <Icon name="stop" :size="16" />Durdur
+      </button>
+      <button v-if="can('baslat')" type="button" class="btn" :class="can('durdur') ? 'btn-secondary' : 'btn-primary'" :disabled="acting !== null" data-eylem="baslat" @click="run('baslat')">
+        <Icon name="play" :size="16" />{{ acting === "baslat" ? "Başlatılıyor…" : "Başlat" }}
+      </button>
+      <button v-if="canRemove" type="button" class="btn btn-danger-quiet" :disabled="acting !== null" data-eylem="kaldir" @click="askRemove">
+        <Icon name="trash" :size="16" />Kaldır…
+      </button>
+    </div>
+
+    <section v-if="warnings.length" class="notice notice-warning" aria-labelledby="uyg-uyari-baslik" data-testid="app-warnings">
+      <Icon name="alert" class="notice-icon" />
+      <div>
+        <h2 id="uyg-uyari-baslik" class="notice-title">{{ warnings.length === 1 ? "Bir uyarı" : `${warnings.length} uyarı` }}</h2>
+        <ul class="notice-list">
+          <li v-for="(w, i) in warnings" :key="i" :data-servis="w.servis"><strong v-if="w.servis">{{ w.servis }}:</strong> {{ w.metin }}</li>
+        </ul>
+      </div>
+    </section>
 
     <p v-if="actionError && !dialogOpen" class="notice notice-danger" role="alert" data-testid="action-error">{{ actionError }}</p>
     <p class="action-note" role="status" data-testid="action-note">{{ actionNote }}</p>
-    <p v-if="loadError" class="notice notice-warning" role="alert">{{ loadError }}</p>
-    <p v-if="boxError" class="notice notice-warning" role="alert" data-testid="box-error">Konteyner ayrıntısı okunamadı: {{ boxError }}</p>
+    <p v-if="loadError" class="notice notice-warning" role="alert" data-testid="load-error">{{ loadError }}</p>
 
     <section v-if="missing" class="card" aria-label="Uygulama bulunamadı">
       <EmptyState title="Bu uygulama yok" :text="missing" icon="apps">
@@ -443,21 +324,16 @@ watch(
 
     <Tabs v-else-if="app" :tabs="TABS" :label="`${app.ad} bölümleri`" param="sekme">
       <template #default="{ active }">
-        <SummaryTab v-if="active === 'ozet'" :app="app" :detail="detail" :box="box" :checking="checking" :check-error="checkError" @access="showAccess" @check="checkUpdates" />
-        <AccessTab v-else-if="active === 'erisim'" :row="detail?.erisim ?? null" :app="app" :box="box" />
-        <StorageTab v-else-if="active === 'depolama'" :detail="detail" :box="box" />
-        <LogTab v-else-if="active === 'gunluk'" :app="app" />
-        <!-- Ayarlar stays once opened, hidden on the other tabs, so a draft survives a look at them. -->
-        <SettingsTab
-          v-if="active === 'ayarlar' || settingsKept"
-          :hidden="active !== 'ayarlar'"
-          :key="app.id"
-          :app="app"
-          :box="box"
-          :box-loading="boxLoading || (!detail && !missing)"
-          @changed="reloadAll"
-          @reload="loadBox"
-        />
+        <p v-if="!detail" class="meter-note" role="status">Okunuyor…</p>
+        <template v-else>
+          <SummaryTab v-if="active === 'ozet'" :app="app" :detail="detail" :rate="rate" :can-update="can('guncelle') && acting === null" @update="ask('guncelle')" />
+          <AccessTab v-else-if="active === 'erisim'" :detail="detail" />
+          <StorageTab v-else-if="active === 'depolama'" :detail="detail" />
+          <LogTab v-else-if="active === 'gunluk'" :app="app.ad" :services="detail.servisler.map((s) => s.ad)" />
+          <div v-if="definitionShown" class="tab-keep" :hidden="active !== 'tanim'">
+            <DefinitionTab :detail="detail" @job="definitionJob" />
+          </div>
+        </template>
       </template>
     </Tabs>
 
@@ -474,29 +350,20 @@ watch(
       </template>
     </Modal>
 
-    <Modal
-      :open="removeOpen"
-      variant="sheet"
-      :title="app ? `${app.ad} kaldırılsın mı?` : ''"
-      :description="isPackage ? 'Bu bir App Store uygulaması; App Store\'dan da kaldırılır.' : 'Konteyner kaldırılır.'"
-      @close="closeDialogs"
-    >
-      <ul class="modal-list">
-        <li v-for="(item, i) in removeItems" :key="i"><Icon :name="item[0]" :size="18" /><span>{{ item[1] }}</span></li>
-      </ul>
-      <label v-if="isPackage" class="check-option" data-testid="remove-data">
-        <input v-model="removeData" type="checkbox" />
-        <span>
-          <strong>{{ removeDataLabel }}</strong>
-          <small>{{ removeDataNote }}</small>
-        </span>
+    <Modal :open="removeOpen" :title="app ? `${app.ad} kaldırılsın mı?` : ''" @close="closeDialogs">
+      <p>{{ app?.ad }} durdurulur; birimleri, ağı, gizli değerleri, adresleri, yerel adları ve ham portları kaldırılır. İmajlar Gelişmiş'teki temizliğe kalır.</p>
+      <label class="check-row remove-keep" data-testid="remove-keep">
+        <input v-model="keepData" type="checkbox" data-autofocus />
+        <span>Verileri sakla <span class="mono muted wrap">{{ detail?.veri ?? "" }}</span></span>
       </label>
-      <ConfirmWord v-model:confirmed="removeConfirmed" />
+      <p class="notice" role="note"><Icon name="info" class="notice-icon" /><span>Sunucu klasörlerine (/srv) hiçbir durumda dokunulmaz.</span></p>
+      <p v-if="keepData" class="meter-note">Aynı adla yeniden eklenince klasör geri bağlanır; istemezseniz Gelişmiş → Podman'daki temizlikle silinir.</p>
+      <ConfirmWord v-else-if="app" v-model:confirmed="deleteTyped" :word="app.ad" />
       <p v-if="actionError" class="form-error" role="alert" data-testid="dialog-error">{{ actionError }}</p>
       <template #actions>
         <button type="button" class="btn btn-secondary" :disabled="acting !== null" @click="closeDialogs">Vazgeç</button>
-        <button type="button" class="btn btn-danger" :disabled="!removeConfirmed || acting !== null" data-onay="kaldir" @click="confirmRemove">
-          {{ acting === "kaldir" ? "Gönderiliyor…" : "Kaldır" }}
+        <button type="button" class="btn btn-danger" :disabled="!removeReady || acting !== null" data-onay="kaldir" @click="confirmRemove">
+          {{ acting === "kaldir" ? "Gönderiliyor…" : keepData ? "Kaldır" : "Kaldır ve verileri sil" }}
         </button>
       </template>
     </Modal>

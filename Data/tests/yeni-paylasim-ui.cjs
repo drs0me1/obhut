@@ -1,14 +1,13 @@
 /* Konsol's new interface, phase 4b (DD-258, DD-267): Dosyalar → Paylaşımlar (folder shares over WebDAV, DD-158,
-   DD-179, DD-190, DD-192) and the old Konsol's addresses landing on their new homes, in the committed build
-   under Data/console/yeni with the production CSP and fixture replies for every endpoint the page reads or
-   posts to (yeni-harness.cjs): the boundary notice, the service and installation warnings, n/max, the
+   DD-179, DD-190, DD-192), in the committed build under Data/console/yeni with the production CSP and fixture
+   replies for every endpoint the page reads or posts to (yeni-harness.cjs): the boundary notice, n/max, the
    transports, one card per share with its two connections (switch, permission, duration and renewal,
    reasons, address with copy and the Infuse fields), the acknowledgements (read/write, the internet over
    plain HTTP) with the exact request bodies, refusals in the server's words, one change at a time, the
    create and edit sheets (folder chooser over the user area, user name rules, password rules, show/hide,
-   generator, copy), removal with the typed word, the deep links (?yeni=, ?paylasim=), Erişim's and
-   Uygulamalar' ways here, the palette without the old interface, 1440/390/320 in light and dark. Fails on
-   any console error, CSP violation or page error. Never contacts a server.
+   generator, copy), removal with the typed word, the deep links (?yeni=, ?paylasim=), Erişim's ways here,
+   the palette without the old interface, 1440/390/320 in light and dark. Fails on any console error, CSP
+   violation, page error or layout-audit finding (DD-270). Never contacts a server.
    PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-paylasim-ui.cjs */
 const assert = require("node:assert/strict");
 
@@ -41,7 +40,7 @@ const SHARES = [
 const LIMITS = { wan_connections: 8, wan_connections_per_ip: 4, tail_connections: 64, wan_auth_parallel: 4, tail_auth_parallel: 2, auth_failures: 5,
   auth_window_seconds: 60, auth_block_seconds: 300, auth_entries: 4096, share_failures: 100, share_window_seconds: 3600, share_block_seconds: 3600, wan_timeout_seconds: 30 };
 const WAN_HTTP = { available: true, address: "203.0.113.10", domain: "", mode: "http", scheme: "http", port: 61010, reason: "" };
-const view = (o = {}) => ({ enabled: true, running: true, host: TS, items: clone(SHARES), max: 32, wan: { ...WAN_HTTP }, tail_enabled: true, limits: LIMITS, ...o });
+const view = (o = {}) => ({ host: TS, items: clone(SHARES), max: 32, wan: { ...WAN_HTTP }, tail_enabled: true, limits: LIMITS, ...o });
 
 /** A copy of `v` with one share's connection changed. */
 function withConn(v, id, scope, patch) {
@@ -50,28 +49,17 @@ function withConn(v, id, scope, patch) {
   return next;
 }
 
-const ucell = (durum, adresler = [], uyari = "", not = "") => ({ durum, adresler, uyari, not });
-const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: ucell("yok"), internet: ucell("yok"),
-  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
-  metinler: null, hesap: false, aciklama: "", ...o });
+const { uygulama, uygulamalar } = require("./yeni-harness.cjs").fixtures;
 const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
-const row = (id, ad, tur, cells, aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, calisiyor: true, yerel: cell("yok"), tailscale: cell("yok"),
-  wireguard: cell("kapali"), internet: cell("yok"), yayinlar: [], ayrinti: [], ...cells });
-const cand = (o) => ({ servis: null, yerel_ad: null, tailscale: false, internet: false, alan_adi: "", durum: "disabled", mesaj: "İnternet yayını kapalı.", bitis: null,
-  hedef: null, giris: "", onay_kelimesi: false, internet_engel: "", kullanilabilir: true, neden: "", konteyner: null, ...o });
+const row = (id, ad, tur, cells, aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, servis: null, anahtar: null, calisiyor: true, yerel: cell("yok"),
+  tailscale: cell("yok"), wireguard: cell("kapali"), internet: cell("yok"), satir: null, web: { tail: true, enabled: false, domain: "" }, ayrinti: [], ...cells });
 
 const ROWS = [
   row("panel", "Konsol", "konsol", { tailscale: cell("acik", ["panel.ev"]), internet: cell("kapali") }, "Yönetim paneli"),
   row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"], "2 klasör"), internet: cell("acik", [WAN], "1 klasör", "Şifresiz HTTP") }, "WebDAV · 3 klasör"),
 ];
-const APPS = [
-  app({ id: "paket:torrent", ad: "qBittorrent", tur: "paket", modul: "torrent", konteyner: "torrent", simge: "download" }),
-  app({ id: "paket:wireguard", ad: "WireGuard", tur: "paket", modul: "wireguard", simge: "shield" }),
-  app({ id: "konteyner:notlar", ad: "notlar", tur: "konteyner", konteyner: "notlar", aciklama: "Konteyner · docker.io/library/nginx" }),
-  app({ id: "yerlesik:dosya", ad: "Dosyalar", tur: "yerlesik", aciklama: "Dosya yöneticisi · yerleşik" }),
-  app({ id: "yerlesik:paylasim", ad: "Paylaşımlar", tur: "yerlesik", aciklama: "WebDAV · yerleşik · 3 klasör",
-    tailscale: ucell("acik", ["paylas.ev"]), internet: ucell("acik", [WAN], "Şifresiz HTTP") }),
-];
+// One application, so the palette has its Uygulamalar group.
+const APPS = [uygulama("notlar")];
 
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.10.16-v2-250", surum: "1.1.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
@@ -82,22 +70,15 @@ const data = {
     denetlendi: NOW, hata: "", is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true },
   bekleyen: { bekleyen: null },
   etkinlik: { items: [] },
-  erisim: { read_at: NOW, alan: "ev", hatalar: [], uyarilar: [], hizmetler: ROWS,
+  erisim: { read_at: NOW, alan: "ev", revizyon: "rev-1", hatalar: [], uyarilar: [], hizmetler: ROWS,
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "", surum: "", adresler: [], cikis_dugumu: null },
-      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, not: "", aglar: [] }, sertifikalar: [] } },
-  uygulamalar: { read_at: NOW, hatalar: [], katalog: [{ id: "gezgin", ad: "Gezgin", aciklama: "Dosya yöneticisi", simge: "folder" }],
-    altyapi: { podman: "5.4.2", calisiyor: true, imaj: 2, kullanilmayan_imaj: 0, birim: 1, ag: 2 }, items: APPS },
-  yayinlar: { revizyon: "rev-1", alan: "ev", wan_ipv4: "203.0.113.10", hatalar: [], adaylar: [
-    cand({ id: "panel", tur: "konsol", ad: "Konsol", servis: "panel", yerel_ad: "panel.ev", tailscale: true, giris: "İnternetten Konsol hesabıyla giriş istenir.", onay_kelimesi: true }),
-    cand({ id: "paylasim", tur: "paylasim", ad: "WebDAV paylaşımları", servis: "paylasim", yerel_ad: "paylas.ev", tailscale: true, durum: "http", mesaj: "HTTPS alan adı tanımlanmadı.",
-      giris: "Klasör hesapları korur; her klasörün internet erişimi Paylaşımlar'dan açılır." })] },
-  adlar: { revizyon: "rev-1", alan: "ev", hatalar: [], adlar: [{ ad: "panel.ev", aile: 4, hedef: "tailscale", kaynak: "base", kapali: false, kilitli: true }],
+      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
+  uygulamalar: uygulamalar(APPS),
+  adlar: { revizyon: "rev-1", alan: "ev", hatalar: [], adlar: [{ ad: "panel.ev", aile: 4, hedef: "tailscale", kaynak: "base", satir: "panel" }],
     kayitlar: [], yonlendirme: false, sunucular: [] },
-  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048, apps: [] },
+  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048 },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
   depolama: { read_at: NOW, kok: "/srv", kullananlar: [], hatalar: [] },
-  "konteynerler/liste": { read_at: NOW, runtime: { version: "5.4.2", ok: true, error: "" }, containers: [], images: [], volumes: [], networks: [],
-    storage: { images: 2, containers: 2, size: null }, resource_errors: {} },
 };
 
 let expectedFailures = [];
@@ -125,19 +106,6 @@ h.handlers["/api/list"] = ({ query }) => {
   if (!(at in FOLDERS)) return { status: 404, body: { error: "Klasör bulunamadı." } };
   return { body: { path: at, skipped: 0, entries: FOLDERS[at].map((name) => ({ name, type: "dir", size: null, mtime: NOW - DAY })) } };
 };
-h.handlers["/api/konsol/uygulamalar/ayrinti"] = ({ query }) => {
-  const item = data.uygulamalar.items.find((a) => a.id === query.get("id"));
-  if (!item) return { status: 404, body: { error: "Uygulama bulunamadı." } };
-  return { body: { uygulama: item, konteyner: null, erisim: ROWS.find((r) => r.id === (item.id === "yerlesik:paylasim" ? "paylasim" : item.id)) ?? null } };
-};
-// The redirect checks open every new home; the endpoints of those pages that this suite does not cover answer
-// 404 there (their own suites drive them), and only the address is checked.
-let lenient = false;
-h.dynamic.push([/^\/api\//, (req) => {
-  if (!lenient) return undefined;
-  if (req.method === "GET" && req.path.replace(/^\/api\/konsol\//, "") in data) return undefined;
-  return { status: 404, body: { error: "fixture" } };
-}]);
 
 // ---- helpers
 const UI = "/";
@@ -166,23 +134,6 @@ const focusOn = (page, what) => page.waitForFunction((w) => {
   return Boolean(e) && (e.getAttribute("data-testid") === w || e.tagName === w || e.textContent.trim() === w);
 }, what, { timeout: 3000 });
 
-/** A page with its reads (not the event stream) followed; `settle()` waits until none is under way, so leaving
-    the page cannot let an intercepted read through to the static server. */
-async function trackedPage(context) {
-  const tab = await context.newPage();
-  await h.watch(tab);
-  await tab.route("**/api/**", h.answer);
-  const pending = new Set();
-  const read = (r) => /\/api\//.test(r.url()) && !r.url().includes("/api/konsol/olaylar");
-  tab.on("request", (r) => read(r) && pending.add(r));
-  tab.on("requestfinished", (r) => pending.delete(r));
-  tab.on("requestfailed", (r) => pending.delete(r));
-  tab.settle = async () => {
-    for (let quiet = 0; quiet < 4; quiet = pending.size ? 0 : quiet + 1) await tab.waitForTimeout(40);
-  };
-  return tab;
-}
-
 async function openShares(page, extra = "") {
   await page.goto(url(SHARES_URL + extra));
   await page.getByTestId("share-head").waitFor();
@@ -204,8 +155,7 @@ async function openShares(page, extra = "") {
     assert.match(await card(page, C).getByTestId("share-state").getAttribute("class"), /pill-danger/);
     assert.equal(await page.getByTestId("share-count").innerText(), "3/32 klasör");
     assert.deepEqual(await page.getByTestId("share-routes").locator("dd").allInnerTexts(), ["Şifreli tünel", "Şifresiz HTTP · 203.0.113.10:61010"]);
-    assert.equal(await page.getByTestId("share-publication").getAttribute("href"), "#/erisim?sekme=adresler&yayinla=paylasim", "the publication and the HTTPS name stay in Erişim");
-    assert.equal(await page.getByTestId("share-stopped").count(), 0);
+    assert.equal(await page.getByTestId("share-publication").getAttribute("href"), "#/erisim?sekme=adresler&satir=paylasim", "the address and the internet name stay in Erişim, on their row");
     // The boundary notice: the short form always, the detail in the address.
     const boundary = page.getByTestId("share-boundary");
     assert.match(await boundary.innerText(), /Paylaşmadan önce erişim sınırını kontrol edin/);
@@ -630,17 +580,10 @@ async function openShares(page, extra = "") {
     await page.keyboard.press("Escape");
     await page.context().close();
 
-    // ================= other states: stopped, not installed, empty, full, unreadable, HTTPS, no internet
+    // ================= other states: empty, full, unreadable, HTTPS, no internet
     page = await newPage();
-    shares = view({ running: false });
-    await openShares(page);
-    assert.equal(await page.getByTestId("share-stopped").innerText(), "WebDAV hizmeti çalışmıyor. Hesaplar korunuyor; sunucuda master-paylasim hizmetini kontrol edin.");
-    shares = view({ enabled: false, running: false, items: [] });
-    await page.reload();
-    await page.getByTestId("share-missing").filter({ hasText: "Yerleşik WebDAV kurulumu tamamlanmamış; kurulumu yeniden çalıştırın." }).waitFor();
-    assert.equal(await page.getByTestId("share-stopped").count(), 0);
     shares = view({ items: [] });
-    await page.reload();
+    await openShares(page);
     const empty = page.getByTestId("share-empty");
     await empty.waitFor();
     assert.match(await empty.innerText(), /Henüz paylaşım yok/);
@@ -684,7 +627,7 @@ async function openShares(page, extra = "") {
     for (const scope of ["tailscale", "wan"]) {
       const c = connOf(page, A, scope);
       assert(await c.getByRole("switch").isDisabled(), scope + ": a closed transport cannot be turned on here");
-      assert.equal(await c.getByTestId("conn-publish").getAttribute("href"), "#/erisim?sekme=adresler&yayinla=paylasim");
+      assert.equal(await c.getByTestId("conn-publish").getAttribute("href"), "#/erisim?sekme=adresler&satir=paylasim");
       assert.equal(await c.getByTestId("conn-no-url").innerText(), "Bağlantı adresi kullanılamıyor.");
     }
     assert.equal(await connOf(page, A, "wan").getByTestId("conn-reason").innerText(), closedWan.reason);
@@ -699,7 +642,7 @@ async function openShares(page, extra = "") {
     await page.keyboard.press("Escape");
     await page.context().close();
 
-    // ================= the ways here: Erişim's WebDAV rows, the built-in Paylaşımlar, the palette
+    // ================= the ways here: Erişim's WebDAV rows, the palette
     shares = view();
     page = await newPage();
     await page.goto(url("#/erisim"));
@@ -707,124 +650,39 @@ async function openShares(page, extra = "") {
     await matrixLink.waitFor();
     assert.equal(await matrixLink.getAttribute("href"), "#/dosyalar?sekme=paylasimlar");
     await page.goto(url("#/erisim?sekme=adresler"));
-    const pubLink = page.locator('tr[data-yayin="paylasim"]').getByTestId("share-folders");
+    const pubLink = page.getByTestId("access-rows").locator('tr[data-satir="paylasim"]').getByTestId("share-folders");
     await pubLink.waitFor();
     assert.equal(await pubLink.innerText(), "Klasör izinleri ve süreler: Dosyalar → Paylaşımlar");
-    assert.equal(await page.locator('tr[data-yayin="panel"]').getByTestId("share-folders").count(), 0, "only WebDAV's row");
+    assert.equal(await page.getByTestId("access-rows").locator('tr[data-satir="panel"]').getByTestId("share-folders").count(), 0, "only WebDAV's row");
+    // Dosyalar' way to the address opens WebDAV's row sheet, which leads back to the folders.
+    await page.goto(url("#/dosyalar?sekme=paylasimlar"));
+    await page.getByTestId("share-publication").click();
+    await page.waitForURL((u) => u.hash === "#/erisim?sekme=adresler&satir=paylasim");
+    const rowSheet = page.getByRole("dialog", { name: "Paylaşımlar" });
+    await rowSheet.getByTestId("row-form").waitFor();
+    assert.equal(await rowSheet.getByRole("switch", { name: "Tailscale adı" }).getAttribute("aria-checked"), "true");
+    assert.equal(await rowSheet.getByTestId("row-shares").getAttribute("href"), "#/dosyalar?sekme=paylasimlar");
+    await rowSheet.getByRole("button", { name: "Vazgeç" }).click();
+    await rowSheet.waitFor({ state: "detached" });
     await pubLink.click();
     await page.waitForURL((u) => u.hash === SHARES_URL);
     await card(page, A).waitFor();
-    // The built-in Paylaşımlar opens here, its settings too; nothing leads to the old interface.
-    await page.goto(url("#/uygulamalar/yerlesik:paylasim"));
-    await page.locator("main h1").filter({ hasText: "Paylaşımlar" }).waitFor();
-    const open = page.getByTestId("app-actions").locator('[data-eylem="ac"]');
-    assert.deepEqual([await open.getAttribute("href"), await open.getAttribute("target")], ["#/dosyalar?sekme=paylasimlar", null]);
-    await page.getByRole("tab", { name: "Ayarlar" }).click();
-    const home = page.getByTestId("settings-home-link");
-    await home.waitFor();
-    assert.equal(await home.getAttribute("href"), "#/dosyalar?sekme=paylasimlar");
-    assert.equal(await page.getByTestId("settings-empty").count(), 0);
-    await home.click();
-    await page.waitForURL((u) => u.hash === SHARES_URL);
-    await page.goto(url("#/uygulamalar/yerlesik:dosya"));
-    await page.locator("main h1").filter({ hasText: "Dosyalar" }).waitFor();
-    assert.equal(await page.getByTestId("app-actions").locator('[data-eylem="ac"]').getAttribute("href"), "#/dosyalar");
     await page.goto(url("#/uygulamalar"));
-    await page.locator('tr[data-uygulama="yerlesik:paylasim"]').waitFor();
-    // The palette: no "Eski arayüz"; Paylaşımlar is a Dosyalar tab and an application.
+    await page.locator('tr[data-uygulama="notlar"]').waitFor();
+    // The palette: no "Eski arayüz"; Paylaşımlar is a Dosyalar tab.
     await page.keyboard.press("Control+K");
     const palette = page.getByRole("dialog", { name: "Komut paleti" });
     await palette.waitFor();
-    assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Eylemler"]);
+    assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Adresler", "Eylemler"]);
     await palette.getByRole("combobox").fill("paylaşım");
-    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Dosyalar", "Dosyalar → Paylaşımlar", "Paylaşımlar"]);
+    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Dosyalar", "Dosyalar → Paylaşımlar", "paylas.ev"],
+      "the folders' tab, and Paylaşımlar' access row in Adresler");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
     await page.waitForURL((u) => u.hash === SHARES_URL);
     await palette.waitFor({ state: "detached" });
     await card(page, A).waitFor();
     await page.context().close();
-
-    // ================= the old Konsol's addresses land on their new homes
-    lenient = true;
-    expectedFailures = ["/api/"];
-    const REDIRECTS = [
-      ["#/", "#/genel"],
-      ["#/genel", "#/genel"],
-      ["#/moduller", "#/uygulamalar?ekle=katalog"],
-      ["#/moduller/gezgin", "#/uygulamalar?ekle=katalog&paket=gezgin"],
-      ["#/moduller/torrent", "#/uygulamalar/paket:torrent"],
-      ["#/konteynerler", "#/uygulamalar"],
-      ["#/konteynerler/notlar", "#/uygulamalar/konteyner:notlar"],
-      ["#/konteynerler/torrent", "#/uygulamalar/paket:torrent"],
-      ["#/konteynerler/yeni-kutu", "#/uygulamalar/konteyner:yeni-kutu"],
-      ["#/ayarlar", "#/sistem"],
-      ["#/ayarlar/system", "#/sistem"],
-      ["#/ayarlar/fw", "#/erisim?sekme=guvenlik-duvari"],
-      ["#/ayarlar/web", "#/erisim?sekme=adresler"],
-      ["#/ayarlar/dns", "#/erisim?sekme=adresler"],
-      ["#/ayarlar/log", "#/sistem?sekme=gunluk"],
-      ["#/ayarlar/konteynerler", "#/gelismis?sekme=podman"],
-      ["#/ayarlar/konteynerler/notlar", "#/uygulamalar/konteyner:notlar"],
-      ["#/dosyalar", "#/dosyalar"],
-      ["#/dosyalar/klasor", "#/dosyalar?sekme=srv"],
-      ["#/dosyalar/klasor/Filmler/Yaz%202026", { path: "/dosyalar", sekme: "srv", yol: "Filmler/Yaz 2026" }],
-      ["#/dosyalar/klasor/M%C3%BCzik", { path: "/dosyalar", sekme: "srv", yol: "Müzik" }],
-      ["#/dosyalar/klasor/..%2Fetc", "#/dosyalar?sekme=srv"],
-      ["#/dosyalar/klasor/Filmler/..", "#/dosyalar?sekme=srv"],
-      ["#/dosyalar/sistem", "#/dosyalar?sekme=sistem"],
-      ["#/dosyalar/sistem/etc/caddy", { path: "/dosyalar", sekme: "sistem", yol: "etc/caddy" }],
-      ["#/dosyalar/cop", "#/dosyalar?sekme=cop"],
-      ["#/dosyalar/paylasim", "#/dosyalar?sekme=paylasimlar"],
-      ["#/wireguard", "#/erisim?sekme=wireguard"],
-      ["#/torrent", "#/uygulamalar/paket:torrent"],
-      ["#/gezgin", "#/uygulamalar?ekle=katalog&paket=gezgin"],
-      ["#/bilinmeyen", "#/genel"],
-      ["#/a/b/c", "#/genel"],
-    ];
-    const lands = (want) => (u) => {
-      if (typeof want === "string") return u.hash === want;
-      const [path, query] = u.hash.slice(1).split("?");
-      const q = new URLSearchParams(query ?? "");
-      return path === want.path && q.get("sekme") === want.sekme && q.get("yol") === want.yol && [...q.keys()].length === 2;
-    };
-    page = await newPage();
-    const context = page.context();
-    for (const [old, want] of REDIRECTS) {
-      // A bookmark: a fresh page at the old address, closed once its new home has read what it reads.
-      const tab = await trackedPage(context);
-      await tab.goto(url(old));
-      await tab.waitForURL(lands(want), { timeout: 8000 }).catch(async () => assert.fail(`${old} → ${await hashOf(tab)}, expected ${JSON.stringify(want)}`));
-      await tab.settle();
-      await tab.close();
-    }
-    // Inside a running page too (a link, a typed address).
-    await page.close();
-    page = await trackedPage(context);
-    await page.goto(url("#/genel"));
-    for (const [old, want] of [["#/ayarlar/fw", "#/erisim?sekme=guvenlik-duvari"], ["#/torrent", "#/uygulamalar/paket:torrent"], ["#/dosyalar/paylasim", SHARES_URL]]) {
-      await page.evaluate((h) => { location.hash = h; }, old);
-      await page.waitForURL(lands(want));
-    }
-    await page.settle();
-    await context.close();
-    // Without the application list an application address gives up after a while and opens Genel Bakış; a
-    // package's App Store address still opens its install.
-    h.status["/api/konsol/uygulamalar"] = 503;
-    page = await newPage();
-    const started = Date.now();
-    await page.goto(url("#/torrent"));
-    await page.waitForURL((u) => u.hash === "#/genel", { timeout: 12000 });
-    assert(Date.now() - started >= 5000, "it waited for the list");
-    await page.goto(url("#/genel"));
-    const tab = await trackedPage(page.context());
-    await tab.goto(url("#/moduller/torrent"));
-    await tab.waitForURL((u) => u.hash === "#/uygulamalar?ekle=katalog&paket=torrent", { timeout: 12000 });
-    await tab.settle();
-    delete h.status["/api/konsol/uygulamalar"];
-    await page.context().close();
-    lenient = false;
-    expectedFailures = [];
 
     // ================= 1440, 390 and 320 in both themes: no style attribute, no horizontal scroll
     shares = view();
@@ -878,9 +736,8 @@ async function openShares(page, extra = "") {
       "user area with /api/list, hidden folders left out, shared ones marked, the user name and password rules, show/hide, the generator, " +
       "copy, the acknowledgements, the whole body, a refusal keeping the form, the password gone after closing, an already shared folder), " +
       "the edit sheet (only changed fields, moving the folder, removal from it), deep links (?yeni=, ?paylasim=, an unknown share, a hidden " +
-      "folder), stopped / not installed / empty / full / unreadable, Erişim's WebDAV rows and the built-in Paylaşımlar leading here, the " +
-      "palette without the old interface, " + REDIRECTS.length + " old addresses on a fresh load and in a running page, an unknown package " +
-      "address without the application list, 1440/390/320 in light and dark. Screenshots: " + h.shots);
+      "folder), empty / full / unreadable, Erişim's WebDAV rows leading here, the palette without the old interface, " +
+      "1440/390/320 in light and dark. Screenshots: " + h.shots);
   } finally {
     await h.stop();
   }

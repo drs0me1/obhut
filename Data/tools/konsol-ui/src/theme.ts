@@ -1,14 +1,24 @@
-// Theme (DD-258): Sistem follows prefers-color-scheme; Açık and Koyu set data-theme on <html>. The choice
-// is this browser's only, in localStorage "konsol.tema"; public/tema.js applies it before the first paint.
+// Theme (DD-258; A7): Sistem follows prefers-color-scheme; Açık and Koyu set data-theme on <html>. The top bar's
+// button steps through the three and the palette chooses one. The choice is this browser's only, in localStorage
+// "konsol.tema"; public/tema.js applies it before the first paint.
 import { ref } from "vue";
 
 export type ThemeChoice = "sistem" | "acik" | "koyu";
 
 export const THEMES: readonly { id: ThemeChoice; label: string }[] = [
-  { id: "sistem", label: "Sistem" },
-  { id: "acik", label: "Açık" },
-  { id: "koyu", label: "Koyu" },
+  { id: "sistem", label: "sistem" },
+  { id: "acik", label: "açık" },
+  { id: "koyu", label: "koyu" },
 ];
+
+/** "Tema: açık": the choice in words, as the top bar and the palette name it. */
+export const themeText = (choice: ThemeChoice): string => "Tema: " + (THEMES.find((t) => t.id === choice)?.label ?? choice);
+
+/** The choice after this one: sistem → açık → koyu → sistem. */
+export function nextTheme(choice: ThemeChoice): ThemeChoice {
+  const at = THEMES.findIndex((t) => t.id === choice);
+  return (THEMES[(at + 1) % THEMES.length] as (typeof THEMES)[number]).id;
+}
 
 const KEY = "konsol.tema";
 const isChoice = (v: unknown): v is ThemeChoice => v === "sistem" || v === "acik" || v === "koyu";

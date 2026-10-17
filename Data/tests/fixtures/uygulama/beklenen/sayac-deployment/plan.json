@@ -1,0 +1,43 @@
+{
+  "environment": {
+    "sayac": "COUNTER_MODE=public\n"
+  },
+  "folders": [
+    "/var/lib/master-stack/uygulamalar/sayac/sayac-data"
+  ],
+  "binds": {
+    "sayac": []
+  },
+  "start": [
+    "konsol-sayac_sayac.service"
+  ],
+  "stop": [
+    "konsol-sayac_sayac.service"
+  ],
+  "containers": {
+    "sayac": "sayac_sayac"
+  },
+  "network": {
+    "name": "ksl-sayac",
+    "interface": "ksl15751ad628",
+    "unit": "konsol-sayac-network.service"
+  },
+  "pod": null,
+  "publications": [
+    {
+      "service": "sayac",
+      "port": 9000,
+      "protocol": "tcp",
+      "host_ip": "127.0.0.1",
+      "host_port": 62100
+    },
+    {
+      "service": "sayac",
+      "port": 9001,
+      "protocol": "udp",
+      "host_ip": "100.64.0.7",
+      "host_port": 19001
+    }
+  ],
+  "needs_podman5": []
+}

@@ -1,8 +1,10 @@
-"""DD-261: the Uygulamalar read model (packages, Konsol's containers and the built-ins in one list) and
-its route. master_uygulamalar.build() is fed the shapes the backend's own sources return; every result
-is checked against master_api's Uygulamalar schema."""
-import copy
+"""DD-271 (phase 3): the applications' routes through the real backend handler. Reads come from the records
+with live state (Podman, systemctl and journalctl answer from fakes); every write is a job handed to the
+broker (its launch is captured, nothing runs) with an audit line uygulama-<verb>. The install plan runs the job's
+checks with read-only commands and writes nothing. Every reply is checked against master_api's shapes, and no secret
+value reaches a reply or an audit line."""
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -10,162 +12,337 @@ import types
 import unittest
 from unittest.mock import patch
 
-import test_erisim
+import app_fixtures
 import test_resources
 from test_overview import Fixture
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "panel"))
 import master_api  # noqa: E402
+import master_applications as apps  # noqa: E402
+import master_container_binds  # noqa: E402
 import master_container_manager  # noqa: E402
-import master_erisim  # noqa: E402
-import master_uygulamalar  # noqa: E402
 
 panel = test_resources.panel
-NOW = test_erisim.NOW
-MODULES = [
-    {"id": "wireguard", "runtime": "konsol", "installed": True, "state": "calisiyor", "live": "-", "busy": False, "progress": None,
-     "durdurulabilir": True, "konsol": {"ad": "WireGuard", "alt": "VPN ağları ve cihazlar.", "simge": "shield"}},
-    {"id": "torrent", "runtime": "konteyner", "installed": True, "state": "calisiyor", "live": "running", "busy": False, "progress": None,
-     "durdurulabilir": True, "konsol": {"ad": "qBittorrent", "alt": "Torrent indirmelerini yönetin.", "simge": "download",
-                                        "durdur_notu": "Süren indirmeler duraklar.",
-                                        "kaldir": {"neler": [["box", "Konteyner durur."], ["bad"], [1, "x"]], "veri_etiket": "Profili de sil",
-                                                   "veri_kalir": "indirilenler kalır.", "veri_silinir": "Profil silinir."}},
-     "urls": {"tailscale": "http://torrent.ev", "internet": None}},
-    {"id": "gezgin", "runtime": "konteyner", "installed": False, "state": "", "live": "-", "busy": False, "progress": None,
-     "durdurulabilir": True, "konsol": {"ad": "Gezgin", "alt": "Dosya yöneticisi.", "simge": "compass"}},
-]
-CONTAINERS = {
-    "runtime": {"ok": True, "version": "5.4.2", "error": ""},
-    "containers": [
-        {"name": "qbittorrent", "source": "appstore", "module_id": "torrent", "state": "running", "busy": None,
-         "cpu_percent": 3.25, "memory_bytes": 210000000, "image": "lscr.io/linuxserver/qbittorrent@sha256:" + "a" * 64,
-         "actions": ["stop", "restart", "remove", "image-update", "save"], "revision": "r" * 64,
-         "update": {"state": "var", "channel": "lscr.io/linuxserver/qbittorrent:latest", "checked_at": NOW}},
-        {"name": "gezgin", "source": "konsol", "module_id": None, "state": "running", "busy": None,
-         "cpu_percent": 0.5, "memory_bytes": 84000000, "image": "ghcr.io/drs0me1/gezgin@sha256:" + "b" * 64,
-         "actions": ["stop", "restart", "save", "remove", "image-update"], "revision": "k" * 32,
-         "update": {"state": "guncel", "channel": "ghcr.io/drs0me1/gezgin:latest", "checked_at": NOW}},
-        {"name": "gece", "source": "external", "module_id": None, "state": "exited", "busy": None, "cpu_percent": None,
-         "memory_bytes": None, "image": "docker.io/library/alpine:3", "actions": ["start", "remove", "adopt"], "revision": None,
-         "update": None},
-    ],
-    "images": [{"id": "i1", "name": "a", "used_by": ["qbittorrent"]}, {"id": "i2", "name": "b", "used_by": ["gezgin"]},
-               {"id": "i3", "name": "c", "used_by": []}],
-    "volumes": [{"name": "gezgin-db"}, {"name": "gezgin-config"}],
-    "networks": [{"name": "podman"}, {"name": "torrent"}, {"name": "ksl-konsol"}],
-}
-
-
-def erisim():
-    return master_erisim.build(dict(test_erisim.ENV), copy.deepcopy(test_erisim.SETTINGS), copy.deepcopy(test_erisim.SHARES),
-                               copy.deepcopy(test_erisim.CONTAINERS), copy.deepcopy(test_erisim.TAILSCALE),
-                               copy.deepcopy(test_erisim.NETWORKS), copy.deepcopy(test_erisim.PACKAGES), test_erisim.NAMES, NOW)
-
-
-class ReadModelTests(unittest.TestCase):
-    def build(self, modules=MODULES, containers=CONTAINERS, view="default", errors=()):
-        result = master_uygulamalar.build(copy.deepcopy(modules), copy.deepcopy(containers),
-                                          erisim() if view == "default" else view, NOW, errors)
-        master_api.check(master_api.ref("Uygulamalar"), result)
-        return result
-
-    @staticmethod
-    def item(result, sid):
-        return next(i for i in result["items"] if i["id"] == sid)
-
-    def test_every_application_in_one_list(self):
-        result = self.build()
-        self.assertEqual([i["id"] for i in result["items"]],
-                         ["paket:wireguard", "paket:torrent", "konteyner:gezgin", "konteyner:gece", "yerlesik:dosya", "yerlesik:paylasim"])
-        self.assertEqual(result["katalog"], [{"id": "gezgin", "ad": "Gezgin", "aciklama": "Dosya yöneticisi.", "simge": "compass"}])
-        self.assertEqual(result["altyapi"], {"podman": "5.4.2", "calisiyor": True, "imaj": 3, "kullanilmayan_imaj": 1, "birim": 2, "ag": 3})
-        self.assertEqual(result["hatalar"], [])
-        # DD-267: no item names a page of the old interface any more.
-        self.assertFalse([i["id"] for i in result["items"] if "sayfa" in i])
-
-    def test_a_package_with_its_container_access_and_update(self):
-        torrent = self.item(self.build(), "paket:torrent")
-        self.assertEqual((torrent["ad"], torrent["tur"], torrent["modul"], torrent["konteyner"], torrent["durum"]),
-                         ("qBittorrent", "paket", "torrent", "qbittorrent", "calisiyor"))
-        self.assertEqual(torrent["kaynak"], {"cpu": 3.25, "bellek": 210000000})
-        self.assertEqual((torrent["guncelleme"], torrent["eylemler"]), ("yeni", ["durdur", "yeniden-baslat", "guncelle", "kaldir"]))
-        self.assertEqual(torrent["adres"], {"tailscale": "http://torrent.ev", "internet": None})
-        self.assertEqual((torrent["tailscale"]["durum"], torrent["internet"]["durum"]), ("acik", "kismen"))
-        self.assertEqual(torrent["revizyon"], "r" * 64)
-        # The package's own stop and removal words, malformed pairs left out.
-        self.assertEqual(torrent["metinler"], {"durdur": "Süren indirmeler duraklar.", "kaldir": [["box", "Konteyner durur."]],
-                                               "veri_etiket": "Profili de sil", "veri_kalir": "indirilenler kalır.",
-                                               "veri_silinir": "Profil silinir."})
-        self.assertEqual(self.item(self.build(), "paket:wireguard")["metinler"],
-                         {"durdur": "", "kaldir": [], "veri_etiket": "", "veri_kalir": "", "veri_silinir": ""})
-        self.assertIsNone(self.item(self.build(), "konteyner:gezgin")["metinler"])
-        self.assertIsNone(self.item(self.build(), "yerlesik:dosya")["metinler"])
-
-    def test_a_konsol_container_with_its_manual_address(self):
-        gezgin = self.item(self.build(), "konteyner:gezgin")
-        self.assertEqual((gezgin["tur"], gezgin["konteyner"], gezgin["aciklama"]), ("konteyner", "gezgin", "Konteyner · ghcr.io/drs0me1/gezgin"))
-        self.assertEqual(gezgin["adres"], {"tailscale": "http://gezgin.ev", "internet": "https://gezgin.example.org"})
-        self.assertEqual((gezgin["guncelleme"], gezgin["eylemler"]), ("guncel", ["durdur", "yeniden-baslat", "kaldir"]))
-        gece = self.item(self.build(), "konteyner:gece")
-        self.assertEqual((gece["durum"], gece["eylemler"]), ("durduruldu", ["baslat", "kaldir"]))
-        self.assertIn("Konsol dışında", gece["aciklama"])
-
-    def test_states_and_running_operations(self):
-        modules = copy.deepcopy(MODULES)
-        modules[1].update(busy=True, progress={"action": "kur", "step": "2", "total": 5, "text": "İmaj indiriliyor"})
-        modules[0].update(state="durduruldu")
-        result = self.build(modules)
-        torrent = self.item(result, "paket:torrent")
-        self.assertEqual((torrent["durum"], torrent["islem"], torrent["eylemler"]),
-                         ("islemde", {"eylem": "kur", "adim": "2", "metin": "İmaj indiriliyor"}, []))
-        self.assertEqual(self.item(result, "paket:wireguard")["eylemler"], ["baslat", "kaldir"])
-        modules[1].update(busy=False, progress=None, live="exited")
-        self.assertEqual(self.item(self.build(modules), "paket:torrent")["durum"], "hata")
-
-    def test_an_image_that_can_move_but_was_not_checked_is_unknown_not_fixed(self):
-        containers = copy.deepcopy(CONTAINERS)
-        containers["containers"][0]["update"] = None
-        torrent = self.item(self.build(containers=containers), "paket:torrent")
-        self.assertEqual((torrent["guncelleme"], torrent["eylemler"]), ("bilinmiyor", ["durdur", "yeniden-baslat", "kaldir"]))
-        self.assertEqual(self.item(self.build(containers=containers), "konteyner:gece")["guncelleme"], "sabit")
-
-    def test_built_ins_and_unreadable_sources(self):
-        result = self.build()
-        share = self.item(result, "yerlesik:paylasim")
-        self.assertEqual((share["durum"], share["aciklama"]), ("calisiyor", "WebDAV · yerleşik · 2 klasör"))
-        self.assertEqual(self.item(result, "yerlesik:dosya")["durum"], "calisiyor")
-        broken = self.build(None, {"runtime": {"ok": False, "version": "", "error": "Podman kullanılamıyor: x"}, "containers": []},
-                            view=None, errors=["Uygulama listesi okunamadı."])
-        self.assertEqual([i["id"] for i in broken["items"]], ["yerlesik:dosya", "yerlesik:paylasim"])
-        self.assertEqual(broken["hatalar"], ["Uygulama listesi okunamadı.", "Podman kullanılamıyor: x"])
-        self.assertEqual(self.item(broken, "yerlesik:paylasim")["durum"], "bilinmiyor")
+SECRET = app_fixtures.SECRET
+LABELS = {"io.master-stack.managed": "uygulama", "io.master-stack.uygulama": "notlar"}
 
 
 class RouteTests(Fixture):
     def setUp(self):
         super().setUp()
+        self.values = app_fixtures.env(self.root)
+        with self.state.open("a") as fh:
+            fh.write("".join("%s=%s\n" % kv for kv in self.values.items() if kv[0] not in ("STATE_FILE", "LOCAL_DOMAIN")))
+        self.record = app_fixtures.record(dict(self.values, STATE_FILE=str(self.state)))
 
         class Handler(panel.Handler):
             def log_message(self, *_args):
                 pass
+        self.audits = []
+        Handler.audit = lambda handler, user, action, detail, ok: self.audits.append((action, detail, ok))
         Handler.panel = self.p
         _server, self.sock = test_resources.start_unix(self, Handler)
+        self.ps, self.inspected, self.units = [], {}, {}
+        for svc in ("web", "db"):
+            self.container("notlar_" + svc, dict(LABELS, PODMAN_SYSTEMD_UNIT="konsol-notlar_%s.service" % svc))
+            self.units["konsol-notlar_%s.service" % svc] = "active"
+        self.container("eski", {})
+        self.launched, self.commands, self.existing, self.podman_version = [], [], set(), "5.4.2\n"
+        patch.object(self.p, "run_tool", side_effect=self.run_tool).start()
+        patch.object(self.p.containers, "_launch", side_effect=lambda ident, action, data: self.launched.append((action, data))).start()
         patch.object(self.p, "update_check_soon").start()  # no registry check from a test
+        patch.object(apps, "bindable", return_value=True).start()
         self.addCleanup(patch.stopall)
 
-    def test_the_route_answers_with_the_read_model(self):
-        with patch.object(self.p, "modules", return_value=copy.deepcopy(MODULES)), \
-             patch.object(self.p, "erisim", return_value=erisim()):
-            status, _, body = test_resources.unix_get(self.sock, "/api/konsol/uygulamalar", {"X-Konsol": "1"})
-        self.assertEqual(status, 200)
-        answer = json.loads(body)
-        master_api.check(master_api.ref("Uygulamalar"), answer)
-        self.assertEqual([i["id"] for i in answer["items"]][:2], ["paket:wireguard", "paket:torrent"])
-        with patch.object(self.p, "modules", side_effect=RuntimeError("modül listesi okunamadı")), \
-             patch.object(self.p, "erisim", return_value=erisim()):
-            answer = json.loads(test_resources.unix_get(self.sock, "/api/konsol/uygulamalar", {"X-Konsol": "1"})[2])
-        self.assertEqual(answer["hatalar"], ["modül listesi okunamadı"])
-        self.assertEqual(test_resources.unix_get(self.sock, "/api/konsol/uygulamalar", {})[0], 403)
+    def container(self, name, labels):
+        ident = "%064x" % (len(self.ps) + 1)
+        self.ps.append({"Id": ident, "Names": [name], "Image": "registry.example/x:1", "State": "running", "Labels": labels})
+        self.inspected[name] = {"Id": ident, "Name": name, "ImageName": "registry.example/x:1", "Image": "registry.example/x:1",
+                                "State": {"Running": True, "Status": "running"},
+                                "Config": {"Labels": labels, "Env": ["DB_PASSWORD=" + SECRET, "MODE=prod"]},
+                                "HostConfig": {"NetworkMode": "bridge"}, "Mounts": []}
+
+    def run_tool(self, argv, binary=False, timeout=120):
+        self.commands.append(list(argv))
+        if argv[:2] == ["podman", "version"]:
+            return 0, self.podman_version, ""
+        if argv[:2] in (["podman", "container"], ["podman", "network"], ["podman", "pod"]) and argv[2:3] == ["exists"]:
+            return (0 if argv[-1] in self.inspected or argv[-1] in self.existing else 1), "", ""
+        if argv[:2] == ["podman", "ps"]:
+            return 0, json.dumps(self.ps), ""
+        if argv[:2] == ["podman", "inspect"]:
+            return (0, json.dumps([self.inspected[argv[-1]]]), "") if argv[-1] in self.inspected else (125, "", "no such")
+        if argv[:3] == ["podman", "image", "inspect"]:
+            return 0, json.dumps([{"Config": {"Env": [], "Cmd": None}}]), ""
+        if argv[:2] in (["podman", "images"], ["podman", "volume"], ["podman", "network"]):
+            return 0, "[]", ""
+        if argv[:2] == ["systemctl", "show"]:
+            names = [a for a in argv[2:] if not a.startswith("--")]
+            return 0, "\n\n".join("Id=%s\nActiveState=%s" % (n, self.units.get(n, "inactive")) for n in names), ""
+        if argv[0] == "journalctl":
+            return 0, "satır 1\nsatır 2\n", ""
+        raise AssertionError(argv)
+
+    def call(self, name, path=None, data=None, query="", code=None):
+        route = next(r for r in master_api.ROUTES if r.name == name)
+        path = path or route.path
+        headers = {"X-Konsol": "1"}
+        body = None
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+            body = json.dumps(data).encode()
+        status, _, raw = test_resources.unix_get(self.sock, path + query, headers, route.method, body)
+        answer = json.loads(raw)
+        if code is not None:
+            self.assertEqual(status, code, answer)
+        if status == route.status:
+            master_api.check(route.reply, answer)
+        elif status in route.also:
+            master_api.check(route.also[status], answer)
+        self.assertNotIn(SECRET, raw.decode())
+        return status, answer
+
+    def revision(self):
+        return apps.Records(dict(self.values, STATE_FILE=str(self.state))).places("notlar")["revision"]
+
+    def test_the_list_and_the_detail(self):
+        _, answer = self.call("uygulamalar", code=200)
+        self.assertEqual([(i["ad"], i["durum"]) for i in answer["items"]], [("notlar", "calisiyor")])
+        self.assertEqual(answer["kaynaklar"], [{"ad": "eski", "imaj": "registry.example/x:1", "durum": "running"}])
+        _, detail = self.call("uygulama", "/api/konsol/uygulamalar/notlar", code=200)
+        self.assertEqual([s["ad"] for s in detail["servisler"]], ["web", "db"])
+        self.assertEqual(detail["yanitlar"]["answers"]["var:DB_PASSWORD"], {"set": True})
+        self.assertEqual(detail["servisler"][0]["portlar"][0]["id"], "uygulama:notlar:web:8080/tcp")
+        self.assertEqual(detail["servisler"][0]["portlar"][0]["erisim"]["tur"], "adres")
+        self.call("uygulama", "/api/konsol/uygulamalar/yok", code=404)
+        for bad in ("Notlar", "a_b", "..", "%2e%2e"):
+            status, _, _ = test_resources.unix_get(self.sock, "/api/konsol/uygulamalar/" + bad, {"X-Konsol": "1"})
+            self.assertIn(status, (400, 404), bad)
+        self.assertEqual(test_resources.unix_get(self.sock, "/api/konsol/uygulamalar/notlar", {})[0], 403)
+
+    def test_a_services_log(self):
+        _, log = self.call("uygulama_gunlugu", "/api/konsol/uygulamalar/notlar/gunluk", query="?servis=web&satir=100", code=200)
+        self.assertEqual(log, {"satirlar": ["satır 1", "satır 2"], "kesik": False})
+        self.call("uygulama_gunlugu", "/api/konsol/uygulamalar/notlar/gunluk", query="?servis=yok", code=404)
+
+    def test_an_install_is_checked_here_and_handed_to_the_worker(self):
+        request = {"metin": app_fixtures.SIMPLE, "yanitlar": app_fixtures.SIMPLE_ANSWERS, "kaynak": {"tur": "dosya"}}
+        _, job = self.call("uygulama_kur", data=request, code=202)
+        self.assertEqual((job["eylem"], job["ad"]), ("kur", "sayac"))
+        [(action, data)] = self.launched
+        self.assertEqual((action, data["name"], data["kaynak"], data["metin"]), ("uygulama-kur", "sayac", {"tur": "dosya"}, app_fixtures.SIMPLE))
+        self.assertEqual(self.audits, [("uygulama-kur", "sayac", True)])
+        # A refused file, wrong answers or a taken name never reach the worker.
+        wrong = dict(request, yanitlar={"name": "sayac", "answers": {}})
+        for data, code in ((dict(request, metin="services: ["), 400), (wrong, 400),
+                           ({"metin": app_fixtures.TEXT, "yanitlar": app_fixtures.answers(), "kaynak": {"tur": "dosya"}}, 409),
+                           (dict(request, kaynak={"tur": "adres", "adres": "http://x.example/a"}), 400)):
+            with self.subTest(code=code):
+                self.call("uygulama_kur", data=data, code=code)
+        self.assertEqual(len(self.launched), 1)
+        # A Tailscale name another application's row holds is refused by its question before the worker.
+        secret = {"metin": app_fixtures.TEXT.replace("notlar", "ikinci"),
+                  "yanitlar": {"name": "ikinci", "answers": {k.replace("notlar", "ikinci"): v for k, v in app_fixtures.answers()["answers"].items()}},
+                  "kaynak": {"tur": "dosya"}}
+        _, refused = self.call("uygulama_kur", data=secret, code=409)
+        self.assertEqual(refused["error"], "port:web:8080/tcp: notlar.test adı zaten kullanılıyor.")
+        self.assertEqual(len(self.launched), 1)
+        # The secret values travel to the worker only, never into the audit line.
+        secret["yanitlar"]["answers"]["port:web:8080/tcp"] = {"use": "caddy", "tailscale_name": "ikinci"}
+        self.call("uygulama_kur", data=secret, code=202)
+        self.assertEqual(self.launched[-1][1]["yanitlar"]["answers"]["var:DB_PASSWORD"], {"value": SECRET})
+        self.assertNotIn(SECRET, json.dumps(self.audits))
+        self.assertNotIn(SECRET, json.dumps(self.p.containers.jobs))
+
+    def files(self):
+        return {str(p): (p.lstat().st_mtime_ns, p.lstat().st_size) for p in self.root.rglob("*")}
+
+    def test_an_install_plan_runs_the_jobs_checks_and_writes_nothing(self):
+        request = {"metin": app_fixtures.SIMPLE, "yanitlar": app_fixtures.SIMPLE_ANSWERS, "kaynak": {"tur": "dosya"}, "plan": True}
+        before = self.files()
+        _, plan = self.call("uygulama_kur", data=request, code=200)
+        self.assertEqual(set(plan), {"inceleme", "tanim", "ozet"})
+        veri = self.values["UYGULAMA_VERI_DIR"] + "/sayac"
+        self.assertEqual(plan["ozet"], {
+            "ad": "sayac", "veri": veri, "ag": "ksl-sayac", "pod": None,
+            "birimler": ["konsol-sayac.network", "konsol-sayac_app.container"],
+            "servisler": [{"ad": "app", "baslangic": "root", "kullanici": None, "imaj": "registry.example/sayac:2",
+                           "baglamalar": [{"hedef": "/data", "tur": "app", "yol": veri + "/veri", "salt_okunur": False,
+                                           "boyut": None}],
+                           "gizliler": []}],
+            "erisim": [{"id": "uygulama:sayac:app:9000/tcp", "anahtar": "app:9000/tcp", "servis": "app", "port": 9000,
+                        "protokol": "tcp", "satir": {"tur": "adres", "ad": "sayac", "tailscale_portu": None, "internet": ""},
+                        "adres": "http://sayac.test"}],
+            "klasorler": [veri + "/veri"], "gizliler": [], "uyarilar": [], "imajlar": ["registry.example/sayac:2"]})
+        self.assertEqual(self.files(), before, "nothing written")
+        self.assertEqual((self.launched, self.audits), ([], []), "no job, no audit line")
+        plan_commands = master_container_manager.PLAN_COMMANDS
+        self.assertTrue(self.commands)
+        self.assertFalse([c for c in self.commands if not any(tuple(c[:len(p)]) == p for p in plan_commands)
+                          and c[:2] not in (["podman", "ps"], ["systemctl", "show"])], self.commands)
+        # The worker's checks in the backend may run nothing that writes or pulls.
+        worker = self.p.containers.worker()
+        for argv in (["podman", "pull", "registry.example/sayac:2"], ["podman", "secret", "create", "x", "-"], ["systemctl", "start", "x"]):
+            with self.subTest(argv=argv), self.assertRaises(apps.AppError):
+                worker.call(argv)
+        # A file with a secret, a /srv folder and a dependency: the secret by name only, the folder walked, no value back.
+        second = {"metin": app_fixtures.TEXT.replace("notlar", "ikinci"),
+                  "yanitlar": {"name": "ikinci", "answers": {k.replace("notlar", "ikinci"): v
+                                                             for k, v in app_fixtures.answers()["answers"].items()}},
+                  "kaynak": {"tur": "dosya"}, "plan": True}
+        second["yanitlar"]["answers"]["port:web:8080/tcp"] = {"use": "caddy", "tailscale_name": "ikinci"}
+        walked = []
+        with patch.object(master_container_binds, "walk", side_effect=lambda path: walked.append(path) or os.open(self.root, os.O_RDONLY)):
+            _, plan = self.call("uygulama_kur", data=second, code=200)
+        self.assertEqual(walked, ["/srv/media"])
+        ozet = plan["ozet"]
+        self.assertEqual(ozet["gizliler"], [{"ad": "ikinci-db-password", "servisler": ["web", "db"]}])
+        self.assertEqual([(s["ad"], s["baslangic"], s["kullanici"], s["gizliler"]) for s in ozet["servisler"]],
+                         [("web", "direct", "1000:1000", ["ikinci-db-password"]), ("db", "root", None, ["ikinci-db-password"])])
+        self.assertEqual(ozet["imajlar"], ["registry.example/ikinci/db:16", "registry.example/ikinci/web:1.4"])
+        self.assertEqual(ozet["uyarilar"], [], "a direct start as the Files account with a read-only folder warns of nothing")
+        self.assertEqual(self.files(), before, "nothing written")
+        # Without plan the same request is the job.
+        _, job = self.call("uygulama_kur", data=dict(request, plan=False), code=202)
+        self.assertEqual(job["eylem"], "kur")
+
+    def test_an_install_plan_names_every_refusal_by_question(self):
+        # A refused file is an inspection; answers that do not check come back by question.
+        _, plan = self.call("uygulama_kur", data={"metin": "services: [", "yanitlar": {"name": "x", "answers": {}},
+                                                  "kaynak": {"tur": "dosya"}, "plan": True}, code=200)
+        self.assertEqual(set(plan), {"inceleme"})
+        given = app_fixtures.answers()
+        given["answers"].pop("start:db")
+        request = {"metin": app_fixtures.TEXT, "yanitlar": given, "kaynak": {"tur": "dosya"}, "plan": True}
+        _, plan = self.call("uygulama_kur", data=request, code=200)
+        self.assertEqual((set(plan), set(plan["hatalar"])), ({"inceleme", "hatalar"}, {"start:db"}))
+        # The state checks: the name is taken, its /srv folder fails DD-226, Podman 4.9 cannot wait for health.
+        self.podman_version = "4.9.3\n"
+        with patch.object(master_container_binds, "walk",
+                          side_effect=master_container_binds.BindError("Bağlanan klasör eksik: /srv/media")):
+            _, plan = self.call("uygulama_kur", data=dict(request, yanitlar=app_fixtures.answers()), code=200)
+        self.assertEqual(set(plan["hatalar"]), {"name", "mount:web:/media", "podman"})
+        self.assertEqual((plan["hatalar"]["name"], plan["hatalar"]["mount:web:/media"]),
+                         ("Bu adla bir uygulama zaten var.", "Bağlanan klasör eksik: /srv/media"))
+        self.assertIn("Podman 5 gerekir; bu sunucuda 4.9", plan["hatalar"]["podman"])
+        self.podman_version = "5.4.2\n"
+        simple = {"metin": app_fixtures.SIMPLE, "yanitlar": app_fixtures.SIMPLE_ANSWERS, "kaynak": {"tur": "dosya"}, "plan": True}
+        # A Tailscale name another application's row holds; a container or network of the name; no pool port left.
+        taken = json.loads(json.dumps(simple).replace('"tailscale_name": "sayac"', '"tailscale_name": "notlar"'))
+        _, plan = self.call("uygulama_kur", data=taken, code=200)
+        self.assertEqual(plan["hatalar"], {"port:app:9000/tcp": "notlar.test adı zaten kullanılıyor."})
+        self.existing = {"ksl-sayac"}
+        _, plan = self.call("uygulama_kur", data=simple, code=200)
+        self.assertEqual(plan["hatalar"], {"name": "Bu adla bir ağ zaten var: ksl-sayac"})
+        self.existing = set()
+        with patch.object(apps, "bindable", return_value=False):
+            _, plan = self.call("uygulama_kur", data=simple, code=200)
+        self.assertEqual(plan["hatalar"], {"portlar": "Yerel port aralığında boş port kalmadı."})
+        # A takeover's container must exist and be standalone; the plan says what happens to it.
+        _, plan = self.call("uygulama_kur", data=dict(simple, kaynak={"tur": "konteyner", "konteyner": "yok"}), code=200)
+        self.assertEqual(plan["hatalar"], {"kaynak": "Kaynak konteyner bulunamadı: yok"})
+        _, plan = self.call("uygulama_kur", data=dict(simple, kaynak={"tur": "konteyner", "konteyner": "eski"}), code=200)
+        self.assertEqual(plan["ozet"]["uyarilar"], [{"servis": "", "metin": "eski konteyneri uygulama hazır olunca kaldırılır; "
+                                                                           "birimleri silinmez. Kurulum sırasında durdurulur."}])
+        self.assertEqual((self.launched, self.audits), ([], []))
+
+    def test_the_list_and_the_detail_carry_the_bridge_rate_and_the_first_address(self):
+        _, answer = self.call("uygulamalar", code=200)
+        self.assertEqual((answer["items"][0]["ag"], answer["items"][0]["adres"]), (None, "http://notlar.test"),
+                         "no rate before the sampler measured one")
+        self.p.app_net_last["notlar"] = {"t": int(time.time()), "indirme": 2048, "yukleme": 512}
+        _, answer = self.call("uygulamalar", code=200)
+        self.assertEqual(answer["items"][0]["ag"], {"indirme": 2048, "yukleme": 512})
+        _, detail = self.call("uygulama", "/api/konsol/uygulamalar/notlar", code=200)
+        self.assertEqual((detail["uygulama"]["ag"], detail["uygulama"]["adres"]), ({"indirme": 2048, "yukleme": 512}, "http://notlar.test"))
+        # A raw port is no address.
+        values = dict(self.values, STATE_FILE=str(self.state))
+        rows = apps.Records(values).rows("notlar")
+        apps.Records(values).write("notlar", rows={k: {"tur": "ham", "kapsam": "kapali", "port": 8080} for k in rows},
+                                   places=dict(apps.Records(values).places("notlar"), ports={}))
+        _, answer = self.call("uygulamalar", code=200)
+        self.assertIsNone(answer["items"][0]["adres"])
+
+    def test_the_update_view_counts_the_applications_with_an_image_update(self):
+        with patch.object(self.p.updates, "status", return_value={"yeni": False}), patch.object(self.p, "unit_active", return_value=False):
+            self.assertEqual(self.p.update_info()["uygulamalar"], {"sayi": 0, "adlar": [], "denetlendi": None})
+            self.p.containers.update_items = {"notlar": {"web": {"state": "var", "channel": "registry.example/notlar/web:1.4"},
+                                                         "db": {"state": "guncel", "channel": "registry.example/notlar/db:16"}}}
+            self.p.containers.update_at = 1_800_000_000.0
+            self.assertEqual(self.p.update_info()["uygulamalar"], {"sayi": 1, "adlar": ["notlar"], "denetlendi": 1_800_000_000})
+        _, answer = self.call("uygulamalar", code=200)
+        self.assertEqual(answer["items"][0]["guncelleme"], "yeni", "the list reads the same state")
+
+    def test_the_actions_carry_the_revision_shown(self):
+        self.call("uygulama_islemi", "/api/konsol/uygulamalar/notlar/islem", {"eylem": "durdur", "revizyon": "b" * 32}, code=409)
+        _, job = self.call("uygulama_islemi", "/api/konsol/uygulamalar/notlar/islem", {"eylem": "durdur", "revizyon": self.revision()}, code=202)
+        self.assertEqual((job["eylem"], job["ad"]), ("durdur", "notlar"))
+        self.assertEqual(self.launched, [("uygulama-durdur", {"revizyon": self.revision(), "name": "notlar"})])
+        self.assertEqual(self.audits, [("uygulama-durdur", "notlar", True)])
+        self.call("uygulama_islemi", "/api/konsol/uygulamalar/yok/islem", {"eylem": "durdur", "revizyon": "b" * 32}, code=404)
+        self.call("uygulama_islemi", "/api/konsol/uygulamalar/notlar/islem", {"eylem": "sil", "revizyon": "b" * 32}, code=400)
+
+    def test_an_edit_is_planned_without_a_write_and_applied_as_a_job(self):
+        given = app_fixtures.answers()
+        given["answers"]["var:DB_PASSWORD"] = {"keep": True}
+        text = app_fixtures.TEXT.replace("LOG_LEVEL: info", "LOG_LEVEL: debug")
+        data = {"metin": text, "yanitlar": given, "plan": True, "revizyon": self.revision()}
+        _, plan = self.call("uygulama_tanim", "/api/konsol/uygulamalar/notlar/tanim", data, code=200)
+        self.assertEqual((plan["fark"]["ortam"], plan["fark"]["gizliler"]["korunan"]), (["web"], ["notlar-db-password"]))
+        self.assertEqual(self.launched, [])
+        _, job = self.call("uygulama_tanim", "/api/konsol/uygulamalar/notlar/tanim", dict(data, plan=False), code=200)
+        self.assertEqual((job["eylem"], job["ad"]), ("tanim", "notlar"))
+        self.assertEqual(self.launched[0][0], "uygulama-tanim")
+        self.assertNotIn("plan", self.launched[0][1])
+        given["answers"]["var:DB_PASSWORD"] = {"value": ""}
+        _, plan = self.call("uygulama_tanim", "/api/konsol/uygulamalar/notlar/tanim", dict(data, yanitlar=given), code=200)
+        self.assertIn("var:DB_PASSWORD", plan["hatalar"])
+        self.call("uygulama_tanim", "/api/konsol/uygulamalar/notlar/tanim", dict(data, yanitlar=given, plan=False), code=400)
+        self.call("uygulama_tanim", "/api/konsol/uygulamalar/notlar/tanim", dict(data, revizyon="b" * 32), code=409)
+        self.assertEqual(len(self.launched), 1)
+
+    def test_a_refresh_works_only_for_an_address_source(self):
+        self.call("uygulama_yenile", "/api/konsol/uygulamalar/notlar/yenile", {}, code=409)
+        values = dict(self.values, STATE_FILE=str(self.state))
+        apps.Records(values).write("notlar", source=apps.source_record({"tur": "adres", "adres": "https://dosya.example.org/c.yaml"},
+                                                                       app_fixtures.TEXT, 1))
+        newer = app_fixtures.TEXT.replace("      LOG_LEVEL: info\n", "      LOG_LEVEL: ${LOG_LEVEL}\n")
+        with patch.object(apps, "fetch", return_value=newer) as fetch:
+            _, answer = self.call("uygulama_yenile", "/api/konsol/uygulamalar/notlar/yenile", {}, code=200)
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args[0], "https://dosya.example.org/c.yaml")
+        self.assertEqual((answer["metin"], answer["yeni_sorular"]), (newer, ["var:LOG_LEVEL"]), "a port that stays is no new question")
+        self.assertEqual(answer["yanitlar"]["answers"]["port:web:8080/tcp"], {"use": "caddy", "tailscale_name": "notlar"},
+                         "the port answers come from the rows")
+        self.assertEqual(self.launched, [])
+
+    def test_a_removal_needs_the_name_to_delete_data(self):
+        data = {"veri": "sil", "revizyon": self.revision()}
+        self.call("uygulama_kaldir", "/api/konsol/uygulamalar/notlar/kaldir", data, code=400)
+        self.call("uygulama_kaldir", "/api/konsol/uygulamalar/notlar/kaldir", dict(data, onay="yanlis"), code=400)
+        self.call("uygulama_kaldir", "/api/konsol/uygulamalar/notlar/kaldir", dict(data, onay="notlar"), code=202)
+        self.call("uygulama_kaldir", "/api/konsol/uygulamalar/notlar/kaldir", {"veri": "sakla", "revizyon": self.revision()}, code=409)
+        self.assertEqual(self.launched, [("uygulama-kaldir", {"veri": "sil", "revizyon": self.revision(), "onay": "notlar", "name": "notlar"})])
+        self.assertEqual(self.audits, [("uygulama-kaldir", "notlar (veri: sil)", True)])
+
+    def test_drafts_from_an_address_a_container_and_an_image(self):
+        with patch.object(apps, "fetch", return_value="services: {}\n"):
+            _, draft = self.call("uygulama_kaynak", data={"tur": "adres", "adres": "https://dosya.example.org/c.yaml?token=abc"},
+                                 code=200)
+        self.assertEqual(draft, {"metin": "services: {}\n", "kaynak": {"tur": "adres", "adres": "https://dosya.example.org/c.yaml?token=abc"}})
+        self.assertEqual(self.audits[-1], ("uygulama-taslak", "adres dosya.example.org", True), "the address's query is not logged")
+        _, draft = self.call("uygulama_kaynak", data={"tur": "konteyner", "konteyner": "eski"}, code=200)
+        self.assertIn("MODE: \"prod\"", draft["metin"])
+        self.assertIn("DB_PASSWORD: \"\"", draft["metin"])
+        self.call("uygulama_kaynak", data={"tur": "konteyner", "konteyner": "notlar_web"}, code=409)
+        self.call("uygulama_kaynak", data={"tur": "konteyner", "konteyner": "yok"}, code=404)
+        _, job = self.call("uygulama_kaynak", data={"tur": "imaj", "imaj": "registry.example/sayac:2"}, code=200)
+        self.assertEqual(self.launched, [("uygulama-taslak", {"imaj": "registry.example/sayac:2", "name": "registry.example/sayac:2"})])
+        self.assertEqual(set(job), {"is"})
+        self.call("uygulama_kaynak", data={"tur": "imaj", "imaj": "Kötü"}, code=400)
+        self.call("uygulama_kaynak", data={"tur": "dosya"}, code=400)
+        with patch.object(apps, "fetch", side_effect=apps.AppError(400, "yerel bir adrese çözümleniyor")):
+            self.call("uygulama_kaynak", data={"tur": "adres", "adres": "https://ic.example.org/c.yaml"}, code=400)
 
 
 class UpdateCheckTests(Fixture):
@@ -195,28 +372,7 @@ class UpdateCheckTests(Fixture):
         updates.assert_called_once_with()
 
 
-class FakeView:
-    def __init__(self, calls):
-        self.calls = calls
-
-    def liste(self):
-        return copy.deepcopy(CONTAINERS)
-
-    def ayrinti(self, name):
-        self.calls.append(("ayrinti", name))
-        return {"name": name, "image": "ghcr.io/drs0me1/gezgin@sha256:" + "b" * 64, "network": "gezgin", "user": "1000:1000",
-                "started": NOW - 3600, "health": "healthy", "restarts": 1,
-                "ports": [{"host_ip": "127.0.0.1", "host_port": 8093, "container_port": 8080, "protocol": "tcp", "scope": "local"}],
-                "mounts": [{"type": "bind", "source": "/srv/media", "destination": "/srv/media", "rw": True, "name": ""},
-                           {"type": "volume", "source": "/var/lib/containers/storage/volumes/gezgin-db/_data", "destination": "/database",
-                            "rw": True, "name": "gezgin-db"}]}
-
-    def gunluk(self, name, tail):
-        self.calls.append(("gunluk", name, tail))
-        return {"name": name, "lines": ["satır 1", "satır 2"], "truncated": False}
-
-
-class DetailAndActionTests(Fixture):
+class RepairRouteTests(Fixture):
     def setUp(self):
         super().setUp()
 
@@ -225,76 +381,11 @@ class DetailAndActionTests(Fixture):
                 pass
         Handler.panel = self.p
         _server, self.sock = test_resources.start_unix(self, Handler)
-        with self.state.open("a") as fh:
-            fh.write("KONTEYNER_STATE_DIR=%s\n" % (self.root / "konteyner"))
-        self.calls = []
-        for name, value in (("modules", copy.deepcopy(MODULES)), ("erisim", erisim())):
-            patch.object(self.p, name, return_value=value).start()
-        patch.object(self.p.containers, "view", return_value=FakeView(self.calls)).start()
-        patch.object(self.p, "update_check_soon").start()  # no registry check from a test
-        self.addCleanup(patch.stopall)
 
-    def get(self, path, code=200):
-        status, _, body = test_resources.unix_get(self.sock, path, {"X-Konsol": "1"})
-        self.assertEqual(status, code, body)
-        return json.loads(body)
-
-    def post(self, body, path="/api/konsol/uygulamalar/islem", headers=None):
+    def post(self, body, path, headers=None):
         status, _, answer = test_resources.unix_get(self.sock, path, {"X-Konsol": "1", "Content-Type": "application/json", **(headers or {})},
                                                     method="POST", body=json.dumps(body).encode())
         return status, json.loads(answer)
-
-    def test_the_detail_of_a_container_application(self):
-        answer = self.get("/api/konsol/uygulamalar/ayrinti?id=konteyner:gezgin")
-        master_api.check(master_api.ref("UygulamaAyrinti"), answer)
-        self.assertEqual((answer["uygulama"]["id"], answer["konteyner"]["saglik"], answer["konteyner"]["baslangic"]),
-                         ("konteyner:gezgin", "healthy", NOW - 3600))
-        self.assertEqual([(m["tur"], m["hedef"], m["ad"]) for m in answer["konteyner"]["baglamalar"]],
-                         [("bind", "/srv/media", ""), ("volume", "/database", "gezgin-db")])
-        self.assertEqual(answer["erisim"]["id"], "konteyner:gezgin")
-        share = self.get("/api/konsol/uygulamalar/ayrinti?id=yerlesik:paylasim")
-        self.assertEqual((share["konteyner"], share["erisim"]["id"]), (None, "paylasim"))
-        self.assertIsNone(self.get("/api/konsol/uygulamalar/ayrinti?id=yerlesik:dosya")["erisim"])
-        self.get("/api/konsol/uygulamalar/ayrinti?id=konteyner:yok", 404)
-        self.get("/api/konsol/uygulamalar/ayrinti?id=../etc", 400)
-        self.get("/api/konsol/uygulamalar/ayrinti", 400)
-
-    def test_logs_come_from_the_container_or_the_engine(self):
-        answer = self.get("/api/konsol/uygulamalar/gunluk?id=konteyner:gezgin&satir=50")
-        master_api.check(master_api.ref("UygulamaGunlugu"), answer)
-        self.assertEqual((answer, self.calls[-1]), ({"satirlar": ["satır 1", "satır 2"], "kesik": False}, ("gunluk", "gezgin", "50")))
-        with patch.object(self.p, "package_container", return_value=None), \
-             patch.object(self.p, "module_state", return_value="calisiyor"), \
-             patch.object(self.p, "modul", return_value=(0, "a\nb\n\nc\n", "")) as modul:
-            answer = self.get("/api/konsol/uygulamalar/gunluk?id=paket:wireguard&satir=2")
-        modul.assert_called_once_with("gunluk", "wireguard", "2")
-        self.assertEqual(answer, {"satirlar": ["b", "c"], "kesik": True})
-        self.assertIn("Sistem → Günlük", self.get("/api/konsol/uygulamalar/gunluk?id=yerlesik:dosya", 404)["error"])
-
-    def test_one_action_entry_for_packages_and_containers(self):
-        with patch.object(self.p, "module_spawn", return_value=(202, "")) as spawn:
-            self.assertEqual(self.post({"id": "paket:torrent", "eylem": "kaldir", "veri": True}),
-                             (202, {"id": "paket:torrent", "eylem": "kaldir", "is": None}))
-        spawn.assert_called_once_with("torrent", "kaldir", True)
-        jobs = []
-
-        def submit(data):
-            jobs.append(data)
-            return {"id": "c" * 32, "action": data["action"], "name": data["name"], "state": "running"}
-        with patch.object(self.p.containers, "submit", side_effect=submit), \
-             patch.object(self.p, "package_container", return_value="qbittorrent"):
-            self.assertEqual(self.post({"id": "konteyner:gezgin", "eylem": "yeniden-baslat", "revizyon": "k" * 32})[1]["is"], "c" * 32)
-            self.assertEqual(self.post({"id": "paket:torrent", "eylem": "guncelle", "revizyon": "r" * 64})[0], 202)
-        self.assertEqual(jobs, [{"action": "restart", "name": "gezgin", "revision": "k" * 32},
-                                {"action": "image-update", "name": "qbittorrent", "revision": "r" * 64}])
-        self.assertEqual(self.post({"id": "paket:gezgin", "eylem": "baslat"})[0], 404, "a package that is not installed")
-        self.assertEqual(self.post({"id": "yerlesik:dosya", "eylem": "durdur"})[0], 409)
-        for bad in ({"id": "paket:torrent"}, {"id": "paket:torrent", "eylem": "sil"}, {"id": 5, "eylem": "baslat"},
-                    {"id": "paket:torrent", "eylem": "baslat", "fazla": 1}, {"id": "paket:torrent", "eylem": "kaldir", "veri": "evet"}):
-            status, answer = self.post(bad)
-            self.assertEqual(status, 400, bad)
-            self.assertIn("İstek biçimi geçersiz", answer["error"])
-        self.assertEqual(self.post({"id": "konteyner:../x", "eylem": "baslat"})[0], 404)
 
     def test_repair_starts_only_from_the_tailnet(self):
         with patch.object(self.p, "repair_start", return_value="denetle") as start:

@@ -1,5 +1,6 @@
 <!-- A settings change waiting on the server (DD-156's transaction): shown on every page until it is confirmed
-     or rolled back. While it awaits confirmation the banner counts down locally from the server's `seconds`
+     or rolled back, named by what it changes (pending.ts: an access row, WireGuard, the local domain, the firewall
+     or the local names). While it awaits confirmation the banner counts down locally from the server's `seconds`
      (re-sent about once a second) and offers "Onayla" and "Geri al" right here. Confirmation comes only from a
      Tailscale device (DD-195), and a local domain change only from its new address (http://panel.<new>): the
      banner says so instead of offering it. A rollback that failed five times ("stuck") can be retried or, with
@@ -13,11 +14,13 @@ import { live, setPending } from "../live";
 import { confirmChange, discardChange, rollBackChange } from "../api/erisim";
 import { tailnetKonsol } from "../links";
 import { countdown } from "../format";
+import { pendingTitle } from "../pending";
 
 const now = ref(Date.now());
 let ticker: number | undefined;
 
 const change = computed(() => live.bekleyen ?? null);
+const title = computed(() => (change.value ? pendingTitle(change.value, live.erisim) : ""));
 const awaiting = computed(() => change.value?.phase === "awaiting" && typeof change.value.seconds === "number" && Number.isFinite(change.value.seconds));
 
 watch(
@@ -79,8 +82,8 @@ const detail = computed(() => {
 const internetChannel = location.protocol === "https:";
 const domain = computed(() => change.value?.domain ?? null);
 const wrongAddress = computed(() => Boolean(domain.value && location.hostname !== "panel." + domain.value.new));
-const newAddress = computed(() => (domain.value ? tailnetKonsol(domain.value.new, "#/erisim?sekme=adresler") : ""));
-const oldAddress = computed(() => (domain.value ? tailnetKonsol(domain.value.old, "#/erisim?sekme=adresler") : ""));
+const newAddress = computed(() => (domain.value ? tailnetKonsol(domain.value.new, "#/erisim?sekme=adlar") : ""));
+const oldAddress = computed(() => (domain.value ? tailnetKonsol(domain.value.old, "#/erisim?sekme=adlar") : ""));
 const tailnetAddress = computed(() => (live.kaynaklar?.domain ? tailnetKonsol(live.kaynaklar.domain) : ""));
 
 const busy = ref(false);
@@ -144,7 +147,7 @@ async function discard(): Promise<void> {
     <section v-if="change" ref="banner" class="pending" aria-labelledby="bekleyen-baslik" :data-phase="change.phase">
       <span class="pending-icon"><Icon :name="change.phase === 'stuck' ? 'alert' : 'clock'" /></span>
       <div class="pending-text">
-        <strong id="bekleyen-baslik">Bekleyen bir ayar değişikliği var</strong>
+        <strong id="bekleyen-baslik" data-testid="pending-title">Bekleyen değişiklik: {{ title }}</strong>
         <span class="pending-detail" aria-live="off">
           <template v-if="awaiting && remaining > 0">
             <span class="pending-count" data-testid="countdown">{{ countdown(remaining) }}</span> içinde onaylanmazsa önceki ayarlar geri yüklenir.

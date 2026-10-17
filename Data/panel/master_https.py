@@ -38,7 +38,7 @@ def settings(env, value=None):
             require(isinstance(pending.get("changes"), dict) and
                     isinstance(pending.get("until"), (int, float)) and
                     isinstance(pending.get("candidate"), dict), "Bekleyen HTTPS ayarı geçersiz.")
-        if (pending and (pending.get("changes", {}).get("https") or pending.get("changes", {}).get("web")) and pending.get("phase") in ("applying", "awaiting") and
+        if (pending and pending.get("changes", {}).get("web") and pending.get("phase") in ("applying", "awaiting") and
                 pending.get("boot") == boot_id() and pending.get("until", 0) > time.monotonic()):
             value = pending["candidate"]
     require(isinstance(value, dict), "HTTPS ayar kaydı okunamadı.")
@@ -46,24 +46,21 @@ def settings(env, value=None):
 
 
 def config(env, value=None):
+    """WebDAV's internet mode from its row in "web" (paylasim): with no row ever saved, a folder's internet
+    connection is consent-gated HTTP on SHARE_PORT; once the row exists, an empty or switched-off name closes WAN
+    instead of exposing plaintext."""
     value = settings(env, value)
     web = value.get("web", {})
     require(isinstance(web, dict), "Caddy yayın kaydı geçersiz.")
-    if "paylasim" in web:
-        row = web["paylasim"]
-        require(isinstance(row, dict) and set(row) == {"tail", "enabled", "domain"}
-                and type(row["enabled"]) is bool and type(row["tail"]) is bool,
-                "WebDAV yayın kaydı geçersiz.")
-        name = domain(row["domain"])
-        require(not row["enabled"] or bool(name), "HTTPS alan adı gerekli.")
-        value = dict(value, https={"domain": name if row["enabled"] else ""})
-    # Existing explicit HTTP opt-ins survive the upgrade. Once HTTPS has been
-    # configured, clearing its domain closes WAN instead of exposing plaintext.
-    if "https" not in value:
+    if "paylasim" not in web:
         return {"domain": "", "mode": "http", "scheme": "http", "port": int(env.get("SHARE_PORT", 0))}
-    item = value["https"]
-    require(isinstance(item, dict) and set(item) == {"domain"}, "HTTPS ayar kaydı geçersiz.")
-    name = domain(item["domain"])
+    row = web["paylasim"]
+    require(isinstance(row, dict) and set(row) == {"tail", "enabled", "domain"}
+            and type(row["enabled"]) is bool and type(row["tail"]) is bool,
+            "WebDAV yayın kaydı geçersiz.")
+    name = domain(row["domain"])
+    require(not row["enabled"] or bool(name), "HTTPS alan adı gerekli.")
+    name = name if row["enabled"] else ""
     port = int(env["SHARE_HTTPS_PORT"])
     require(1 <= port <= 65535 and port != int(env["SHARE_PORT"]), "HTTPS portu geçersiz.")
     return {"domain": name, "mode": "https" if name else "off", "scheme": "https" if name else "", "port": port}
@@ -110,7 +107,7 @@ def wait_certificate(env, name, seconds=60):
 
 def status(env):
     cfg = config(env)
-    # In legacy HTTP mode "port" is SHARE_PORT.
+    # In HTTP mode "port" is SHARE_PORT.
     result = dict(cfg, expires=None)
     if cfg["mode"] == "http":
         return dict(result, status="http", message="HTTPS alan adı tanımlanmadı. Mevcut WAN paylaşımları HTTP kullanıyor.")
@@ -121,7 +118,7 @@ def status(env):
         return dict(result, status="ready", message="Sertifika doğrulandı.", expires=expires)
     except (OSError, ValueError, KeyError, SettingsError):
         pending = read_json(env["SETTINGS_PENDING_FILE"], None) if env.get("SETTINGS_PENDING_FILE") else None
-        if pending and pending.get("phase") == "applying" and (pending.get("changes", {}).get("https") or pending.get("changes", {}).get("web")):
+        if pending and pending.get("phase") == "applying" and pending.get("changes", {}).get("web"):
             return dict(result, status="pending", message="Sertifika hazırlanıyor…")
         return dict(result, status="error", message="HTTPS sertifikası doğrulanamadı; Caddy ve DNS ayarlarını kontrol edin.")
 

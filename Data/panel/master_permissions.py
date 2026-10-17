@@ -31,7 +31,7 @@ def open_root(path, create=False):
         raise
 
 
-def repair(root, uid, gid, excluded):
+def repair(root, uid, gid):
     changed = 0
 
     def fix(fd):
@@ -51,13 +51,11 @@ def repair(root, uid, gid, excluded):
         changed += bool(owner_diff or mode_diff)
         return directory
 
-    def walk(fd, top=False):
+    def walk(fd):
         if not fix(fd):
             return
         with os.scandir(fd) as entries:
             for entry in entries:
-                if top and entry.name in excluded:
-                    continue
                 child = None
                 try:
                     st = entry.stat(follow_symlinks=False)
@@ -78,7 +76,7 @@ def repair(root, uid, gid, excluded):
 
     fd = open_root(root)
     try:
-        walk(fd, top=True)
+        walk(fd)
     finally:
         os.close(fd)
     return changed
@@ -94,13 +92,12 @@ if __name__ == '__main__':
     parser.add_argument('root')
     parser.add_argument('uid', type=int)
     parser.add_argument('gid', type=int)
-    parser.add_argument('excluded', nargs='*')
     args = parser.parse_args()
     try:
         if args.mkdir:
             prepare_directory(args.root)
         else:
-            print(repair(args.root, args.uid, args.gid, args.excluded))
+            print(repair(args.root, args.uid, args.gid))
     except (OSError, ValueError, RecursionError):
         print('HATA: kullanıcı alanı izinleri güvenli onarılamadı.', file=sys.stderr)
         sys.exit(1)

@@ -10,8 +10,8 @@
      h.handlers{ "/api/konsol/…": (req) => ({ status, body }) | undefined } answers before data
                (req: { method, path, query (URLSearchParams), body (parsed JSON or null) }); a reply with
                `contentType` is sent as it is (a PNG, a text file) instead of as JSON;
-     h.dynamic [[/regex/, (req, match) => reply | undefined], …] answers paths with variable parts (a
-               package's /api/uygulama/<id>/… routes) after the exact handlers;
+     h.dynamic [[/regex/, (req, match) => reply | undefined], …] answers paths with variable parts
+               (WireGuard's /api/konsol/wireguard/nets/<iface>/… routes) after the exact handlers;
                a handler may also return a promise of its reply (an upload the suite holds back); the page
                may give up on such a request meanwhile (it is cancelled), which is not an error;
      h.raw     (path) => true for POST paths whose body is the raw upload, not JSON (the files backend's
@@ -19,7 +19,13 @@
      h.unsigned(path) => true for GET paths a plain link opens without X-Konsol (a file's download);
                Playwright does not route a download, so the static server answers such a path from its
                exact handler (logged like the routed requests);
-     expected  URL fragments whose failed loads (4xx/5xx) are part of the current scenario. */
+     expected  URL fragments whose failed loads (4xx/5xx) are part of the current scenario.
+
+   const { uygulama, servis, uygulamalar, ayrinti, soru, inceleme } = require("./yeni-harness.cjs").fixtures;
+     builders of the application shapes (api/sema.ts: Uygulama, UygulamaServisi, Uygulamalar, UygulamaAyrinti)
+     with neutral defaults (registry.example images), and of the inspector's (Soru*, Inceleme: `inceleme`
+     derives the line marks from the refusals, questions and notes as master_inspector.py does); every field can
+     be overridden. */
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const assert = require("node:assert/strict");
 const childProcess = require("node:child_process");
@@ -279,4 +285,63 @@ function create({ name, url, data, expected = () => [] }) {
   return h;
 }
 
-module.exports = { create };
+// ---- application fixtures (DD-271, phase 3)
+const servis = (ad, o = {}) => ({ ad, durum: "calisiyor", imaj: `registry.example/${ad}:1`, guncelleme: "sabit", ...o });
+
+const uygulama = (ad, o = {}) => ({ ad, durum: "calisiyor", bicim: "compose", servisler: [servis("web")], kaynak: { cpu: null, bellek: null },
+  guncelleme: "sabit", eylemler: ["durdur", "yeniden-baslat"], revizyon: "rev-" + ad, is: null, koken: "dosya", durduruldu: false, uyari: 0, ag: null,
+  adres: null, ...o });
+
+const uygulamalar = (items, o = {}) => ({ read_at: 1791845000, items, kaynaklar: [], hatalar: [], ...o });
+
+/** An application's detail from its list item; `servisler` overrides each service's detail by name. */
+function ayrinti(item, o = {}, servisler = {}) {
+  const svc = (s) => ({ ad: s.ad, durum: s.durum, baslangic: "direct", kullanici: null, imaj: s.imaj, ozet: null, kanal: s.imaj, guncelleme: s.guncelleme,
+    konteyner: `${item.ad}_${s.ad}`, birim: `konsol-${item.ad}_${s.ad}.service`, calisma: null, saglik: "", yeniden_baslama: 0, portlar: [], baglamalar: [],
+    gizliler: [], ...(servisler[s.ad] || {}) });
+  return { uygulama: item, servisler: item.servisler.map(svc), gizliler: [], uyarilar: [],
+    koken: { tur: item.koken, adres: null, imaj: null, konteyner: null, alindi: 1791700000, sha256: "0".repeat(64) },
+    metin: "services:\n" + item.servisler.map((s) => `  ${s.ad}:\n    image: ${s.imaj}\n`).join(""), yanitlar: { name: item.ad, answers: {} },
+    birimler: [`konsol-${item.ad}.network`, ...item.servisler.map((s) => `konsol-${item.ad}_${s.ad}.container`)].sort(),
+    veri: `/var/lib/master-stack/uygulamalar/${item.ad}`, ag: `ksl-${item.ad}`, pod: null, guncelleme_denetlendi: null, ...o };
+}
+
+// ---- the inspector's shapes (rebuild phase 2; api/sema.ts: Soru*, Inceleme)
+const soru = {
+  ad: (suggest, o = {}) => ({ id: "name", kind: "name", line: 2, title: "Uygulamanın adı",
+    why: "Birimlerin, ağın ve verilerin klasörünün adı olur: küçük harf, rakam ve '-', en çok 30 karakter.", suggest, ...o }),
+  port: (service, port, o = {}) => {
+    const protocol = o.protocol || "tcp";
+    const udp = protocol === "udp";
+    return { id: `port:${service}:${port}/${protocol}`, kind: "port", line: 4, title: `${service}: ${port}/${protocol.toUpperCase()}`,
+      why: udp ? "UDP ham port olarak eklenir ve kapalı gelir; kapsamı (Tailscale ya da internet) Erişim'den seçilir."
+        : "Web arayüzü olabilir: bir adres (Caddy satırı, Tailscale adı) ya da ham port olarak eklenir. Seçim sizin; dosyadaki sunucu portu kullanılmaz.",
+      service, port, protocol, guess: udp ? "raw" : "web", choices: udp ? ["raw"] : ["caddy", "raw"], suggest: null, host_port: null, ...o };
+  },
+  degisken: (name, o = {}) => ({ id: "var:" + name, kind: "var", line: 6, title: `Değişken: \${${name}}`,
+    why: o.secret ? "Gizli bir değer gibi görünüyor; Podman secret olarak verilir, diske ve tarayıcıya açık yazılmaz." : "Dosya bu değeri dışarıdan (.env) bekliyor.",
+    name, secret: false, generate: false, default: null, required: false, services: ["web"], ...o }),
+  gizli: (service, env, o = {}) => ({ id: `secret:${service}:${env}`, kind: "secret", line: 7, title: `${service}: ${env} (gizli değer)`,
+    why: "Dosyada boş; değerini siz verirsiniz, Podman secret olur.", service, env, generate: false, services: [service], uses: [{ service, env }], ...o }),
+  klasor: (service, target, o = {}) => ({ id: `mount:${service}:${target}`, kind: "mount", line: 5, title: `${service}: ${target}`,
+    why: "Uygulamanın klasörüne ya da /srv altından bir klasöre bağlanır; başka bir sunucu yolu kullanılmaz.", service, target, source: "veri",
+    source_kind: "named", read_only: false, suggest: "app", folder: "veri", srv_path: null, ...o }),
+  baslangic: (service, o = {}) => ({ id: "start:" + service, kind: "start", line: 2, title: `${service}: nasıl başlasın?`,
+    why: "Dosya kullanıcı belirtmiyor: imaj büyük olasılıkla root başlayıp kendi kullanıcısına geçiyor. Doğrudan başlatılırsa 1000:1000 ile başlar ve açılmayabilir.",
+    service, suggest: "root", user: null, direct_user: "1000:1000", caps_add: [],
+    open_caps: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "SETGID", "SETPCAP", "SETUID"], ...o }),
+};
+
+/** An inspection; without `marks` they are derived as the inspector does (refusals, questions, notes by line). */
+function inceleme(o = {}) {
+  const value = { format: "compose", name: "ornek", pod: false, services: [], variables: [], refusals: [], notes: [], questions: [], ...o };
+  if (!o.marks) {
+    const order = { refuse: 0, question: 1, note: 2 };
+    value.marks = [...value.refusals.map((r) => ({ line: r.line, kind: "refuse", text: r.text })),
+      ...value.questions.map((q) => ({ line: q.line, kind: "question", text: q.title })),
+      ...value.notes.map((n) => ({ line: n.line, kind: "note", text: n.text }))].sort((a, b) => a.line - b.line || order[a.kind] - order[b.kind]);
+  }
+  return value;
+}
+
+module.exports = { create, fixtures: { servis, uygulama, uygulamalar, ayrinti, soru, inceleme } };

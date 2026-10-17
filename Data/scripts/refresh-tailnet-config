@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tailscale adres değişince state.env güncelle; Caddy ve bağlı konteyner adreslerini yenile.
-# Modül siteleri (ör. Paylaşım'ın Infuse adresi {$TAILSCALE_IPV4}:port) Caddyfile'a içe
+# Tailscale adres değişince state.env güncelle ve Caddy'yi yeniden başlat.
+# Ek siteler (ör. Paylaşım'ın Infuse adresi {$TAILSCALE_IPV4}:port) Caddyfile'a içe
 # aktarılır; Caddy yeniden başlayınca onlar da yeni adresle açılır (DD-98, DD-149).
 # DD-239/DD-240: 5 dakikalık döngü yok. Açılışta bir kez, her gece 03:00–04:00 arasında bir kez, Caddy
 # çökünce (OnFailure) ve master-onar (Konsol'un "Denetle ve onar" düğmesi ya da SSH) istediğinde çalışır.
@@ -20,9 +20,12 @@ source "$STATE_FILE"
 
 : "${TAILSCALE_IF:=tailscale0}"
 
+: "${SBIN_DIR:?}"
+
 BOUND_UNITS="caddy.service"
 FIREWALL_UNIT="master-firewall.service"
-FIREWALL_BIN="${FIREWALL_BIN:-/usr/local/sbin/master-firewall}"
+# The base's tools are in state.env's SBIN_DIR (config/defaults.env, the single source).
+FIREWALL_BIN="$SBIN_DIR/master-firewall"
 # WantedBy=tailscaled tetiklemesi süreç start'ı ile gelir; IP henüz yok olabilir.
 # tailscale wait (1.90+) backend + arayüz + IP hazır olana kadar bekler.
 WAIT_TIMEOUT="${REFRESH_TAILNET_WAIT_TIMEOUT:-120s}"
@@ -59,18 +62,6 @@ restart_bound_units() {
         systemctl restart "$unit" ||
             printf 'refresh-tailnet: %s yeniden başlatılamadı\n' "$unit" >&2
     done
-}
-
-refresh_bound_containers() {
-    [[ -n "${KONTEYNER_STATE_DIR:-}" && -n "${RUNTIME_DIR:-}" && -n "${SBIN_DIR:-}" ]] || return 0
-    [[ -f "$RUNTIME_DIR/containers-tailnet.pending" ]] || return 0
-    # Uzun yeniden oluşturma bu birimin 150 saniyelik bütçesini tüketmez. Çalışan iş
-    # varsa yeni iş açılmaz; işaret bir sonraki çalışmada (onarım ya da açılış) tekrar denenir.
-    systemd-run --quiet --no-block --collect --unit=master-container-tailnet-refresh \
-        --property=RuntimeMaxSec=900 --property=UMask=0077 \
-        --setenv=PYTHONDONTWRITEBYTECODE=1 \
-        /usr/bin/python3 "$SBIN_DIR/master_container_worker.py" --state "$STATE_FILE" --refresh-tailnet ||
-        printf 'refresh-tailnet: konteyner adres işi başlatılamadı; sonraki çalışmada denenecek\n' >&2
 }
 
 recover_failed_bound_units() {
@@ -118,8 +109,9 @@ recover_failed_wireguard() {
     # açılışta kurulamamışsa ağ failed kalır; duvar düzelince burada yeniden açılır.
     # Yalnız etkin (Konsol'dan kapatılmamış) ağlar; Tailscale'i beklemez.
     local unit units
-    # DD-196: paket kurulu değilken WireGuard birimleri aranmaz.
-    grep -qx $'wireguard\tcalisiyor' "${MODULES_FILE:-/etc/master-stack/moduller}" 2>/dev/null || return 0
+    # DD-229/271: ağ kurulmamışsa ya da WireGuard durdurulmuşsa birimler aranmaz.
+    [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]] || return 0
+    [[ -n "${WG_STOPPED_FILE:-}" && ! -e "$WG_STOPPED_FILE" ]] || return 0
     units="$(systemctl list-units --failed --plain --no-legend 'wg-quick@wg*.service' 2>/dev/null |
         awk '{print $1}')" || return 0
     [[ -n "$units" ]] || return 0
@@ -131,6 +123,20 @@ recover_failed_wireguard() {
         systemctl restart "$unit" ||
             printf 'refresh-tailnet: %s açılamadı\n' "$unit" >&2
     done
+}
+
+refresh_application_addresses() {
+    # Rebuild phase 4: an application's open raw port is published on TAILSCALE_IPV4 or WAN_IPV4 in its
+    # unit. The container worker writes the units that carry an older address again and restarts those
+    # services (master_container_worker.py --adres-yenile; idempotent). It may wait up to 300 s per
+    # service, so it runs as its own transient unit and this unit's budget stays as it is; a job, the
+    # installer or a pending settings change makes it leave the work to the next run.
+    [[ -n "${UYGULAMA_STATE_DIR:-}" && -n "${SBIN_DIR:-}" && -f "${SBIN_DIR}/master_container_worker.py" ]] || return 0
+    systemd-run --quiet --no-block --collect --unit=master-container-adres-yenile \
+        --property=RuntimeMaxSec=1800 --property=UMask=0077 \
+        --setenv=PYTHONDONTWRITEBYTECODE=1 \
+        /usr/bin/python3 "$SBIN_DIR/master_container_worker.py" --state "$STATE_FILE" --adres-yenile ||
+        printf 'refresh-tailnet: uygulama adres işi başlatılamadı ya da sürüyor; sonraki çalışmada denenecek\n' >&2
 }
 
 wait_for_tailscale_ready() {
@@ -191,8 +197,8 @@ old_v6="${TAILSCALE_IPV6:-}"
 if [[ "$new_v4" == "$old_v4" && "$new_v6" == "$old_v6" ]]; then
     printf 'refresh-tailnet: değişiklik yok (%s)\n' "$new_v4"
     recover_failed_bound_units
-    [[ -z "${RUNTIME_DIR:-}" ]] || exec 8>&-
-    refresh_bound_containers
+    # The boot and nightly runs also catch a WAN address an installer run has written since.
+    refresh_application_addresses
     exit 0
 fi
 
@@ -220,12 +226,9 @@ chmod 0600 "$tmp"
 mv -f "$tmp" "$STATE_FILE"
 trap - EXIT
 
-if [[ -n "${KONTEYNER_STATE_DIR:-}" && -n "${RUNTIME_DIR:-}" ]]; then
-    printf '%s\n%s\n' "$new_v4" "$new_v6" >"$RUNTIME_DIR/containers-tailnet.pending"
-fi
 [[ -z "${RUNTIME_DIR:-}" ]] || exec 8>&-
 recover_firewall_if_broken
 restart_bound_units
-refresh_bound_containers
+refresh_application_addresses
 
 printf 'refresh-tailnet: state.env güncellendi; Caddy yeniden başlatıldı\n'

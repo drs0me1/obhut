@@ -3,7 +3,7 @@
 Creates/removes one RO WAN+Tailscale share and two 256 MiB test files. Existing
 shares remain configured, but WebDAV restarts during fixture setup/cleanup.
 Run from an external tailnet client, never against an unauthorized host.
-WAN uses the host's mode: legacy HTTP on SHARE_PORT or HTTPS on its public name.
+WAN uses the host's mode: plain HTTP on SHARE_PORT or HTTPS on its public name.
 """
 import argparse
 import base64
@@ -70,7 +70,7 @@ def panel_get(path):
 
 for name, paths in (
     # DD-267: Gelişmiş reads the settings view the old GET /api/konsol/ayarlar returned.
-    ('Konsol', ['/api/konsol/kaynaklar', '/api/konsol/gelismis', '/api/konsol/moduller']),
+    ('Konsol', ['/api/konsol/kaynaklar', '/api/konsol/gelismis', '/api/konsol/wireguard/state']),
     ('Files', ['/api/state', '/api/list?path=downloads'])):
     with ThreadPoolExecutor(max_workers=20) as pool:
         codes = list(pool.map(panel_get, [paths[i % len(paths)] for i in range(100)]))

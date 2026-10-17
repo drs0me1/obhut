@@ -1,0 +1,17 @@
+# Deliberately unsafe: the inspector must stop at every one of these lines.
+services:
+  yonetim:
+    image: docker.io/portainer/portainer-ce:2.21.0
+    privileged: true
+    network_mode: host
+    pid: host
+    cap_add:
+      - CHOWN
+      - NET_ADMIN
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /:/host
+      - /etc/master-stack:/obhut:ro
+    ports:
+      - "9000:9000"
+    runtime: runc

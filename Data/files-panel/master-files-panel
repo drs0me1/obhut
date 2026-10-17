@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-# Konsol'un dosya arka ucu (DD-139, DD-140, DD-141). Kullanıcı alanını tarayıcıdan yönetir:
+# Konsol'un dosya arka ucu (DD-139, DD-140). Kullanıcı alanını tarayıcıdan yönetir:
 # gez, yeni klasör, yeniden adlandır, taşı, çöpe at / geri yükle / kalıcı sil, metin dosyasını
-# oku, indir ve yükle. Sayfaları Caddy verir; /api/konsol/* ve /api/uygulama/* istekleri
-# root arka ucuna (master-panel) gider. Klasör paylaşım hesapları orada yönetilir.
+# oku, indir ve yükle. Sayfaları Caddy verir; /api/konsol/* istekleri root arka ucuna (master-panel)
+# gider. Klasör paylaşım hesapları orada yönetilir.
 # Yalnız 127.0.0.1'i dinler; Caddy tailnet'e (http://panel.<alan>) ve isteğe bağlı genel HTTPS
 # adına (DD-195) açar. Konsol oturumunu
 # Caddy root arka uca sorar (DD-194); bu servis oturum görmez. Servis root değil, kullanıcı
 # alanının sahibi olarak çalışır. Yalnız Python standart kütüphanesi.
 #
 #   master-files-panel serve --listen 127.0.0.1:PORT --root DİZİN [--trash AD]
-#                            [--domain ALAN] [--version SÜRÜM] [--protected YOL=SAHİP;...] [--allow-host HOST]
+#                            [--domain ALAN] [--version SÜRÜM] [--downloads-dir AD]
 #   master-files-panel serve --sistem --listen unix:SOKET --socket-group GRUP --root / [--domain ALAN]
 #   master-files-panel check --url URL --host HOST
 #
@@ -907,7 +907,7 @@ class Panel:
     def state(self):
         vfs = os.statvfs(self.args.root)
         if self.system:
-            # DD-235: çöp, kullanım toplamı ve paket klasörleri yok (DD-238: salt okunur kök de yok).
+            # DD-235: çöp ve kullanım toplamı yok (DD-238: salt okunur kök de yok).
             return {
                 "host": socket.gethostname(),
                 "version": self.args.version,
@@ -925,7 +925,6 @@ class Panel:
             "root": self.args.root,
             "downloads": getattr(self.args, "downloads_dir", ""),
             "domain": self.args.domain,
-            "protected": self.args.protected,
             "writable": os.access(self.args.root, os.W_OK),
             "disk": {"total": vfs.f_blocks * vfs.f_frsize, "free": vfs.f_bavail * vfs.f_frsize,
                      "used": self.used(), "mount": os.path.ismount(self.args.root)},
@@ -996,7 +995,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             hosts = {"127.0.0.1:%d" % port, "localhost:%d" % port}
         if self.panel.args.domain:
             hosts.add("panel.%s" % self.panel.args.domain.lower())
-        hosts.update(h.lower() for h in self.panel.args.allow_host)
         return hosts
 
     def gate(self, route):
@@ -1341,7 +1339,6 @@ def serve_system(args):
         except KeyError:
             fail("soket grubu yok: %s" % args.socket_group)
     args.trash = args.downloads_dir = ""
-    args.protected = []
     try:
         os.close(Files(args.root, "", system=True).open_dir([]))
     except OSError as err:
@@ -1369,17 +1366,6 @@ def cmd_serve(args):
         fail("panel yalnız yerel adresi dinler (127.0.0.1:PORT)")
     if not os.path.isabs(args.root) or not TRASH_RE.match(args.trash):
         fail("kök mutlak yol, çöp adı noktayla başlayan küçük harfli bir ad olmalı")
-    # DD-203: paketlerin yazdığı klasörler (köke göre yol ve sahibinin adı); sayfa onları
-    # seçtirmez, paylaştırmaz ve kime ait olduğunu söyler. Kurulum listeyi bildirimlerden derler.
-    protected = []
-    for entry in (args.protected or "").split(";"):
-        if not entry.strip():
-            continue
-        rel, sep, owner = entry.partition("=")
-        if not sep or not owner.strip() or not all(valid_name(p) for p in rel.split("/")):
-            fail("geçersiz --protected")
-        protected.append({"path": rel, "owner": owner.strip()})
-    args.protected = protected
     try:
         Files(args.root, args.trash).split(args.downloads_dir)
     except PanelError:
@@ -1406,15 +1392,9 @@ def main():
     s.add_argument("--trash", default=".cop")
     s.add_argument("--domain", default="")
     s.add_argument("--version", default="")
-    s.add_argument("--protected", default="")
     s.add_argument("--downloads-dir", default="")
-    s.add_argument("--allow-host", dest="allow_host", action="append", default=[])
     s.add_argument("--sistem", action="store_true")
     s.add_argument("--socket-group", dest="socket_group", default="")
-    # DD-267, DD-269: a unit from before the upgrade may still pass these for one release (an install
-    # stopped between placing this script and rendering its unit). Accepted and ignored.
-    s.add_argument("--archive-dir", dest="retired_archive_dir", default="", help=argparse.SUPPRESS)
-    s.add_argument("--share", dest="retired_share_dir", default="", help=argparse.SUPPRESS)
     c = sub.add_parser("check")
     c.add_argument("--url", required=True)
     c.add_argument("--host", required=True)

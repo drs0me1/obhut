@@ -2,8 +2,19 @@
 """Konsol settings transactions (DD-156), Python stdlib only.
 
 The HTTP process only reads here. Mutations run in an independent systemd unit,
-with JSON on stdin, and share the install/module locks. A permanent systemd
+with JSON on stdin, and share the installer's lock. A permanent systemd
 timer recovers incomplete transactions, including after a reboot. No shell input.
+
+DD-275: WireGuard's access-changing actions are the "wireguard" section. The worker runs master-wg
+in its caller mode: the install.lock descriptor it holds (OBHUT_KILIT_FD) and the pending change's id
+(OBHUT_AYAR_ISLEMI). WireGuard's private keys and device profiles never enter the pending file.
+
+Rebuild phase 4: the settings transaction is the single writer of access. Its sections, each alone in a
+request except firewall + dns: firewall, dns, domain, web (Konsol's and WebDAV's fixed rows), erisim (one
+access row of one application, checked in master_publications.section) and wireguard. Decision 1: a change
+that opens or widens access waits for the 60 s confirmation from Tailscale; one that only closes commits at
+once. An erisim change runs its container side in this process (master_container_worker.Manager.row_change,
+under the contract its docstring holds), then the firewall and the projection (master_shares publish).
 """
 import argparse
 import base64
@@ -16,7 +27,6 @@ import json
 import os
 from pathlib import Path
 import re
-import importlib.util
 import secrets
 import shlex
 import stat
@@ -34,8 +44,23 @@ GUARD_TIMER = "master-settings-guard.timer"
 ROLLBACK_ATTEMPTS = 5
 ROLLBACK_BACKOFF = 15
 CONFIRM_WORD = "onayla"
-OFF = "# konsol-off: "
-DEFAULT = {"firewall": [], "dns": {"disabled": [], "records": [], "forward": False, "servers": []}}
+# DD-275: the worker's exit status for a page that showed another revision; the backend answers 409.
+STALE_EXIT = 75
+BASE_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C.UTF-8"}
+DEFAULT = {"firewall": [], "dns": {"records": [], "forward": False, "servers": []}}
+# The applying deadline: a change must be applied (or rolled back by the guard) within this many seconds. An
+# erisim change may restart a container and wait up to 300 s for it to be ready (master_container_worker
+# READY_SECONDS), then publish and wait for a certificate: it gets ERISIM_SECONDS, and the backend runs its
+# worker (apply, and the rollback of a pending erisim change) with ERISIM_WORKER_SECONDS (RuntimeMaxSec), enough
+# for an apply that fails at the deadline and its rollback. Every other change keeps the shorter limits.
+APPLY_SECONDS = 180
+ERISIM_SECONDS = 900
+WORKER_SECONDS = 150
+ERISIM_WORKER_SECONDS = 1800
+# A change that waits for the timed confirmation, asked from the internet name (plan and apply say the same).
+TIMED_FROM_INTERNET = ("Bu değişiklik süreli onay ister ve onay yalnız Tailscale'den verilir; "
+                       "internet adresinden uygulanamaz.")
+SECTIONS = ("firewall", "dns", "domain", "web", "erisim", "wireguard")
 DOMAIN_RE = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 
 
@@ -45,6 +70,10 @@ class SettingsError(Exception):
 
 class SettingsBusy(SettingsError):
     pass
+
+
+class SettingsStale(SettingsError):
+    """The request carries another revision than the files have now (409)."""
 
 
 def require(ok, message):
@@ -103,126 +132,6 @@ def read_regular(path, limit=1024 * 1024):
             return data, info
 
 
-# DD-197/198: a package manifest (MODULES_DIR/<id>/paket.env) is parsed line by line with the
-# engine's pattern and never executed. Malformed manifests are left out: no guessing.
-MANIFEST_LINE_RE = re.compile(r'^(PAKET_[A-Z_]+)=(?:"([^"]*)"|([A-Za-z0-9_./@*: -]*))$')
-MANIFEST_ID_RE = re.compile(r"^[a-z]{2,16}$")
-
-
-def package_env(env, mid):
-    """Package defaults plus supported durable choices outside the regenerated package directory."""
-    base = env.get("MODULES_DIR", "")
-    if not base or not MANIFEST_ID_RE.fullmatch(mid):
-        return {}
-    try:
-        values = env_read(Path(base) / mid / (mid + ".env"))
-    except (OSError, UnicodeError):
-        return {}
-    values.update(package_overrides(env, mid))
-    return values
-
-
-def package_override_path(env, mid):
-    require(bool(MANIFEST_ID_RE.fullmatch(mid)), "Paket adı geçersiz.")
-    directory = env.get("PACKAGE_OVERRIDES_DIR")
-    if not directory:
-        directory = str(Path(env["STATE_DIR"]) / "package-overrides") if env.get("STATE_DIR") else None
-    return Path(directory) / (mid + ".env") if directory else None
-
-
-def package_overrides(env, mid):
-    """Private, data-only overrides. A package explicitly declares every writable key.
-
-    Values never reach `source`/eval; the bounded KEY=value CLI is also safe to consume
-    with `IFS='=' read` and printf -v. Unknown keys fail closed, including old overrides
-    after a package changes its supported settings.
-    """
-    path = package_override_path(env, mid)
-    if path is None:
-        return {}
-    try:
-        raw, info = read_regular(path, 16384)
-    except FileNotFoundError:
-        return {}
-    require(info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) & 0o077 == 0,
-            "Paket ayar dosyası yalnız root tarafından okunabilir olmalı.")
-    allowed = set(read_manifests(env).get(mid, {}).get("PAKET_AYAR_ANAHTARLAR", "").split())
-    require(bool(allowed) and all(re.fullmatch(r"[A-Z][A-Z0-9_]*", key) for key in allowed),
-            "Paket kalıcı ayarları desteklemiyor.")
-    values = {}
-    for line in raw.decode("ascii").splitlines():
-        key, sep, value = line.partition("=")
-        require(bool(sep) and key in allowed and key not in values and
-                re.fullmatch(r"[A-Za-z0-9_./:@+-]{1,1024}", value) is not None,
-                "Paket ayar dosyasında desteklenmeyen alan/değer var.")
-        # A declared service listener remains valid even if its file was edited by hand.
-        if key.endswith("_PORT"):
-            require(value.isdecimal() and 1 <= int(value) <= 65535, "Paket portu geçersiz.")
-        values[key] = value
-    return values
-
-
-_package_modules = {}
-
-
-def load_package_module(env, mid, name, attr, label):
-    """DD-199/203: a package's own Python module (yayin.py, klasorler.py), loaded from its rendered
-    folder as data: regular file, no symlink, cached by mtime, no bytecode written next to it.
-    It must expose the callable `attr`; any failure is a SettingsError under `label`."""
-    require(bool(re.fullmatch(r"[a-z][a-z0-9_]{0,40}\.py", name or "")), "%s adı geçersiz." % label)
-    path = Path(env["MODULES_DIR"]) / mid / name
-    try:
-        st = os.stat(path, follow_symlinks=False)
-    except OSError as err:
-        raise SettingsError("%s yok; kurulumu yeniden çalıştırın." % label) from err
-    require(not os.path.islink(path) and stat.S_ISREG(st.st_mode), "%s okunamadı." % label)
-    key = (str(path), st.st_mtime_ns, st.st_size)
-    module = _package_modules.get(key)
-    if module is None:
-        spec = importlib.util.spec_from_file_location("magaza_%s_%s" % (mid, name[:-3]), path)
-        module = importlib.util.module_from_spec(spec)
-        before = sys.dont_write_bytecode
-        sys.dont_write_bytecode = True
-        try:
-            spec.loader.exec_module(module)
-        except Exception as err:  # the package's file is data for us
-            raise SettingsError("%s yüklenemedi." % label) from err
-        finally:
-            sys.dont_write_bytecode = before
-        require(callable(getattr(module, attr, None)), "%s eksik (%s)." % (label, attr))
-        for old in [k for k in _package_modules if k[0] == str(path)]:
-            del _package_modules[old]
-        _package_modules[key] = module
-    return module
-
-
-def read_manifests(env, limit=65536):
-    """{id: {PAKET_KEY: value}} for every rendered package folder with a readable manifest."""
-    result = {}
-    base = env.get("MODULES_DIR", "")
-    if not base or not os.path.isdir(base):
-        return result
-    for name in sorted(os.listdir(base)):
-        if not MANIFEST_ID_RE.fullmatch(name):
-            continue
-        try:
-            raw, _ = read_regular(os.path.join(base, name, "paket.env"), limit)
-        except (OSError, ValueError, SettingsError):
-            continue
-        values = {}
-        for line in raw.decode("utf-8", "replace").splitlines():
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            m = MANIFEST_LINE_RE.match(line)
-            if not m:
-                values = None
-                break
-            values[m.group(1)] = m.group(2) if m.group(2) is not None else (m.group(3) or "")
-        if values is not None:
-            result[name] = values
-    return result
-
-
 def atomic(path, content, mode=0o600, owner=None):
     path = Path(path)
     require(not path.is_symlink(), "Sembolik bağlantı hedefi reddedildi.")
@@ -264,8 +173,7 @@ def saved_domain(path):
 
 def run(argv, *, input=None, check=True, timeout=30, env=None):
     try:
-        p = subprocess.run(argv, input=input, capture_output=True, text=True, timeout=timeout,
-                           env=dict({"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C.UTF-8"}, **(env or {})))
+        p = subprocess.run(argv, input=input, capture_output=True, text=True, timeout=timeout, env=dict(BASE_ENV, **(env or {})))
     except (OSError, subprocess.TimeoutExpired) as err:
         raise SettingsError("Komut tamamlanamadı: " + Path(argv[0]).name) from err
     # Never copy command output into errors: a service may print credentials.
@@ -312,6 +220,15 @@ def tailnet_ports(env):
         # PeerAPI normally also has a userspace netstack path; never grant an
         # ephemeral port range or abort host protection on a failed status read.
         pass
+    # DD-172 amended (rebuild phase 4, K5): an address row's Tailscale port, where Caddy listens on the
+    # Tailscale IPv4. An application record that cannot be read stops the caller (the firewall keeps its rules).
+    import master_publications
+    for item in master_publications.app_rows(env):
+        row = item["satir"]
+        if row["tur"] == "adres" and row["tailscale_portu"] is not None:
+            port = dict(family=4, proto="tcp", port=row["tailscale_portu"], name="%s · Tailscale portu" % item["uygulama"])
+            if not any(all(r[k] == port[k] for k in ("family", "proto", "port")) for r in rows):
+                rows.append(port)
     return rows
 
 
@@ -338,6 +255,49 @@ def forward_text(d):
     return "Üst DNS: " + ", ".join(d["servers"]) if d["forward"] else "Yalnız yerel adlar"
 
 
+def audit_detail(item):
+    """The audit line's detail for a settings action (DD-275): a WireGuard action by its name and network
+    (item: the request's "wireguard" object or the pending change's), an access row by its id and what it becomes
+    (the request's "erisim" object, or the pending change's row id), "ayarlar" for the other sections. Only checked
+    words reach the journal."""
+    import master_wireguard
+    if isinstance(item, str):
+        return "erisim " + item if erisim_id(item) else "ayarlar"
+    if isinstance(item, dict) and {"uygulama", "anahtar", "satir"} <= set(item):
+        return erisim_detail(item)
+    if not isinstance(item, dict) or item.get("eylem") not in master_wireguard.ACTIONS:
+        return "ayarlar"
+    words = ["wireguard", item["eylem"]]
+    if isinstance(item.get("iface"), str) and master_wireguard.IFACE_RE.fullmatch(item["iface"]):
+        words.append(item["iface"])
+    ag = item.get("ag")
+    if isinstance(ag, dict) and type(ag.get("port")) is int and 0 < ag["port"] < 65536:
+        words.append("UDP %d" % ag["port"])
+    return " ".join(words)
+
+
+def erisim_id(value):
+    """True for an application access row's id (uygulama:<app>:<service>:<port>/<proto>)."""
+    import master_applications as apps
+    app, sep, key = value.removeprefix(apps.ROW_PREFIX).partition(":") if value.startswith(apps.ROW_PREFIX) else ("", "", "")
+    match = apps.PORT_KEY_RE.fullmatch(key) if sep else None
+    return bool(match and apps.APP_NAME_RE.fullmatch(app) and apps.SERVICE_RE.fullmatch(match.group(1)))
+
+
+def erisim_detail(item):
+    """"erisim <row id> <what the row becomes>" for a request whose application, key and row are well formed."""
+    import master_applications as apps
+    app, key, row = item.get("uygulama"), item.get("anahtar"), item.get("satir")
+    if not (isinstance(app, str) and isinstance(key, str) and apps.APP_NAME_RE.fullmatch(app)
+            and apps.row_problem(key, row) is None):
+        return "erisim"
+    rid = apps.row_id(app, key)
+    if row["tur"] == "ham":
+        return "erisim %s ham %s %d" % (rid, row["kapsam"], row["port"])
+    return "erisim %s adres %s tailscale-portu %s internet %s" % (
+        rid, row["ad"], row["tailscale_portu"] if row["tailscale_portu"] is not None else "kapali", row["internet"] or "kapali")
+
+
 def dns_interface(value):
     """The managed interface-name grammar, shared with the read-only DNS view."""
     match = re.fullmatch(r"([^,\s]+),([^,/\s]+)(?:/([46]))?", value)
@@ -354,6 +314,8 @@ class Manager:
         self.config_path = Path(self.e["SETTINGS_FILE"])
         self.pending_path = Path(self.e["SETTINGS_PENDING_FILE"])
         self.dns_file = Path(self.e["SETTINGS_DNS_FILE"])
+        # DD-275: install.lock while locked() holds it; master-wg's caller mode inherits it.
+        self.install_lock = None
 
     def config(self):
         return read_json(self.config_path, DEFAULT)
@@ -369,9 +331,9 @@ class Manager:
 
     def revision(self):
         h = hashlib.sha256(json.dumps(self.config(), sort_keys=True).encode())
-        # Detect installer and module lifecycle changes too (DD-201/202: no package file is named
-        # here; a package's own settings go through its API module and worker).
-        for path in [Path(self.state), Path(self.e["MODULES_FILE"]), self.dns_file, *self.dns_paths(), *self.domain_paths()]:
+        # Detect installer changes too, and WireGuard's networks and stopped marker (DD-275).
+        for path in [Path(self.state), self.dns_file, *self.dns_paths(), *self.domain_paths(), *self.wireguard_paths(),
+                     *self.row_paths()]:
             try:
                 s = path.stat()
                 h.update((str(path) + str(s.st_mtime_ns) + str(s.st_size)).encode())
@@ -382,15 +344,36 @@ class Manager:
     @contextlib.contextmanager
     def locked(self):
         with contextlib.ExitStack() as stack:
-            for name in ("install.lock", "modul.lock", "settings.lock", "state.lock"):
+            held = {}
+            for name in ("install.lock", "settings.lock", "state.lock"):
                 path = Path(self.e["RUNTIME_DIR"]) / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 f = stack.enter_context(open(path, "a"))
                 try:
                     fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError as err:
-                    raise SettingsBusy("Kurulum/modül/ayar işlemi sürüyor; biraz sonra yeniden deneyin.") from err
-            yield
+                    raise SettingsBusy("Kurulum ya da ayar işlemi sürüyor; biraz sonra yeniden deneyin.") from err
+                held[name] = f
+            self.install_lock = held["install.lock"]
+            try:
+                yield
+            finally:
+                self.install_lock = None
+
+    def row_paths(self):
+        """Rebuild phase 4: every application's erisim.json (the access rows; a fingerprint only, read by stat)."""
+        root = self.e.get("UYGULAMA_STATE_DIR")
+        if not root:
+            return []
+        try:
+            return sorted(Path(entry.path) / "erisim.json" for entry in os.scandir(root)
+                          if not entry.name.startswith(".") and entry.is_dir(follow_symlinks=False))
+        except OSError:
+            return []
+
+    def wireguard_paths(self):
+        """DD-275: WireGuard's non-secret files that master-wg changes for a planned action."""
+        return [Path(self.e[k]) for k in ("WG_NETWORKS_FILE", "WG_STOPPED_FILE") if self.e.get(k)]
 
     def dns_paths(self):
         directory = Path(self.e["DNSMASQ_CONF_DIR"])
@@ -403,7 +386,6 @@ class Manager:
                 continue
             source = path.stem.removeprefix("modul-") if path.name.startswith("modul-") else "base"
             for line in path.read_text().splitlines():
-                line = line.removeprefix(OFF)
                 if line.startswith("interface-name="):
                     record = dns_interface(line.partition("=")[2])
                     if record:
@@ -412,29 +394,22 @@ class Manager:
         return names
 
     def validate(self, data):
-        require(isinstance(data, dict) and set(data) <= {"revision", "firewall", "dns", "domain", "https", "web"}, "Bilinmeyen ayar alanı.")
-        require(data.get("revision") == self.revision(), "Ayarlar değişmiş. Yenileyip yeniden inceleyin.")
+        require(isinstance(data, dict) and set(data) <= {"revision", *SECTIONS}, "Bilinmeyen ayar alanı.")
+        if data.get("revision") != self.revision():
+            raise SettingsStale("Ayarlar değişmiş. Yenileyip yeniden inceleyin.")
         c = self.config()
+        if "wireguard" in data:
+            # DD-275: checked against the files and units in prepare (wireguard_section).
+            require(set(data) == {"revision", "wireguard"}, "WireGuard değişikliğini diğer ayarlardan ayrı kaydedin.")
+        if "erisim" in data:
+            # Rebuild phase 4: checked against every row, the host's ports and DNS in prepare (erisim_section).
+            require(set(data) == {"revision", "erisim"}, "Erişim satırını diğer ayarlardan ayrı kaydedin.")
+            require(not Path(self.e["SHARE_STATE_FILE"] + ".pending").exists(), "Önceki paylaşım işlemi kurtarılıyor.")
         if "web" in data:
             import master_publications
             require(set(data) == {"revision", "web"}, "Caddy yayınını diğer ayarlardan ayrı kaydedin.")
             require(not Path(self.e["SHARE_STATE_FILE"] + ".pending").exists(), "Önceki paylaşım işlemi kurtarılıyor.")
             c = master_publications.validate(self.e, c, data["web"])
-        if "https" in data:
-            import master_https
-            require(set(data) == {"revision", "https"}, "HTTPS alan adını diğer ayarlardan ayrı kaydedin.")
-            item = data["https"]
-            require(isinstance(item, dict) and set(item) == {"domain"}, "HTTPS ayarı geçersiz.")
-            c["https"] = {"domain": master_https.domain(item["domain"])}
-            if "paylasim" in c.get("web", {}):
-                c["web"]["paylasim"].update(domain=c["https"]["domain"], enabled=bool(c["https"]["domain"]))
-            import master_publications
-            master_publications.config(self.e, c)
-            master_https.config(self.e, c)
-            require(Path(self.e["CADDYFILE"]).is_file(), "Caddy yapılandırması bulunamadı.")
-            require(not Path(self.e["SHARE_STATE_FILE"] + ".pending").exists(), "Önceki paylaşım işlemi kurtarılıyor.")
-            if c["https"]["domain"]:
-                master_https.check_dns(self.e, c["https"]["domain"])
         if "domain" in data:
             require(set(data) == {"revision", "domain"}, "Alan adını diğer ayarlardan ayrı güncelleyin.")
             domain = data["domain"]
@@ -445,13 +420,13 @@ class Manager:
             c["domain"] = domain
             def rename(name):
                 return name[:-len(old)] + domain if name.endswith("." + old) else name
-            c["dns"]["disabled"] = [rename(n) for n in c["dns"]["disabled"]]
             for record in c["dns"]["records"]:
                 record["name"] = rename(record["name"])
         if "firewall" in data:
             rules = data["firewall"]
             require(isinstance(rules, list) and len(rules) <= 100, "En çok 100 kullanıcı kuralı olabilir.")
             seen, selectors = set(), set()
+            held = self.app_rule_ports()
             for r in rules:
                 require(isinstance(r, dict) and set(r) == {"id", "name", "family", "scope", "proto", "port", "source", "allow"}, "Kural biçimi geçersiz.")
                 require(isinstance(r["id"], str) and re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", r["id"]), "Kural kimliği geçersiz.")
@@ -471,28 +446,28 @@ class Manager:
                     r["source"] = str(src)
                 selector = (r["family"], r["scope"], r["proto"], r["port"], r["source"])
                 require(selector not in selectors, "Aynı port/kaynak için iki kural olamaz.")
+                # Rebuild phase 4: a raw port or a Tailscale port is its access row's; a rule there would mislead.
+                import master_publications
+                require((r["scope"], r["proto"], r["port"]) not in held, master_publications.RULE_HELD)
                 selectors.add(selector)
             c["firewall"] = rules
         if "dns" in data:
             d = data["dns"]
-            require(isinstance(d, dict) and set(d) == {"disabled", "records", "forward", "servers"}, "DNS biçimi geçersiz.")
-            require(type(d["forward"]) is bool and isinstance(d["disabled"], list) and isinstance(d["records"], list)
-                    and isinstance(d["servers"], list), "DNS alanları geçersiz.")
-            require(len(d["records"]) <= 100 and len(d["disabled"]) <= 200 and len(d["servers"]) <= 4, "Çok fazla DNS kaydı.")
-            known = {n["name"] for n in self.dns_names()}
-            reserved = set(known)
-            for path in Path(self.e["MODULES_DIR"]).glob("*/dnsmasq.conf"):
-                for line in path.read_text().splitlines():
-                    if line.startswith("interface-name="):
-                        reserved.add(line.partition("=")[2].partition(",")[0])
-            managed_names = set(reserved)
+            # Rebuild phase 6: no managed name is switched here (Konsol's, WebDAV's and the applications' names change in
+            # their own rows), so the object has no "disabled" key; an unknown key is refused.
+            require(isinstance(d, dict) and set(d) == {"records", "forward", "servers"}, "DNS biçimi geçersiz.")
+            require(type(d["forward"]) is bool and isinstance(d["records"], list) and isinstance(d["servers"], list),
+                    "DNS alanları geçersiz.")
+            require(len(d["records"]) <= 100 and len(d["servers"]) <= 4, "Çok fazla DNS kaydı.")
+            # A record may not take a managed name: the base's, a modul-*.conf file's or an application row's.
+            reserved = {n["name"] for n in self.dns_names()} | set(self.app_names())
             for r in d["records"]:
                 require(isinstance(r, dict) and set(r) == {"name", "target", "enabled"}, "DNS kaydı biçimi geçersiz.")
                 name = r["name"]
                 require(isinstance(name, str) and len(name) <= 253 and name.endswith("." + self.e["LOCAL_DOMAIN"])
                         and all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", x) for x in name.split(".")),
                         "Kayıt yerel alan içinde, geçerli küçük harfli bir ad olmalı.")
-                require(name not in reserved, "Bu DNS adı zaten tanımlı ya da bir modüle ayrılmış.")
+                require(name not in reserved, "Bu DNS adı zaten tanımlı.")
                 reserved.add(name)
                 require(type(r["enabled"]) is bool and isinstance(r["target"], str), "DNS hedefi geçersiz.")
                 if r["target"] != "tailscale":
@@ -502,7 +477,6 @@ class Manager:
                         raise SettingsError("DNS hedefi IPv4/IPv6 olmalı.") from err
                     require(not (addr.is_unspecified or addr.is_multicast), "DNS hedefi geçersiz.")
                     r["target"] = str(addr)
-            require(all(isinstance(n, str) and n in managed_names for n in d["disabled"]), "Bilinmeyen DNS adı kapatılamaz.")
             for server in d["servers"]:
                 try:
                     addr = ipaddress.ip_address(server)
@@ -515,55 +489,24 @@ class Manager:
             c["dns"] = d
         return c
 
-    def safe_dir(self, value, writable=False):
-        require(isinstance(value, str) and len(value) <= 1024 and bool(re.fullmatch(r"/[A-Za-z0-9_./ -]+", value)),
-                "Dizin yolu geçersiz (harf/rakam, boşluk, . _ - / kullanılabilir).")
-        path = Path(value)
-        root = Path(self.e["SERVER_ROOT"])
-        require(path.is_absolute() and ".." not in path.parts and path.is_dir() and str(path.resolve()) == str(path), "Dizin mevcut ve gerçek bir klasör olmalı; sembolik bağlantı kullanılamaz.")
-        allowed = [Path(self.e["DOWNLOADS_PATH"]), root / self.e["MEDIA_SUBDIR"]]
-        require(any(path == a or a in path.parents for a in allowed), "Yalnız indirmeler veya kütüphane altı seçilebilir.")
-        require(not any(part.startswith(".") for part in path.relative_to(root).parts), "Gizli/paylaşım/çöp dizinleri kullanılamaz.")
-        if writable:
-            # Probe as the service user, never chown a user-selected tree as root.
-            probe = "import os,sys,tempfile; f,p=tempfile.mkstemp(prefix='.konsol-test-',dir=sys.argv[1]); os.close(f); os.unlink(p)"
-            run(["setpriv", "--reuid=" + self.e["DOWNLOADS_UID"], "--regid=" + self.e["DOWNLOADS_GID"],
-                 "--clear-groups", "python3", "-c", probe, str(path)])
-            s = os.statvfs(path)
-            require(s.f_bavail * s.f_frsize > 0, "Seçilen diskte boş alan yok.")
-        return path
+    def app_rows(self):
+        import master_publications
+        return master_publications.app_rows(self.e)
 
-    def folders(self, path=None):
-        if path:
-            root = self.safe_dir(path)
-            dirs = [p for p in root.iterdir() if not p.is_symlink() and p.is_dir() and not p.name.startswith(".")]
-        else:
-            dirs = [Path(self.e["DOWNLOADS_PATH"]), Path(self.e["SERVER_ROOT"]) / self.e["MEDIA_SUBDIR"]]
-        result = []
-        for p in sorted(dirs)[:200]:
-            try:
-                self.safe_dir(str(p))
-                s = os.statvfs(p)
-                result.append({"path": str(p), "free": s.f_bavail * s.f_frsize})
-            except (SettingsError, OSError):
-                continue
-        return result
+    def app_rule_ports(self):
+        """{(scope, protocol, port): row id} the operator's firewall rules may not name (master_publications)."""
+        import master_publications
+        return master_publications.rule_ports(self.app_rows())
 
-    def filter_dns(self, text, config=None):
-        disabled = (config or self.current())["dns"]["disabled"]
-        lines = []
-        for raw in text.splitlines():
-            line = raw.removeprefix(OFF)
-            name = line.partition("=")[2].partition(",")[0]
-            lines.append(OFF + line if line.startswith("interface-name=") and name in disabled else line)
-        return "\n".join(lines) + "\n"
+    def app_names(self):
+        """{full Tailscale name: row id} of the applications' address rows."""
+        return {"%s.%s" % (r["satir"]["ad"], self.e["LOCAL_DOMAIN"]): r["id"]
+                for r in self.app_rows() if r["satir"]["tur"] == "adres"}
 
     def project_dns(self, config=None):
+        """SETTINGS_DNS_FILE from the operator's records and forwarding. The managed names' files (the base's,
+        WebDAV's, the applications') are their owners'; nothing here rewrites them."""
         d = (config or self.current())["dns"]
-        for path in self.dns_paths():
-            if not path.exists():
-                continue
-            atomic(path, self.filter_dns(path.read_text(), config), 0o644)
         lines = ["# Konsol (DD-156); kalıcı kaynak SETTINGS_FILE."]
         for r in d["records"]:
             if r["enabled"]:
@@ -571,7 +514,7 @@ class Manager:
                              else "host-record=" + r["name"] + "," + r["target"])
         if d["forward"]:
             lines += ["server=" + ip for ip in d["servers"]]
-        # Base local=/DOMAIN/ + no-resolv remain authoritative, even for disabled names.
+        # Base local=/DOMAIN/ + no-resolv remain authoritative: a local name never goes upstream.
         atomic(self.dns_file, "\n".join(lines) + "\n", 0o644)
 
     def rules(self, family, wan=None):
@@ -603,6 +546,11 @@ class Manager:
             pending["domain"] = {"old": p["old_domain"], "new": p["candidate"]["domain"]}
         if p["changes"].get("web"):
             pending["web"] = True
+        if p["changes"].get("erisim"):
+            pending["erisim"] = p["changes"]["erisim"]["id"]
+        wg = p["changes"].get("wireguard")
+        if wg:
+            pending["wireguard"] = {"eylem": wg["eylem"], "iface": wg["iface"]}
         return pending
 
     def status(self):
@@ -637,11 +585,10 @@ class Manager:
 
     def domain_paths(self):
         # Only installer-owned renderings; never touch credentials or download data.
-        modules = Path(self.e["MODULES_DIR"])
-        paths = [*modules.glob("*/dnsmasq.conf"), *modules.glob("*/*.caddy"),
-                 modules / "dosya/master-files-panel.service",
-                 Path(self.e["UNIT_DIR"]) / "master-files-panel.service",
+        paths = [Path(self.e["UNIT_DIR"]) / "master-files-panel.service",
                  Path(self.e["UNIT_DIR"]) / "master-sistem-dosya.service"]
+        if self.e.get("SHARE_CADDY_SOURCE"):
+            paths.append(Path(self.e["SHARE_CADDY_SOURCE"]))
         if self.e.get("CADDYFILE"):
             paths.append(Path(self.e["CADDYFILE"]))
         if self.e.get("CADDY_MODULES_DIR"):
@@ -682,7 +629,7 @@ class Manager:
             raw, info = read_regular(path)
             text = raw.decode()
             # Structured tokens only: no blanket replacement in paths/comments.
-            patterns = [r"(?m)^((?:# konsol-off: )?interface-name=[^,\n]+\.)" + old + r"(?=,)",
+            patterns = [r"(?m)^(interface-name=[^,\n]+\.)" + old + r"(?=,)",
                         r"(?m)^(local=/)" + old + r"(?=/$)",
                         r"(?m)^(http://[a-z0-9.-]+\.)" + old + r"(?=[:\s,{]|$)",
                         # DD-195: the shared Konsol routes name the backends' Host.
@@ -700,21 +647,39 @@ class Manager:
         sections change. plan() runs the same, so a plan and an apply cannot disagree."""
         require(not self.pending(), "Önce bekleyen işlemi onaylayın veya geri alın.")
         candidate = self.validate(data)
-        change = {k: k in data for k in ("firewall", "dns", "domain", "https", "web")}
+        change = {k: k in data for k in ("firewall", "dns", "domain")}
+        change["web"] = False
+        if "web" in data:
+            # Decision 1 for a fixed row: whether it opens or widens access (master_publications.web_opening).
+            import master_publications
+            service = data["web"]["service"]
+            before = master_publications.config(self.e, self.config())[service]
+            after = master_publications.config(self.e, candidate)[service]
+            change["web"] = {"service": service, "acilir": master_publications.web_opening(before, after)}
+        # DD-275: the checked WireGuard change (master_wireguard.section), False without the section.
+        change["wireguard"] = self.wireguard_section(data["wireguard"]) if "wireguard" in data else False
+        # Rebuild phase 4: the checked access row change (master_publications.section), False without the section.
+        change["erisim"] = self.erisim_section(data["erisim"], candidate) if "erisim" in data else False
         require(any(change.values()), "Değişiklik yok.")
-        if change["dns"]:
-            require("panel." + self.e["LOCAL_DOMAIN"] not in candidate["dns"]["disabled"],
-                    "Panel erişimini korumak için Konsol'un kendi DNS adı kapatılamaz.")
         if change["domain"]:
             require(Path(self.e["CADDYFILE"]).is_file(), "Caddy yapılandırması bulunamadı.")
         return candidate, change
 
     @staticmethod
     def confirm_seconds(change):
-        """0 when the change commits at once (DNS alone, an HTTPS name, a publication row), else
-        the window the operator has to confirm it: 300 s for the local domain, 60 s otherwise."""
-        dns_only = change["dns"] and not any(change[k] for k in ("firewall", "domain"))
-        if dns_only or change["https"] or change["web"]:
+        """0 when the change commits at once, else the window the operator has to confirm it (decision 1/4,
+        DD-275): 300 s for the local domain; 60 s for the firewall, a WireGuard action that opens, an access row
+        (erisim) or a fixed row (web) that opens or widens access. DNS alone and any change that only closes or
+        narrows access commit at once."""
+        if change.get("wireguard"):
+            import master_wireguard
+            return 60 if change["wireguard"]["eylem"] in master_wireguard.OPENING else 0
+        if change.get("erisim"):
+            import master_publications
+            return 60 if master_publications.opening(change["erisim"]) else 0
+        if change.get("web"):
+            return 60 if change["web"]["acilir"] else 0
+        if change["dns"] and not any(change[k] for k in ("firewall", "domain")):
             return 0
         return 300 if change["domain"] else 60
 
@@ -748,18 +713,33 @@ class Manager:
             effects.append("Caddy ve dosya servisleri yeni adla yeniden başlar.")
             warnings.append({"seviye": "warn", "metin": "Değişikliği 5 dakika içinde yeni adresten onaylayın: http://panel.%s. "
                              "Tailscale yönetim panelindeki split DNS kaydını da yeni ada çevirin." % candidate["domain"]})
-        if change["web"] or change["https"]:
+        if change["web"]:
+            import master_publications
             effects.append("Caddy yapılandırması yeniden yüklenir.")
-            row = data.get("web") or {}
-            if row.get("enabled") or (change["https"] and candidate["https"]["domain"]):
+            before = master_publications.config(self.e, saved)[change["web"]["service"]]
+            after = master_publications.config(self.e, candidate)[change["web"]["service"]]
+            if after["enabled"] and (not before["enabled"] or before["domain"] != after["domain"]):
                 effects.append("İnternet adı için HTTPS sertifikası alınır (en çok 1 dakika).")
+        if change["erisim"]:
+            import master_publications
+            notes, notices, applicable = master_publications.plan_notes(self.e, change["erisim"])
+            effects += notes
+            warnings += notices
+            ok = ok and applicable
+        if change["wireguard"]:
+            import master_wireguard
+            wg_effects, wg_warnings = master_wireguard.plan_notes(change["wireguard"])
+            effects += wg_effects
+            warnings += wg_warnings
+            if change["wireguard"]["eylem"] in master_wireguard.TYPED and not change["wireguard"]["onay"]:
+                ok = False
+                warnings.append({"seviye": "bad", "metin": master_wireguard.TYPED_TEXT})
         if seconds:
             warnings.append({"seviye": "info", "metin": "Uygulandıktan sonra %d saniye içinde onaylamazsanız kendiliğinden geri alınır."
                              % seconds})
             if kanal == "internet":
                 ok = False
-                warnings.append({"seviye": "bad", "metin": "Bu değişiklik süreli onay ister ve onay yalnız Tailscale'den verilir; "
-                                 "internet adresinden uygulanamaz."})
+                warnings.append({"seviye": "bad", "metin": TIMED_FROM_INTERNET})
         try:
             address = ipaddress.ip_address(client) if client else None
         except ValueError:
@@ -794,10 +774,6 @@ class Manager:
             items.append(plan_item("alan-adi", "degistir", "Yerel alan adı", self.e["LOCAL_DOMAIN"], candidate["domain"]))
         elif change["dns"]:
             b, a = saved.get("dns") or DEFAULT["dns"], candidate["dns"]
-            for name in sorted(set(a["disabled"]) - set(b["disabled"])):
-                items.append(plan_item("dns", "kapat", name, "açık", "kapalı"))
-            for name in sorted(set(b["disabled"]) - set(a["disabled"])):
-                items.append(plan_item("dns", "ac", name, "kapalı", "açık"))
             before = {r["name"]: r for r in b["records"]}
             after = {r["name"]: r for r in a["records"]}
             for name, r in after.items():
@@ -810,87 +786,110 @@ class Manager:
                     items.append(plan_item("dns", "kaldir", name, dns_record_text(r), None))
             if (b["forward"], b["servers"]) != (a["forward"], a["servers"]):
                 items.append(plan_item("dns", "degistir", "Dış adlar", forward_text(b), forward_text(a)))
-        if change["web"] or change["https"]:
+        if change["web"]:
             items += self.publication_items(saved, candidate, data)
+        if change["erisim"]:
+            import master_publications
+            items += master_publications.plan_items(self.e, change["erisim"])
+        if change["wireguard"]:
+            import master_wireguard
+            items += master_wireguard.plan_items(change["wireguard"])
         return items
 
-    def publication_items(self, saved, candidate, data):
-        """A publication row before and after: its Tailscale name and its internet (HTTPS) name."""
-        import master_publications
-        service = data["web"]["service"] if "web" in data else master_publications.BUILTIN_ID
-        before = master_publications.config(self.e, saved).get(service)
-        after = master_publications.config(self.e, candidate).get(service)
-        items = master_publications.manual(self.e, candidate) if service.startswith(master_publications.MANUAL_PREFIX) else {}
-        old_items = master_publications.manual(self.e, saved) if service.startswith(master_publications.MANUAL_PREFIX) else {}
-        info = items.get(service) or old_items.get(service)
-        if info:
-            name, local = info["name"], info["local"]
-        elif service == master_publications.PANEL_ID:
-            name, local = "Konsol", "panel"
-        elif service == master_publications.BUILTIN_ID:
-            name, local = "WebDAV", "paylas"
-        else:
-            pkg = master_publications.packages(self.e).get(service, {})
-            name, local = pkg.get("name", service), pkg.get("local", service)
-        tailnet = "%s.%s" % (local, self.e["LOCAL_DOMAIN"])
+    def wireguard_section(self, item):
+        """DD-275: the WireGuard section checked against the networks file, the stopped marker and the units."""
+        import master_wireguard
+        try:
+            return master_wireguard.section(self.e, item, self.wireguard_unit)
+        except master_wireguard.WireGuardError as err:
+            raise SettingsError(str(err)) from err
 
-        def text(row):
-            return "%s %s · internet: %s" % (tailnet, "açık" if row["tail"] else "kapalı",
-                                              row["domain"] if row["enabled"] else "kapalı")
-        if after is None:
-            return [plan_item("yayin", "kaldir", name, text(before) + " · hedef " + old_items[service]["upstream"], None)]
-        if before is None:
-            return [plan_item("yayin", "ekle", name, None, text(after) + " · hedef " + items[service]["upstream"])]
+    def wireguard_unit(self, iface):
+        """(enabled, active) of a network's wg-quick unit; reads only."""
+        unit = "wg-quick@%s.service" % iface
+        return (run(["systemctl", "is-enabled", "--quiet", unit], check=False).returncode == 0,
+                run(["systemctl", "is-active", "--quiet", unit], check=False).returncode == 0)
+
+    def publication_items(self, saved, candidate, data):
+        """A fixed row (Konsol, WebDAV) before and after: its Tailscale name and its internet (HTTPS) name, as
+        access rows (alan "erisim")."""
+        import master_publications
+        service = data["web"]["service"]
+        before = master_publications.config(self.e, saved)[service]
+        after = master_publications.config(self.e, candidate)[service]
+        name, local = ("Konsol", "panel") if service == master_publications.PANEL_ID else ("WebDAV", "paylas")
+        tailnet = "%s.%s" % (local, self.e["LOCAL_DOMAIN"])
         out = []
         if before["tail"] != after["tail"]:
-            out.append(plan_item("yayin", "ac" if after["tail"] else "kapat", "%s · Tailscale adı" % name,
+            out.append(plan_item("erisim", "ac" if after["tail"] else "kapat", "%s · Tailscale adı" % name,
                                  tailnet + (" açık" if before["tail"] else " kapalı"), tailnet + (" açık" if after["tail"] else " kapalı")))
         if (before["enabled"], before["domain"]) != (after["enabled"], after["domain"]):
-            out.append(plan_item("yayin", "ac" if after["enabled"] and not before["enabled"] else
+            out.append(plan_item("erisim", "ac" if after["enabled"] and not before["enabled"] else
                                  "kapat" if before["enabled"] and not after["enabled"] else "degistir",
                                  "%s · internet adı" % name, before["domain"] if before["enabled"] else "kapalı",
                                  after["domain"] if after["enabled"] else "kapalı"))
-        if info and old_items.get(service) and items.get(service) and old_items[service] != items[service]:
-            out.append(plan_item("yayin", "degistir", "%s · hedef" % name, old_items[service]["upstream"], items[service]["upstream"]))
         return out
 
+    def erisim_section(self, item, saved):
+        """Rebuild phase 4: the erisim section checked against every row, the host's ports and DNS
+        (master_publications.section; saved: SETTINGS_FILE, whose firewall rules a port may not collide with)."""
+        import master_publications
+        return master_publications.section(self.e, saved, item)
+
     def apply(self, data):
+        # The channel the request came by (the root backend writes it, never the browser); not a setting.
+        data = dict(data)
+        kanal = data.pop("kanal", "")
         candidate, change = self.prepare(data)
+        if change["wireguard"]:
+            import master_wireguard
+            require(change["wireguard"]["eylem"] not in master_wireguard.TYPED or change["wireguard"]["onay"],
+                    master_wireguard.TYPED_TEXT)
+        if change["erisim"]:
+            import master_publications
+            # A2: a raw port opens to the internet only with the consent the plan asked for.
+            require(not change["erisim"]["internet_acilir"] or change["erisim"]["internet_onayi"],
+                    master_publications.CONSENT_MISSING)
         seconds = self.confirm_seconds(change)
+        # The plan's rule: a change that waits for the timed confirmation cannot be confirmed from the internet, so it
+        # is not applied from there at all (it would open access until the rollback). Nothing is written before this.
+        require(not (seconds and kanal == "internet"), TIMED_FROM_INTERNET)
         run(["systemctl", "start", GUARD_TIMER])
         run(["systemctl", "is-active", "--quiet", GUARD_TIMER])
-        paths = [*self.dns_paths(), self.dns_file] if change["dns"] else []
+        paths = [self.dns_file] if change["dns"] else []
         files_active = False
-        manual_dns = False
         if change["web"]:
             import master_publications
             # Snapshot private projections too: a first-time row has no saved
             # web key for the publisher to reconstruct after a failed apply.
-            paths += [Path(self.e["CADDY_MODULES_DIR"]) / (name + ".caddy")
-                      for name in master_publications.module_ids(self.e)]
-            # DD-252: a manual address also owns a tailnet DNS line; it is restored with the rest.
-            manual_dns = data["web"]["service"].startswith(master_publications.MANUAL_PREFIX)
-            if manual_dns:
-                paths.append(Path(self.e["DNSMASQ_CONF_DIR"]) / master_publications.MANUAL_DNS)
+            paths.append(Path(self.e["CADDY_MODULES_DIR"]) / (master_publications.BUILTIN_ID + ".caddy"))
+        if change["erisim"]:
+            paths += self.erisim_paths(change["erisim"]["uygulama"])
         if change["domain"]:
             paths += [*self.dns_paths(), self.dns_file, *self.domain_paths()]
             files_active = run(["systemctl", "is-active", "--quiet", "master-files-panel.service"], check=False).returncode == 0
         # Pending is durable BEFORE the first mutation, and the timer already runs.
-        p = {"id": secrets.token_hex(16), "boot": boot_id(), "until": time.monotonic() + 180,
+        p = {"id": secrets.token_hex(16), "boot": boot_id(),
+             "until": time.monotonic() + (ERISIM_SECONDS if change["erisim"] else APPLY_SECONDS),
              "phase": "applying", "candidate": candidate, "changes": change,
              "files": {str(path): self.snapshot(path) for path in paths},
-             "old_domain": self.e["LOCAL_DOMAIN"], "files_active": files_active, "manual_dns": manual_dns}
+             "old_domain": self.e["LOCAL_DOMAIN"], "files_active": files_active}
+        if change["erisim"]:
+            # The units row_change restarted; None until it returns (a rollback then restarts every service).
+            p["erisim"] = {"yeniden_baslatilan": None}
+        if change["wireguard"]:
+            # DD-275: the networks file and the stopped marker only; keys and profiles are never copied.
+            p["wireguard"] = {"files": {str(path): self.snapshot(path) for path in self.wireguard_paths()}}
         save_json(self.pending_path, p)
         try:
+            if change["wireguard"]:
+                self.wireguard_apply(p)
             if change["web"]:
                 row = data["web"]
-                # A removed manual address has no row and nothing to certify.
                 self.https_apply(candidate["web"][row["service"]]["domain"] if row.get("enabled") else None,
                                  row["service"])
-                if manual_dns:
-                    self.manual_dns_apply(candidate)
-            if change["https"]:
-                self.https_apply(candidate["https"]["domain"])
+            if change["erisim"]:
+                self.erisim_apply(p)
             if change["domain"]:
                 self.domain_apply(candidate)
             if change["dns"]:
@@ -911,49 +910,182 @@ class Manager:
             raise
         return {"pending": self.pending_view()}
 
+    def wireguard_tool(self, pending_id, *argv):
+        """master-wg in its caller mode (DD-275): it inherits the install.lock descriptor this worker
+        holds and the pending change's id. (returncode, stdout, its last HATA line without the prefix);
+        these verbs print no key."""
+        lock = self.install_lock
+        require(lock is not None and not lock.closed, "Kurulum kilidi tutulmuyor; WireGuard değişikliği uygulanmadı.")
+        fd = lock.fileno()
+        env = dict(BASE_ENV, STATE_FILE=self.state, OBHUT_KILIT_FD=str(fd), OBHUT_AYAR_ISLEMI=pending_id)
+        try:
+            p = subprocess.run([self.e["SBIN_DIR"] + "/master-wg", *argv], capture_output=True, text=True, timeout=90,
+                               env=env, pass_fds=(fd,), stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired) as err:
+            raise SettingsError("Komut tamamlanamadı: master-wg") from err
+        errors = [line[6:] for line in p.stderr.splitlines() if line.startswith("HATA: ")]
+        return p.returncode, p.stdout, errors[-1] if errors else ""
+
+    def wireguard_run(self, p, *argv):
+        rc, out, message = self.wireguard_tool(p["id"], *argv)
+        require(rc == 0, message or "WireGuard geri alınamadı.")
+        return out
+
+    def wireguard_apply(self, p):
+        """DD-275: the planned WireGuard action through master-wg. A closing action that fails names the
+        state it left; it is not reopened."""
+        import master_wireguard
+        wg = p["changes"]["wireguard"]
+        action, iface = wg["eylem"], wg["iface"]
+        if action in ("baslat", "durdur"):
+            argv = [action]
+        elif action == "ag-ekle":
+            argv = ["net-add", str(wg["ag"]["port"]), wg["ag"]["dns"], wg["ag"]["label"]]
+        elif action == "ag-kaldir":
+            argv = ["net-remove", iface, "--onay"]
+        elif action == "yeniden-uret":
+            argv = ["--if", iface, "reset", "--onay"]
+        else:
+            argv = ["--if", iface, "net", "ac" if action == "ag-ac" else "kapat"]
+        rc, _out, message = self.wireguard_tool(p["id"], *argv)
+        if rc != 0:
+            text = message or master_wireguard.FAILED[action]
+            raise SettingsError(text if action in master_wireguard.OPENING else "%s %s" % (text, self.wireguard_left()))
+
+    def wireguard_left(self):
+        """What a failed closing action left: WireGuard stopped or not, and each network's unit."""
+        import master_wireguard
+        try:
+            if master_wireguard.stopped(self.e):
+                return "Şu anki durum: WireGuard kapalı."
+            names = master_wireguard.registered(self.e)
+            if not names:
+                return "Şu anki durum: WireGuard ağı yok."
+            return "Şu anki durum: %s." % ", ".join("%s %s" % (n, "açık" if self.wireguard_unit(n)[1] else "kapalı") for n in names)
+        except (SettingsError, OSError, ValueError):
+            return "Şu anki durum okunamadı; Erişim → WireGuard'ı yenileyin."
+
+    def wireguard_rollback(self, p):
+        """DD-275: an opening that was not confirmed (or failed) is undone: baslat by putting the marker
+        back, taking the networks down and applying the firewall; ag-ac by closing the network; ag-ekle by
+        removing every network the change created. A closing action is never reopened: only the firewall
+        is applied again from the files as they are."""
+        import master_wireguard
+        wg = p["changes"]["wireguard"]
+        files = (p.get("wireguard") or {}).get("files") or {}
+        action = wg["eylem"]
+        if action == "baslat":
+            # The marker first: from then on the firewall drops WireGuard's ports, forwarding and NAT.
+            self.restore(files)
+            for iface in master_wireguard.registered(self.e):
+                unit = "wg-quick@%s.service" % iface
+                run(["systemctl", "disable", "--now", "--quiet", unit], check=False, timeout=30)
+                require(not self.wireguard_unit(iface)[1], "%s kapatılamadı." % iface)
+            self.firewall_apply()
+        elif action == "ag-ac":
+            self.wireguard_run(p, "--if", wg["iface"], "net", "kapat")
+        elif action == "ag-ekle":
+            saved = files.get(self.e.get("WG_NETWORKS_FILE", ""))
+            before = {n["iface"] for n in master_wireguard.parse(base64.b64decode(saved["data"]).decode())} if saved else set()
+            for iface in master_wireguard.registered(self.e):
+                if iface not in before:
+                    self.wireguard_run(p, "net-remove", iface, "--onay")
+            self.restore(files)
+            self.firewall_apply()
+        else:
+            self.firewall_apply()
+
+    def publish(self):
+        """master_shares.Manager.publish (the access projection) under its contract: this worker holds install.lock,
+        the share lock is taken here around the call (its other holders hold install.lock too, so it is free)."""
+        import master_shares
+        with open(Path(self.e["RUNTIME_DIR"]) / "paylasim.lock", "a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as err:
+                raise SettingsBusy("Paylaşım işlemi sürüyor; biraz sonra yeniden deneyin.") from err
+            shares = master_shares.Manager(self.state)
+            try:
+                shares.publish()
+            except master_shares.ShareError as err:
+                raise SettingsError(str(err)) from err
+            return shares
+
     def https_apply(self, name=None, service="paylasim"):
         import master_https
         import master_shares
+        shares = self.publish()
+        if not name:
+            return
+        # Without the listener the certificate wait can only time out after a
+        # minute with a DNS/CAA hint; report the actual cause instead (DD-193).
+        import master_publications
         try:
-            shares = master_shares.Manager(self.state)
-            shares.publish()
-            if name:
-                # Without the listener the certificate wait can only time out after a
-                # minute with a DNS/CAA hint; report the actual cause instead (DD-193).
-                import master_publications
-                packages = master_publications.packages(self.e)
-                if service in packages:
-                    require(master_publications.package_active(self.e, service),
-                            "%s internet yayını açılamadı; uygulamanın çalıştığını, giriş ayarlarını ve WAN adresini kontrol edin."
-                            % packages[service]["name"])
-                elif service == "panel":
-                    require(master_publications.panel_active(self.e),
-                            "Panel internet yayını açılamadı; Konsol hesabını ve sunucunun WAN IPv4 adresini kontrol edin.")
-                elif service.startswith(master_publications.MANUAL_PREFIX):
-                    require(master_publications.manual_active(self.e, service),
-                            "İnternet yayını açılamadı; sunucunun WAN IPv4 adresini kontrol edin.")
-                elif not shares.wan_active():
-                    raise SettingsError(shares.wan_info()["reason"] or
-                                        "WAN HTTPS dinleyicisi açılamadı; paylaşım servisini ve WAN adresini kontrol edin.")
-                master_https.wait_certificate(self.e, name)
+            if service == master_publications.PANEL_ID:
+                require(master_publications.panel_active(self.e),
+                        "Panel internet yayını açılamadı; Konsol hesabını ve sunucunun WAN IPv4 adresini kontrol edin.")
+            elif not shares.wan_active():
+                raise SettingsError(shares.wan_info()["reason"] or
+                                    "WAN HTTPS dinleyicisi açılamadı; paylaşım servisini ve WAN adresini kontrol edin.")
         except master_shares.ShareError as err:
             raise SettingsError(str(err)) from err
+        master_https.wait_certificate(self.e, name)
 
-    def manual_dns_apply(self, candidate):
-        """DD-252: the tailnet names of manual addresses, under the DNS tab's off switches."""
+    # -- rebuild phase 4: an access row of an application (the "erisim" section)
+    def container_manager(self):
+        """The container worker's Manager in this process (row_files, row_change, row_restore)."""
+        import master_container_worker
+        return master_container_worker.Manager(self.state)
+
+    def container_call(self, method, *args):
+        import master_applications as apps
+        try:
+            return getattr(self.container_manager(), method)(*args)
+        except apps.AppError as err:
+            raise SettingsError(str(err)) from err
+
+    def erisim_paths(self, app):
+        """Every file an erisim change may change: the application's erisim.json, yerler.json and unit files
+        (row_files), its two Caddy files, WebDAV's internet site (an internet name may close plaintext WebDAV) and
+        the applications' DNS file."""
         import master_publications
-        path = Path(self.e["DNSMASQ_CONF_DIR"]) / master_publications.MANUAL_DNS
-        text = master_publications.manual_dns(self.e, candidate)
-        text = self.filter_dns(text, candidate) if text else ""
-        before = path.read_text() if path.exists() else ""
-        if text == before:
-            return
-        if text:
-            atomic(path, text, 0o644)
-        else:
-            path.unlink(missing_ok=True)
-        self.dns_test()
-        run(["systemctl", "restart", "dnsmasq"], timeout=20)
+        modules = Path(self.e["CADDY_MODULES_DIR"])
+        return ([Path(name) for name in self.container_call("row_files", app)]
+                + [modules / name for name in master_publications.app_files(app)]
+                + [modules / "paylasim-wan.caddy", Path(master_publications.dns_path(self.e))])
+
+    def erisim_apply(self, p):
+        """The row through the container side (units, restart, ready check: row_change), then the firewall (K5 ports,
+        the guard), the projection (Caddy sites, names, 443) and the certificate of a new internet name."""
+        import master_https
+        import master_publications
+        change = p["changes"]["erisim"]
+        result = self.container_call("row_change", change["uygulama"], change["anahtar"], change["sonra"])
+        p["erisim"] = {"yeniden_baslatilan": list(result["yeniden_baslatilan"])}
+        save_json(self.pending_path, p)
+        self.firewall_apply()
+        self.publish()
+        name = master_publications.certificate_name(change)
+        if name:
+            item = next((r for r in master_publications.app_rows(self.e) if r["id"] == change["id"]), None)
+            require(item is not None and master_publications.app_active(self.e, item),
+                    "İnternet adı açılamadı; sunucunun WAN IPv4 adresini kontrol edin.")
+            master_https.wait_certificate(self.e, name)
+
+    def erisim_rollback(self, p):
+        """Puts the snapshot back; when the row change wrote anything, the container side follows (row_restore:
+        the guard, systemd and the services it restarted, every service when that is not known), then the firewall
+        and the projection, and the snapshot once more (the projection's files exactly as before)."""
+        change = p["changes"]["erisim"]
+        restarted = (p.get("erisim") or {}).get("yeniden_baslatilan")
+        files = p["files"]
+        written = any(self.snapshot(Path(name)) != record for name, record in files.items())
+        self.restore(files)
+        if written or restarted:
+            self.container_call("row_restore", change["uygulama"], restarted)
+        self.firewall_apply()
+        self.publish()
+        self.restore(files)
 
     def confirm(self, data):
         p = self.pending()
@@ -975,8 +1107,6 @@ class Manager:
             self.caddy_test()
         blocked = self.client_blocked(p["candidate"], client)
         require(not blocked, blocked)
-        require("panel." + self.e["LOCAL_DOMAIN"] not in p["candidate"]["dns"]["disabled"],
-                "Konsol'un kendi DNS adı kapalıyken değişiklik kalıcılaştırılamaz.")
         # Recheck validators before committing.
         if p["changes"]["dns"]:
             self.dns_test()
@@ -1018,14 +1148,15 @@ class Manager:
         return {"ok": True}
 
     def rollback_steps(self, p):
+        if p["changes"].get("wireguard"):
+            self.wireguard_rollback(p)
+        if p["changes"].get("erisim"):
+            self.erisim_rollback(p)
+            return
         if p["changes"].get("web"):
             self.restore(p["files"])
-        if p["changes"].get("https") or p["changes"].get("web"):
             self.https_apply()
         self.restore(p["files"])
-        if p.get("manual_dns"):
-            self.dns_test()
-            run(["systemctl", "restart", "dnsmasq"], timeout=20)
         if p["changes"].get("domain"):
             self.set_domain_state(p["old_domain"])
             self.domain_reload(p["files_active"])
@@ -1064,30 +1195,13 @@ def guard_idle(p):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
-    parser.add_argument("action", choices=("apply", "confirm", "rollback", "discard", "guard", "rules", "tailnet-ports", "project-dns", "filter-dns", "dns-enabled", "dns-forward", "status", "saved-domain", "package-overrides", "container-revision"))
+    parser.add_argument("action", choices=("apply", "confirm", "rollback", "discard", "guard", "rules", "tailnet-ports", "project-dns", "dns-forward", "status", "saved-domain"))
     parser.add_argument("value", nargs="?")
     parser.add_argument("wan", nargs="?")
     args = parser.parse_args()
     try:
         if args.action == "saved-domain":
             print(saved_domain(args.value))
-            return
-        if args.action == "package-overrides":
-            for key, value in sorted(package_overrides(env_read(args.state), args.value).items()):
-                print(key + "=" + value)
-            return
-        if args.action == "container-revision":
-            env = env_read(args.state)
-            mid = args.value
-            require(isinstance(mid, str) and bool(MANIFEST_ID_RE.fullmatch(mid)), "Paket adı geçersiz.")
-            manifest = read_manifests(env).get(mid, {})
-            adapter = load_package_module(env, mid, manifest.get("PAKET_KONTEYNER_YONETIM", ""),
-                                          "container_config", "Konteyner paket ayarı")
-            effective = dict(env, **package_env(env, mid))
-            current = adapter.container_config(effective)
-            require(isinstance(current, dict) and isinstance(current.get("revision"), str) and
-                    isinstance(args.wan, str) and bool(args.wan) and current["revision"] == args.wan,
-                    "Konteyner ayarları değişti; yenileyip yeniden deneyin.")
             return
         m = Manager(args.state)
         if args.action == "tailnet-ports":
@@ -1108,12 +1222,6 @@ def main():
         if args.action == "project-dns":
             m.project_dns()
             return
-        if args.action == "filter-dns":
-            path = Path(args.value)
-            atomic(path, m.filter_dns(path.read_text()), 0o644)
-            return
-        if args.action == "dns-enabled":
-            sys.exit(0 if args.value not in m.current()["dns"]["disabled"] else 1)
         if args.action == "dns-forward":
             sys.exit(0 if m.current()["dns"]["forward"] else 1)
         if args.action == "status":
@@ -1140,7 +1248,7 @@ def main():
         print(json.dumps({"error": message}, ensure_ascii=False))
         if args.action == "guard":
             print(message, file=sys.stderr)
-        sys.exit(1)
+        sys.exit(STALE_EXIT if isinstance(err, SettingsStale) else 1)
 
 
 if __name__ == "__main__":

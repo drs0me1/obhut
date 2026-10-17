@@ -1,7 +1,7 @@
 // Shared helpers of Dosyalar' views (phase 4b): paths relative to a tree's root, the order of a folder
-// (folders first, Turkish collation with numbers in order), what may open in the editor, dates, the
-// packages' folders (DD-203) and a folder share's mark (DD-192).
-import type { Entry, ProtectedFolder } from "../../api/dosyalar";
+// (folders first, Turkish collation with numbers in order), what may open in the editor, dates and a
+// folder share's mark (DD-192).
+import type { Entry } from "../../api/dosyalar";
 import type { Paylasim } from "../../api/sema";
 import { UNKNOWN, bytes } from "../../format";
 
@@ -68,24 +68,6 @@ export const countText = (count: number | null): string => `${count === null ? "
 
 export const TYPE_TEXT: Record<Entry["type"], string> = { dir: "Klasör", file: "Dosya", link: "Sembolik bağlantı", other: "Özel dosya" };
 
-export interface Guard {
-  owner: string;
-  /** "yazar": the package writes in it (or it is inside such a folder); "icerir": a package's folder is inside it. */
-  kind: "yazar" | "icerir";
-}
-
-/** Whether a package's folder (DD-203) holds `rel`: it is that folder, inside it, or holds one inside. */
-export function guardOf(list: readonly ProtectedFolder[], rel: string): Guard | null {
-  const own = list.find((p) => rel === p.path || rel.startsWith(p.path + "/"));
-  if (own) return { owner: own.owner, kind: "yazar" };
-  const inner = rel ? list.find((p) => p.path.startsWith(rel + "/")) : list[0];
-  return inner ? { owner: inner.owner, kind: "icerir" } : null;
-}
-
-export function guardText(g: Guard): string {
-  return g.kind === "yazar" ? `Yazan: ${g.owner}` : `İçinde ${g.owner} klasörü var`;
-}
-
 const SCOPES = [
   ["tailscale", "Tailscale"],
   ["wan", "İnternet"],
@@ -97,9 +79,9 @@ export function shareMark(s: Paylasim): { on: boolean; text: string } {
   return open.length ? { on: true, text: "Paylaşılıyor · " + open.join(", ") } : { on: false, text: "Paylaşım kapalı" };
 }
 
-/** Whether a folder may be offered for sharing: not hidden, not a package's, not holding one. */
-export function shareable(rel: string, list: readonly ProtectedFolder[]): boolean {
-  return !rel.split("/").some((p) => p.startsWith(".")) && !guardOf(list, rel);
+/** Whether a folder may be offered for sharing: no part of its path is hidden. */
+export function shareable(rel: string): boolean {
+  return !rel.split("/").some((p) => p.startsWith("."));
 }
 
 export function errorText(err: unknown): string {

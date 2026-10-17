@@ -4,9 +4,9 @@ installed one, and starts master-guncelle as its own systemd unit, so the run su
 restarts the installer makes. The unit's result file and output are under LOG_DIR; this module only
 reads them. Nothing here runs installer code itself.
 
-DD-277: this is generation 1 (the 1.x line). A commit whose install.sh carries another OBHUT_NESIL (a
-commit without the line is generation 1) installs only on a clean operating system: the check reports it
-as `yeni_nesil` with the notice below, offers no update, and the start route refuses it."""
+DD-271 (S3): only a build of this host's own generation is offered. The remote generation is the
+OBHUT_NESIL line of that install.sh (a commit without it is generation 1), the local one state.env's
+OBHUT_NESIL; another generation needs a clean install and is never an update."""
 import http.client
 import os
 import re
@@ -20,17 +20,12 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
 BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,100}$")
 INSTALL_LINE_RE = re.compile(r'^V2_VERSION="([^"\n]{1,64})"$', re.M)
-# DD-260: the version people see (semantic versioning) beside the build number above; servers still
-# compare build numbers, so a commit without this line is offered like before.
+# DD-260: the version people see (semantic versioning) beside the build number above; servers
+# compare build numbers.
 SURUM_RE = re.compile(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}")
 SURUM_LINE_RE = re.compile(r'^OBHUT_SURUM="([0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4})"$', re.M)
-# DD-277: the generation, read as the generation-2 module reads it (DD-271); absent means 1.
-NESIL = 1
+NESIL_RE = re.compile(r"[1-9][0-9]{0,2}")
 NESIL_LINE_RE = re.compile(r'^OBHUT_NESIL="([1-9][0-9]{0,2})"$', re.M)
-YENI_NESIL_METNI = ("Obhut'un yeni bir nesli çıktı. Yeni nesil yalnız temiz bir işletim sistemine kurulur; bu sunucuya "
-                    "güncelleme olarak gelmez. Bu sunucuda hiçbir şey değişmez: kurulu sürüm olduğu gibi çalışmayı "
-                    "sürdürür. Yeni nesle geçmek için gerekenleri yedekleyin, ardından temiz bir işletim sistemine "
-                    "kur.sh ile kurun.")
 STAGE_RE = re.compile(r"Aşama ([0-9])/([0-9]) — ([^\n]{1,80})")
 CHECK_SECONDS = 6 * 3600       # a fresh answer is reused for six hours
 FAIL_SECONDS = 15 * 60         # an unreachable GitHub is asked again after a quarter hour
@@ -89,7 +84,7 @@ class Updates:
         self.fetcher = fetcher
         self.clock = clock
         self.lock = threading.Lock()
-        self.cache = None      # {"at", "kaynak", "ok", "son", "surum", "nesil", "commit", "hata"}
+        self.cache = None      # {"at", "ok", "son", "commit", "hata"}
         self.forced_at = -FORCE_GAP_SECONDS
 
     # -- GitHub
@@ -113,15 +108,13 @@ class Updates:
                 if not SHA_RE.match(sha):
                     raise ValueError("commit")
                 text = self.fetcher(RAW_URL % (repo, sha), "text/plain")
-                nesil = NESIL_LINE_RE.search(text)
-                nesil = int(nesil.group(1)) if nesil else NESIL
                 found = INSTALL_LINE_RE.search(text)
-                son = found.group(1) if found and number(found.group(1)) is not None else None
-                # Another generation is reported even when its build number is not in this line's format.
-                if son is None and nesil == NESIL:
+                if not found or number(found.group(1)) is None:
                     raise ValueError("sürüm")
                 surum = SURUM_LINE_RE.search(text)
-                result.update(ok=True, son=son, surum=surum.group(1) if surum else None, nesil=nesil, commit=sha)
+                nesil = NESIL_LINE_RE.search(text)
+                result.update(ok=True, son=found.group(1), surum=surum.group(1) if surum else None,
+                              nesil=int(nesil.group(1)) if nesil else 1, commit=sha)
             except (OSError, urllib.error.URLError, http.client.HTTPException, ValueError, UnicodeError):
                 result["hata"] = "GitHub'a ulaşılamadı ya da sürüm okunamadı; daha sonra yeniden denenir."
             self.cache = result
@@ -151,12 +144,18 @@ class Updates:
         installed = env.get("V2_VERSION", "")
         mine, theirs = number(installed), number(info["son"])
         surum = env.get("OBHUT_SURUM", "")
-        other = bool(info["ok"] and info.get("nesil", NESIL) != NESIL)
+        local = int(env["OBHUT_NESIL"]) if NESIL_RE.fullmatch(env.get("OBHUT_NESIL", "")) else None
+        same = info["ok"] and local is not None and info["nesil"] == local
+        hata = info["hata"]
+        if info["ok"] and local is None:
+            hata = "Kurulum kaydında nesil yok; kurulumu terminalden yeniden çalıştırın."
+        elif info["ok"] and not same:
+            hata = ("GitHub'daki sürüm başka bir nesilden (%d); bu sunucuya güncelleme olarak gelmez, yalnız temiz "
+                    "bir işletim sistemine kurulur." % info["nesil"])
         return {"kurulu": installed, "kurulu_surum": surum if SURUM_RE.fullmatch(surum) else "",
                 "son": info["son"], "son_surum": info.get("surum"), "commit": info["commit"],
-                "yeni": bool(info["ok"] and not other and mine is not None and theirs is not None and theirs > mine),
-                "yeni_nesil": {"nesil": info["nesil"], "metin": YENI_NESIL_METNI} if other else None,
-                "denetlendi": int(info["at"]) or None, "hata": info["hata"], "is": self.job(env, running)}
+                "yeni": bool(same and mine is not None and theirs is not None and theirs > mine),
+                "denetlendi": int(info["at"]) or None, "hata": hata, "is": self.job(env, running)}
 
     def check_start(self, env, data, running, blocked):
         """Validates a start request against the shown offer; returns (commit, version)."""
@@ -165,10 +164,8 @@ class Updates:
         if blocked:
             raise UpdateError(409, blocked)
         info = self.status(env, running)
-        if info["yeni_nesil"]:
-            raise UpdateError(409, info["yeni_nesil"]["metin"])
         if not info["yeni"]:
-            raise UpdateError(409, "Kurulu sürüm güncel; yeni bir sürüm yok.")
+            raise UpdateError(409, info["hata"] or "Kurulu sürüm güncel; yeni bir sürüm yok.")
         if data.get("surum") != info["son"] or data.get("commit") != info["commit"]:
             raise UpdateError(409, "GitHub'daki sürüm değişti; sayfayı yenileyip yeniden deneyin.")
         return info["commit"], info["son"]

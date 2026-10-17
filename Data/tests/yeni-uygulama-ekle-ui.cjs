@@ -1,968 +1,771 @@
-/* Konsol's new interface, phase 4a (DD-258): Uygulamalar' add flows (the catalogue with a package's install
-   form, a container from an image, adopting a container made outside Konsol) and the application page's
-   container views and settings (Özet, Erişim's ports, Depolama, Ayarlar: a Konsol definition, an App Store
-   adapter, a package's settings form and first-login account; Günlük's tail and search; the image update) in
-   the committed build under Data/console/yeni, with the production CSP and fixture replies for every endpoint
-   they read or post to (yeni-harness.cjs). Fails on any console error, CSP violation or page error. Never
-   contacts a server.
+/* Konsol's Uygulama ekle and an application's Tanım edit (rebuild phase 5, the prototype; K2, K3) in the committed
+   build under Data/console/yeni, with the production CSP and fixture replies for every endpoint they read or post to
+   (yeni-harness.cjs): the four sources (a pasted or uploaded file, an https address, an image name as a job, an
+   existing container), the inspector (the file's line marks, refusals with their lines, every question kind, the
+   answers checked again as they change), the install's plan (a refusal leading back to its question) and the
+   install job; Tanım's editor and questions (a staying port's use left to Erişim, a stored secret kept or renewed, a
+   new port), its plan's difference and apply job, and the refresh from an address source. Every request body is
+   checked exactly; no secret value reaches an address, the browser's storage or a GET request. Fails on any console
+   error, CSP violation, page error or layout finding. Never contacts a server.
    PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulama-ekle-ui.cjs */
 const assert = require("node:assert/strict");
+const { isDeepStrictEqual } = require("node:util");
+const { uygulama, servis, uygulamalar, ayrinti, soru, inceleme } = require("./yeni-harness.cjs").fixtures;
 
-// ---- fixtures: documentation values only (RFC 5737 addresses, example names); shapes as in api/sema.ts
-const NOW = 1791845000;
-const cell = (durum, adresler = [], uyari = "", not = "") => ({ durum, adresler, uyari, not });
-const app = (o) => ({ modul: null, konteyner: null, simge: null, durum: "calisiyor", islem: null, tailscale: cell("yok"), internet: cell("yok"),
-  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
-  metinler: null, hesap: false, ...o });
-const SHA = (c) => c.repeat(64);
+// ---- fixtures: documentation values only (RFC 5737 addresses, registry.example images, example.org); shapes as in api/sema.ts
+const D = (c) => c.repeat(64);
+const JOB = (n) => String(n).padStart(32, "0");
+const ROOT_WARNING = "Bu konteyner root olarak başlıyor; kendi kullanıcısına geçmezse /srv'ye Dosyalar hesabının açamayacağı dosyalar yazabilir.";
+const accessCell = (durum, adresler = []) => ({ durum, adresler, not: "", uyari: "" });
+const NOTLAR_WEB = "uygulama:notlar:web:8080/tcp";
+const NOTLAR_UDP = "uygulama:notlar:web:9000/udp";
+const NOTLAR_ROW = { tur: "adres", ad: "notlar", tailscale_portu: null, internet: "" };
+const accessRow = (id, satir) => ({ id, ad: "notlar · web", tur: "uygulama", aciklama: "", uygulama: "notlar", servis: "web", anahtar: id.split(":").slice(2).join(":"),
+  calisiyor: true, yerel: accessCell("kapali"), tailscale: accessCell("acik", ["notlar.ev"]), wireguard: accessCell("kapali"), internet: accessCell("kapali"),
+  satir, web: null, ayrinti: [] });
 
-const TORRENT_FORM = {
-  kur_baslik: "qBittorrent'i kur", kur_alt: "Web arayüzü hesabı ve indirme klasörü", kur_not: "Kurulum bu bilgilerle başlar. Parola sunucuda yalnız özet olarak saklanır.",
-  ayar_baslik: "qBittorrent ayarları", ayar_alt: "Web arayüzü hesabı ve indirme klasörü",
-  ayar_not: "Doğrudan kaydedilir; çalışıyorsa qBittorrent kısa süre yeniden başlar. Mevcut indirmeler taşınmaz.", oku: "/durum", yaz: "/ayar",
-  alanlar: [
-    { ad: "username", tur: "metin", etiket: "Kullanıcı adı", varsayilan: "admin", desen: "[A-Za-z0-9._@\\-]{1,64}", en_cok: 64, ipucu: "Harf, rakam ve . _ @ - kullanılabilir." },
-    { ad: "password", tur: "parola", etiket: "Parola", en_az: 8, en_cok: 256, ipucu: "En az 8 karakter.", ayar_ipucu: "Boş bırakılırsa kayıtlı parola korunur." },
-    // An unrendered default (the installer fills it in) counts as none: the folder must be chosen.
-    { ad: "save", tur: "klasor", etiket: "İndirme klasörü", varsayilan: "__DOWNLOADS_PATH__", ipucu: "İndirmeler ya da kütüphane altında." },
-  ] };
-const TORRENT_KONSOL = { ad: "qBittorrent", alt: "Torrent indirmelerini yönetin.", simge: "download",
-  aciklama: "Sunucudaki Podman'da konteyner olarak çalışır. Kurulumda seçtiğiniz hesap ve indirme klasörüyle başlar.",
-  neler: [["box", "linuxserver/qbittorrent imajı 5.1.2, özetiyle sabit"], ["globe", "torrent.ev adı eklenir (arayüz yalnız sunucuda dinler)"], ["nope", "Eş portu yalnız WAN IPv4 adresinde açılır"]],
-  notlar: ["Podman konteyneri · qbittorrent", "arayüz yalnız sunucu"], form: TORRENT_FORM };
-const WG_KONSOL = { ad: "WireGuard", alt: "Cihazlarınız için VPN bağlantısı.", simge: "shield", aciklama: "Çekirdek WireGuard katmanını kurar.",
-  neler: [["box", "Paketler: wireguard-tools, qrencode"]], notlar: ["Debian paketleri + Konsol sayfası"] };
-const GEZGIN_KONSOL = { ad: "Gezgin", alt: "Sunucudaki dosyalarınızı tarayıcıdan yönetin.", simge: "folder",
-  form: { kur_baslik: "Gezgin'i kur", alanlar: [{ ad: "username", tur: "metin", etiket: "Kullanıcı adı", varsayilan: "yonetici" }] } };
-const pkg = (id, installed, konsol, o = {}) => ({ id, installed, state: installed ? "calisiyor" : "", live: installed ? "running" : "", busy: false,
-  progress: null, durdurulabilir: true, konsol, ...o });
+// The file every source ends in (a pasted Compose file with each kind of question).
+const ORNEK_FILE = [
+  "name: ornek",
+  "services:",
+  "  web:",
+  "    image: registry.example/ornek/web:1.2",
+  "    ports: [\"8080:8080\", \"9000/udp\", \"5432\"]",
+  "    volumes: [\"veri:/data\", \"/srv/Belgeler:/belgeler:ro\"]",
+  "    environment:",
+  "      TZ: ${TZ:-Europe/Istanbul}",
+  "      ADMIN_PASSWORD: ${ADMIN_PASSWORD}",
+  "      API_TOKEN: \"\"",
+  "  db:",
+  "    image: registry.example/ornek/db:16",
+  "    user: \"999:999\"",
+  ""].join("\n");
+const REFUSED_LINE = "    privileged: true";
+const REFUSED_FILE = ORNEK_FILE.split("\n").toSpliced(4, 0, REFUSED_LINE).join("\n");
+const ORNEK_INSPECTION = inceleme({ name: "ornek", services: [{ name: "web" }, { name: "db" }], questions: [
+  soru.ad("ornek", { line: 1 }),
+  soru.degisken("TZ", { line: 8, default: "Europe/Istanbul", why: "Dosya bu değeri dışarıdan (.env) bekliyor; varsayılanı: Europe/Istanbul." }),
+  soru.degisken("ADMIN_PASSWORD", { line: 9, secret: true, generate: true }),
+  soru.port("web", 8080, { line: 5, suggest: "ornek", host_port: 8080 }), soru.port("web", 9000, { line: 5, protocol: "udp" }),
+  soru.port("web", 5432, { line: 5, guess: "raw",
+    why: "Web dışı bir port gibi görünüyor (bilinen bir servis portu ya da aynı port UDP'de de açılıyor): ham port önerilir. Ham portlar kapalı gelir; Erişim'den açılır." }),
+  soru.klasor("web", "/data", { line: 6 }),
+  soru.klasor("web", "/belgeler", { line: 6, source: "/srv/Belgeler", source_kind: "absolute", read_only: true, suggest: "srv", folder: "belgeler", srv_path: "/srv/Belgeler" }),
+  soru.gizli("web", "API_TOKEN", { line: 10 }),
+  soru.baslangic("web", { line: 3 }),
+  soru.baslangic("db", { line: 11, suggest: "direct", user: "999:999", direct_user: "999:999",
+    why: "Dosya kullanıcıyı belirtiyor (999:999): doğrudan bu kullanıcıyla başlayabilir; bütün yetkiler kapalı, yeni yetki kazanılamaz." })],
+notes: [{ line: 5, key: "ports", text: "Dosyadaki sunucu tarafı (8080) kullanılmaz; port Erişim'den açılır." }] });
+const REFUSED_INSPECTION = inceleme({ name: "ornek", refusals: [{ line: 5, key: "privileged", text: "web: privileged kullanılamaz; konteynerler ayrıcalıklı çalışmaz." }],
+  questions: [] });
+// The drafts the other sources answer with: each is inspected like a file.
+const ADRES = "https://files.example.org/ornek/compose.yaml";
+const ADRES_FILE = "services:\n  pano:\n    image: registry.example/pano:3\n    ports: [\"3000\"]\n";
+const ADRES_INSPECTION = inceleme({ name: "pano", questions: [soru.ad("pano"), soru.port("pano", 3000, { line: 4, suggest: "pano" }), soru.baslangic("pano")] });
+const IMAGE = "registry.example/ornek:2";
+const IMAGE_FILE = `# Taslak: ${IMAGE}\nservices:\n  ornek:\n    image: ${IMAGE}\n    ports: ["80"]\n`;
+const IMAGE_INSPECTION = inceleme({ name: "ornek", questions: [soru.ad("ornek", { line: 3 }), soru.port("ornek", 80, { line: 5, suggest: "ornek" }), soru.baslangic("ornek", { line: 3 })] });
+const CONTAINER_FILE = "services:\n  eski-redis:\n    image: registry.example/redis:7\n    volumes: [\"redis-veri:/data\"]\n";
+const CONTAINER_INSPECTION = inceleme({ name: "eski-redis", questions: [soru.ad("eski-redis"), soru.klasor("eski-redis", "/data", { line: 4, source: "redis-veri", folder: "redis-veri" }),
+  soru.baslangic("eski-redis")] });
 
-const APPS = {
-  gezgin: app({ id: "paket:gezgin", ad: "Gezgin", tur: "paket", aciklama: "Sunucudaki dosyalarınızı tarayıcıdan yönetin.", modul: "gezgin", konteyner: "gezgin", simge: "folder",
-    eylemler: ["durdur", "yeniden-baslat", "kaldir"], revizyon: "rev-gezgin-1" }),
-  torrent: app({ id: "paket:torrent", ad: "qBittorrent", tur: "paket", aciklama: "Torrent indirmelerini yönetin.", modul: "torrent", konteyner: "torrent", simge: "download", hesap: true,
-    tailscale: cell("acik", ["torrent.ev"]), adres: { tailscale: "http://torrent.ev", internet: null }, eylemler: ["durdur", "yeniden-baslat", "kaldir"], revizyon: "rev-torrent-7" }),
-  web: app({ id: "konteyner:web", ad: "web", tur: "konteyner", aciklama: "Konteyner · docker.io/library/nginx", konteyner: "web", kaynak: { cpu: 4.2, bellek: 41943040 },
-    tailscale: cell("acik", ["web.ev"]), internet: cell("acik", ["203.0.113.10:8443/tcp"]), guncelleme: "yeni", eylemler: ["durdur", "yeniden-baslat", "guncelle", "kaldir"], revizyon: "rev-web-1" }),
-  notlar: app({ id: "konteyner:notlar", ad: "notlar", tur: "konteyner", aciklama: "Konteyner · docker.io/library/nginx", konteyner: "notlar", durum: "durduruldu",
-    guncelleme: "guncel", eylemler: ["baslat", "kaldir"], revizyon: "rev-notlar-1" }),
-  medya: app({ id: "konteyner:medya", ad: "medya", tur: "konteyner", aciklama: "Konsol dışında yönetilen konteyner · docker.io/example/medya", konteyner: "medya",
-    eylemler: ["durdur", "yeniden-baslat", "kaldir"] }),
-  paylasim: app({ id: "yerlesik:paylasim", ad: "Paylaşımlar", tur: "yerlesik", aciklama: "WebDAV · yerleşik" }),
+// notlar, whose Tanım is edited: its stored file, answers and the inspection of its file (with a new port: 7000).
+const NOTLAR_FILE = [
+  "services:",
+  "  web:",
+  "    image: registry.example/notlar/web:2.4",
+  "    ports: [\"8080\", \"9000/udp\"]",
+  "    environment: { TZ: Europe/Istanbul, DB_PASSWORD: \"${DB_PASSWORD}\" }",
+  "    volumes: [\"veri:/data\"]",
+  ""].join("\n");
+const NOTLAR_NEW = NOTLAR_FILE.replace('["8080", "9000/udp"]', '["8080", "9000/udp", "7000"]');
+const notlarInspection = (withNew) => inceleme({ name: "notlar", questions: [
+  soru.ad("notlar"), soru.degisken("TZ", { line: 5 }), soru.degisken("DB_PASSWORD", { line: 5, secret: true, generate: true }),
+  soru.port("web", 8080, { line: 4, suggest: "notlar" }), soru.port("web", 9000, { line: 4, protocol: "udp" }),
+  ...(withNew ? [soru.port("web", 7000, { line: 4, suggest: "notlar-7000" })] : []),
+  soru.klasor("web", "/data", { line: 6 }), soru.baslangic("web")] });
+const NOTLAR_ANSWERS = { name: "notlar", answers: { "var:DB_PASSWORD": { set: true }, "var:TZ": { value: "Europe/Istanbul" }, "mount:web:/data": { to: "app" },
+  "start:web": { mode: "root" } } };
+const PANO_FILE = "services:\n  web:\n    image: registry.example/pano:1\n    ports: [\"3000\"]\n";
+const PANO_NEW = "services:\n  web:\n    image: registry.example/pano:2\n    ports: [\"3000\", \"3001\"]\n";
+const panoInspection = (withNew) => inceleme({ name: "pano", questions: [soru.ad("pano"), soru.port("web", 3000, { line: 4, suggest: "pano" }),
+  ...(withNew ? [soru.port("web", 3001, { line: 4, suggest: "pano-3001" })] : []), soru.baslangic("web")] });
+
+const PLAN = {
+  ad: "ornek", veri: "/var/lib/master-stack/uygulamalar/ornek", ag: "ksl-ornek", pod: null,
+  birimler: ["konsol-ornek.network", "konsol-ornek_db.container", "konsol-ornek_web.container"],
+  servisler: [
+    { ad: "web", baslangic: "root", kullanici: null, imaj: "registry.example/ornek/web:1.2", gizliler: ["ornek-admin-password", "ornek-api-token"],
+      baglamalar: [{ hedef: "/data", tur: "app", yol: "/var/lib/master-stack/uygulamalar/ornek/veri", salt_okunur: false },
+        { hedef: "/belgeler", tur: "srv", yol: "/srv/Belgeler", salt_okunur: true }] },
+    { ad: "db", baslangic: "direct", kullanici: "999:999", imaj: "registry.example/ornek/db:16", gizliler: [], baglamalar: [] }],
+  erisim: [
+    { id: "uygulama:ornek:web:8080/tcp", anahtar: "web:8080/tcp", servis: "web", port: 8080, protokol: "tcp", satir: { tur: "adres", ad: "ornek", tailscale_portu: null, internet: "" },
+      adres: "http://ornek.ev" },
+    { id: "uygulama:ornek:web:9000/udp", anahtar: "web:9000/udp", servis: "web", port: 9000, protokol: "udp", satir: { tur: "ham", kapsam: "kapali", port: 9000 }, adres: null },
+    { id: "uygulama:ornek:web:5432/tcp", anahtar: "web:5432/tcp", servis: "web", port: 5432, protokol: "tcp", satir: { tur: "ham", kapsam: "kapali", port: 5432 }, adres: null }],
+  klasorler: ["/var/lib/master-stack/uygulamalar/ornek/veri"],
+  gizliler: [{ ad: "ornek-admin-password", servisler: ["web"] }, { ad: "ornek-api-token", servisler: ["web"] }],
+  uyarilar: [{ servis: "web", metin: ROOT_WARNING }],
+  imajlar: ["registry.example/ornek/web:1.2", "registry.example/ornek/db:16"],
 };
+const FARK = {
+  birimler: [{ ad: "konsol-notlar_web.container", degisim: "degisir" }], ortam: ["web"],
+  portlar: [{ anahtar: "web:7000/tcp", degisim: "eklenir", yerel_port: null }, { anahtar: "web:8080/tcp", degisim: "kalir", yerel_port: 62001 },
+    { anahtar: "web:9000/udp", degisim: "kalir", yerel_port: null }],
+  klasorler: { eklenen: [], birakilan: [] }, gizliler: { yeni: [], yenilenen: ["notlar-db-password"], korunan: [], kaldirilan: [] },
+  baslangic: [{ servis: "web", once: "root", sonra: "direct" }], uyarilar: [{ servis: "web", metin: ROOT_WARNING }], yeniden_baslar: true,
+};
+const NO_FARK = { birimler: [], ortam: [], portlar: [{ anahtar: "web:8080/tcp", degisim: "kalir", yerel_port: 62001 }], klasorler: { eklenen: [], birakilan: [] },
+  gizliler: { yeni: [], yenilenen: [], korunan: ["notlar-db-password"], kaldirilan: [] }, baslangic: [], uyarilar: [], yeniden_baslar: false };
 
-const crow = (o) => ({ id: "", image: "", state: "running", unit: "", network: "", ports: [], started: null, restarts: 0, health: "", live: true, source: "konsol",
-  module_id: null, revision: null, actions: [], restricted_reason: "", cpu_percent: null, memory_bytes: null, busy: null, listening: null, update: null, mounts: 0, ...o });
-const WEB_CONFIG = { schema: 1, name: "web", image: "docker.io/library/nginx@sha256:" + SHA("c"), image_ref: "docker.io/library/nginx:1.27-alpine", network: "bridge",
-  ports: [{ scope: "local", host_port: 8088, container_port: 80, protocol: "tcp", public_ack: false }, { scope: "public", host_port: 8443, container_port: 443, protocol: "tcp", public_ack: true }],
-  mounts: [{ type: "volume", source: "web-veri", destination: "/usr/share/nginx/html", read_only: false }],
-  environment: [{ name: "TZ", value: "Europe/Istanbul", secret: false }, { name: "API_TOKEN", secret: true, present: true }, { name: "ESKI", value: "1", secret: false }],
-  command: ["nginx", "-g", "daemon off;"], autostart: true, manual_stop: false, restart: "on-failure", cpus: "1.5", memory: "512m", pids_limit: "", user: "downloads", revision: "rev-web-1" };
-const EDITABLE = ["ports", "mounts", "environment", "command", "autostart", "restart", "cpus", "memory", "image", "network", "user"];
-function containers() {
-  return {
-    web: crow({ name: "web", id: "0a1b2c3d4e5f", image: WEB_CONFIG.image, unit: "konsol-web.service", network: "konsol", revision: "rev-web-1", health: "unhealthy", restarts: 3,
-      started: NOW - 7200, cpu_percent: 4.2, memory_bytes: 41943040, actions: ["stop", "restart", "save", "remove", "image-update"],
-      ports: [{ host_ip: "127.0.0.1", host_port: 8088, container_port: 80, protocol: "tcp", scope: "local" }, { host_ip: "0.0.0.0", host_port: 8443, container_port: 443, protocol: "tcp", scope: "public" }],
-      update: { state: "var", channel: "docker.io/library/nginx:1.27-alpine", error: "", checked_at: NOW - 600 },
-      config: WEB_CONFIG, editable: EDITABLE, protected_mounts: [], effective_autostart: true, user: "1000:1000", command: "nginx -g daemon off;",
-      mounts: [{ type: "volume", source: "/var/lib/containers/storage/volumes/web-veri/_data", destination: "/usr/share/nginx/html", rw: true, name: "web-veri" }] }),
-    notlar: crow({ name: "notlar", image: "docker.io/library/nginx@sha256:" + SHA("d"), state: "stopped", live: false, unit: "konsol-notlar.service", network: "bridge",
-      revision: "rev-notlar-1", actions: ["start", "save", "remove", "image-update"], update: { state: "guncel", channel: "docker.io/library/nginx:1.27", error: "", checked_at: NOW - 600 },
-      config: { schema: 1, name: "notlar", image: "docker.io/library/nginx@sha256:" + SHA("d"), image_ref: "docker.io/library/nginx:1.27", network: "bridge", ports: [], mounts: [],
-        environment: [], command: [], autostart: true, manual_stop: true, restart: "always", cpus: "", memory: "", user: "image", revision: "rev-notlar-1" },
-      editable: EDITABLE, protected_mounts: [], effective_autostart: false, user: "", command: "", mounts: [] }),
-    medya: crow({ name: "medya", id: "9f8e7d6c5b4a", image: "docker.io/example/medya:10.9", network: "host", source: "external", actions: ["stop", "restart", "remove", "adopt"],
-      listening: [{ address: "0.0.0.0", port: 8096, protocol: "tcp", scope: "all" }, { address: "100.64.0.2", port: 1900, protocol: "udp", scope: "tailscale" }],
-      user: "", command: "/jellyfin/jellyfin", mounts: [{ type: "bind", source: "/srv/medya", destination: "/media", rw: true, name: "" }] }),
-    eski: crow({ name: "eski", image: "docker.io/example/eski:1", state: "exited", source: "external", actions: [],
-      restricted_reason: "Konteyner başka bir yöneticiye ait veya desteklenmeyen seçenekler kullanıyor." }),
-    garip: crow({ name: "garip", image: "docker.io/example/garip:2", source: "external", actions: ["stop", "restart", "remove", "adopt"] }),
-    torrent: crow({ name: "torrent", id: "a1b2c3d4e5f6", image: "lscr.io/linuxserver/qbittorrent@sha256:" + SHA("a"), unit: "torrent.service", network: "torrent",
-      source: "appstore", module_id: "torrent", revision: "rev-torrent-7", actions: ["stop", "restart", "remove", "image-update", "save"],
-      ports: [{ host_ip: "127.0.0.1", host_port: 62947, container_port: 62947, protocol: "tcp", scope: "local" }, { host_ip: "203.0.113.10", host_port: 63851, container_port: 63851, protocol: "tcp", scope: "public" }],
-      config: { listener_port: 62947, peer_port: 63851, save: "/srv/indirilenler" }, editable: ["listener_port", "peer_port", "save"],
-      protected_mounts: [{ source: "/var/lib/qbittorrent", target: "/config", destination: "/config", reason: "Uygulama profili; taşıma ayrı bir işlemdir." },
-        { source: "/srv/indirilenler", target: "/srv/indirilenler", destination: "/srv/indirilenler", reason: "Uygulamanın indirme kökü." }],
-      effective_autostart: true, user: "1000:1000", command: "",
-      mounts: [{ type: "bind", source: "/var/lib/qbittorrent", destination: "/config", rw: true, name: "" }, { type: "bind", source: "/srv/indirilenler", destination: "/srv/indirilenler", rw: true, name: "" }] }),
-    gezgin: crow({ name: "gezgin", image: "ghcr.io/example/gezgin@sha256:" + SHA("b"), unit: "gezgin.service", network: "gezgin", source: "appstore", module_id: "gezgin",
-      revision: "rev-gezgin-1", actions: ["stop", "restart", "remove", "image-update"], config: { listener_port: 62983 }, editable: [], protected_mounts: [], effective_autostart: true }),
-  };
+function apps() {
+  return [
+    uygulama("notlar", { servisler: [servis("web", { imaj: "registry.example/notlar/web:2.4" })], revizyon: "rev-notlar-3" }),
+    uygulama("pano", { servisler: [servis("web", { imaj: "registry.example/pano:1" })], koken: "adres", revizyon: "rev-pano-1" }),
+  ];
 }
-let CONTAINERS = containers();
-const box = (name) => {
-  const c = CONTAINERS[name];
-  if (!c) return null;
-  return { imaj: c.image, ag: c.network, kullanici: c.user, baslangic: c.started, saglik: c.health, yeniden_baslama: c.restarts,
-    portlar: c.ports, baglamalar: (Array.isArray(c.mounts) ? c.mounts : []).map((m) => ({ tur: m.type, kaynak: m.source, hedef: m.destination, yazilabilir: m.rw, ad: m.name })) };
-};
-const listRow = (c) => ({ ...c, mounts: Array.isArray(c.mounts) ? c.mounts.length : 0, config: undefined, editable: undefined, protected_mounts: undefined });
-const inventory = () => ({ read_at: NOW, runtime: { version: "5.4.2", ok: true, error: "" }, containers: Object.values(CONTAINERS).map(listRow),
-  images: [{ id: "sha256:" + SHA("c"), name: "docker.io/library/nginx:1.27-alpine", size: 52428800, created: NOW - 86400, used_by: ["web"], managed: true, pinned: false }],
-  volumes: [{ name: "web-veri", driver: "local", size: null, used_by: ["web"], managed: true }, { name: "bos-veri", driver: "local", size: null, used_by: [], managed: true }],
-  networks: [{ name: "konsol", id: "n1", driver: "bridge", subnets: ["10.89.0.0/24"], used_by: ["web"], managed: true, internal: false },
-    { name: "arka", id: "n2", driver: "bridge", subnets: ["10.89.1.0/24"], used_by: [], managed: true, internal: true },
-    { name: "podman", id: "n0", driver: "bridge", subnets: ["10.88.0.0/16"], used_by: [], managed: false, internal: false }],
-  storage: { images: 1, containers: 6, size: 1610612736 }, resource_errors: {} });
+const VERI = "/var/lib/master-stack/uygulamalar/";
+function details() {
+  const items = Object.fromEntries(data.uygulamalar.items.map((a) => [a.ad, a]));
+  const out = {};
+  if (items.notlar) {
+    out.notlar = ayrinti(items.notlar, { metin: NOTLAR_FILE, yanitlar: NOTLAR_ANSWERS, gizliler: [{ ad: "notlar-db-password", servisler: ["web"] }],
+      koken: { tur: "dosya", adres: null, imaj: null, konteyner: null, alindi: 1791700000, sha256: D("e") } }, {
+      web: { baslangic: "root", gizliler: ["notlar-db-password"],
+        portlar: [{ port: 8080, protokol: "tcp", id: NOTLAR_WEB, erisim: NOTLAR_ROW, kullanim: "caddy", tailscale_adi: "notlar", yerel_port: 62001 },
+          { port: 9000, protokol: "udp", id: NOTLAR_UDP, erisim: { tur: "ham", kapsam: "kapali", port: 9000 }, kullanim: "raw", tailscale_adi: null, yerel_port: null }],
+        baglamalar: [{ hedef: "/data", tur: "app", yol: VERI + "notlar/veri", salt_okunur: false }] } });
+  }
+  if (items.pano) {
+    out.pano = ayrinti(items.pano, { metin: PANO_FILE, yanitlar: { name: "pano", answers: { "start:web": { mode: "root" } } },
+      koken: { tur: "adres", adres: "https://files.example.org/pano/compose.yaml", imaj: null, konteyner: null, alindi: 1791710000, sha256: D("f") } }, {
+      web: { baslangic: "root", portlar: [{ port: 3000, protokol: "tcp", id: "uygulama:pano:web:3000/tcp", erisim: { tur: "adres", ad: "pano", tailscale_portu: null, internet: "" },
+        kullanim: "caddy", tailscale_adi: "pano", yerel_port: 62002 }] } });
+  }
+  if (items.ornek) out.ornek = ayrinti(items.ornek);
+  return out;
+}
 
 const data = {
-  kaynaklar: { host: "sunucu", version: "2026.08.06-v2-250", surum: "1.0.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
-    cores: 4, read_at: NOW, sampled_at: NOW, cpu: 1.0, mem: { total: 8375186227, used: 696254464 },
+  kaynaklar: { host: "sunucu", version: "2026.08.06-v2-244", surum: "1.0.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
+    cores: 4, read_at: 1791845000, sampled_at: 1791845000, cpu: 2.0, mem: { total: 8375186227, used: 696254464 },
     net: { wan: "203.0.113.10", wan6: "", iface: "eth0", tailscale: "100.64.0.2", tailscale6: "" }, root: "/srv", disk: { total: 269186688614, free: 255550000000 } },
-  saglik: { status: "ok", read_at: NOW, checks: [{ id: "tailscale", name: "Tailscale", status: "ok", detail: "çalışıyor" }] },
-  guncelleme: { kurulu: "2026.08.06-v2-250", kurulu_surum: "1.0.0", son: "2026.08.06-v2-250", son_surum: "1.0.0", commit: "0".repeat(40), yeni: false,
-    denetlendi: NOW, hata: "", is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true },
+  saglik: { status: "ok", read_at: 1791844900, checks: [{ id: "tailscale", name: "Tailscale", status: "ok", detail: "çalışıyor" }] },
+  guncelleme: { kurulu: "2026.08.06-v2-244", kurulu_surum: "1.0.0", son: "2026.08.06-v2-244", son_surum: "1.0.0", commit: "0".repeat(40), yeni: false,
+    denetlendi: 1791845000, hata: "", is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true },
   bekleyen: { bekleyen: null },
   etkinlik: { items: [] },
-  erisim: { read_at: NOW, alan: "ev", hizmetler: [], hatalar: [], uyarilar: [],
-    ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null }, internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
-      wireguard: { kurulu: false, not: "", aglar: [] }, sertifikalar: [] } },
-  uygulamalar: null,
-  // Genel Bakış (the palette starts there).
-  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048, apps: [] },
-  onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
+  erisim: { read_at: 1791845000, alan: "ev", revizyon: "rev-1", hizmetler: [accessRow(NOTLAR_WEB, NOTLAR_ROW)], hatalar: [], uyarilar: [],
+    ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "sunucu", surum: "1.80.0", adresler: ["100.64.0.2"], cikis_dugumu: true },
+      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
+  uygulamalar: uygulamalar(apps(), { kaynaklar: [{ ad: "eski-redis", imaj: "registry.example/redis:7", durum: "running" }] }),
 };
-function setApps(ids, katalog) {
-  data.uygulamalar = { read_at: NOW, hatalar: [], katalog, altyapi: { podman: "5.4.2", calisiyor: true, imaj: 1, kullanilmayan_imaj: 0, birim: 2, ag: 3 },
-    items: ids.map((id) => APPS[id]).filter(Boolean) };
-}
-const CATALOGUE = [{ id: "torrent", ad: "qBittorrent", aciklama: "Torrent indirmelerini yönetin.", simge: "download" }, { id: "wireguard", ad: "WireGuard", aciklama: "Cihazlarınız için VPN bağlantısı.", simge: "shield" }];
-setApps(["gezgin", "web", "notlar", "medya", "paylasim"], CATALOGUE);
-let PACKAGES = [pkg("torrent", false, TORRENT_KONSOL), pkg("wireguard", false, WG_KONSOL), pkg("gezgin", true, GEZGIN_KONSOL)];
-
-const FOLDERS = {
-  "": [{ path: "/srv/indirilenler", free: 255550000000 }, { path: "/srv/kitaplik", free: 255550000000 }],
-  "/srv/indirilenler": [{ path: "/srv/indirilenler/filmler", free: 255550000000 }, { path: "/srv/indirilenler/diziler", free: 255550000000 }],
-  "/srv/kitaplik": [],
-};
-const LOG = ["2026-10-13T01:10:00+03:00 web[812]: başladı", "2026-10-13T01:11:00+03:00 web[812]: HATA: yukarı akış yanıt vermedi", "2026-10-13T01:12:00+03:00 web[812]: istek tamam",
-  "2026-10-13T01:13:00+03:00 web[812]: İkinci hata: İstanbul saat dilimi"];
 
 let expectedFailures = [];
-const h = require("./yeni-harness.cjs").create({ name: "konsol-yeni-uygulama-ekle-ui", url: process.env.KONSOL_URL || "http://127.0.0.1:8774", data,
+const h = require("./yeni-harness.cjs").create({ name: "konsol-yeni-uygulama-ekle-ui", url: process.env.KONSOL_URL || "http://127.0.0.1:8770", data,
   expected: () => expectedFailures });
-const { base, push, waitFor, newPage, posts, noHorizontalScroll, styleAttributes, shot } = h;
+const { base, push, waitFor, newPage, noHorizontalScroll, styleAttributes, shot } = h;
 
-// ---- dynamic replies
-const replies = { islem: [], konteyner: [], ayar: [] };   // forced replies for the next POSTs, before the defaults
-const ops = {};                                           // GET …/konteynerler/islem?id= records
-let jobSeq = 0;
-h.handlers["/api/konsol/moduller"] = () => ({ body: { items: PACKAGES } });
-h.handlers["/api/konsol/ayarlar/klasorler"] = ({ query }) => ({ body: { items: FOLDERS[query.get("path") ?? ""] ?? [] } });
-h.handlers["/api/konsol/konteynerler/liste"] = () => ({ body: inventory() });
-h.handlers["/api/konsol/konteynerler/ayrinti"] = ({ query }) => (CONTAINERS[query.get("ad")] ? { body: CONTAINERS[query.get("ad")] } : { status: 404, body: { error: "Konteyner bulunamadı" } });
-h.handlers["/api/konsol/konteynerler/guncellemeler"] = ({ query }) => {
-  if (query.get("yenile") === "1") CONTAINERS.web.update = { state: "var", channel: "docker.io/library/nginx:1.27-alpine", error: "", checked_at: NOW + 60 };
-  return { body: { checked_at: NOW + 60, items: { web: CONTAINERS.web.update, notlar: CONTAINERS.notlar.update }, cached: query.get("yenile") !== "1" } };
-};
-h.handlers["/api/konsol/konteynerler/islem"] = ({ method, body, query }) => {
-  if (method === "GET") return ops[query.get("id")] ? { body: ops[query.get("id")] } : { status: 404, body: { error: "İşlem bulunamadı; konteyner durumunu yenileyin." } };
-  const forced = replies.konteyner.shift();
-  if (forced) return forced;
-  const id = `is${String(++jobSeq).padStart(30, "0")}`;
-  return { status: 202, body: { id, action: body.action, name: body.name ?? body.config?.name, state: "running", step: "Başlatılıyor" } };
-};
-h.handlers["/api/konsol/uygulamalar/ayrinti"] = ({ query }) => {
-  const item = data.uygulamalar.items.find((a) => a.id === query.get("id"));
-  if (!item) return { status: 404, body: { error: "Uygulama bulunamadı." } };
-  return { body: { uygulama: item, konteyner: item.konteyner ? box(item.konteyner) : null, erisim: null } };
-};
-h.handlers["/api/konsol/uygulamalar/gunluk"] = ({ query }) => ({ body: { satirlar: LOG, kesik: query.get("satir") === "100" } });
-h.handlers["/api/konsol/uygulamalar/islem"] = ({ method, body }) => {
+// ---- the inspector: an inspection by the file's text; with answers, the errors by question or a definition
+function inspectionOf(text) {
+  if (text.includes("privileged")) return REFUSED_INSPECTION;
+  if (text === ORNEK_FILE) return ORNEK_INSPECTION;
+  if (text === ADRES_FILE) return ADRES_INSPECTION;
+  if (text === IMAGE_FILE) return IMAGE_INSPECTION;
+  if (text === CONTAINER_FILE) return CONTAINER_INSPECTION;
+  if (text === NOTLAR_FILE || text === NOTLAR_NEW) return notlarInspection(text === NOTLAR_NEW);
+  if (text === PANO_FILE || text === PANO_NEW) return panoInspection(text === PANO_NEW);
+  return inceleme({ format: null, name: "", refusals: [{ line: 1, key: "dosya", text: "Dosya Compose ya da Kubernetes değil." }] });
+}
+function check(inspection, answers) {
+  const errors = {};
+  for (const q of inspection.questions) if (q.kind !== "name" && !(q.id in answers.answers)) errors[q.id] = "Yanıt gerekli.";
+  if (answers.answers["var:TZ"]?.value === "Mars/Olympus") errors["var:TZ"] = "Bu değer kabul edilmedi.";
+  return errors;
+}
+h.handlers["/api/konsol/uygulamalar/denetle"] = ({ method, body }) => {
   if (method !== "POST") return undefined;
-  const forced = replies.islem.shift();
-  if (forced) return forced;
-  const broker = body.id.startsWith("konteyner:") || body.eylem === "guncelle";
-  return { status: 202, body: { id: body.id, eylem: body.eylem, is: broker ? `is${String(++jobSeq).padStart(30, "0")}` : null } };
+  const inspection = inspectionOf(body.metin);
+  if (!body.yanitlar) return { body: { inceleme: inspection } };
+  const errors = check(inspection, body.yanitlar);
+  return { body: Object.keys(errors).length ? { inceleme: inspection, hatalar: errors } : { inceleme: inspection, tanim: { name: body.yanitlar.name } } };
 };
-let account = { user: "admin", temp: true, host: "torrent.ev" };
-h.handlers["/api/konsol/uygulamalar/hesap"] = ({ query }) => {
-  if (query.get("id") !== "paket:torrent") return { status: 404, body: { error: "bu modülde hesap yok" } };
-  return { body: query.get("parola") === "1" && account.temp ? { ...account, pass: "Gecici-Parola-42" } : account };
+// The drafts: an address and a container at once; an image is a job whose record ends in the draft.
+let imageReads = 0;
+h.handlers["/api/konsol/uygulamalar/kaynak"] = ({ method, body }) => {
+  if (method !== "POST") return undefined;
+  if (body.tur === "adres") {
+    if (body.adres !== ADRES) return { status: 502, body: { error: "Adres indirilemedi: bağlantı kurulamadı." } };
+    return { body: { metin: ADRES_FILE, kaynak: body } };
+  }
+  if (body.tur === "imaj") return { body: { is: JOB(50) } };
+  return { body: { metin: CONTAINER_FILE, kaynak: body } };
 };
-let torrentSettings = { username: "admin", save: "/srv/indirilenler", profile: "/var/lib/qbittorrent" };
-h.dynamic.push([/^\/api\/uygulama\/torrent\/(durum|ayar)$/, (req, m) => {
-  if (m[1] === "durum") return { body: torrentSettings };
-  const forced = replies.ayar.shift();
-  if (forced) return forced;
-  if (req.body.username) torrentSettings = { ...torrentSettings, username: req.body.username };
-  return { body: { ok: true, username: torrentSettings.username, save: torrentSettings.save } };
+h.handlers["/api/konsol/konteynerler/islem"] = ({ method, query }) => {
+  if (method !== "GET" || query.get("id") !== JOB(50)) return undefined;
+  imageReads += 1;
+  return imageReads < 3 ? { body: { id: JOB(50), action: "uygulama-taslak", name: IMAGE, state: "running", step: `İmaj indiriliyor: ${IMAGE}` } }
+    : { body: { id: JOB(50), action: "uygulama-taslak", name: IMAGE, state: "done", step: "", result: { metin: IMAGE_FILE, kaynak: { tur: "imaj", imaj: IMAGE } } } };
+};
+// The install's plan (every check before the first write) and the install.
+h.handlers["/api/konsol/uygulamalar/kur"] = ({ method, body }) => {
+  if (method !== "POST") return undefined;
+  const inspection = inspectionOf(body.metin);
+  if (!body.plan) return { status: 202, body: { is: JOB(1), eylem: "kur", ad: body.yanitlar.name } };
+  const errors = check(inspection, body.yanitlar);
+  if (body.yanitlar.answers["mount:web:/belgeler"]?.path === "/srv/Filmler") {
+    errors["mount:web:/belgeler"] = "Klasör yok: /srv/Filmler";
+    errors.podman = "Bu dosya Podman 5 gerekir; bu sunucuda 4.9.";
+  }
+  return { body: Object.keys(errors).length ? { inceleme: inspection, hatalar: errors } : { inceleme: inspection, tanim: { name: body.yanitlar.name }, ozet: PLAN } };
+};
+// The files backend's folders under /srv (the folder picker).
+h.handlers["/api/list"] = ({ method, query }) => {
+  if (method !== "GET") return undefined;
+  const path = query.get("path") || "";
+  const names = path === "" ? ["Belgeler", "Filmler", ".gizli"] : path === "Belgeler" ? ["arsiv"] : [];
+  return { body: { path, entries: names.map((name) => ({ name, type: "dir" })) } };
+};
+// One application's detail; Tanım's plan and apply; the refresh from an address.
+const tanimReplies = [];
+h.dynamic.push([/^\/api\/konsol\/uygulamalar\/([a-z][a-z0-9-]*)$/, ({ method }, m) => {
+  if (method !== "GET") return undefined;
+  const d = details()[m[1]];
+  return d ? { body: d } : { status: 404, body: { error: "Uygulama bulunamadı." } };
 }]);
+h.dynamic.push([/^\/api\/konsol\/uygulamalar\/([a-z][a-z0-9-]*)\/tanim$/, ({ method, body }, m) => {
+  if (method !== "POST") return undefined;
+  const inspection = inspectionOf(body.metin);
+  if (!body.plan) return { body: { is: JOB(70), eylem: "tanim", ad: m[1] } };
+  const queued = tanimReplies.shift();
+  if (queued) return queued;
+  if (body.yanitlar.answers["var:TZ"]?.value === "Mars/Olympus") return { body: { inceleme: inspection, hatalar: { "var:TZ": "Bu değer kabul edilmedi." } } };
+  return { body: { inceleme: inspection, fark: body.metin === NOTLAR_NEW ? FARK : NO_FARK } };
+}]);
+let panoSource = PANO_NEW;
+h.dynamic.push([/^\/api\/konsol\/uygulamalar\/pano\/yenile$/, ({ method }) => (method === "POST"
+  ? { body: { metin: panoSource, yanitlar: { name: "pano", answers: { "port:web:3000/tcp": { use: "caddy", tailscale_name: "pano" }, "start:web": { mode: "root" } } },
+    yeni_sorular: panoSource === PANO_NEW ? ["port:web:3001/tcp"] : [] } } : undefined)]);
 
 // ---- helpers
 const url = (hash) => new URL("/" + hash, base).href;
-const hashOf = (page) => page.evaluate(() => location.hash);
-const lastPost = (key) => posts(key).at(-1);
-const job = (o) => ({ tur: "konteyner", id: "", ad: "", durum: "calisiyor", adim: "", bitis: null, ...o });
-const lastJob = () => `is${String(jobSeq).padStart(30, "0")}`;
-const field = (scope, name) => scope.locator(`[data-alan="${name}"]`);
-/** A table's rows as their cells' text, "|" between cells (the same on wide screens and as cards). */
-const cells = (table) => table.locator("tbody tr").evaluateAll((trs) => trs.map((tr) => [...tr.children].map((c) => c.textContent.trim()).join("|")));
+const active = (page) => page.evaluate(() => {
+  const e = document.activeElement;
+  return e ? (e.getAttribute("aria-label") || e.textContent || "").trim().replace(/\s+/g, " ") : "";
+});
+const postsTo = (path) => h.requests.filter((r) => r.method === "POST" && r.path === path).map((r) => r.body);
+const lastPost = (path) => postsTo(path).at(-1);
+const DENETLE = "/api/konsol/uygulamalar/denetle";
+const KAYNAK = "/api/konsol/uygulamalar/kaynak";
+const KUR = "/api/konsol/uygulamalar/kur";
+const job = (o) => ({ tur: "uygulama", id: JOB(1), ad: "ornek · Kurulum", durum: "calisiyor", adim: "", bitis: null, ...o });
 async function noStyles(page, where) {
   assert.deepEqual(await styleAttributes(page), [], "no style attributes: " + where);
 }
-const settle = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-async function stream() {
-  await waitFor(() => h.stream.clients.size >= 1, "event stream");
+/** No secret value in the address, the browser's storage or any GET request's address. */
+async function noSecrets(page, secrets, where) {
+  const stored = await page.evaluate(() => JSON.stringify([location.href, history.state, { ...localStorage }, { ...sessionStorage }]));
+  const gets = h.requests.filter((r) => r.method === "GET").map((r) => r.path + r.query).join("\n");
+  for (const s of secrets) {
+    assert(!stored.includes(s), `${where}: a secret in the address or storage`);
+    assert(!gets.includes(s), `${where}: a secret in a GET request`);
+  }
 }
-/** Whether the page asks before a reload (useLeaveGuard's beforeunload listener). */
-const guarded = (page) => page.evaluate(() => {
-  const e = new Event("beforeunload", { cancelable: true });
-  window.dispatchEvent(e);
-  return e.defaultPrevented;
-});
+const marksOf = (scope) => scope.locator(".code-line[data-satir]").evaluateAll((els) => els.map((e) => [Number(e.dataset.satir), e.querySelector(".code-mark").textContent,
+  [...e.classList].find((c) => c.startsWith("code-line-")).slice(10)]));
+const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) => els.map((e) => e.dataset.soru));
 
 (async () => {
   h.checkBuild();
   await h.start();
   try {
-    // ================= Uygulamalar: the add card and Podman's counts
-    let page = await newPage();
-    await page.goto(url("#/uygulamalar"));
-    const add = page.getByTestId("add-app");
-    await add.getByText("2 uygulama kurulabilir.").waitFor();
-    assert.deepEqual(await add.locator(".catalog a").evaluateAll((as) => as.map((a) => [a.textContent, a.getAttribute("href")])),
-      [["qBittorrent", "#/uygulamalar?ekle=katalog&paket=torrent"], ["WireGuard", "#/uygulamalar?ekle=katalog&paket=wireguard"]]);
-    await add.getByText("Podman'da Konsol dışında kurulmuş 2 konteyner yönetime alınabilir.").waitFor();
-    const infra = page.getByTestId("infra");
-    assert.equal(await infra.getByTestId("infra-unhealthy").innerText(), "1");
-    assert.equal(await infra.getByTestId("infra-updates").innerText(), "1");
-    assert.equal(await infra.getByTestId("infra-size").innerText(), "1,5 GB");
-    assert.deepEqual(await infra.locator(".infra-links a").evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
-      ["#/gelismis?sekme=podman&kaynak=imajlar", "#/gelismis?sekme=podman&kaynak=birimler", "#/gelismis?sekme=podman&kaynak=aglar"]);
-    assert.equal(await page.locator('a[href^="/#/moduller"], a[href^="/#/konteynerler"]').count(), 0, "no links to App Store or Podman of the current interface");
-
-    // ================= the catalogue: list, a package's words, its form and its checks
-    await add.getByRole("link", { name: "Kataloğu aç" }).click();
-    await page.waitForURL((u) => u.hash === "#/uygulamalar?ekle=katalog");
-    let sheet = page.getByRole("dialog", { name: "Katalogdan kur" });
-    await sheet.getByTestId("catalog-list").waitFor();
-    assert.deepEqual(await sheet.locator(".catalog-item strong").allInnerTexts(), ["qBittorrent", "WireGuard"], "only packages not installed");
-    await shot(page, "1440-light-katalog.png");
-    await sheet.getByRole("button", { name: "qBittorrent: ayrıntı ve kurulum" }).click();
-    await page.waitForURL((u) => u.hash === "#/uygulamalar?ekle=katalog&paket=torrent");
-    sheet = page.getByRole("dialog", { name: "qBittorrent'i kur" });
-    await sheet.getByTestId("catalog-desc").waitFor();
-    assert.equal(await sheet.locator(".modal-desc").innerText(), "Web arayüzü hesabı ve indirme klasörü");
-    assert.deepEqual(await sheet.getByTestId("catalog-will").locator("li").allInnerTexts(), TORRENT_KONSOL.neler.map((p) => p[1]));
-    assert.equal(await sheet.getByTestId("catalog-will").locator("svg").count(), 3, "an unknown icon falls back");
-    assert.deepEqual(await sheet.getByTestId("catalog-facts").locator(".fact-chip").allInnerTexts(), TORRENT_KONSOL.notlar);
-    assert.equal(await sheet.getByTestId("install-note").innerText(), TORRENT_FORM.kur_not);
-    const form = sheet.getByTestId("package-form");
-    assert.equal(await field(form, "username").inputValue(), "admin", "the declared default");
-    assert.equal(await form.getByTestId("folder-value").inputValue(), "", "an unrendered default is no default");
-    // Checks on the first submit, the first invalid field focused.
-    await sheet.getByTestId("install-go").click();
-    await form.getByText("Parolayı yazın.").waitFor();
-    await form.getByText("Bir klasör seçin.").waitFor();
-    assert(await field(form, "password").evaluate((el) => el === document.activeElement), "the first invalid field has focus");
-    assert.equal(posts("uygulamalar/islem").length, 0, "nothing sent");
-    await field(form, "username").fill("ad soyad");
-    await field(form, "password").fill("kisa");
-    await form.getByText("Geçersiz değer. Harf, rakam ve . _ @ - kullanılabilir.").waitFor();
-    await form.getByText("En az 8 karakter olmalı.").waitFor();
-    await field(form, "password").fill("uzun-parola-1");
-    await field(form, "password-tekrar").fill("uzun-parola-2");
-    await form.getByText("Parolalar aynı değil.").waitFor();
-    await field(form, "password-tekrar").fill("uzun-parola-1");
-    await field(form, "username").fill("yonetici");
-    // The folder picker: the roots with their free space, into a folder, Esc closes only the picker.
-    const toggle = form.getByTestId("folder-toggle");
-    await toggle.click();
-    const panel = form.getByTestId("folder-panel");
-    await panel.locator(".folder-row").first().waitFor();
-    assert.equal(await toggle.getAttribute("aria-expanded"), "true");
-    assert.deepEqual(await panel.locator(".folder-row").allInnerTexts(), ["/srv/indirilenler\n238,0 GB boş\nİçine gir\nSeç", "/srv/kitaplik\n238,0 GB boş\nİçine gir\nSeç"]);
-    await panel.getByRole("button", { name: "/srv/kitaplik içine gir" }).click();
-    await panel.getByText("Bu klasörün altında seçilebilir klasör yok.").waitFor();
-    assert(await panel.locator(".folder-where").evaluate((el) => el === document.activeElement), "the location has focus after entering");
-    await panel.getByTestId("folder-up").click();
-    await panel.getByRole("button", { name: "/srv/indirilenler içine gir" }).click();
-    await panel.getByRole("button", { name: "/srv/indirilenler/filmler seç" }).waitFor();
+    let page;
+    // ================= Kaynak: four sources; a pasted file; the address carries only ekle=1
+    page = await newPage();
+    await page.goto(url("#/uygulamalar?ekle=1"));
+    const sheet = page.getByRole("dialog", { name: "Uygulama ekle" });
+    await sheet.waitFor();
+    assert.equal(await sheet.locator(".modal-desc").innerText(), "Kurulumu dosya anlatır; denetçi sorar, Obhut kendi birimlerini üretir.");
+    const sources = sheet.locator(".src-card");
+    assert.deepEqual(await sources.evaluateAll((els) => els.map((e) => [e.dataset.kaynak, e.querySelector("strong").textContent, e.querySelector(".src-text span").textContent])), [
+      ["dosya", "Dosya", "Compose ya da Kubernetes YAML yapıştır ya da yükle"], ["adres", "Adresten", "https ile bir Compose ya da Kubernetes dosyası"],
+      ["imaj", "İmaj adından", "Obhut taslak bir dosya üretir"], ["konteyner", "Var olan konteyner", "Elle başlatılmış bir konteyner yönetime alınır"]]);
+    const next = sheet.locator('[data-eylem="ileri"]');
+    assert.equal(await next.innerText(), "Devam");
+    assert(await next.isDisabled(), "nothing chosen yet");
+    await shot(page, "1440-light-ekle-kaynak.png");
+    await sheet.getByRole("radio", { name: /Dosya/ }).check();
+    assert.equal(await next.innerText(), "Denetle");
+    assert(await next.isDisabled(), "no file yet");
+    // An upload is read here: too large, not UTF-8, then a file.
+    const input = sheet.getByTestId("file-input");
+    await input.setInputFiles({ name: "buyuk.yaml", mimeType: "text/yaml", buffer: Buffer.alloc(300 * 1024, 0x61) });
+    await sheet.getByTestId("source-error").filter({ hasText: "buyuk.yaml çok büyük (en çok 256 KiB)." }).waitFor();
+    await input.setInputFiles({ name: "ikili.yaml", mimeType: "text/yaml", buffer: Buffer.from([0x73, 0x65, 0xff, 0xfe, 0x0a]) });
+    await sheet.getByTestId("source-error").filter({ hasText: "ikili.yaml UTF-8 bir metin dosyası değil." }).waitFor();
+    await input.setInputFiles({ name: "compose.yaml", mimeType: "text/yaml", buffer: Buffer.from(REFUSED_FILE, "utf8") });
+    await page.waitForFunction(() => document.querySelector("[data-testid=paste]").value.includes("privileged"));
+    assert.equal(await sheet.getByTestId("paste").inputValue(), REFUSED_FILE, "the file's text, read in the browser");
+    assert.match(await sheet.locator("#kurulum-dosyasi-ipucu").innerText(), /^compose\.yaml okundu\./);
+    assert.equal(h.requests.filter((r) => r.method === "POST").length, 0, "nothing sent while reading");
+    await shot(page, "1440-light-ekle-dosya.png");
+    // Closing with a file in the form asks first.
     await page.keyboard.press("Escape");
-    await panel.waitFor({ state: "detached" });
-    assert(await sheet.isVisible(), "Esc closed the picker, not the sheet");
-    assert(await toggle.evaluate((el) => el === document.activeElement), "focus back on Klasör seç");
-    await toggle.press("Enter");
-    await panel.getByRole("button", { name: "/srv/indirilenler içine gir" }).click();
-    await panel.getByRole("button", { name: "/srv/indirilenler/filmler seç" }).click();
-    assert.equal(await form.getByTestId("folder-value").inputValue(), "/srv/indirilenler/filmler");
-    assert.deepEqual(h.requests.filter((r) => r.path === "/api/konsol/ayarlar/klasorler").map((r) => r.query),
-      ["", "?path=%2Fsrv%2Fkitaplik", "", "?path=%2Fsrv%2Findirilenler", "", "?path=%2Fsrv%2Findirilenler"]);
-    assert(await guarded(page), "a typed draft asks before a reload");
-    await noStyles(page, "katalog formu");
-    await shot(page, "1440-light-katalog-form.png");
-    // A refusal stays in the sheet, in the server's words; the draft stays.
-    expectedFailures = ["/api/konsol/uygulamalar/islem"];
-    replies.islem.push({ status: 400, body: { error: "Kurulum bilgileri doğrulanamadı: parola çok yaygın." } });
-    await sheet.getByTestId("install-go").click();
-    await sheet.getByTestId("install-error").filter({ hasText: "Kurulum bilgileri doğrulanamadı: parola çok yaygın." }).waitFor();
-    assert.equal(await field(form, "password").inputValue(), "uzun-parola-1", "the draft stays after a refusal");
-    expectedFailures = [];
-    // An earlier failed install of the same package is still listed: it is not this one's end.
-    await stream();
-    push("islemler", { items: [job({ tur: "modul", id: "torrent", ad: "qBittorrent · Kur", durum: "hata", adim: "eski hata", bitis: NOW - 30 })] });
-    await sheet.getByTestId("install-go").click();
-    await sheet.getByTestId("install-progress").waitFor();
-    assert.deepEqual(lastPost("uygulamalar/islem"), { id: "paket:torrent", eylem: "kur", form: { username: "yonetici", password: "uzun-parola-1", save: "/srv/indirilenler/filmler" } });
+    const closeConfirm = sheet.getByTestId("close-confirm");
+    await closeConfirm.waitFor();
+    assert.match(await closeConfirm.innerText(), /Girdikleriniz silinir; uygulama kurulmaz\./);
+    await closeConfirm.getByRole("button", { name: "Devam et" }).click();
+    await closeConfirm.waitFor({ state: "detached" });
+    assert.equal(await sheet.getByTestId("paste").inputValue(), REFUSED_FILE, "kept");
+
+    // ================= Denetçi: a refused line stops the flow; correcting the file in the editor goes on
+    await next.click();
+    await page.waitForFunction(() => document.querySelector("[data-testid=add-flow]")?.dataset.adim === "2");
+    await sheet.getByTestId("refusals").waitFor();
+    assert.deepEqual(postsTo(DENETLE)[0], { metin: REFUSED_FILE }, "the first read: the file only");
+    assert.equal(await sheet.getByTestId("format").innerText(), "Compose");
+    assert.equal(await sheet.getByTestId("refusal-count").innerText(), "1 satır");
+    assert.equal(await sheet.getByTestId("refusals").locator("li").innerText(), "Satır 5 web: privileged kullanılamaz; konteynerler ayrıcalıklı çalışmaz.");
+    assert.deepEqual(await marksOf(sheet), [[5, "durduruyor", "refuse"]], "the refused line marked beside it");
+    assert.equal(await sheet.getByTestId("questions").count(), 0, "no questions while a line stops it");
+    assert.equal(await sheet.getByTestId("flow-status").innerText(), "1 satır kurulumu durduruyor");
+    assert(await sheet.locator('[data-eylem="plan"]').isDisabled());
+    assert.equal(await sheet.locator(".flow-boxes dd").nth(1).innerText(), "compose.yaml (yüklenen dosya)");
+    await shot(page, "1440-light-ekle-durduran.png");
+    // "Satır 5" shows the line in the editor (the caret at its start).
+    await sheet.getByTestId("refusals").getByRole("button", { name: "Satır 5" }).click();
+    const editor = sheet.getByRole("textbox", { name: "Kurulum dosyası" });
+    assert.equal(await editor.evaluate((t) => t === document.activeElement && t.value.slice(0, t.selectionStart).split("\n").length), 5);
+    await editor.fill(ORNEK_FILE);
+    await sheet.getByTestId("questions").waitFor();
+    await waitFor(() => lastPost(DENETLE)?.yanitlar, "checked again with the answers");
+    assert(postsTo(DENETLE).some((b) => b.metin === ORNEK_FILE), "the corrected file read again");
+    assert.equal(await sheet.getByTestId("refusals").count(), 0);
+    assert.equal(await sheet.getByTestId("refusal-count").innerText(), "Yok");
+    // The marks beside the lines: the questions' words, a note.
+    assert.deepEqual(await marksOf(sheet), [[1, "ad", "question"], [3, "başlatma", "question"], [5, "port · not", "question"], [6, "klasör", "question"],
+      [8, "değişken", "question"], [9, "gizli değer", "question"], [10, "gizli değer", "question"], [11, "başlatma", "question"]]);
+    assert.deepEqual(await sheet.getByTestId("notes").locator("li").allInnerTexts(), ["Satır 5 Dosyadaki sunucu tarafı (8080) kullanılmaz; port Erişim'den açılır."]);
+    // Every question, in the inspector's order.
+    assert.equal(await sheet.getByTestId("app-name").inputValue(), "ornek", "the inspector's name");
+    assert.deepEqual(await questionIds(sheet), ["var:TZ", "var:ADMIN_PASSWORD", "port:web:8080/tcp", "port:web:9000/udp", "port:web:5432/tcp", "mount:web:/data",
+      "mount:web:/belgeler", "secret:web:API_TOKEN", "start:web", "start:db"]);
+    const q = (id) => sheet.locator(`[data-soru="${id}"]`);
+    assert.deepEqual(await sheet.locator("[data-soru] .q-title").allInnerTexts(), ["Değişken ${TZ}", "Gizli değer ${ADMIN_PASSWORD}", "8080/TCP · web", "9000/UDP · web",
+      "5432/TCP · web", "Klasör /data · web", "Klasör /belgeler · web", "Gizli değer API_TOKEN · web", "web · nasıl başlasın?", "db · nasıl başlasın?"]);
+    assert.equal(await sheet.getByTestId("flow-status").innerText(), "4 soru yanıt bekliyor");
+    assert.deepEqual(await sheet.locator(".q-need").evaluateAll((els) => els.map((e) => e.dataset.soru)),
+      ["var:ADMIN_PASSWORD", "port:web:8080/tcp", "port:web:5432/tcp", "secret:web:API_TOKEN"], "the waiting ones stand out");
+    // The answers already given are checked; a waiting question's "Yanıt gerekli." is not shown.
+    const SEEDED = { metin: ORNEK_FILE, yanitlar: { name: "ornek", answers: {
+      "var:TZ": { value: "Europe/Istanbul" }, "port:web:9000/udp": { use: "raw" }, "mount:web:/data": { to: "app" },
+      "mount:web:/belgeler": { to: "srv", path: "/srv/Belgeler", read_only: true }, "start:web": { mode: "root" }, "start:db": { mode: "direct" } } } };
+    await waitFor(() => isDeepStrictEqual(lastPost(DENETLE), SEEDED), "the answers given so far (the file's defaults and suggestions) checked");
+    assert.equal(await sheet.getByTestId("q-error").count(), 0);
+    // A port: nothing chosen (A1), the inspector's guess beside it.
+    assert.equal(await q("port:web:8080/tcp").getByTestId("q-guess").innerText(), "Denetçinin tahmini: web arayüzü");
+    assert.equal(await q("port:web:8080/tcp").locator("input[type=radio]:checked").count(), 0, "no port is chosen for the operator");
+    assert.equal(await q("port:web:5432/tcp").getByTestId("q-guess").innerText(), "Denetçinin tahmini: web değil (bilinen bir servis portu)");
+    assert.equal(await q("port:web:9000/udp").locator("input").count(), 0, "a UDP port is a raw port, closed");
+    assert.match(await q("port:web:9000/udp").innerText(), /Ham port · kapalı gelir/);
+    // A start mode: the suggestion marked, a word when the choice differs (A4).
+    assert(await q("start:web").getByRole("radio", { name: /Root olarak/ }).isChecked());
+    assert.equal(await q("start:web").locator('[data-secim="root"] .pill').innerText(), "Önerilen");
+    assert.match(await q("start:web").locator('[data-secim="root"]').innerText(), /8 yetki açık · gerekirse kendi kullanıcısına geçer/);
+    assert(await q("start:db").getByRole("radio", { name: /Doğrudan · 999:999/ }).isChecked());
+    await q("start:db").getByRole("radio", { name: /Root olarak/ }).check();
+    assert.equal(await q("start:db").getByTestId("q-start-note").innerText(), "Dosya kullanıcıyı belirtiyor; root başlangıcı gereksiz yetki bırakır.");
+    await q("start:db").getByRole("radio", { name: /Doğrudan/ }).check();
+    await q("start:db").getByTestId("q-start-note").waitFor({ state: "detached" });
+    // The mounts: the application's folder, or a folder under /srv with the picker.
+    assert(await q("mount:web:/data").getByRole("radio", { name: /Uygulamanın klasörü/ }).isChecked());
+    assert.equal(await q("mount:web:/data").locator('[data-secim="app"] .choice-sub').innerText(), "veri");
+    assert(await q("mount:web:/belgeler").getByRole("radio", { name: /\/srv altından bir klasör/ }).isChecked(), "the file's own /srv folder suggested");
+    assert.equal(await q("mount:web:/belgeler").getByTestId("share-folder-value").inputValue(), "/srv/Belgeler");
+    assert(await q("mount:web:/belgeler").getByTestId("q-readonly").isChecked(), "read-only as in the file");
+    assert.equal(await q("mount:web:/belgeler").getByRole("button", { name: "Klasör /belgeler · web: klasör seç" }).count(), 1);
+    // A variable with the file's default; a server error shows under it, and goes with a valid value.
+    assert.equal(await q("var:TZ").getByTestId("q-value").inputValue(), "Europe/Istanbul");
+    await q("var:TZ").getByTestId("q-value").fill("Mars/Olympus");
+    await q("var:TZ").getByTestId("q-error").filter({ hasText: "Bu değer kabul edilmedi." }).waitFor();
+    assert.equal(lastPost(DENETLE).yanitlar.answers["var:TZ"].value, "Mars/Olympus");
+    await q("var:TZ").getByTestId("q-value").fill("Europe/Istanbul");
+    await q("var:TZ").getByTestId("q-error").waitFor({ state: "detached" });
+    await shot(page, "1440-light-ekle-denetci.png");
+    // The ports answered: an address with the suggested Tailscale name; a name another row holds is refused at once.
+    await q("port:web:8080/tcp").getByRole("radio", { name: /Adres/ }).check();
+    const tsName = q("port:web:8080/tcp").getByTestId("q-name");
+    assert.equal(await tsName.inputValue(), "ornek", "the inspector's suggestion");
+    assert.equal(await q("port:web:8080/tcp").locator(".input-suffix").innerText(), ".ev");
+    await tsName.fill("notlar");
+    await q("port:web:8080/tcp").getByTestId("q-error").filter({ hasText: "notlar adı başka bir satırda kullanılıyor." }).waitFor();
+    await tsName.fill("ornek");
+    await q("port:web:5432/tcp").getByRole("radio", { name: /Adres/ }).check();
+    assert.match(await q("port:web:5432/tcp").innerText(), /Web arayüzü değilse adres çalışmaz/);
+    assert.equal(await q("port:web:5432/tcp").getByTestId("q-name").inputValue(), "", "no suggestion for a non-web port");
+    await q("port:web:5432/tcp").getByRole("radio", { name: /Ham port/ }).check();
+    // The secrets: a hidden value, "Rastgele üret" only where the inspector allows it, "Göster".
+    const adminInput = q("var:ADMIN_PASSWORD").getByTestId("q-secret");
+    assert.equal(await adminInput.getAttribute("type"), "password");
+    assert.equal(await q("secret:web:API_TOKEN").locator('[data-eylem="uret"]').count(), 0, "a token is not generated");
+    await q("var:ADMIN_PASSWORD").locator('[data-eylem="uret"]').click();
+    const adminSecret = await adminInput.inputValue();
+    assert.match(adminSecret, /^[A-Za-z0-9]{32}$/, "32 random letters and digits");
+    await q("var:ADMIN_PASSWORD").getByRole("button", { name: "Değeri göster" }).click();
+    assert.equal(await adminInput.getAttribute("type"), "text");
+    await q("var:ADMIN_PASSWORD").getByRole("button", { name: "Değeri gizle" }).click();
+    const tokenSecret = "jeton-degeri-4711";
+    await q("secret:web:API_TOKEN").getByTestId("q-secret").fill(tokenSecret);
+    await sheet.getByTestId("flow-status").filter({ hasText: "Bütün sorular yanıtlandı" }).waitFor();
+    await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
+    const ANSWERS = { name: "ornek", answers: {
+      "var:TZ": { value: "Europe/Istanbul" }, "var:ADMIN_PASSWORD": { value: adminSecret }, "port:web:8080/tcp": { use: "caddy", tailscale_name: "ornek" },
+      "port:web:9000/udp": { use: "raw" }, "port:web:5432/tcp": { use: "raw" }, "mount:web:/data": { to: "app" },
+      "mount:web:/belgeler": { to: "srv", path: "/srv/Belgeler", read_only: true }, "secret:web:API_TOKEN": { value: tokenSecret },
+      "start:web": { mode: "root" }, "start:db": { mode: "direct" } } };
+    await waitFor(() => isDeepStrictEqual(lastPost(DENETLE), { metin: ORNEK_FILE, yanitlar: ANSWERS }), "every answer checked");
+    await noSecrets(page, [adminSecret, tokenSecret], "Denetçi");
+    // Another /srv folder from the picker (hidden folders are never offered).
+    await q("mount:web:/belgeler").getByTestId("share-folder-toggle").click();
+    const panel = q("mount:web:/belgeler").getByTestId("share-folder-panel");
+    await panel.locator("[data-klasor]").first().waitFor();
+    assert.deepEqual(await panel.locator("[data-klasor]").evaluateAll((els) => els.map((e) => e.dataset.klasor)), ["Belgeler", "Filmler"]);
+    await panel.getByRole("button", { name: "Filmler seç" }).click();
+    assert.equal(await q("mount:web:/belgeler").getByTestId("share-folder-value").inputValue(), "/srv/Filmler");
+    await waitFor(() => lastPost(DENETLE).yanitlar.answers["mount:web:/belgeler"].path === "/srv/Filmler", "the folder checked");
+    await shot(page, "1440-light-ekle-yanitlar.png");
+
+    // ================= Plan: a refusal leads back to its question; then what the install creates
+    await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
+    await sheet.locator('[data-eylem="plan"]').click();
+    const problems = sheet.getByTestId("plan-problems");
+    await problems.waitFor();
+    const filmler = { ...ANSWERS, answers: { ...ANSWERS.answers, "mount:web:/belgeler": { to: "srv", path: "/srv/Filmler", read_only: true } } };
+    assert.deepEqual(lastPost(KUR), { metin: ORNEK_FILE, yanitlar: filmler, kaynak: { tur: "dosya" }, plan: true });
+    assert.deepEqual(await problems.locator("li").evaluateAll((els) => els.map((e) => [e.dataset.hata, e.querySelector("span").textContent, Boolean(e.querySelector("button"))])), [
+      ["mount:web:/belgeler", "Klasör /belgeler · web: Klasör yok: /srv/Filmler", true], ["podman", "Podman: Bu dosya Podman 5 gerekir; bu sunucuda 4.9.", false]]);
+    assert(await sheet.locator('[data-eylem="kur"]').isDisabled(), "nothing to install while the plan refuses");
+    assert.deepEqual(await sheet.locator(".flow-steps li").evaluateAll((els) => els.map((e) => e.getAttribute("aria-current"))), [null, null, "step"]);
+    await shot(page, "1440-light-ekle-plan-engel.png");
+    await problems.getByRole("button", { name: "Soruya git" }).click();
+    await page.waitForFunction(() => document.querySelector("[data-testid=add-flow]")?.dataset.adim === "2");
+    assert.equal(await q("mount:web:/belgeler").getByTestId("q-error").innerText(), "Klasör yok: /srv/Filmler", "the refusal beside its question");
+    assert(await q("mount:web:/belgeler").evaluate((e) => e.contains(document.activeElement)), "the question has the focus");
+    assert(await sheet.locator('[data-eylem="plan"]').isDisabled(), "not again before the answer changes");
+    await q("mount:web:/belgeler").getByTestId("share-folder-toggle").click();
+    await q("mount:web:/belgeler").locator('[data-klasor="Belgeler"]').waitFor();
+    await q("mount:web:/belgeler").getByRole("button", { name: "Belgeler seç" }).click();
+    await q("mount:web:/belgeler").getByTestId("q-error").waitFor({ state: "detached" });
+    await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
+    await sheet.locator('[data-eylem="plan"]').click();
+    const boxes = sheet.getByTestId("plan-boxes");
+    await boxes.waitFor();
+    assert.deepEqual(lastPost(KUR), { metin: ORNEK_FILE, yanitlar: ANSWERS, kaynak: { tur: "dosya" }, plan: true });
+    assert.deepEqual(await boxes.locator("[data-kutu]").evaluateAll((els) => els.map((e) => [e.querySelector("dt").textContent, [...e.querySelectorAll("dd")].map((d) => d.textContent)])), [
+      ["Uygulama", ["ornek · 2 servis", "ksl-ornek"]], ["Adresler", ["http://ornek.ev"]], ["Ham portlar", ["web · 9000/UDP · kapalı", "web · 5432/TCP · kapalı"]],
+      ["Klasörler", ["/var/lib/master-stack/uygulamalar/ornek/veri", "/srv/Belgeler · salt okunur"]],
+      ["Gizli değerler", ["2 · Podman secret", "ornek-admin-password", "ornek-api-token"]], ["Başlatma", ["web: root olarak", "db: doğrudan 999:999"]],
+      ["İmajlar", ["registry.example/ornek/web:1.2", "registry.example/ornek/db:16"]]]);
+    assert.deepEqual(await sheet.getByTestId("plan-units").locator("li").allInnerTexts(), PLAN.birimler);
+    assert.equal(await sheet.getByTestId("plan-warnings").locator("li").innerText(), "web: " + ROOT_WARNING);
+    assert(await sheet.locator('[data-eylem="kur"]').isEnabled());
+    await shot(page, "1440-light-ekle-plan.png");
+
+    // ================= Kur: the job in İşlemler; when it ends the application's page opens
+    await sheet.locator('[data-eylem="kur"]').click();
+    await waitFor(() => postsTo(KUR).length === 3, "install posted");
+    assert.deepEqual(lastPost(KUR), { metin: ORNEK_FILE, yanitlar: ANSWERS, kaynak: { tur: "dosya" } }, "the same body, without plan");
+    await waitFor(() => h.stream.clients.size === 1, "event stream");
+    push("islemler", { items: [job({ adim: "İmaj indiriliyor: registry.example/ornek/web:1.2" })] });
+    await sheet.getByTestId("install-progress").filter({ hasText: "Kuruluyor · İmaj indiriliyor: registry.example/ornek/web:1.2 · ilerlemesi İşlemler'de de görünür." }).waitFor();
+    assert(await sheet.locator('[data-eylem="kur"]').isDisabled());
+    await noSecrets(page, [adminSecret, tokenSecret], "install");
+    await shot(page, "1440-light-ekle-kuruluyor.png");
+    data.uygulamalar = uygulamalar([...apps(), uygulama("ornek", { servisler: [servis("web"), servis("db")] })]);
+    push("islemler", { items: [job({ durum: "tamam", bitis: 1791845300 })] });
+    await page.waitForURL((u) => u.hash === "#/uygulamalar/ornek");
+    await sheet.waitFor({ state: "detached" });
+    await page.locator("main h1").filter({ hasText: "ornek" }).waitFor();
+    await noSecrets(page, [adminSecret, tokenSecret], "the new application's page");
+    await page.context().close();
+    data.uygulamalar = uygulamalar(apps(), { kaynaklar: [{ ad: "eski-redis", imaj: "registry.example/redis:7", durum: "running" }] });
+
+    // ================= a failed install says why; Vazgeç drops what was entered
+    page = await newPage();
+    await page.goto(url("#/uygulamalar?ekle=1"));
+    const sheet2 = page.getByRole("dialog", { name: "Uygulama ekle" });
+    await sheet2.getByRole("radio", { name: /Dosya/ }).check();
+    await sheet2.getByTestId("paste").fill(ADRES_FILE);
+    await sheet2.locator('[data-eylem="ileri"]').click();
+    const q2 = (id) => sheet2.locator(`[data-soru="${id}"]`);
+    await q2("port:pano:3000/tcp").getByRole("radio", { name: /Ham port/ }).check();
+    await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
+    await sheet2.locator('[data-eylem="plan"]').click();
+    await sheet2.getByTestId("plan-boxes").waitFor();
+    await sheet2.locator('[data-eylem="kur"]').click();
+    await waitFor(() => !lastPost(KUR).plan, "install posted");
+    assert.deepEqual(lastPost(KUR).kaynak, { tur: "dosya" });
+    await waitFor(() => h.stream.clients.size === 1, "event stream");
+    push("islemler", { items: [job({ ad: "pano · Kurulum", adim: "pano başlatılıyor" })] });
     await page.waitForTimeout(150);
-    assert.equal(await sheet.getByTestId("install-error").count(), 0, "the old failure is not this install's end");
-    push("islemler", { items: [job({ tur: "modul", id: "torrent", ad: "qBittorrent · Kur", adim: "Adım 2/4 · İmaj indiriliyor" })] });
-    await sheet.getByTestId("install-step").filter({ hasText: "Adım 2/4 · İmaj indiriliyor" }).waitFor();
-    await shot(page, "1440-light-katalog-kuruluyor.png");
-    // Installed: the application's page opens.
-    PACKAGES = [pkg("torrent", true, TORRENT_KONSOL), pkg("wireguard", false, WG_KONSOL), pkg("gezgin", true, GEZGIN_KONSOL)];
-    setApps(["gezgin", "torrent", "web", "notlar", "medya", "paylasim"], [CATALOGUE[1]]);
-    push("islemler", { items: [job({ tur: "modul", id: "torrent", ad: "qBittorrent · Kur", durum: "tamam", bitis: NOW + 60 })] });
-    await page.waitForURL((u) => u.hash === "#/uygulamalar/paket:torrent");
-    await page.locator("main h1").filter({ hasText: "qBittorrent" }).waitFor();
-    assert.equal(await guarded(page), false, "nothing left to ask about");
-
-    // A package without a form: Kur at once; a failed job says why and offers to try again.
-    await page.goto(url("#/uygulamalar?ekle=katalog&paket=wireguard"));
-    sheet = page.getByRole("dialog", { name: "WireGuard kurulsun mu?" });
-    await sheet.getByText("Kurulum bilgi istemez; Kur ile hemen başlar.").waitFor();
-    await sheet.getByTestId("install-go").click();
-    await sheet.getByTestId("install-progress").waitFor();
-    assert.deepEqual(lastPost("uygulamalar/islem"), { id: "paket:wireguard", eylem: "kur" }, "no form without a declaration");
-    push("islemler", { items: [job({ tur: "modul", id: "wireguard", ad: "WireGuard · Kur", adim: "Adım 1/3 · Paketler" })] });
-    await sheet.getByTestId("install-step").filter({ hasText: "Adım 1/3 · Paketler" }).waitFor();
-    push("islemler", { items: [job({ tur: "modul", id: "wireguard", ad: "WireGuard · Kur", durum: "hata", adim: "apt-get başarısız", bitis: NOW + 90 })] });
-    await sheet.getByTestId("install-error").filter({ hasText: "Kurulum başarısız: apt-get başarısız" }).waitFor();
-    assert.equal(await sheet.getByTestId("install-go").innerText(), "Yeniden dene");
-    assert.equal(await hashOf(page), "#/uygulamalar?ekle=katalog&paket=wireguard", "a failed install stays");
-    await shot(page, "1440-light-katalog-hata.png");
-    await sheet.getByTestId("catalog-back").click();
-    await page.waitForURL((u) => u.hash === "#/uygulamalar?ekle=katalog");
-    await page.keyboard.press("Escape");
+    push("islemler", { items: [job({ ad: "pano · Kurulum", durum: "hata", adim: "pano başlamadı; günlüğü: journalctl -u konsol-pano_pano", bitis: 1791845310 })] });
+    await sheet2.getByTestId("install-error").filter({ hasText: "Kurulum başarısız: pano başlamadı; günlüğü: journalctl -u konsol-pano_pano" }).waitFor();
+    assert(await sheet2.locator('[data-eylem="kur"]').isEnabled(), "it can be tried again");
+    await sheet2.getByRole("button", { name: "Kapat" }).click();
+    await sheet2.getByTestId("close-confirm").getByRole("button", { name: "Vazgeç" }).click();
+    await sheet2.waitFor({ state: "detached" });
     await page.waitForURL((u) => u.hash === "#/uygulamalar");
+    await page.locator('.apps-toolbar [data-eylem="ekle"]').click();
+    await sheet2.waitFor();
+    assert.equal(await sheet2.locator("input[type=radio]:checked").count(), 0, "a fresh start: nothing kept");
     await page.context().close();
 
-    // ================= Bir imajdan: the definition, its checks, the review, a refusal, a failed and a done job
+    // ================= Adresten: https only; a server error in its words; the draft inspected; its kaynak in the plan
     page = await newPage();
-    await page.goto(url("#/uygulamalar?ekle=imaj"));
-    sheet = page.getByRole("dialog", { name: "Bir imajdan konteyner" });
-    const flow = sheet.getByTestId("create-flow");
-    await field(flow, "image").waitFor();
-    assert.deepEqual(await field(flow, "network").locator("option").allInnerTexts(), ["Varsayılan Konsol ağı", "konsol", "arka (iç ağ)"], "the default and Konsol's managed bridges");
-    assert.equal(await field(flow, "user").inputValue(), "downloads", "least privilege by default");
-    await sheet.getByTestId("create-go").click();
-    await flow.getByText("İmajın tam adını yazın: kayıt adresi, depo ve etiket (ör. docker.io/library/nginx:1.27-alpine).").waitFor();
-    await flow.getByText("Ad küçük harfle başlar; küçük harf, rakam ve - içerir (2–31 karakter).").waitFor();
-    assert(await field(flow, "image").evaluate((el) => el === document.activeElement), "the first invalid field has focus");
-    await field(flow, "image").fill("nginx:latest");
-    await field(flow, "name").fill("notlar");
-    await flow.getByText("Bu ad kullanılıyor.").waitFor();
-    await field(flow, "image").fill("docker.io/library/caddy:2.8");
-    await field(flow, "name").fill("site");
-    // Ports: an internet port needs the acknowledgement; the same server port twice; a port out of range.
-    await flow.getByRole("button", { name: "Port ekle" }).click();
-    let ports = flow.locator(".port-row");
-    assert(await field(ports.nth(0), "scope").evaluate((el) => el === document.activeElement), "the new row's first field has focus");
-    assert.equal(await field(ports.nth(0), "scope").inputValue(), "local", "a new port starts on this server only");
-    await field(ports.nth(0), "host").fill("8080");
-    await field(ports.nth(0), "inner").fill("80");
-    await field(ports.nth(0), "scope").selectOption("public");
-    await ports.nth(0).getByText("İnternete açık port için onay kutusunu işaretleyin.").waitFor();
-    await field(ports.nth(0), "ack").locator("input").check();
-    await flow.getByRole("button", { name: "Port ekle" }).click();
-    await field(ports.nth(1), "host").fill("8080");
-    await field(ports.nth(1), "inner").fill("70000");
-    await ports.nth(1).getByText("Portlar 1–65535 arasında bir sayı olmalı.").waitFor();
-    await field(ports.nth(1), "inner").fill("443");
-    await ports.nth(1).getByText("Bu sunucu portu bu protokolle iki kez var.").waitFor();
-    await field(ports.nth(1), "protocol").selectOption("udp");
-    await ports.nth(1).getByText("Bu sunucu portu bu protokolle iki kez var.").waitFor({ state: "detached" });
-    await field(ports.nth(1), "scope").selectOption("tailscale");
-    // Mounts: a volume from the list or a new name, a server folder through the picker, the account rule.
-    await flow.getByRole("button", { name: "Bağlama ekle" }).click();
-    let mounts = flow.locator(".mount-row");
-    assert.deepEqual(await flow.locator("datalist option").evaluateAll((os) => os.map((o) => o.value)), ["web-veri", "bos-veri"]);
-    await field(mounts.nth(0), "source").fill("Site Verisi");
-    await field(mounts.nth(0), "destination").fill("/data");
-    await mounts.nth(0).getByText("Birim adı küçük harf ya da rakamla başlar; küçük harf, rakam ve - _ . içerir.").waitFor();
-    await field(mounts.nth(0), "source").fill("site-veri");
-    // The worker mounts only an existing volume; another name is refused before the review.
-    await mounts.nth(0).getByText("Bu birim yok; önce Gelişmiş → Podman → Birimler'de oluşturun.").waitFor();
-    await field(mounts.nth(0), "source").fill("web-veri");
-    await flow.getByRole("button", { name: "Bağlama ekle" }).click();
-    await field(mounts.nth(1), "type").selectOption("bind");
-    await mounts.nth(1).getByText("Sunucu klasörünü seçin.").waitFor();
-    await mounts.nth(1).getByTestId("folder-toggle").click();
-    await mounts.nth(1).getByRole("button", { name: "/srv/kitaplik seç" }).click();
-    await field(mounts.nth(1), "destination").fill("/data");
-    await mounts.nth(1).getByText("Bu konteyner yolu iki kez var.").waitFor();
-    await field(mounts.nth(1), "destination").fill("/kitaplik");
-    await field(flow, "user").selectOption("image");
-    await flow.getByText("Sunucu klasörüne yalnız Dosyalar hesabıyla yazılabilir: hesabı değiştirin ya da klasörü salt okunur yapın.").waitFor();
-    await field(mounts.nth(1), "readonly").locator("input").check();
-    await flow.getByText("Sunucu klasörüne yalnız Dosyalar hesabıyla yazılabilir", { exact: false }).waitFor({ state: "detached" });
-    // Environment: names checked, a secret row; command; limits.
-    await flow.getByRole("button", { name: "Değişken ekle" }).click();
-    let envs = flow.locator(".env-row");
-    await field(envs.nth(0), "env-name").fill("1TZ");
-    await envs.nth(0).getByText("Değişken adı harf ya da _ ile başlar; harf, rakam ve _ içerir.").waitFor();
-    await field(envs.nth(0), "env-name").fill("TZ");
-    await field(envs.nth(0), "env-value").fill("Europe/Istanbul");
-    await flow.getByRole("button", { name: "Değişken ekle" }).click();
-    await field(envs.nth(1), "env-name").fill("SIFRE");
-    await field(envs.nth(1), "secret").locator("input").check();
-    assert.equal(await field(envs.nth(1), "env-value").getAttribute("type"), "password");
-    await field(envs.nth(1), "env-value").fill("cok-gizli");
-    await flow.getByRole("button", { name: "Değişken ekle" }).click();
-    await flow.getByRole("button", { name: "3. değişkenini kaldır" }).click();
-    assert.equal(await envs.count(), 2);
-    assert(await flow.getByRole("button", { name: "Değişken ekle" }).evaluate((el) => el === document.activeElement), "focus goes to Değişken ekle after a removal");
-    await field(flow, "command").fill("caddy\nrun\n--config\n/etc/caddy/Caddyfile");
-    await field(flow, "cpus").fill("iki");
-    await field(flow, "memory").fill("512mb");
-    await flow.getByText("İşlemci sınırı bir sayı olmalı (ör. 1.5; en çok 256).").waitFor();
-    await flow.getByText("Bellek sınırı sayı ve birim olmalı (ör. 512m, 2g).").waitFor();
-    await field(flow, "cpus").fill("0.5");
-    await field(flow, "memory").fill("256m");
-    await field(flow, "restart").selectOption("always");
-    assert.equal(await flow.locator(".field-error").count(), 0, "no problem left");
-    await noStyles(page, "imajdan");
-    assert(await guarded(page), "the draft asks before a reload");
-    await shot(page, "1440-light-imajdan.png", true);
-    await sheet.getByTestId("create-go").click();
-    await sheet.getByTestId("review").waitFor();
-    assert(await sheet.getByTestId("review-title").evaluate((el) => el === document.activeElement), "the review's heading has focus");
-    assert.deepEqual(await sheet.locator(".review-facts dt").allInnerTexts(), ["Ad", "İmaj", "Ağ", "Port", "Port", "Bağlama", "Bağlama", "Ortam", "Ortam", "Komut", "Başlatma", "İşlemci sınırı", "Bellek sınırı", "Hesap"]);
-    assert.deepEqual(await sheet.locator(".review-facts dd").allInnerTexts(), ["site", "docker.io/library/caddy:2.8", "Varsayılan Konsol ağı",
-      "İnternet (herkese açık) · 8080 → 80/tcp", "Tailscale · 8080 → 443/udp", "birim web-veri → /data", "klasör /srv/kitaplik → /kitaplik (salt okunur)",
-      "TZ=Europe/Istanbul", "SIFRE (gizli, yeni değer)", "caddy run --config /etc/caddy/Caddyfile", "açılışta başlar · yeniden başlatma: Her zaman", "0.5 çekirdek", "256m",
-      "İmajın kendi hesabı (çoğunlukla root)"]);
-    assert.equal(await sheet.getByTestId("public-ports").locator(".notice-title").innerText(), "İnternete açık port: 8080/tcp");
-    assert.equal(await sheet.locator('[data-testid="consequences"] [data-ton="bad"]').count(), 1, "the internet port is called out");
-    assert.equal(await sheet.getByTestId("create-go").innerText(), "Oluştur ve başlat");
-    await sheet.getByTestId("start-after").locator("input").uncheck();
-    assert.equal(await sheet.getByTestId("create-go").innerText(), "Oluştur");
-    await shot(page, "1440-light-imajdan-gozden.png", true);
-    // A refusal: the server's words on the review, nothing else changes.
-    expectedFailures = ["/api/konsol/konteynerler/islem"];
-    replies.konteyner.push({ status: 409, body: { error: "Bu ad bir uygulamaya veya sistem hizmetine ait." } });
-    await sheet.getByTestId("create-go").click();
-    await sheet.getByTestId("create-error").filter({ hasText: "Bu ad bir uygulamaya veya sistem hizmetine ait." }).waitFor();
+    await page.goto(url("#/uygulamalar?ekle=1"));
+    const sheet3 = page.getByRole("dialog", { name: "Uygulama ekle" });
+    await sheet3.getByRole("radio", { name: /Adresten/ }).check();
+    const urlField = sheet3.getByTestId("src-url");
+    assert.equal(await urlField.getAttribute("placeholder"), "https://depo.example.org/compose.yaml");
+    await urlField.fill("http://files.example.org/ornek/compose.yaml");
+    await sheet3.locator('[data-eylem="ileri"]').click();
+    await sheet3.getByTestId("source-error").filter({ hasText: "Adres https ile başlamalı." }).waitFor();
+    assert.equal(postsTo(KAYNAK).length, 0, "refused before asking the server");
+    expectedFailures = [KAYNAK];
+    await urlField.fill("https://bos.example.org/compose.yaml");
+    assert.equal(await sheet3.locator('[data-eylem="ileri"]').innerText(), "İndir ve denetle");
+    await sheet3.locator('[data-eylem="ileri"]').click();
+    await sheet3.getByTestId("source-error").filter({ hasText: "Adres indirilemedi: bağlantı kurulamadı." }).waitFor();
     expectedFailures = [];
-    const created = { name: "site", image: "docker.io/library/caddy:2.8", image_ref: "docker.io/library/caddy:2.8", network: "bridge",
-      ports: [{ scope: "public", host_port: 8080, container_port: 80, protocol: "tcp", public_ack: true }, { scope: "tailscale", host_port: 8080, container_port: 443, protocol: "udp", public_ack: false }],
-      mounts: [{ type: "volume", source: "web-veri", destination: "/data", read_only: false }, { type: "bind", source: "/srv/kitaplik", destination: "/kitaplik", read_only: true }],
-      environment: [{ name: "TZ", value: "Europe/Istanbul", secret: false }, { name: "SIFRE", value: "cok-gizli", secret: true }],
-      command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile"], autostart: true, restart: "always", cpus: "0.5", memory: "256m", user: "image" };
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "create", config: created, start: false }, "the exact create request");
-    // A failed job: back to the definition, which kept the draft.
-    await stream();
-    await sheet.getByTestId("create-go").click();
-    await sheet.getByTestId("create-run").waitFor();
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "create", config: created, start: false });
-    push("islemler", { items: [job({ id: lastJob(), ad: "site · Oluştur", adim: "İmaj çekiliyor" })] });
-    await sheet.getByTestId("create-step").filter({ hasText: "İmaj çekiliyor" }).waitFor();
-    push("islemler", { items: [job({ id: lastJob(), ad: "site · Oluştur", durum: "hata", adim: "İmaj çekilemedi: manifest unknown", bitis: NOW + 5 })] });
-    await sheet.getByTestId("create-error").filter({ hasText: "Oluşturulamadı: İmaj çekilemedi: manifest unknown" }).waitFor();
-    await shot(page, "1440-light-imajdan-hata.png");
-    await sheet.getByTestId("create-go").click();
-    await field(flow, "image").waitFor();
-    assert.equal(await field(flow, "name").inputValue(), "site", "the draft is kept");
-    assert.equal(await flow.locator(".port-row").count(), 2);
-    // Done: the new application's page opens.
-    await sheet.getByTestId("create-go").click();
-    await sheet.getByTestId("start-after").locator("input").check();
-    await sheet.getByTestId("create-go").click();
-    await sheet.getByTestId("create-run").waitFor();
-    assert.equal(lastPost("konteynerler/islem").start, true);
-    APPS.site = app({ id: "konteyner:site", ad: "site", tur: "konteyner", aciklama: "Konteyner · docker.io/library/caddy", konteyner: "site", eylemler: ["durdur", "yeniden-baslat", "kaldir"] });
-    CONTAINERS.site = crow({ name: "site", image: "docker.io/library/caddy@sha256:" + SHA("e"), unit: "konsol-site.service", network: "konsol", actions: ["stop", "restart", "save", "remove", "image-update"],
-      config: { ...created, image: "docker.io/library/caddy@sha256:" + SHA("e"), manual_stop: false }, editable: EDITABLE, revision: "rev-site-1" });
-    setApps(["gezgin", "torrent", "web", "notlar", "medya", "site", "paylasim"], [CATALOGUE[1]]);
-    push("islemler", { items: [job({ id: lastJob(), ad: "site · Oluştur", durum: "tamam", bitis: NOW + 9 })] });
-    await page.waitForURL((u) => u.hash === "#/uygulamalar/konteyner:site");
-    await page.locator("main h1").filter({ hasText: "site" }).waitFor();
-    await page.context().close();
-    delete CONTAINERS.site;
-    setApps(["gezgin", "torrent", "web", "notlar", "medya", "paylasim"], [CATALOGUE[1]]);
-
-    // ================= Var olanı yönetime al: the list, a preview, the choices, the typed word
-    page = await newPage();
-    await page.goto(url("#/uygulamalar?ekle=sahiplen"));
-    sheet = page.getByRole("dialog", { name: "Var olanı yönetime al" });
-    await sheet.locator('[data-konteyner="medya"]').waitFor();
-    assert.deepEqual(await sheet.locator(".choice-item strong").allInnerTexts(), ["medya", "eski", "garip"], "only containers made outside Konsol");
-    assert.equal(await sheet.locator('[data-konteyner="eski"] .warn-text').innerText(), "Konteyner başka bir yöneticiye ait veya desteklenmeyen seçenekler kullanıyor.");
-    assert.equal(await sheet.locator('[data-konteyner="eski"] button').count(), 0, "not adoptable: no button");
-    await stream();
-    const adoptPosts = posts("konteynerler/islem").length;
-    await sheet.getByRole("button", { name: "medya: önizle" }).click();
-    await page.waitForURL((u) => u.hash === "#/uygulamalar?ekle=sahiplen&ad=medya");
-    sheet = page.getByRole("dialog", { name: "medya · yönetime al" });
-    await sheet.getByTestId("adopt-waiting").waitFor();
-    await waitFor(() => posts("konteynerler/islem").length && lastPost("konteynerler/islem").preview === true, "the preview request");
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "adopt", name: "medya", preview: true });
-    const previewJob = lastJob();
-    const PREVIEW_CONFIG = { name: "medya", image: "docker.io/example/medya@sha256:" + SHA("f"), image_ref: "docker.io/example/medya:10.9", network: "host",
-      ports: [{ scope: "public", host_port: 8096, container_port: 8096, protocol: "tcp", public_ack: false }, { scope: "tailscale", host_port: 1900, container_port: 1900, protocol: "udp", public_ack: false }],
-      mounts: [{ type: "bind", source: "/srv/medya", destination: "/media", read_only: false }], environment: [{ name: "TZ", value: "Europe/Istanbul", secret: false }, { name: "ANAHTAR", secret: true, present: true }],
-      command: [], autostart: true, restart: "always", cpus: "", memory: "", user: "image", pids_limit: "2048", stop_signal: "SIGTERM" };
-    ops[previewJob] = { id: previewJob, action: "adopt", name: "medya", state: "done", step: "", result: { preview: { config: PREVIEW_CONFIG, unsupported: [], fingerprint: "fp-medya-1", requires_scope_review: true } } };
-    push("islemler", { items: [job({ id: previewJob, ad: "medya · Sahiplen", durum: "tamam", bitis: NOW + 20 })] });
-    await sheet.getByTestId("adopt-read").waitFor();
-    assert.deepEqual(await sheet.getByTestId("adopt-read").locator("dd").allInnerTexts(),
-      ["docker.io/example/medya:10.9", "host", "/srv/medya → /media", "TZ, ANAHTAR (gizli)", "Her zaman"]);
-    assert.equal(await field(sheet, "network").inputValue(), "bridge", "the host network is not offered: the default bridge");
-    const adoptPorts = sheet.locator(".adopt-row");
-    assert.deepEqual(await adoptPorts.locator(".field-help").allInnerTexts(), ["Şu an: İnternet (herkese açık)", "Şu an: Tailscale"]);
-    assert.deepEqual([await field(adoptPorts.nth(0), "scope").inputValue(), await field(adoptPorts.nth(1), "scope").inputValue()], ["", ""], "every scope chosen again");
-    await sheet.getByTestId("adopt-go").click();
-    await sheet.getByTestId("adopt-why").filter({ hasText: "Her portun erişimini seçin." }).waitFor();
-    await sheet.getByText("Erişimi seçin.").first().waitFor();
-    await field(adoptPorts.nth(0), "scope").selectOption("public");
-    await field(adoptPorts.nth(1), "scope").selectOption("local");
-    await sheet.getByTestId("adopt-why").filter({ hasText: "Her portun erişimini seçin." }).waitFor();
-    await field(adoptPorts.nth(0), "ack").locator("input").check();
-    await sheet.getByTestId("adopt-why").filter({ hasText: "Hesabı ya da klasörü düzeltin." }).waitFor();
-    await sheet.getByText("Sunucu klasörüne yalnız Dosyalar hesabıyla yazılabilir: hesabı değiştirin ya da klasörü salt okunur yapın.").waitFor();
-    await field(sheet, "user").selectOption("downloads");
-    await sheet.getByTestId("adopt-why").filter({ hasText: "Onay sözcüğünü yazın." }).waitFor();
-    await sheet.getByRole("textbox", { name: "Onaylamak için onayla yazın" }).fill("onayla");
-    await noStyles(page, "yönetime al");
-    await shot(page, "1440-light-yonetime-al.png", true);
-    assert.equal(posts("konteynerler/islem").length, adoptPosts + 1, "nothing changed before the confirmation");
-    await sheet.getByTestId("adopt-go").click();
-    await sheet.getByTestId("adopt-run").waitFor();
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "adopt", name: "medya", preview_fingerprint: "fp-medya-1", start: true, confirm: true,
-      config: { ...PREVIEW_CONFIG, network: "bridge", user: "downloads", ports: [{ scope: "public", host_port: 8096, container_port: 8096, protocol: "tcp", public_ack: true },
-        { scope: "local", host_port: 1900, container_port: 1900, protocol: "udp", public_ack: false }] } }, "the preview's settings with the choices");
-    push("islemler", { items: [job({ id: lastJob(), ad: "medya · Sahiplen", durum: "tamam", bitis: NOW + 40 })] });
-    await page.waitForURL((u) => u.hash === "#/uygulamalar/konteyner:medya");
-    // Options the server cannot carry over block it.
-    await page.goto(url("#/uygulamalar?ekle=sahiplen&ad=garip"));
-    sheet = page.getByRole("dialog", { name: "garip · yönetime al" });
-    await sheet.getByTestId("adopt-waiting").waitFor();
-    await waitFor(() => lastPost("konteynerler/islem").name === "garip", "the preview request");
-    const garipJob = lastJob();
-    ops[garipJob] = { id: garipJob, action: "adopt", name: "garip", state: "done", result: { preview: { config: { ...PREVIEW_CONFIG, name: "garip", ports: [], mounts: [] },
-      unsupported: ["--privileged", "--device /dev/dri"], fingerprint: "fp-garip" } } };
-    push("islemler", { items: [job({ id: garipJob, ad: "garip · Sahiplen", durum: "tamam", bitis: NOW + 50 })] });
-    await sheet.getByTestId("adopt-unsupported").waitFor();
-    assert.deepEqual(await sheet.getByTestId("adopt-unsupported").locator("li").allInnerTexts(), ["--privileged", "--device /dev/dri"]);
-    assert(await sheet.getByTestId("adopt-go").isDisabled(), "cannot be adopted");
-    assert.equal(await sheet.getByRole("textbox", { name: "Onaylamak için onayla yazın" }).count(), 0);
-    // A failed preview job says why and can be asked again.
-    await page.goto(url("#/uygulamalar?ekle=sahiplen&ad=medya"));
-    sheet = page.getByRole("dialog", { name: "medya · yönetime al" });
-    await sheet.getByTestId("adopt-waiting").waitFor();
-    await waitFor(() => lastPost("konteynerler/islem").name === "medya" && lastJob() !== garipJob, "another preview");
-    push("islemler", { items: [job({ id: lastJob(), ad: "medya · Sahiplen", durum: "hata", adim: "Konteyner incelenemedi.", bitis: NOW + 60 })] });
-    await sheet.getByTestId("adopt-error").filter({ hasText: "Konteyner incelenemedi." }).waitFor();
-    await sheet.getByRole("button", { name: "Yeniden dene" }).waitFor();
+    await urlField.fill(ADRES);
+    await urlField.press("Enter");
+    await sheet3.getByTestId("questions").waitFor();
+    assert.deepEqual(lastPost(KAYNAK), { tur: "adres", adres: ADRES });
+    assert.equal(await sheet3.locator(".flow-boxes dd").nth(1).innerText(), ADRES);
+    assert.equal(await sheet3.getByRole("textbox", { name: "Kurulum dosyası" }).inputValue(), ADRES_FILE);
+    await sheet3.locator('[data-soru="port:pano:3000/tcp"]').getByRole("radio", { name: /Adres/ }).check();
+    await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
+    await sheet3.locator('[data-eylem="plan"]').click();
+    await sheet3.getByTestId("plan-boxes").waitFor();
+    assert.deepEqual(lastPost(KUR), { metin: ADRES_FILE, yanitlar: { name: "pano", answers: { "port:pano:3000/tcp": { use: "caddy", tailscale_name: "pano" },
+      "start:pano": { mode: "root" } } }, kaynak: { tur: "adres", adres: ADRES }, plan: true }, "the source travels with the file");
+    // Geri goes back step by step.
+    await sheet3.getByRole("button", { name: "Geri" }).click();
+    await sheet3.getByTestId("questions").waitFor();
+    await sheet3.getByRole("button", { name: "Geri" }).click();
+    await page.waitForFunction(() => document.querySelector("[data-testid=add-flow]")?.dataset.adim === "1");
+    assert.equal(await urlField.inputValue(), ADRES, "the address is kept while the sheet is open");
     await page.context().close();
 
-    // ================= a Konsol container's page: Özet, Erişim's ports, Depolama, the update check
+    // ================= İmaj adından: a job; its progress here; its result is the draft
     page = await newPage();
-    await page.goto(url("#/uygulamalar/konteyner:web"));
-    await page.getByTestId("source").waitFor();
-    assert.equal(await page.getByTestId("source").locator(".pill").innerText(), "Konsol");
-    assert.equal(await page.getByTestId("unit").innerText(), "konsol-web.service");
-    assert.equal(await page.getByTestId("container-id").innerText(), "0a1b2c3d4e5f");
-    assert.equal(await page.getByTestId("image-tag").innerText(), " · etiket docker.io/library/nginx:1.27-alpine");
-    assert.equal(await page.getByTestId("command").innerText(), "nginx -g daemon off;");
-    assert.equal(await page.getByTestId("note-unhealthy").getByRole("link", { name: "Günlük" }).getAttribute("href"), "#/uygulamalar/konteyner:web?sekme=gunluk");
-    assert.equal(await page.getByTestId("update-state").innerText(), "Yeni sürüm var");
-    const clock = (s) => new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit" }).format(new Date(s * 1000));
-    assert.equal(await page.getByTestId("update-note").innerText(), `kanal: docker.io/library/nginx:1.27-alpine · ${clock(NOW - 600)}'de denetlendi`);
-    assert.equal(await page.getByTestId("cpu-limit").innerText(), "Sınır 1.5 çekirdek");
-    assert.equal(await page.getByTestId("memory-limit").innerText(), "Sınır 512m");
-    assert.equal(await page.getByTestId("autostart").innerText(), "Açılışta başlar");
-    assert.equal(await page.getByTestId("restart-policy").innerText(), "Hata olursa");
-    const env = page.getByTestId("summary-env");
-    assert.deepEqual(await cells(env), ["TZ|Europe/Istanbul", "API_TOKEN|gizli · gösterilmez", "ESKI|1"]);
-    await noStyles(page, "web özet");
-    await shot(page, "1440-light-konteyner-ozet.png", true);
-    const ayrintiReads = () => h.requests.filter((r) => r.path === "/api/konsol/konteynerler/ayrinti").length;
-    const before = ayrintiReads();
-    await page.getByTestId("update-check").click();
-    await waitFor(() => h.requests.some((r) => r.path === "/api/konsol/konteynerler/guncellemeler" && r.query === "?yenile=1"), "the registries asked again");
-    await waitFor(() => ayrintiReads() > before, "the container read again");
-    await page.getByTestId("update-note").filter({ hasText: `${clock(NOW + 60)}'de denetlendi` }).waitFor();
-    // Erişim: the published ports with their scope, the internet one marked.
-    await page.getByRole("tab", { name: "Erişim" }).click();
-    const portTable = page.getByTestId("port-table");
-    await portTable.waitFor();
-    assert.deepEqual(await cells(portTable), ["Yalnız bu sunucu|8088|80|TCP", "İnternet (herkese açık)|8443|443|TCP"]);
-    assert.equal(await portTable.locator('tr[data-kapsam="public"] .pill-danger').count(), 1);
-    await page.getByTestId("public-warning").waitFor();
-    assert.equal(await page.getByTestId("network").innerText(), "Varsayılan Konsol ağı");
-    await page.getByRole("tab", { name: "Depolama" }).click();
-    assert.deepEqual(await page.getByTestId("volumes").locator(".mount").allInnerTexts(), ["web-veri\nOkuma-yazma · konteynerde /usr/share/nginx/html"]);
-    assert.equal(await page.getByTestId("volumes").getByRole("link", { name: "Gelişmiş → Podman → Birimler" }).getAttribute("href"), "#/gelismis?sekme=podman&kaynak=birimler");
+    await page.goto(url("#/uygulamalar?ekle=1"));
+    const sheet4 = page.getByRole("dialog", { name: "Uygulama ekle" });
+    await sheet4.getByRole("radio", { name: /İmaj adından/ }).check();
+    await sheet4.getByTestId("src-image").fill(IMAGE);
+    assert.equal(await sheet4.locator('[data-eylem="ileri"]').innerText(), "Taslak üret");
+    imageReads = 0;
+    await sheet4.locator('[data-eylem="ileri"]').click();
+    await sheet4.getByTestId("draft-progress").filter({ hasText: `İmaj indiriliyor: ${IMAGE} · ilerlemesi İşlemler'de de görünür.` }).waitFor();
+    assert.deepEqual(lastPost(KAYNAK), { tur: "imaj", imaj: IMAGE });
+    assert.equal(await sheet4.locator('[data-eylem="ileri"]').innerText(), "Taslak üretiliyor…");
+    assert(await sheet4.getByTestId("src-image").isDisabled());
+    await shot(page, "1440-light-ekle-imaj.png");
+    await sheet4.getByTestId("questions").waitFor({ timeout: 8000 });
+    assert(imageReads >= 3, "the job's record read until it ended");
+    assert.equal(await sheet4.locator(".flow-boxes dd").nth(1).innerText(), `İmaj adından taslak · ${IMAGE}`);
+    assert.equal(await sheet4.getByRole("textbox", { name: "Kurulum dosyası" }).inputValue(), IMAGE_FILE);
+    await page.context().close();
 
-    // Günlük: the number of lines and the search are in the address; matches are marked.
-    await page.getByRole("tab", { name: "Günlük" }).click();
-    await page.getByTestId("log-lines").waitFor();
-    assert.equal(h.requests.filter((r) => r.path === "/api/konsol/uygulamalar/gunluk").at(-1).query, "?id=konteyner%3Aweb&satir=200");
-    await page.getByTestId("log-tail").getByText("500").click();
-    await page.waitForURL((u) => u.hash === "#/uygulamalar/konteyner:web?sekme=gunluk&satir=500");
-    await waitFor(() => h.requests.filter((r) => r.path === "/api/konsol/uygulamalar/gunluk").at(-1).query === "?id=konteyner%3Aweb&satir=500", "500 lines asked");
-    await page.getByTestId("log-search").fill("HATA");
-    await page.waitForURL((u) => u.hash === "#/uygulamalar/konteyner:web?sekme=gunluk&satir=500&ara=HATA");
-    assert.deepEqual(await page.getByTestId("log-lines").locator("li").allInnerTexts(), [LOG[1], LOG[3]], "only the matching lines (Turkish case rules)");
-    assert.deepEqual(await page.getByTestId("log-lines").locator("mark").allInnerTexts(), ["HATA", "hata"]);
-    assert.equal(await page.getByTestId("log-matches").innerText(), "2 satır eşleşiyor");
-    await page.getByTestId("log-search").fill("İSTANBUL");
-    assert.deepEqual(await page.getByTestId("log-lines").locator("mark").allInnerTexts(), ["İstanbul"]);
-    await shot(page, "1440-light-gunluk-arama.png");
-    await page.reload();
-    await page.getByTestId("log-lines").waitFor();
-    assert.equal(await page.getByTestId("log-search").inputValue(), "İSTANBUL", "the search comes back from the address");
-    assert.equal(await page.getByTestId("log-tail").locator("input:checked").inputValue(), "500");
-    await page.getByTestId("log-search").fill("yok-böyle-bir-şey");
-    await page.getByText("Eşleşen satır yok").waitFor();
+    // ================= Var olan konteyner: the standalone containers; the draft from one
+    page = await newPage();
+    await page.goto(url("#/uygulamalar?ekle=1"));
+    const sheet5 = page.getByRole("dialog", { name: "Uygulama ekle" });
+    await sheet5.getByRole("radio", { name: /Var olan konteyner/ }).check();
+    const containers = sheet5.getByTestId("src-containers");
+    await containers.waitFor();
+    assert.equal(await containers.locator(".choice-item").innerText(), "eski-redis\nrunning\nregistry.example/redis:7");
+    assert(await sheet5.locator('[data-eylem="ileri"]').isDisabled());
+    await containers.getByRole("radio", { name: /eski-redis/ }).check();
+    assert.equal(await sheet5.locator('[data-eylem="ileri"]').innerText(), "Dosyaya çevir");
+    await shot(page, "1440-light-ekle-konteyner.png");
+    await sheet5.locator('[data-eylem="ileri"]').click();
+    await sheet5.getByTestId("questions").waitFor();
+    assert.deepEqual(lastPost(KAYNAK), { tur: "konteyner", konteyner: "eski-redis" });
+    assert.equal(await sheet5.locator(".flow-boxes dd").nth(1).innerText(), "eski-redis konteynerinden taslak");
+    await page.context().close();
+    // No standalone container: it says so.
+    data.uygulamalar = uygulamalar(apps());
+    page = await newPage();
+    await page.goto(url("#/uygulamalar?ekle=1"));
+    await page.getByRole("dialog", { name: "Uygulama ekle" }).getByRole("radio", { name: /Var olan konteyner/ }).check();
+    await page.getByTestId("src-containers-empty").filter({ hasText: "Elle başlatılmış, Obhut'un yönetmediği bir konteyner yok." }).waitFor();
+    await page.context().close();
 
-    // Güncelle (a newer image is known): the result says the new version.
-    await page.getByRole("tab", { name: "Özet" }).click();
-    const action = (eylem) => page.getByTestId("app-actions").locator(`[data-eylem="${eylem}"]`);
-    assert.deepEqual(await page.getByTestId("app-actions").locator("[data-eylem]").evaluateAll((els) => els.map((e) => e.dataset.eylem)),
-      ["yeniden-baslat", "durdur", "guncelle", "kaldir"]);
-    await action("guncelle").click();
-    let dialog = page.getByRole("dialog", { name: "web güncellensin mi?" });
-    await dialog.waitFor();
-    assert.equal(await dialog.locator(".modal-desc").innerText(), "Yeni sürüm yayınlanmış · docker.io/library/nginx:1.27-alpine");
-    assert.deepEqual(await dialog.locator(".modal-list li").allInnerTexts(), ["İmajın etiketi yeniden çekilir ve yeni özetle karşılaştırılır.",
-      "Özet değiştiyse konteyner yeni imajla yeniden oluşturulur; kısa bir kesinti olabilir.", "Kalıcı veriler bağlamalarda kalır; konteynerin yazılabilir katmanı silinir."]);
-    await dialog.getByRole("button", { name: "Güncelle" }).click();
-    await dialog.waitFor({ state: "detached" });
-    assert.deepEqual(lastPost("uygulamalar/islem"), { id: "konteyner:web", eylem: "guncelle", revizyon: "rev-web-1" });
-    const updateJob = lastJob();
-    ops[updateJob] = { id: updateJob, action: "image-update", name: "web", state: "done", result: { changed: true, version: "1.27.3" } };
-    await stream();
-    push("islemler", { items: [job({ id: updateJob, ad: "web · İmaj güncelleme", adim: "İmaj indiriliyor" })] });
+    // ================= Tanım: edit the file and the answers; the plan's difference; apply as a job
+    const TANIM = "/api/konsol/uygulamalar/notlar/tanim";
+    page = await newPage();
+    await page.goto(url("#/uygulamalar/notlar?sekme=tanim"));
+    const definition = page.locator(".definition-tab");
+    await definition.getByTestId("source").waitFor();
+    await definition.locator('[data-eylem="duzenle"]').click();
+    const edit = definition.getByTestId("definition-edit");
+    await edit.getByTestId("edit-answers").waitFor();
+    assert.equal(await edit.getByRole("textbox", { name: "Kurulum dosyası" }).inputValue(), NOTLAR_FILE);
+    const eq = (id) => edit.locator(`[data-soru="${id}"]`);
+    assert.deepEqual(await questionIds(edit), ["var:TZ", "var:DB_PASSWORD", "port:web:8080/tcp", "port:web:9000/udp", "mount:web:/data", "start:web"]);
+    // A port that stays: its use is its row's, changed in Erişim → Adresler.
+    assert.equal(await eq("port:web:8080/tcp").getByTestId("q-stay").innerText(), "Adres · notlar.ev");
+    assert.equal(await eq("port:web:8080/tcp").getByTestId("q-stay-link").getAttribute("href"), "#/erisim?sekme=adresler&satir=uygulama%3Anotlar%3Aweb%3A8080%2Ftcp");
+    assert.equal(await eq("port:web:8080/tcp").locator("input").count(), 0, "not editable here");
+    assert.equal(await eq("port:web:9000/udp").getByTestId("q-stay").innerText(), "Ham port · Kapalı");
+    // A stored secret is "Kayıtlı" and kept; the other answers as stored.
+    assert.equal(await eq("var:DB_PASSWORD").getByTestId("q-kept").locator(".pill").innerText(), "Kayıtlı");
+    assert.equal(await eq("var:DB_PASSWORD").getByTestId("q-secret").count(), 0, "no value is shown or asked for");
+    assert.equal(await eq("var:TZ").getByTestId("q-value").inputValue(), "Europe/Istanbul");
+    assert(await eq("start:web").getByRole("radio", { name: /Root olarak/ }).isChecked());
+    assert.equal(await edit.getByTestId("edit-status").innerText(), "Bütün sorular yanıtlandı");
+    await shot(page, "1440-light-tanim-duzenle.png", true);
+    // Nothing changed: the plan says so and Uygula waits.
+    await edit.locator('[data-eylem="incele"]').click();
+    const diffSheet = page.getByRole("dialog", { name: "notlar · Tanım değişikliği" });
+    await diffSheet.getByTestId("diff-none").waitFor();
+    assert.deepEqual(lastPost(TANIM), { metin: NOTLAR_FILE, yanitlar: { name: "notlar", answers: { "var:TZ": { value: "Europe/Istanbul" }, "var:DB_PASSWORD": { keep: true },
+      "mount:web:/data": { to: "app" }, "start:web": { mode: "root" } } }, revizyon: "rev-notlar-3", plan: true }, "a kept secret, no staying port's answer");
+    assert(await diffSheet.locator('[data-eylem="uygula"]').isDisabled());
+    await diffSheet.getByRole("button", { name: "Vazgeç" }).click();
+    await diffSheet.waitFor({ state: "detached" });
+    // A new port in the file is asked for (A1); a renewed secret; another start mode.
+    await edit.getByRole("textbox", { name: "Kurulum dosyası" }).fill(NOTLAR_NEW);
+    await eq("port:web:7000/tcp").waitFor();
+    assert.deepEqual(postsTo(DENETLE).at(-1), { metin: NOTLAR_NEW }, "the edited file inspected (its text only)");
+    assert.equal(await eq("port:web:7000/tcp").locator("input[type=radio]:checked").count(), 0);
+    assert.equal(await edit.getByTestId("edit-status").innerText(), "1 soru yanıt bekliyor");
+    assert(await edit.locator('[data-eylem="incele"]').isDisabled());
+    await eq("port:web:7000/tcp").getByRole("radio", { name: /Ham port/ }).check();
+    await eq("var:DB_PASSWORD").locator('[data-eylem="yenile"]').click();
+    await eq("var:DB_PASSWORD").locator('[data-eylem="uret"]').click();
+    const renewed = await eq("var:DB_PASSWORD").getByTestId("q-secret").inputValue();
+    assert.match(renewed, /^[A-Za-z0-9]{32}$/);
+    await eq("start:web").getByRole("radio", { name: /Doğrudan/ }).check();
+    // A refusal of the plan goes to its question.
+    await eq("var:TZ").getByTestId("q-value").fill("Mars/Olympus");
+    await edit.locator('[data-eylem="incele"]').click();
+    await edit.getByTestId("plan-problems").waitFor();
+    assert.equal(await edit.getByTestId("plan-problems").locator("li span").innerText(), "Değişken ${TZ}: Bu değer kabul edilmedi.");
+    assert.equal(await eq("var:TZ").getByTestId("q-error").innerText(), "Bu değer kabul edilmedi.");
+    await edit.getByTestId("plan-problems").getByRole("button", { name: "Soruya git" }).click();
+    assert(await eq("var:TZ").getByTestId("q-value").evaluate((e) => e === document.activeElement), "the question has the focus");
+    await eq("var:TZ").getByTestId("q-value").fill("Europe/Istanbul");
+    await eq("var:TZ").getByTestId("q-error").waitFor({ state: "detached" });
+    await noSecrets(page, [renewed], "Tanım");
+    await edit.locator('[data-eylem="incele"]').click();
+    await diffSheet.getByTestId("diff").waitFor();
+    const EDIT_BODY = { metin: NOTLAR_NEW, yanitlar: { name: "notlar", answers: { "var:TZ": { value: "Europe/Istanbul" }, "var:DB_PASSWORD": { value: renewed },
+      "port:web:7000/tcp": { use: "raw" }, "mount:web:/data": { to: "app" }, "start:web": { mode: "direct" } } }, revizyon: "rev-notlar-3" };
+    assert.deepEqual(lastPost(TANIM), { ...EDIT_BODY, plan: true });
+    assert.deepEqual(await diffSheet.locator("[data-fark]").evaluateAll((els) => els.map((e) => [e.dataset.fark, e.innerText.replace(/\s+/g, " ").trim()])), [
+      ["birimler", "Birimler Değişir konsol-notlar_web.container"], ["ortam", "Ortam değişkenleri Değişir web"],
+      ["portlar", "Portlar Eklenir 7000/TCP · web 2 port aynı kalır; kullanımları Erişim'dedir."], ["gizliler", "Gizli değerler Yenilenir notlar-db-password"],
+      ["baslangic", "Başlatma Değişir web root olarak → doğrudan"]]);
+    assert.equal(await diffSheet.getByTestId("diff-warnings").innerText(), "web: " + ROOT_WARNING);
+    assert.equal(await diffSheet.getByTestId("diff-restart").innerText(), "Uygulama yeniden başlar; açılmazsa önceki tanıma dönülür.");
+    await shot(page, "1440-light-tanim-fark.png");
+    await diffSheet.locator('[data-eylem="uygula"]').click();
+    await diffSheet.waitFor({ state: "detached" });
+    assert.deepEqual(lastPost(TANIM), { ...EDIT_BODY, plan: false }, "the same body, applied");
+    await page.getByTestId("action-note").filter({ hasText: "Tanım uygulanıyor; ilerlemesi İşlemler'de görünür." }).waitFor();
+    await waitFor(() => h.stream.clients.size === 1, "event stream");
+    push("islemler", { items: [job({ id: JOB(70), ad: "notlar · Tanım değişikliği", adim: "Birimler yazılıyor" })] });
     await page.waitForTimeout(150);
-    push("islemler", { items: [job({ id: updateJob, ad: "web · İmaj güncelleme", durum: "tamam", bitis: NOW + 70 })] });
-    await page.getByTestId("action-note").filter({ hasText: "web: imaj güncellendi (1.27.3)." }).waitFor();
+    const detailReads = h.requests.filter((r) => r.method === "GET" && r.path === "/api/konsol/uygulamalar/notlar").length;
+    push("islemler", { items: [job({ id: JOB(70), ad: "notlar · Tanım değişikliği", durum: "tamam", bitis: 1791845400 })] });
+    await definition.getByTestId("source").waitFor();
+    assert.equal(await page.getByTestId("definition-edit").count(), 0, "back to the definition as it is");
+    await page.getByTestId("action-note").filter({ hasText: "notlar: tanım uygulandı." }).waitFor();
+    await waitFor(() => h.requests.filter((r) => r.method === "GET" && r.path === "/api/konsol/uygulamalar/notlar").length > detailReads, "read again");
+    await noSecrets(page, [renewed], "after the apply");
     await page.context().close();
 
-    // ================= Ayarlar of a running Konsol container: the definition, the diff, a stale revision, the save
+    // ================= Kaynaktan yenile: the address's new text, its new question marked; unchanged says so
     page = await newPage();
-    await page.goto(url("#/uygulamalar/konteyner:web?sekme=ayarlar"));
-    const def = page.getByTestId("definition");
-    await field(def, "image").waitFor();
-    assert.equal(await field(def, "image").inputValue(), "docker.io/library/nginx:1.27-alpine", "the tag, not the pinned digest");
-    assert.equal(await page.getByTestId("definition-status").innerText(), "Değişiklik yok.");
-    assert(await page.getByTestId("definition-review").isDisabled());
-    assert.equal(await guarded(page), false);
-    const secret = def.locator(".env-row").nth(1);
-    assert.equal(await field(secret, "env-value").getAttribute("placeholder"), "kayıtlı · boş bırakılırsa korunur");
-    assert.equal(await field(secret, "env-value").inputValue(), "", "a stored secret never comes to the browser");
-    assert(await field(secret, "secret").locator("input").isDisabled());
-    await field(def, "memory").fill("1g");
-    await field(def, "restart").selectOption("always");
-    await def.getByRole("button", { name: "ESKI değişkenini kaldır" }).click();
-    await def.getByRole("button", { name: "Port ekle" }).click();
-    const newPort = def.locator(".port-row").nth(2);
-    await field(newPort, "host").fill("9000");
-    await field(newPort, "inner").fill("9000");
-    await page.getByTestId("definition-status").filter({ hasText: "4 değişiklik; henüz kaydedilmedi." }).waitFor();
-    assert(await guarded(page), "a draft asks before a reload");
-    // Live updates (a read of the same definition) do not touch the draft.
-    await page.getByRole("tab", { name: "Özet" }).click();
-    await page.getByRole("tab", { name: "Ayarlar" }).click();
-    await field(def, "image").waitFor();
-    await page.getByTestId("definition-review").click();
-    let review = page.getByRole("dialog", { name: "web · değişiklikler" });
-    await review.getByTestId("diff").waitFor();
-    const diff = await review.getByTestId("diff").locator(".plan-item").evaluateAll((items) => items.map((i) => `${i.dataset.tur} ${i.querySelector(".plan-object").textContent}: ${i.querySelector(".plan-change").innerText.replace(/\s+/g, " ").trim()}`));
-    assert.deepEqual(diff, ["add Port: Sonra: Yalnız bu sunucu · 9000 → 9000/tcp", "del Ortam: Önce: ESKI=1", "chg Yeniden başlatma: Önce: Hata olursa → Sonra: Her zaman",
-      "chg Bellek sınırı: Önce: 512m → Sonra: 1g"], "each field before → after, named for screen readers");
-    assert.deepEqual(await review.getByTestId("consequences").locator("li").evaluateAll((ls) => ls.map((l) => l.dataset.ton)), ["warn", "bad"], "a running container is re-created");
-    assert.equal(await review.getByTestId("start-after").count(), 0, "a running container needs no start");
-    assert.equal(await review.getByTestId("definition-apply").innerText(), "Uygula ve yeniden oluştur");
-    await shot(page, "1440-light-tanim-gozden.png");
-    // A stale revision: the current definition is offered instead of sending again.
-    expectedFailures = ["/api/konsol/konteynerler/islem"];
-    replies.konteyner.push({ status: 409, body: { error: "Ayarlar değişmiş; sayfayı yenileyip değişiklikleri yeniden inceleyin." } });
-    await review.getByTestId("definition-apply").click();
-    await review.getByTestId("definition-error").filter({ hasText: "Ayarlar değişmiş; sayfayı yenileyip değişiklikleri yeniden inceleyin." }).waitFor();
-    assert(await review.getByTestId("definition-apply").isDisabled(), "not sent again as it is");
-    expectedFailures = [];
-    const expectedConfig = { name: "web", image: WEB_CONFIG.image, image_ref: WEB_CONFIG.image_ref, network: "bridge",
-      ports: [...WEB_CONFIG.ports, { scope: "local", host_port: 9000, container_port: 9000, protocol: "tcp", public_ack: false }],
-      mounts: WEB_CONFIG.mounts, environment: [{ name: "TZ", value: "Europe/Istanbul", secret: false }, { name: "API_TOKEN", secret: true }],
-      command: WEB_CONFIG.command, autostart: true, restart: "always", cpus: "1.5", memory: "1g", user: "downloads" };
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "save", name: "web", revision: "rev-web-1", config: expectedConfig, start: false },
-      "the exact save request; the stored secret goes without a value");
-    await shot(page, "1440-light-tanim-eski.png");
-    CONTAINERS.web = { ...CONTAINERS.web, revision: "rev-web-2", config: { ...WEB_CONFIG, cpus: "2", revision: "rev-web-2" } };
-    await review.getByTestId("definition-reload").click();
-    await review.waitFor({ state: "detached" });
-    await page.getByTestId("definition-status").filter({ hasText: "Değişiklik yok." }).waitFor();
-    assert.equal(await field(def, "cpus").inputValue(), "2", "the current definition replaced the draft");
-    // Edit again and save: the job's end reads the page again.
-    await field(def, "memory").fill("768m");
-    await page.getByTestId("definition-review").click();
-    review = page.getByRole("dialog", { name: "web · değişiklikler" });
-    await review.getByTestId("definition-apply").click();
-    await review.getByTestId("definition-run").waitFor();
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "save", name: "web", revision: "rev-web-2", start: false,
-      config: { ...expectedConfig, ports: WEB_CONFIG.ports, environment: [...expectedConfig.environment, { name: "ESKI", value: "1", secret: false }], restart: "on-failure", cpus: "2", memory: "768m" } });
-    await stream();
-    push("islemler", { items: [job({ id: lastJob(), ad: "web · Kaydet", adim: "Konteyner yeniden oluşturuluyor" })] });
-    await review.getByTestId("definition-run").getByText("Konteyner yeniden oluşturuluyor").waitFor();
-    CONTAINERS.web = { ...CONTAINERS.web, revision: "rev-web-3", config: { ...WEB_CONFIG, cpus: "2", memory: "768m", revision: "rev-web-3" } };
-    push("islemler", { items: [job({ id: lastJob(), ad: "web · Kaydet", durum: "tamam", bitis: NOW + 80 })] });
-    await review.waitFor({ state: "detached" });
-    await page.getByTestId("definition-done").filter({ hasText: "Değişiklikler uygulandı." }).waitFor();
-    await page.getByTestId("definition-status").filter({ hasText: "Değişiklik yok." }).waitFor();
-    assert.equal(await field(def, "memory").inputValue(), "768m");
-    // A failed save job keeps the draft and says why.
-    await field(def, "memory").fill("2g");
-    await page.getByTestId("definition-review").click();
-    review = page.getByRole("dialog", { name: "web · değişiklikler" });
-    await review.getByTestId("definition-apply").click();
-    await review.getByTestId("definition-run").waitFor();
-    push("islemler", { items: [job({ id: lastJob(), ad: "web · Kaydet", durum: "hata", adim: "Konteyner başlatılamadı.", bitis: NOW + 90 })] });
-    await review.getByTestId("definition-error").filter({ hasText: "Uygulanamadı: Konteyner başlatılamadı." }).waitFor();
-    await review.getByTestId("definition-back").click();
-    await review.waitFor({ state: "detached" });
-    assert.equal(await field(def, "memory").inputValue(), "2g", "the draft is kept");
-    await page.context().close();
-    CONTAINERS = containers();
-
-    // ================= a stopped definition: no live container, start after saving, İmajı güncelle "zaten güncel"
-    page = await newPage();
-    await page.goto(url("#/uygulamalar/konteyner:notlar"));
-    await page.getByTestId("note-definition").waitFor();
-    assert.equal(await page.getByTestId("container-id").innerText(), "— · çalışan konteyner yok");
-    assert.equal(await page.getByTestId("autostart").innerText(), "Kapalı · siz durdurdunuz\nBaşlat bu durumu kaldırır; açılış tercihi yeniden geçerli olur.");
-    assert.deepEqual(await page.getByTestId("app-actions").locator("[data-eylem]").evaluateAll((els) => els.map((e) => e.dataset.eylem)), ["baslat", "imaj-guncelle", "kaldir"]);
-    await page.getByTestId("app-actions").locator('[data-eylem="imaj-guncelle"]').click();
-    dialog = page.getByRole("dialog", { name: "notlar güncellensin mi?" });
-    await dialog.waitFor();
-    assert.equal(await dialog.locator(".modal-desc").innerText(), "Kendiliğinden güncelleme yoktur; yalnız siz onaylayınca.");
-    await dialog.getByRole("button", { name: "Güncelle" }).click();
-    await dialog.waitFor({ state: "detached" });
-    assert.deepEqual(lastPost("uygulamalar/islem"), { id: "konteyner:notlar", eylem: "guncelle", revizyon: "rev-notlar-1" });
-    const sameJob = lastJob();
-    ops[sameJob] = { id: sameJob, action: "image-update", name: "notlar", state: "done", result: { changed: false } };
-    await stream();
-    push("islemler", { items: [job({ id: sameJob, ad: "notlar · İmaj güncelleme" })] });
-    await page.waitForTimeout(150);
-    push("islemler", { items: [job({ id: sameJob, ad: "notlar · İmaj güncelleme", durum: "tamam", bitis: NOW + 100 })] });
-    await page.getByTestId("action-note").filter({ hasText: "notlar: imaj zaten güncel." }).waitFor();
-    await page.getByRole("tab", { name: "Ayarlar" }).click();
-    await field(page.getByTestId("definition"), "cpus").fill("1");
-    await page.getByTestId("definition-review").click();
-    review = page.getByRole("dialog", { name: "notlar · değişiklikler" });
-    await review.getByTestId("start-after").waitFor();
-    assert.deepEqual(await review.getByTestId("consequences").locator("li").evaluateAll((ls) => ls.map((l) => l.dataset.ton)), ["ok"], "a stopped one is not interrupted");
-    assert.equal(await review.getByTestId("definition-apply").innerText(), "Kaydet");
-    await review.getByTestId("start-after").locator("input").check();
-    assert.equal(await review.getByTestId("definition-apply").innerText(), "Kaydet ve başlat");
-    await review.getByTestId("definition-apply").click();
-    await review.getByTestId("definition-run").waitFor();
-    const body = lastPost("konteynerler/islem");
-    assert.deepEqual([body.action, body.name, body.revision, body.start, body.config.cpus, body.config.user], ["save", "notlar", "rev-notlar-1", true, "1", "image"]);
+    await page.goto(url("#/uygulamalar/pano?sekme=tanim"));
+    const panoDef = page.locator(".definition-tab");
+    await panoDef.locator('[data-eylem="kaynaktan-yenile"]').click();
+    const panoEdit = panoDef.getByTestId("definition-edit");
+    await panoEdit.getByTestId("edit-answers").waitFor();
+    assert.deepEqual(postsTo("/api/konsol/uygulamalar/pano/yenile"), [{}]);
+    assert.equal(await panoEdit.getByRole("textbox", { name: "Kurulum dosyası" }).inputValue(), PANO_NEW);
+    assert.match(await panoEdit.getByTestId("refreshed").innerText(), /Kaynaktan yeni metin alındı: https:\/\/files\.example\.org\/pano\/compose\.yaml\. 1 yeni soru var; işaretli\./);
+    assert.equal(await panoEdit.locator('[data-soru="port:web:3001/tcp"] .q-meta .pill').innerText(), "Yeni");
+    assert.equal(await panoEdit.locator('[data-soru="port:web:3000/tcp"] .q-meta .pill').count(), 0);
+    assert.equal(await panoEdit.locator('[data-soru="port:web:3000/tcp"]').getByTestId("q-stay").innerText(), "Adres · pano.ev");
+    await shot(page, "1440-light-tanim-yenile.png", true);
+    await panoEdit.locator('[data-eylem="vazgec"]').click();
+    panoSource = PANO_FILE;
+    await panoDef.locator('[data-eylem="kaynaktan-yenile"]').click();
+    await panoDef.getByTestId("definition-note").filter({ hasText: "Kaynakta değişiklik yok; dosya son okumadan beri aynı." }).waitFor();
+    assert.equal(await page.getByTestId("definition-edit").count(), 0);
+    panoSource = PANO_NEW;
     await page.context().close();
 
-    // ================= a container made outside Konsol: its listening sockets, adopt from its page
-    page = await newPage();
-    await page.goto(url("#/uygulamalar/konteyner:medya?sekme=erisim"));
-    const listen = page.getByTestId("listening");
-    await listen.waitFor();
-    assert.deepEqual(await cells(listen), ["Tüm adresler|0.0.0.0|8096|TCP", "Tailscale|100.64.0.2|1900|UDP"]);
-    assert.equal(await page.getByTestId("network").innerText(), "Sunucu ağı (host)");
-    const adoptLink = page.getByTestId("app-actions").locator('[data-eylem="yonetime-al"]');
-    assert.equal(await adoptLink.getAttribute("href"), "#/uygulamalar?ekle=sahiplen&ad=medya");
-    await page.getByRole("tab", { name: "Ayarlar" }).click();
-    await page.getByTestId("settings-external").waitFor();
-    assert.equal(await page.getByTestId("settings-adopt").getAttribute("href"), "#/uygulamalar?ekle=sahiplen&ad=medya");
-    await page.getByRole("tab", { name: "Özet" }).click();
-    assert.equal(await page.getByTestId("summary-update").count(), 0, "no update state for a foreign container");
-    assert.equal(await page.getByTestId("autostart").innerText(), "Konsol söz veremez\nBu konteyneri başka bir araç yönetir; açılışta ne olacağını o belirler.");
-    await page.context().close();
-
-    // ================= an App Store package's Ayarlar: the adapter, the settings form, the first-login account
-    page = await newPage({ permissions: ["clipboard-read", "clipboard-write"] }, { clock: true });
-    await page.goto(url("#/uygulamalar/paket:torrent?sekme=ayarlar"));
-    const adapter = page.getByTestId("adapter");
-    await field(adapter, "listener").waitFor();
-    assert.equal(await field(adapter, "peer").inputValue(), "63851");
-    assert.equal(await adapter.getByTestId("folder-value").inputValue(), "/srv/indirilenler");
-    assert.deepEqual(await adapter.getByTestId("protected").locator(".mount").allInnerTexts(),
-      ["/var/lib/qbittorrent → /config\nkorunur · Uygulama profili; taşıma ayrı bir işlemdir · burada değiştirilemez",
-        "/srv/indirilenler → /srv/indirilenler\nkorunur · Uygulamanın indirme kökü · burada değiştirilemez"]);
-    await field(adapter, "peer").fill("62947");
-    await page.getByTestId("adapter-review").click();
-    await adapter.getByText("Eş portu arayüz portundan farklı olmalı.").waitFor();
-    await field(adapter, "peer").fill("80");
-    await adapter.getByText("Eş portu 1024–65535 arasında bir sayı olmalı.").waitFor();
-    await field(adapter, "peer").fill("64000");
-    await adapter.getByTestId("folder-toggle").click();
-    await adapter.getByRole("button", { name: "/srv/indirilenler içine gir" }).click();
-    await adapter.getByRole("button", { name: "/srv/indirilenler/filmler seç" }).click();
-    await page.getByTestId("adapter-status").filter({ hasText: "2 değişiklik; henüz kaydedilmedi." }).waitFor();
-    await page.getByTestId("adapter-review").click();
-    review = page.getByRole("dialog", { name: "Konteyner ayarları · değişiklikler" });
-    await review.getByTestId("diff").waitFor();
-    assert.deepEqual(await review.getByTestId("diff").locator(".plan-item").evaluateAll((items) => items.map((i) => `${i.querySelector(".plan-object").textContent}: ${i.querySelector(".plan-change").innerText.replace(/\s+/g, " ").trim()}`)),
-      ["Eş portu: Önce: 63851 → Sonra: 64000", "Kayıt klasörü: Önce: /srv/indirilenler → Sonra: /srv/indirilenler/filmler"]);
-    assert.deepEqual(await review.getByTestId("consequences").locator("li").evaluateAll((ls) => ls.map((l) => l.dataset.ton)), ["warn", "warn", "warn", "info"]);
-    await review.getByTestId("adapter-apply").click();
-    await review.getByTestId("adapter-run").waitFor();
-    assert.deepEqual(lastPost("konteynerler/islem"), { action: "save", name: "torrent", revision: "rev-torrent-7",
-      config: { listener_port: 62947, peer_port: 64000, save: "/srv/indirilenler/filmler" }, start: false });
-    await stream();
-    CONTAINERS.torrent = { ...CONTAINERS.torrent, revision: "rev-torrent-8", config: { listener_port: 62947, peer_port: 64000, save: "/srv/indirilenler/filmler" } };
-    push("islemler", { items: [job({ id: lastJob(), ad: "torrent · Kaydet", durum: "tamam", bitis: NOW + 110 })] });
-    await page.getByTestId("adapter-done").waitFor();
-    await page.getByTestId("adapter-status").filter({ hasText: "Değişiklik yok." }).waitFor();
-    // The settings form: the save folder is the adapter card's; only changed fields go out.
-    const settings = page.getByTestId("package-settings");
-    await field(settings, "username").waitFor();
-    assert.equal(await settings.getByRole("heading").innerText(), "qBittorrent ayarları");
-    assert.equal(await settings.locator('[data-alan="save"]').count(), 0, "one place per setting");
-    await settings.getByText("İndirme klasörü: yukarıdaki Konteyner ayarları kartında değişir.").waitFor();
-    assert.equal(await field(settings, "username").inputValue(), "admin", "the package's current value");
-    assert.equal(await field(settings, "password").inputValue(), "", "never a password");
-    await settings.getByTestId("settings-save").click();
-    await settings.getByTestId("form-note").filter({ hasText: "Değişiklik yok." }).waitFor();
-    await field(settings, "password").fill("yeni-parola-9");
-    await settings.getByTestId("settings-save").click();
-    await settings.getByText("Parolalar aynı değil.").waitFor();
-    await field(settings, "password-tekrar").fill("yeni-parola-9");
-    expectedFailures = ["/api/uygulama/torrent/ayar"];
-    replies.ayar.push({ status: 400, body: { error: "qBittorrent ayarı uygulanamadı: profil kilitli." } });
-    await settings.getByTestId("settings-save").click();
-    await settings.getByTestId("settings-error").filter({ hasText: "qBittorrent ayarı uygulanamadı: profil kilitli." }).waitFor();
-    expectedFailures = [];
-    assert.deepEqual(h.requests.filter((r) => r.path === "/api/uygulama/torrent/ayar").at(-1).body, { password: "yeni-parola-9" }, "a password alone");
-    await field(settings, "username").fill("yonetici");
-    await field(settings, "password").fill("");
-    await field(settings, "password-tekrar").fill("");
-    await settings.getByTestId("settings-save").click();
-    await settings.getByTestId("settings-done").waitFor();
-    assert.deepEqual(h.requests.filter((r) => r.path === "/api/uygulama/torrent/ayar").at(-1).body, { username: "yonetici" }, "a blank password keeps the stored one");
-    assert.equal(await field(settings, "username").inputValue(), "yonetici", "read again after the save");
-    assert.equal(await settings.getByTestId("settings-note").innerText(), TORRENT_FORM.ayar_not);
-    // The first-login account: the temporary password only on request, for 30 s, hidden with the tab.
-    const acct = page.getByTestId("account-card");
-    await acct.getByTestId("account-user").waitFor();
-    assert.equal(await acct.getByTestId("account-address").innerText(), "torrent.ev");
-    assert.equal(await acct.getByTestId("account-pass").innerText(), "•••••••••");
-    const reveals = () => h.requests.filter((r) => r.path === "/api/konsol/uygulamalar/hesap" && r.query.includes("parola=1")).length;
-    assert.equal(reveals(), 0, "never read without asking");
-    await acct.getByTestId("account-reveal").click();
-    await acct.getByTestId("account-pass").filter({ hasText: "Gecici-Parola-42" }).waitFor();
-    assert.equal(await acct.getByTestId("account-left").innerText(), "30 sn sonra gizlenir");
-    assert.equal(h.requests.filter((r) => r.path === "/api/konsol/uygulamalar/hesap").at(-1).query, "?id=paket%3Atorrent&parola=1");
-    await noStyles(page, "torrent ayarlar");
-    await shot(page, "1440-light-paket-ayarlar.png", true);
-    await page.clock.runFor(10000);
-    await acct.getByTestId("account-left").filter({ hasText: "20 sn sonra gizlenir" }).waitFor();
-    await page.clock.runFor(20000);
-    await acct.getByTestId("account-pass").filter({ hasText: "•••••••••" }).waitFor();
-    assert.equal(await acct.getByTestId("account-left").count(), 0, "hidden after 30 s");
-    await acct.getByTestId("account-reveal").click();
-    await acct.getByTestId("account-pass").filter({ hasText: "Gecici-Parola-42" }).waitFor();
-    await page.evaluate(() => {
-      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
-      document.dispatchEvent(new Event("visibilitychange"));
-    });
-    await acct.getByTestId("account-pass").filter({ hasText: "•••••••••" }).waitFor();
-    await page.evaluate(() => {
-      Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
-      document.dispatchEvent(new Event("visibilitychange"));
-    });
-    // Copying fetches it on request too, without showing it.
-    const n = reveals();
-    await acct.getByTestId("account-copy").click();
-    await waitFor(() => reveals() === n + 1, "the password fetched for the copy");
-    await acct.locator('[role="status"]').filter({ hasText: "Geçici parola kopyalandı." }).waitFor();
-    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "Gecici-Parola-42");
-    assert.equal(await acct.getByTestId("account-pass").innerText(), "•••••••••", "copied, not shown");
-    await page.context().close();
-
-    // A package without settings or an account (404): the plain empty state.
-    expectedFailures = ["/api/konsol/uygulamalar/hesap"];
-    page = await newPage();
-    await page.goto(url("#/uygulamalar/paket:gezgin?sekme=ayarlar"));
-    await page.getByTestId("settings-empty").waitFor();
-    await page.context().close();
-    expectedFailures = [];
-
-    // ================= the palette opens the add flows
-    page = await newPage();
-    await page.goto(url("#/genel"));
-    await page.locator(".app-card").first().waitFor();
-    await page.keyboard.press("Control+K");
-    const palette = page.getByRole("dialog", { name: "Komut paleti" });
-    await palette.getByRole("combobox").fill("konteyner oluştur");
-    assert.equal(await palette.locator('[aria-selected="true"] .palette-label').innerText(), "İmajdan konteyner oluştur");
-    await page.keyboard.press("Enter");
-    await page.waitForURL((u) => u.hash === "#/uygulamalar?ekle=imaj");
-    await page.getByRole("dialog", { name: "Bir imajdan konteyner" }).waitFor();
-    await page.keyboard.press("Escape");
-    await page.waitForURL((u) => u.hash === "#/uygulamalar");
-    await page.context().close();
-
-    // ================= 1440, 390 and 320 in both themes
-    PACKAGES = [pkg("torrent", false, TORRENT_KONSOL), pkg("wireguard", false, WG_KONSOL), pkg("gezgin", true, GEZGIN_KONSOL)];
-    CONTAINERS = containers();
-    const views = [
-      ["katalog", "#/uygulamalar?ekle=katalog&paket=torrent", '[data-testid="package-form"]'],
-      ["imajdan", "#/uygulamalar?ekle=imaj", '[data-alan="image"]'],
-      ["yonetime-al", "#/uygulamalar?ekle=sahiplen", '[data-konteyner="medya"]'],
-      ["konteyner-ayarlar", "#/uygulamalar/konteyner:web?sekme=ayarlar", '[data-testid="definition"] [data-alan="image"]'],
-      ["konteyner-ozet", "#/uygulamalar/konteyner:web", '[data-testid="summary-env"]'],
-      ["konteyner-erisim", "#/uygulamalar/konteyner:medya?sekme=erisim", '[data-testid="listening"]'],
-      ["paket-ayarlar", "#/uygulamalar/paket:torrent?sekme=ayarlar", '[data-testid="account-user"]'],
-      ["gunluk", "#/uygulamalar/konteyner:web?sekme=gunluk&ara=hata", '[data-testid="log-lines"]'],
-      ["uygulamalar", "#/uygulamalar", '[data-testid="infra-counts"]'],
-    ];
+    // ================= 1440, 390 and 320 in both themes: each step of the flow, the edit
+    data.uygulamalar = uygulamalar(apps(), { kaynaklar: [{ ad: "eski-redis", imaj: "registry.example/redis:7", durum: "running" }] });
     for (const colorScheme of ["light", "dark"]) {
       for (const [width, height] of [[1440, 900], [390, 844], [320, 640]]) {
         const phone = width < 768;
-        page = await newPage({ colorScheme, viewport: { width, height }, ...(phone ? { isMobile: true, hasTouch: true } : {}), reducedMotion: "reduce" });
-        for (const [name, hash, ready] of views) {
-          await page.goto(url(hash));
-          await page.locator(ready).first().waitFor();
-          if (name === "imajdan") {
-            await page.getByRole("button", { name: "Port ekle" }).click();
-            await page.getByRole("button", { name: "Bağlama ekle" }).click();
-            await page.locator('.mount-row [data-alan="type"]').selectOption("bind");
-            await page.locator(".mount-row").getByTestId("folder-toggle").click();
-            await page.locator(".mount-row .folder-row").first().waitFor();
-            await page.getByRole("button", { name: "Değişken ekle" }).click();
-          }
-          await settle(page);
-          await noStyles(page, `${width} ${colorScheme} ${name}`);
-          assert(await noHorizontalScroll(page), `no horizontal scroll: ${width} ${colorScheme} ${name}`);
-          const overflow = await page.evaluate(() => [...document.querySelectorAll(".modal, .card")].filter((el) => el.scrollWidth > el.clientWidth + 1).map((el) => el.className));
-          assert.deepEqual(overflow, [], `nothing wider than its card or sheet: ${width} ${colorScheme} ${name}`);
-          await shot(page, `${width}-${colorScheme}-${name}.png`, !hash.includes("ekle="));
+        page = await newPage({ colorScheme, viewport: { width, height }, ...(phone ? { isMobile: true, hasTouch: true, reducedMotion: "reduce" } : {}) });
+        await page.goto(url("#/uygulamalar?ekle=1"));
+        const s = page.getByRole("dialog", { name: "Uygulama ekle" });
+        await s.waitFor();
+        await s.getByRole("radio", { name: /Dosya/ }).check({ force: true });
+        await s.getByTestId("paste").fill(ORNEK_FILE);
+        await shot(page, `${width}-${colorScheme}-ekle-kaynak.png`);
+        await s.locator('[data-eylem="ileri"]').click();
+        await s.getByTestId("questions").waitFor();
+        await s.locator('[data-soru="port:web:8080/tcp"]').getByRole("radio", { name: /Adres/ }).check({ force: true });
+        await s.locator('[data-soru="port:web:5432/tcp"]').getByRole("radio", { name: /Ham port/ }).check({ force: true });
+        await s.locator('[data-soru="var:ADMIN_PASSWORD"] [data-eylem="uret"]').click();
+        await s.locator('[data-soru="secret:web:API_TOKEN"]').getByTestId("q-secret").fill("jeton");
+        await noStyles(page, `${width} ${colorScheme} denetçi`);
+        await shot(page, `${width}-${colorScheme}-ekle-denetci.png`);
+        await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
+        await s.locator('[data-eylem="plan"]').click();
+        await s.getByTestId("plan-boxes").waitFor();
+        await shot(page, `${width}-${colorScheme}-ekle-plan.png`);
+        if (phone) {
+          const box = await s.boundingBox();
+          assert(Math.abs(box.y + box.height - height) <= 1 && box.width === width, "a bottom sheet on a phone");
         }
+        await page.goto(url("#/uygulamalar/notlar?sekme=tanim"));
+        await page.locator('.definition-tab [data-eylem="duzenle"]').click();
+        await page.getByTestId("edit-answers").waitFor();
+        await page.getByTestId("definition-edit").getByRole("textbox", { name: "Kurulum dosyası" }).fill(NOTLAR_NEW);
+        await page.locator('[data-soru="port:web:7000/tcp"]').waitFor();
+        await noStyles(page, `${width} ${colorScheme} tanım`);
+        assert(await noHorizontalScroll(page), `${width} ${colorScheme} tanım`);
+        await shot(page, `${width}-${colorScheme}-tanim-duzenle.png`, true);
+        await page.locator('[data-soru="port:web:7000/tcp"]').getByRole("radio", { name: /Ham port/ }).check({ force: true });
+        await page.locator('[data-eylem="incele"]').click();
+        await page.getByRole("dialog", { name: "notlar · Tanım değişikliği" }).getByTestId("diff").waitFor();
+        await shot(page, `${width}-${colorScheme}-tanim-fark.png`);
         await page.context().close();
       }
     }
 
     assert.deepEqual(h.errors, []);
-    console.log("PASS: Konsol phase 4a Uygulama ekle and the application's settings under the production CSP — Uygulamalar' add card (catalogue " +
-      "links, adoptable count, no links to the current interface) and Altyapı (unhealthy, updates, storage, Gelişmiş's Podman lists), the " +
-      "catalogue (only packages not installed, the package's words, its form: the declared default, an unrendered default, required, " +
-      "pattern, length, the repeated password, the folder picker with free space, entering, back, Esc only closing the picker, a refusal " +
-      "keeping the draft, an older finished job not ending this one, progress, the application's page on success, a package without a " +
-      "form, a failed job and Yeniden dene), Bir imajdan (checks of image, name, ports with scope and acknowledgement, duplicates, mounts " +
-      "with volumes and the folder picker, the writable-bind account rule, environment with secrets, limits; the review with internet ports " +
-      "called out and start after; a refusal; a failed job keeping the draft; the exact create request; the new page on success), adoption " +
-      "(only foreign containers with reasons, the preview job and its record, every scope chosen again, acknowledgement, account rule, the " +
-      "typed word, the exact request, unsupported options blocking, a failed preview), a Konsol container's Özet (source, unit, ID, tag, " +
-      "update state with channel and time and ?yenile=1, limits, command, environment without secrets, start state), Erişim's ports and a " +
-      "host container's sockets, Depolama, Günlük (?satir=, ?ara= with marks, Turkish case, reload), Güncelle and İmajı güncelle with their " +
-      "results, the definition editor (draft kept across reads, field diff, consequences, stale revision with Güncel tanımı yükle, the exact " +
-      "save with a kept secret, the job, a failed job keeping the draft, start after saving a stopped one), the leave guard, adopting from " +
-      "the page, an App Store adapter (checks, picker, diff, exact save), the settings form (no password read, only changed fields, blank " +
-      "password kept, refusal), the account (password on request only, 30 s, hidden with the tab, copied without showing), a package " +
-      "without settings, the palette, 1440/390/320 in light and dark. Screenshots: " + h.shots);
+    console.log("PASS: Konsol's Uygulama ekle and Tanım (rebuild phase 5) under the production CSP — #/uygulamalar?ekle=1, the four sources " +
+      "(a pasted file, an upload read in the browser with its size and UTF-8 checks, an https address with its refusal and a server error, an " +
+      "image name as a job with its progress, an existing container and none), the close confirmation, Denetçi (a refused line stopping the flow " +
+      "and corrected in the editor, the marks beside the lines, notes, every question kind: name, TCP ports with nothing chosen and the guess, a " +
+      "UDP port, a variable with its default and a server error, a generated and a typed secret, Göster, the app folder and a /srv folder from " +
+      "the picker, start modes with the suggestion and a word; answers checked again as they change, waiting ones left out, a taken Tailscale " +
+      "name refused at once), Plan (exact body, a refusal mapped back to its question and a part, what the install creates), Kur (exact body " +
+      "without plan, the job's step, the application's page when it ends; a failure's reason), Tanım (staying ports read-only with their link, " +
+      "a kept and a renewed secret, a new port asked for, a plan refusal mapped to its question, the difference, apply as a job and the view " +
+      "again), Kaynaktan yenile (new text, the new question marked; unchanged), no secret in an address, storage or GET request, 1440/390/320 in " +
+      "light and dark. Screenshots: " + h.shots);
   } finally {
     await h.stop();
   }
