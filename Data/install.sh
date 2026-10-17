@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-255"
+V2_VERSION="2026.08.06-v2-256"
 # DD-260: insanların gördüğü sürüm (anlamlı sürümleme; yalnız bir yayında değişir, vX.Y.Z etiketlenir).
 # V2_VERSION yapı numarasıdır: Konsol güncelleme önerirken sunucular onu karşılaştırır.
 OBHUT_SURUM="1.1.0"
@@ -824,9 +824,10 @@ stage_4() {
     # DD-233: Konsol'un "Güncelle" düğmesi: sürüm denetimi (arka uç) ve işi yürüten root aracı.
     atomic_write "$SBIN_DIR/master_update.py" 0755 <"$V2_ROOT/panel/master_update.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
-    # DD-259: Konsol'un rota tablosu, Erişim okuma modeli ve canlı olaylar; DD-271: WireGuard (arka uç yükler).
+    # DD-259: Konsol'un rota tablosu, Erişim okuma modeli ve canlı olaylar; DD-271: WireGuard ve denetçi
+    # (YAML okuyucu, Compose ve Kubernetes okuyucuları; arka uç yükler).
     local panel_module
-    for panel_module in master_api master_erisim master_olaylar master_uygulamalar master_wireguard master_yayin; do
+    for panel_module in master_api master_compose master_erisim master_inspector master_kube master_olaylar master_uygulamalar master_wireguard master_yaml master_yayin; do
         atomic_write "$SBIN_DIR/$panel_module.py" 0755 <"$V2_ROOT/panel/$panel_module.py"
         [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     done

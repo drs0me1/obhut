@@ -1,0 +1,67 @@
+# Save the output of this file and use kubectl create -f to import it into Kubernetes.
+#
+# Created with podman-5.4.2
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    io.containers.autoupdate/notlar-web: registry
+    org.example.owner/notlar-web: operator
+  creationTimestamp: "2026-10-17T08:12:45Z"
+  labels:
+    app: notlar-pod
+  name: notlar-pod
+spec:
+  containers:
+  - args:
+    - nginx
+    - -g
+    - daemon off;
+    env:
+    - name: NGINX_PORT
+      value: "8080"
+    image: docker.io/library/nginx:1.27-alpine
+    name: notlar-web
+    ports:
+    - containerPort: 8080
+      hostPort: 8080
+    securityContext:
+      capabilities:
+        drop:
+        - CAP_MKNOD
+        - CAP_NET_RAW
+        - CAP_AUDIT_WRITE
+    volumeMounts:
+    - mountPath: /usr/share/nginx/html
+      name: srv-notlar-html-host-0
+      readOnly: true
+    - mountPath: /var/cache/nginx
+      name: notlar_cache-pvc
+  - args:
+    - redis-server
+    - --save
+    - "60"
+    - "1"
+    image: docker.io/library/redis:7.4-alpine
+    name: notlar-redis
+    resources: {}
+    securityContext:
+      runAsGroup: 999
+      runAsUser: 999
+    stdin: true
+    tty: true
+    volumeMounts:
+    - mountPath: /data
+      name: notlar_redis-pvc
+  restartPolicy: Always
+  volumes:
+  - hostPath:
+      path: /srv/notlar/html
+      type: Directory
+    name: srv-notlar-html-host-0
+  - name: notlar_cache-pvc
+    persistentVolumeClaim:
+      claimName: notlar_cache
+  - name: notlar_redis-pvc
+    persistentVolumeClaim:
+      claimName: notlar_redis

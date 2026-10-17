@@ -17,6 +17,52 @@ Konsol's old interface was removed in DD-267 (v2-250). Live entries written
 before it still name its places (Ayarlar → Caddy, Ayarlar → Sistem, App Store,
 the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 
+### DD-273: The rebuild's phase 2: reading and inspecting application files (v2-256)
+
+- **Scope (`rebuild.md` phase 2):** pure functions and one dry-run route; nothing is written on the
+  server. Phase 3 installs what this phase's definition describes.
+- **The YAML reader (`panel/master_yaml.py`, K4):** standard library only. Block mappings and sequences
+  (also a sequence at its key's own indentation, as `podman kube generate` writes), plain and quoted
+  scalars, flow collections over several lines, literal and folded block scalars with their indicators,
+  comments, several documents. YAML 1.2 core schema for scalars; mapping keys stay the written text.
+  Anchors, aliases, merge keys, tags, complex keys, directives, duplicate keys, tab indentation and
+  multi-line plain or quoted scalars stop with their line and column; 256 KiB, 64 levels and 100,000 nodes
+  at most. Every mapping and sequence carries the line of each key and item. 200,000 random inputs raised
+  nothing but its own error.
+- **One model for both formats (`master_compose.py`, `master_kube.py`):** services with image, command,
+  entrypoint, working directory, user, environment, ports, mounts, health, restart, dependencies, added
+  and dropped capabilities, labels, stop settings, host name, init, read-only root, shared memory and
+  limits; Compose variables with their uses. The supported, noted and refused keys are listed in
+  `rebuild.md` 4.2. Harmless keys common in published files (`logging`, `init`, `read_only`, `cap_drop`,
+  `deploy.resources`, `ulimits`, `security_opt: no-new-privileges`) read or are noted, so such files do
+  not fail; anything that widens what a container may do is refused with its line. `x-` keys are ignored
+  (A3). Kubernetes `$(VAR)` in `command`, `args` and env values is expanded from the container's own
+  earlier non-secret entries, as Kubernetes does; a reference to a secret is refused.
+- **The inspector (`master_inspector.py`):** `inspect(text)` returns the format, the suggested name,
+  refusals, notes, line marks and the questions: the name, every port (nothing preselected for TCP, A1;
+  UDP only raw, A2), every variable and file-literal or Kubernetes secret (one question per secret and
+  key), every mount (the application's folder or a folder under `/srv`, A5), every container's start mode
+  (A4, with the capabilities it leaves open). `check(inspection, answers)` validates every answer and
+  returns the definition for phase 3 and, separately, the secret values; an environment value mixing
+  text and a secret becomes one secret holding the composed value. Neither function raises.
+- **The route:** `POST /api/konsol/uygulamalar/denetle` in the route table, with a per-route body limit
+  (1 MiB; the text at most 256 KiB). No write, no subprocess, no network; secret values are never in the
+  reply. `do_POST` now matches the route before reading the body, so each route keeps its own limit.
+- **Install:** the four modules are installed beside the backend; the bats test now follows imports
+  through every installed module.
+- **Tests:** the reader 28, Compose 37, Kubernetes 14, the inspector 21, route tests in `test_api`;
+  fixtures in `tests/fixtures/uygulama/` (Gezgin's own `compose.yaml` verbatim, linuxserver qBittorrent,
+  a web application with PostgreSQL and a secret, a Pod and a Deployment as Podman writes them, a
+  hardened file, an unsafe file). Python 760 with only the eight known macOS failures; `bats` 177/177; the
+  nine browser suites pass.
+- **Live check (test host, 2026-10-17, v2-256 re-run over v2-255):** the seven fixtures through Caddy and
+  the real backend in 130-260 ms each; the unsafe file refused on eight lines; answers to the web
+  application with a database gave its two-service definition with two Podman secret names and no secret
+  value in the reply; a body over the limit and broken JSON were refused with 400.
+- **For phase 3 (`rebuild.md`):** the start question's suggestion is refined from the pulled image's own
+  user; the generator renders the new definition fields and decides the health check, `httpGet` probes,
+  the root mode's user and short image names.
+
 ### DD-272: The rebuild's phase 1: a clean base without the App Store (v2-255)
 
 - **Scope (`rebuild.md` phase 1):** the base installs with its built-ins only (Konsol, Tailscale, Caddy,

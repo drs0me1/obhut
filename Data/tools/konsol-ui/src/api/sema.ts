@@ -980,6 +980,327 @@ export interface Acik {
   on: boolean;
 }
 
+export interface Bulgu {
+  line: number;
+  key: string;
+  text: string;
+}
+
+export interface Isaret {
+  line: number;
+  kind: "refuse" | "question" | "note";
+  text: string;
+}
+
+export interface ModelOrtami {
+  name: string;
+  value: string;
+  line: number;
+  secret_ref: boolean;
+  secret_key: string | null;
+}
+
+export interface ModelPortu {
+  port: number;
+  protocol: "tcp" | "udp";
+  host_port: number | null;
+  line: number;
+}
+
+export interface ModelBaglamasi {
+  kind: "named" | "relative" | "absolute" | "tmpfs";
+  source: string;
+  target: string;
+  read_only: boolean;
+  line: number;
+}
+
+export interface SaglikDenetimi {
+  test: string[];
+  interval: string | null;
+  timeout: string | null;
+  retries: number | null;
+  start_period: string | null;
+}
+
+export interface Bagimlilik {
+  service: string;
+  condition: "started" | "healthy";
+}
+
+export interface Sinirlar {
+  cpus: number | null;
+  memory: number | null;
+  pids: number | null;
+  ulimits: {
+    [key: string]: {
+      soft: number;
+      hard: number;
+    };
+  };
+}
+
+export type YenidenBaslatmaKurali = "no" | "always" | "on-failure" | "unless-stopped";
+
+export interface ModelServisi {
+  name: string;
+  line: number;
+  image: string;
+  image_line: number;
+  command: string[] | null;
+  entrypoint: string[] | null;
+  workdir: string | null;
+  user: string | null;
+  environment: ModelOrtami[];
+  ports: ModelPortu[];
+  mounts: ModelBaglamasi[];
+  health: SaglikDenetimi | null;
+  restart: YenidenBaslatmaKurali;
+  depends_on: Bagimlilik[];
+  caps_add: string[];
+  caps_drop: string[];
+  no_new_privileges: boolean;
+  read_only: boolean;
+  init: boolean;
+  hostname: string | null;
+  shm_size: number | null;
+  limits: Sinirlar;
+  labels: {
+    [key: string]: string;
+  };
+  stop_signal: string | null;
+  stop_grace: string | null;
+}
+
+export interface ModelDegiskeni {
+  name: string;
+  default: string | null;
+  required: boolean;
+  line: number;
+  uses: ({
+    service: string | null;
+    field: string;
+    line: number;
+  })[];
+}
+
+export interface SoruAd {
+  id: string;
+  kind: "name";
+  line: number;
+  title: string;
+  why: string;
+  suggest: string;
+}
+
+export interface SoruPort {
+  id: string;
+  kind: "port";
+  line: number;
+  title: string;
+  why: string;
+  service: string;
+  port: number;
+  protocol: "tcp" | "udp";
+  guess: "web" | "raw";
+  choices: ("caddy" | "raw")[];
+  suggest: string | null;
+  host_port: number | null;
+}
+
+export interface SoruDegisken {
+  id: string;
+  kind: "var";
+  line: number;
+  title: string;
+  why: string;
+  name: string;
+  secret: boolean;
+  generate: boolean;
+  default: string | null;
+  required: boolean;
+  services: string[];
+}
+
+export interface SoruGizli {
+  id: string;
+  kind: "secret";
+  line: number;
+  title: string;
+  why: string;
+  service: string;
+  env: string;
+  generate: boolean;
+  services: string[];
+  uses: {
+    service: string;
+    env: string;
+  }[];
+}
+
+export interface SoruKlasor {
+  id: string;
+  kind: "mount";
+  line: number;
+  title: string;
+  why: string;
+  service: string;
+  target: string;
+  source: string;
+  source_kind: "named" | "relative" | "absolute";
+  read_only: boolean;
+  suggest: "app" | "srv";
+  folder: string;
+  srv_path: string | null;
+}
+
+export interface SoruBaslangic {
+  id: string;
+  kind: "start";
+  line: number;
+  title: string;
+  why: string;
+  service: string;
+  suggest: "direct" | "root";
+  user: string | null;
+  direct_user: string;
+  caps_add: string[];
+  open_caps: string[];
+}
+
+export type Soru = SoruAd | SoruPort | SoruDegisken | SoruGizli | SoruKlasor | SoruBaslangic;
+
+export interface Inceleme {
+  format: "compose" | "kubernetes" | null;
+  name: string;
+  pod: boolean;
+  services: ModelServisi[];
+  variables: ModelDegiskeni[];
+  refusals: Bulgu[];
+  notes: Bulgu[];
+  questions: Soru[];
+  marks: Isaret[];
+}
+
+export interface YanitAdres {
+  use: "caddy";
+  tailscale_name: string;
+}
+
+export interface YanitHamPort {
+  use: "raw";
+}
+
+export interface YanitDeger {
+  value: string;
+}
+
+export interface YanitUygulamaKlasoru {
+  to: "app";
+}
+
+export interface YanitSrvKlasoru {
+  to: "srv";
+  path: string;
+  read_only: boolean;
+}
+
+export interface YanitBaslangic {
+  mode: "direct" | "root";
+}
+
+export type Yanit = YanitAdres | YanitHamPort | YanitDeger | YanitUygulamaKlasoru | YanitSrvKlasoru | YanitBaslangic;
+
+export interface Yanitlar {
+  name: string;
+  answers: {
+    [key: string]: Yanit;
+  };
+}
+
+export type TanimOrtami = {
+  name: string;
+  value: string;
+} | {
+  name: string;
+  secret: string;
+};
+
+export interface TanimPortu {
+  port: number;
+  protocol: "tcp" | "udp";
+  use: "caddy" | "raw";
+  tailscale_name: string | null;
+}
+
+export type TanimBaglamasi = {
+  target: string;
+  to: "app";
+  folder: string;
+  read_only: boolean;
+} | {
+  target: string;
+  to: "srv";
+  path: string;
+  read_only: boolean;
+} | {
+  target: string;
+  to: "tmpfs";
+};
+
+export interface TanimServisi {
+  name: string;
+  image: string;
+  command: string[] | null;
+  entrypoint: string[] | null;
+  workdir: string | null;
+  health: SaglikDenetimi | null;
+  restart: YenidenBaslatmaKurali;
+  depends_on: Bagimlilik[];
+  labels: {
+    [key: string]: string;
+  };
+  stop_signal: string | null;
+  stop_grace: string | null;
+  start: "direct" | "root";
+  user: string | null;
+  caps_drop: string[] | "all";
+  caps_add: string[];
+  no_new_privileges: boolean;
+  read_only: boolean;
+  init: boolean;
+  hostname: string | null;
+  shm_size: number | null;
+  limits: Sinirlar;
+  environment: TanimOrtami[];
+  ports: TanimPortu[];
+  mounts: TanimBaglamasi[];
+}
+
+export interface Tanim {
+  name: string;
+  format: "compose" | "kubernetes";
+  pod: boolean;
+  services: TanimServisi[];
+  secrets: {
+    name: string;
+    services: string[];
+  }[];
+}
+
+export interface DenetimIstegi {
+  metin: string;
+  yanitlar?: Yanitlar;
+}
+
+export interface Denetim {
+  inceleme: Inceleme;
+  tanim?: Tanim;
+  hatalar?: {
+    [key: string]: string;
+  };
+}
+
 export interface Olaylar {
   kaynaklar: Kaynaklar;
   saglik: Saglik;
@@ -999,6 +1320,7 @@ export const YOLLAR = {
   uygulama_ayrinti: "/api/konsol/uygulamalar/ayrinti",
   uygulama_gunlugu: "/api/konsol/uygulamalar/gunluk",
   uygulama_islemi: "/api/konsol/uygulamalar/islem",
+  uygulama_denetle: "/api/konsol/uygulamalar/denetle",
   ag: "/api/konsol/ag",
   onarim: "/api/konsol/onarim",
   onarim_baslat: "/api/konsol/onarim",

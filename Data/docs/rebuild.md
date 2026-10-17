@@ -134,19 +134,24 @@ Kubernetes Pod becomes a Quadlet `.pod` whose containers share `localhost`.
 **Supported Compose keys (first version).** Services: `image` (required), `command`, `entrypoint`,
 `environment` (list or map), `ports` (`C`, `H:C`, `IP:H:C`, `/udp`; the host side is ignored),
 `volumes` (named, relative, absolute, `:ro`), `user`, `restart`, `healthcheck`, `depends_on` (list or
-map), `working_dir`, `tmpfs`, `cap_add` (only names from Podman's default set), `labels`,
-`stop_signal`, `stop_grace_period`; `container_name`, `expose` and `networks` are noted and ignored.
-Top level: `services`, `volumes`, `networks` (ignored), `name`, `version`. Interpolation: `${VAR}`,
-`${VAR:-default}`, `${VAR-default}`, `${VAR:?message}`, `$$`. Refused with their line: `build`,
-`extends`, `env_file`, `secrets`, `configs`, `profiles`, `include`, `privileged`, `network_mode`,
-`pid`, `ipc`, `devices`, `security_opt`, `sysctls`, `volumes_from`, `cap_add` outside the default set,
-and any key not listed.
+map), `working_dir`, `tmpfs`, `cap_add` (only names from Podman's default set), `cap_drop`, `labels`,
+`stop_signal`, `stop_grace_period`, `hostname`, `init`, `read_only`, `shm_size`, `ulimits`, `pids_limit`,
+`mem_limit`, `cpus`, `deploy.resources.limits` (`deploy.replicas` only 1), and `security_opt` only as
+`no-new-privileges`. Noted and ignored: `container_name`, `expose`, `networks`, `tty`, `stdin_open`,
+`logging`, `platform`, `pull_policy`, the rest of `deploy`. Top level: `services`, `volumes`, `networks`
+(ignored), `name`, `version`. Interpolation: `${VAR}`, `${VAR:-default}`, `${VAR-default}`,
+`${VAR:?message}`, `$$`. Refused with their line: `build`, `extends`, `env_file`, `secrets`, `configs`,
+`profiles`, `include`, `privileged`, `network_mode`, `pid`, `ipc`, `devices`, `dns`, `extra_hosts`,
+`group_add`, `links`, `sysctls`, `volumes_from`, any other `security_opt`, `cap_add` outside the default
+set, Podman's own labels (`io.containers.*`, `io.podman.*`), and any key not listed.
 
 **Supported Kubernetes kinds (first version).** `Pod`; `Deployment` with one replica;
 `PersistentVolumeClaim` (becomes a sub-folder). Containers: `name`, `image`, `command`, `args`, `env`
 (`value`, `valueFrom.secretKeyRef`), `ports` (`containerPort`, `protocol`; `hostPort` ignored),
-`volumeMounts`, `securityContext.runAsUser`/`runAsGroup`, `livenessProbe`/`readinessProbe`
-(`exec`, `httpGet`), `workingDir`. Volumes: `hostPath`, `persistentVolumeClaim`, `emptyDir` (tmpfs).
+`volumeMounts`, `securityContext.runAsUser`/`runAsGroup`, `readOnlyRootFilesystem`,
+`allowPrivilegeEscalation`, `livenessProbe`/`readinessProbe` (`exec`, `httpGet`), `workingDir`,
+`resources.limits`; `$(VAR)` in `command`/`args` is expanded from the container's own non-secret
+environment, as Kubernetes does. Volumes: `hostPath`, `persistentVolumeClaim`, `emptyDir` (tmpfs).
 Refused: `hostNetwork`, `hostPID`, `hostIPC`, `privileged`, added capabilities outside the default
 set, `initContainers`, `ConfigMap` and `Secret` objects, other kinds.
 
@@ -276,12 +281,13 @@ Done in v2-255 (DD-272), live-verified on the test host on 2026-10-17.
 ### Phase 2: reading and inspecting
 
 Pure functions, no writes: the YAML reader, both format readers, the model and the inspector.
+Done in v2-256 (DD-273), live-verified on the test host on 2026-10-17.
 
-- [ ] `master_yaml.py` with tests for every supported form and every refusal
-- [ ] `master_compose.py` and `master_kube.py`
-- [ ] `master_inspector.py`: refusals, guesses, questions, answer checking
-- [ ] A dry-run route (`POST /api/konsol/uygulamalar/denetle`) in the route table
-- [ ] Acceptance fixtures: Gezgin's own `compose.yaml`, a linuxserver qBittorrent Compose file, a
+- [x] `master_yaml.py` with tests for every supported form and every refusal
+- [x] `master_compose.py` and `master_kube.py`
+- [x] `master_inspector.py`: refusals, guesses, questions, answer checking
+- [x] A dry-run route (`POST /api/konsol/uygulamalar/denetle`) in the route table
+- [x] Acceptance fixtures: Gezgin's own `compose.yaml`, a linuxserver qBittorrent Compose file, a
       two-service application with a database, a Kubernetes Pod from `podman kube generate`, and a
       deliberately unsafe file
 
@@ -293,6 +299,8 @@ Pure functions, no writes: the YAML reader, both format readers, the model and t
 - [ ] Multi-container applications: one network, aliases, ordering, health; Kubernetes `.pod`
 - [ ] Bind rule (A5) and start modes (A4); DD-226 and DD-227 amended
 - [ ] Image name and existing container turned into draft files (K2)
+- [ ] The start question's suggestion refined from the pulled image's own user (an image that runs as
+      a non-root user, such as Gezgin's, is suggested "direct" even when the file has no `user:`)
 - [ ] Single-container definitions, adoption and their routes removed
 
 ### Phase 4: access rows

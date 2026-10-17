@@ -39,6 +39,15 @@ def arr(item):
     return {"type": "array", "items": item}
 
 
+def map_of(item):
+    """An object whose keys are free (a question id, a label) and whose values all have one shape."""
+    return {"type": "object", "properties": {}, "required": [], "additionalProperties": item}
+
+
+def one_of(*schemas):
+    return {"anyOf": list(schemas)}
+
+
 def null(schema):
     return {"anyOf": [schema, {"type": "null"}]}
 
@@ -305,6 +314,87 @@ SCHEMAS = {
     "WireGuardKeepalive": obj({"keepalive": INT}),
     "Onay": obj({"confirm": STR}),
     "Acik": obj({"on": BOOL}),
+    # DD-271 (phase 2): the inspector's dry run (master_inspector). The model both readers return, the
+    # questions, the answers and the checked definition phase 3 installs from; no secret value in a reply.
+    "Bulgu": obj({"line": INT, "key": STR, "text": STR}),
+    "Isaret": obj({"line": INT, "kind": enum("refuse", "question", "note"), "text": STR}),
+    # secret_key: the Kubernetes secretKeyRef as "<secret>/<key>" (null in Compose).
+    "ModelOrtami": obj({"name": STR, "value": STR, "line": INT, "secret_ref": BOOL, "secret_key": null(STR)}),
+    "ModelPortu": obj({"port": INT, "protocol": enum("tcp", "udp"), "host_port": null(INT), "line": INT}),
+    "ModelBaglamasi": obj({"kind": enum("named", "relative", "absolute", "tmpfs"), "source": STR, "target": STR,
+                           "read_only": BOOL, "line": INT}),
+    "SaglikDenetimi": obj({"test": arr(STR), "interval": null(STR), "timeout": null(STR), "retries": null(INT),
+                           "start_period": null(STR)}),
+    "Bagimlilik": obj({"service": STR, "condition": enum("started", "healthy")}),
+    # memory in bytes; ulimits by name (soft and hard, -1 unlimited).
+    "Sinirlar": obj({"cpus": null(NUM), "memory": null(INT), "pids": null(INT),
+                     "ulimits": map_of(obj({"soft": INT, "hard": INT}))}),
+    "YenidenBaslatmaKurali": enum("no", "always", "on-failure", "unless-stopped"),
+    "ModelServisi": obj({
+        "name": STR, "line": INT, "image": STR, "image_line": INT, "command": null(arr(STR)),
+        "entrypoint": null(arr(STR)), "workdir": null(STR), "user": null(STR), "environment": arr(ref("ModelOrtami")),
+        "ports": arr(ref("ModelPortu")), "mounts": arr(ref("ModelBaglamasi")), "health": null(ref("SaglikDenetimi")),
+        "restart": ref("YenidenBaslatmaKurali"), "depends_on": arr(ref("Bagimlilik")), "caps_add": arr(STR),
+        "caps_drop": arr(STR), "no_new_privileges": BOOL, "read_only": BOOL, "init": BOOL, "hostname": null(STR),
+        "shm_size": null(INT), "limits": ref("Sinirlar"),
+        "labels": map_of(STR), "stop_signal": null(STR), "stop_grace": null(STR),
+    }),
+    "ModelDegiskeni": obj({"name": STR, "default": null(STR), "required": BOOL, "line": INT,
+                           "uses": arr(obj({"service": null(STR), "field": STR, "line": INT}))}),
+    "SoruAd": obj({"id": STR, "kind": enum("name"), "line": INT, "title": STR, "why": STR, "suggest": STR}),
+    "SoruPort": obj({"id": STR, "kind": enum("port"), "line": INT, "title": STR, "why": STR, "service": STR,
+                     "port": INT, "protocol": enum("tcp", "udp"), "guess": enum("web", "raw"),
+                     "choices": arr(enum("caddy", "raw")), "suggest": null(STR), "host_port": null(INT)}),
+    "SoruDegisken": obj({"id": STR, "kind": enum("var"), "line": INT, "title": STR, "why": STR, "name": STR,
+                         "secret": BOOL, "generate": BOOL, "default": null(STR), "required": BOOL,
+                         "services": arr(STR)}),
+    # Compose: one question per service and entry; Kubernetes: one per secret and key, with every use.
+    "SoruGizli": obj({"id": STR, "kind": enum("secret"), "line": INT, "title": STR, "why": STR, "service": STR,
+                      "env": STR, "generate": BOOL, "services": arr(STR),
+                      "uses": arr(obj({"service": STR, "env": STR}))}),
+    "SoruKlasor": obj({"id": STR, "kind": enum("mount"), "line": INT, "title": STR, "why": STR, "service": STR,
+                       "target": STR, "source": STR, "source_kind": enum("named", "relative", "absolute"),
+                       "read_only": BOOL, "suggest": enum("app", "srv"), "folder": STR, "srv_path": null(STR)}),
+    "SoruBaslangic": obj({"id": STR, "kind": enum("start"), "line": INT, "title": STR, "why": STR, "service": STR,
+                          "suggest": enum("direct", "root"), "user": null(STR), "direct_user": STR,
+                          "caps_add": arr(STR), "open_caps": arr(STR)}),
+    "Soru": one_of(ref("SoruAd"), ref("SoruPort"), ref("SoruDegisken"), ref("SoruGizli"), ref("SoruKlasor"),
+                   ref("SoruBaslangic")),
+    "Inceleme": obj({
+        "format": null(enum("compose", "kubernetes")), "name": STR, "pod": BOOL,
+        "services": arr(ref("ModelServisi")), "variables": arr(ref("ModelDegiskeni")),
+        "refusals": arr(ref("Bulgu")), "notes": arr(ref("Bulgu")), "questions": arr(ref("Soru")),
+        "marks": arr(ref("Isaret")),
+    }),
+    "YanitAdres": obj({"use": enum("caddy"), "tailscale_name": STR}),
+    "YanitHamPort": obj({"use": enum("raw")}),
+    "YanitDeger": obj({"value": STR}),
+    "YanitUygulamaKlasoru": obj({"to": enum("app")}),
+    "YanitSrvKlasoru": obj({"to": enum("srv"), "path": STR, "read_only": BOOL}),
+    "YanitBaslangic": obj({"mode": enum("direct", "root")}),
+    "Yanit": one_of(ref("YanitAdres"), ref("YanitHamPort"), ref("YanitDeger"), ref("YanitUygulamaKlasoru"),
+                    ref("YanitSrvKlasoru"), ref("YanitBaslangic")),
+    "Yanitlar": obj({"name": STR, "answers": map_of(ref("Yanit"))}),
+    "TanimOrtami": one_of(obj({"name": STR, "value": STR}), obj({"name": STR, "secret": STR})),
+    "TanimPortu": obj({"port": INT, "protocol": enum("tcp", "udp"), "use": enum("caddy", "raw"),
+                       "tailscale_name": null(STR)}),
+    "TanimBaglamasi": one_of(obj({"target": STR, "to": enum("app"), "folder": STR, "read_only": BOOL}),
+                             obj({"target": STR, "to": enum("srv"), "path": STR, "read_only": BOOL}),
+                             obj({"target": STR, "to": enum("tmpfs")})),
+    "TanimServisi": obj({
+        "name": STR, "image": STR, "command": null(arr(STR)), "entrypoint": null(arr(STR)), "workdir": null(STR),
+        "health": null(ref("SaglikDenetimi")), "restart": ref("YenidenBaslatmaKurali"), "depends_on": arr(ref("Bagimlilik")),
+        "labels": map_of(STR), "stop_signal": null(STR), "stop_grace": null(STR),
+        "start": enum("direct", "root"), "user": null(STR), "caps_drop": one_of(arr(STR), enum("all")),
+        "caps_add": arr(STR), "no_new_privileges": BOOL, "read_only": BOOL, "init": BOOL, "hostname": null(STR),
+        "shm_size": null(INT), "limits": ref("Sinirlar"), "environment": arr(ref("TanimOrtami")),
+        "ports": arr(ref("TanimPortu")), "mounts": arr(ref("TanimBaglamasi")),
+    }),
+    "Tanim": obj({"name": STR, "format": enum("compose", "kubernetes"), "pod": BOOL, "services": arr(ref("TanimServisi")),
+                  "secrets": arr(obj({"name": STR, "services": arr(STR)}))}),
+    "DenetimIstegi": obj({"metin": STR, "yanitlar": ref("Yanitlar")}, optional=("yanitlar",)),
+    "Denetim": obj({"inceleme": ref("Inceleme"), "tanim": ref("Tanim"), "hatalar": map_of(STR)},
+                   optional=("tanim", "hatalar")),
 }
 
 # Path parameters ({name} segments); a segment is percent-decoded before its shape is checked.
@@ -317,13 +407,14 @@ JSON = "application/json"
 
 class Route:
     """content: the reply's media type; anything but JSON (a log, a device profile, a QR code) is sent as
-    it is, its schema a string. params: the path's {name} segments, in order."""
+    it is, its schema a string. params: the path's {name} segments, in order. body_limit: the largest
+    request body in bytes when it is not the backend's usual one (a whole file in a request)."""
 
     def __init__(self, method, path, name, summary, reply=None, events=None, request=None, query=None, status=200,
-                 content=JSON):
+                 content=JSON, body_limit=None):
         self.method, self.path, self.name, self.summary = method, path, name, summary
         self.reply, self.events, self.request, self.query, self.status = reply, events, request, query or {}, status
-        self.content = content
+        self.content, self.body_limit = content, body_limit
         self.segments = path.split("/")
         self.params = [seg[1:-1] for seg in self.segments if seg.startswith("{") and seg.endswith("}")]
 
@@ -347,6 +438,11 @@ ROUTES = (
     Route("POST", "/api/konsol/uygulamalar/islem", "uygulama_islemi",
           "Bir uygulamayı başlat, durdur, yeniden başlat, güncelle ya da kaldır; ilerleme olay akışında (islemler)",
           ref("UygulamaIslemiBasladi"), request=ref("UygulamaIslemi"), status=202),
+    # DD-271 (phase 2): the inspector's dry run. A file of up to 256 KiB arrives JSON-escaped beside the answers.
+    Route("POST", "/api/konsol/uygulamalar/denetle", "uygulama_denetle",
+          "Bir Compose ya da Kubernetes dosyasını denetler; yanıtlar verilirse tanımı çıkarır. Hiçbir şey yazılmaz, "
+          "çalıştırılmaz, indirilmez; gizli değerler yanıtta yer almaz", ref("Denetim"), request=ref("DenetimIstegi"),
+          body_limit=1048576),
     Route("GET", "/api/konsol/ag", "ag", "WAN'ın son hızı (DD-206)", ref("Ag")),
     Route("GET", "/api/konsol/onarim", "onarim", "Son denetim ve onarım raporu (DD-239)", ref("Onarim")),
     Route("POST", "/api/konsol/onarim", "onarim_baslat", "Denetimi ya da onarımı başlatır; yalnız Tailscale'den",
@@ -514,14 +610,17 @@ def check(schema, value, path="$"):
             check(schema["items"], item, "%s[%d]" % (path, i))
     if kind == "object":
         props = schema.get("properties", {})
+        extra = schema.get("additionalProperties")
         for key in schema.get("required", []):
             if key not in value:
                 raise SchemaError("%s: %s eksik" % (path, key))
         for key, item in value.items():
             if key in props:
                 check(props[key], item, "%s.%s" % (path, key))
-            elif schema.get("additionalProperties") is False:
+            elif extra is False:
                 raise SchemaError("%s: bilinmeyen alan %s" % (path, key))
+            elif isinstance(extra, dict):
+                check(extra, item, "%s.%s" % (path, key))
 
 
 # -- generated descriptions
@@ -579,8 +678,11 @@ def ts_object(schema, indent):
     required = set(schema.get("required", []))
     for key, prop in schema["properties"].items():
         lines.append("%s%s%s: %s;" % (inner, key, "" if key in required else "?", ts_type(prop, inner)))
-    if schema.get("additionalProperties") is True:
+    extra = schema.get("additionalProperties")
+    if extra is True:
         lines.append("%s[key: string]: unknown;" % inner)
+    elif isinstance(extra, dict):
+        lines.append("%s[key: string]: %s;" % (inner, ts_type(extra, inner)))
     lines.append(indent + "}")
     return "\n".join(lines)
 

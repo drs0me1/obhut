@@ -18,6 +18,8 @@ DATA = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DATA / "panel"))
 import master_api  # noqa: E402
 
+FIXTURES = DATA / "tests" / "fixtures" / "uygulama"
+
 panel = test_resources.panel
 SAMPLES = {"iface": "wg0", "name": "telefon"}
 
@@ -220,6 +222,80 @@ class RouteReplyTests(Fixture):
             {"yol": root + "/media", "id": "konteyner:notlar", "ad": "notlar", "tur": "konteyner", "hedef": "/media", "yazilabilir": False},
             {"yol": root + "/media/filmler", "id": "paylasim", "ad": "filmler", "tur": "paylasim", "hedef": "/s/abc/", "yazilabilir": True}])
         self.assertEqual(answer["hatalar"], [])
+
+    def raw_post(self, path, body):
+        status, _headers, raw = test_resources.unix_get(
+            self.sock, path, {"X-Konsol": "1", "Content-Type": "application/json"}, method="POST", body=body)
+        return status, raw
+
+    def test_the_inspector_dry_run_from_the_table(self):
+        # DD-271 (phase 2): a whole file fits in the request, nothing is run or written, no secret value comes back.
+        text = (FIXTURES / "notlar-compose.yaml").read_text()
+        answers = {"name": "notlar", "answers": {
+            "var:NOTLAR_VERSION": {"value": "1.5"}, "var:BASE_URL": {"value": ""}, "var:DB_PASSWORD": {"value": "Gizli-7f3a9"},
+            "var:LOG_LEVEL": {"value": "debug"}, "port:web:3000/tcp": {"use": "caddy", "tailscale_name": "notlar"},
+            "mount:web:/app/uploads": {"to": "app"},
+            "mount:web:/media/notlar": {"to": "srv", "path": "/srv/media/notlar", "read_only": True},
+            "start:web": {"mode": "direct"}, "mount:db:/var/lib/postgresql/data": {"to": "app"}, "start:db": {"mode": "root"}}}
+        route = next(r for r in master_api.ROUTES if r.name == "uygulama_denetle")
+        handler = panel.Handler.api_uygulama_denetle
+
+        def guarded(self, user, data):
+            # While the handler runs (the gates before it read state.env), no file is opened.
+            with patch("builtins.open", side_effect=AssertionError("nothing is read or written")), \
+                    patch.object(panel.os, "open", side_effect=AssertionError("nothing is read or written")):
+                return handler(self, user, data)
+        with patch.object(panel.subprocess, "run", side_effect=AssertionError("no command may run")), \
+                patch.object(panel.subprocess, "Popen", side_effect=AssertionError("no command may run")), \
+                patch.object(panel.Handler, "api_uygulama_denetle", guarded):
+            status, answer = self.post("uygulama_denetle", {"metin": text})
+            self.assertEqual((status, set(answer)), (200, {"inceleme"}))
+            self.assertEqual((answer["inceleme"]["format"], answer["inceleme"]["refusals"]), ("compose", []))
+            self.assertIn("var:DB_PASSWORD", [q["id"] for q in answer["inceleme"]["questions"]])
+            status, raw = self.raw_post(route.path, json.dumps({"metin": text, "yanitlar": answers}).encode())
+        self.assertEqual(status, 200, raw)
+        reply = json.loads(raw)
+        master_api.check(route.reply, reply)
+        self.assertEqual(set(reply), {"inceleme", "tanim"})
+        self.assertNotIn(b"Gizli-7f3a9", raw)
+        env = {e["name"]: e for e in reply["tanim"]["services"][0]["environment"]}
+        self.assertEqual((env["DB_PASSWORD"], env["LOG_LEVEL"]),
+                         ({"name": "DB_PASSWORD", "secret": "notlar-db-password"}, {"name": "LOG_LEVEL", "value": "debug"}))
+        # Answers the checker refuses come back by question, without a definition.
+        answers["answers"]["port:web:3000/tcp"] = {"use": "caddy", "tailscale_name": "panel"}
+        answers["answers"].pop("start:db")
+        status, answer = self.post("uygulama_denetle", {"metin": text, "yanitlar": answers})
+        self.assertEqual((status, set(answer)), (200, {"inceleme", "hatalar"}))
+        self.assertEqual(set(answer["hatalar"]), {"port:web:3000/tcp", "start:db"})
+        # A refused file is an inspection, not an error.
+        status, answer = self.post("uygulama_denetle", {"metin": (FIXTURES / "unsafe-compose.yaml").read_text()})
+        self.assertEqual((status, len(answer["inceleme"]["refusals"])), (200, 8))
+        status, answer = self.post("uygulama_denetle", {"metin": "services: ["})
+        self.assertEqual((status, answer["inceleme"]["format"], answer["inceleme"]["refusals"][0]["line"]), (200, None, 1))
+
+    def test_the_inspector_takes_a_whole_file_and_no_more(self):
+        route = next(r for r in master_api.ROUTES if r.name == "uygulama_denetle")
+        padding = "# %s\n" % ("x" * 76)
+        big = (FIXTURES / "gezgin-compose.yaml").read_text() + padding * 2500
+        self.assertGreater(len(big), 3 * 65536)
+        status, answer = self.post("uygulama_denetle", {"metin": big})
+        self.assertEqual((status, answer["inceleme"]["refusals"]), (200, []), "larger than the usual body limit")
+        status, answer = self.post("uygulama_denetle", {"metin": "#" * (256 * 1024 + 1)})
+        self.assertEqual(status, 400)
+        self.assertIn("256 KiB", answer["error"])
+        status, raw = self.raw_post(route.path, json.dumps({"metin": "\n" * (route.body_limit // 2)}).encode())
+        self.assertEqual(status, 400, "the body limit holds before anything is parsed")
+        self.assertIn("JSON", json.loads(raw)["error"])
+        status, raw = self.raw_post(route.path, b'{"metin": "\\ud800"}')
+        self.assertEqual(status, 400, raw)
+        for bad in ({"metin": 5}, {"metin": "x", "extra": 1}, {"metin": "x", "yanitlar": {"name": "x"}},
+                    {"metin": "x", "yanitlar": {"name": "x", "answers": {"start:a": {"mode": 1}}}}):
+            with self.subTest(bad=bad):
+                self.assertEqual(self.post("uygulama_denetle", bad)[0], 400)
+        # Every other route keeps the usual limit.
+        status, raw = self.raw_post("/api/konsol/oturum/cikis", json.dumps({"x": "y" * 70000}).encode())
+        self.assertEqual(status, 400)
+        self.assertIn("JSON", json.loads(raw)["error"])
 
     def test_a_real_health_reply_has_the_declared_shape(self):
         # Commands that do not exist on the test machine read as failed checks, not as a broken reply.

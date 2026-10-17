@@ -54,6 +54,7 @@ import master_auth
 import master_containers
 import master_container_manager
 import master_erisim
+import master_inspector
 import master_olaylar
 import master_uygulamalar
 import master_yayin
@@ -1848,14 +1849,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         hosts.update(h.lower() for h in self.panel.args.allow_host)
         return hosts
 
-    def body_json(self):
+    def body_json(self, limit=MAX_BODY):
         if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
             return None
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             return None
-        if length <= 0 or length > MAX_BODY:
+        if length <= 0 or length > limit:
             return None
         raw = self.read_body(length)
         self.body_read = len(raw) == length
@@ -2092,6 +2093,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except master_containers.ContainerError as err:
             self.error(err.status, str(err))
 
+    def api_uygulama_denetle(self, user, data):
+        """DD-271 (phase 2): the inspector's dry run. Nothing is written, run or fetched; the secret values
+        among the answers are checked and dropped, so the reply never carries one."""
+        text = data["metin"]
+        try:
+            size = len(text.encode("utf-8"))
+        except UnicodeEncodeError:
+            self.error(400, "Dosya geçerli bir UTF-8 metni değil.")
+            return
+        if size > master_inspector.LIMIT_BYTES:
+            self.error(400, "Dosya çok büyük (en çok %d KiB)." % (master_inspector.LIMIT_BYTES // 1024))
+            return
+        reply = {"inceleme": master_inspector.inspect(text)}
+        if "yanitlar" in data:
+            definition, _secrets, errors = master_inspector.check(reply["inceleme"], data["yanitlar"])
+            if errors:
+                reply["hatalar"] = errors
+            else:
+                reply["tanim"] = definition
+        self.json(200, reply)
+
     def api_ag(self, query):
         self.json(200, self.panel.network())
 
@@ -2269,15 +2291,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if user is None:
             return
         path = urllib.parse.urlsplit(self.path).path
-        data = self.body_json()
-        if data is None:
-            self.error(400, "istek gövdesi JSON olmalı")
-            return
         if path == "/api/konsol/oturum/giris":
+            data = self.body_json()
+            if data is None:
+                self.error(400, "istek gövdesi JSON olmalı")
+                return
             self.account_post(path, data)
             return
         # DD-259/261/271: every other answer comes from the table; a body without the declared shape is refused.
+        # A route may take a larger body than usual (the inspector takes a whole file).
         self.route, self.params = master_api.match("POST", path)
+        data = self.body_json(getattr(self.route, "body_limit", None) or MAX_BODY)
+        if data is None:
+            self.error(400, "istek gövdesi JSON olmalı")
+            return
         if self.route is None:
             self.error(404, "bulunamadı")
             return

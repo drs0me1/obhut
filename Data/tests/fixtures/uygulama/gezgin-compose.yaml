@@ -1,0 +1,28 @@
+# Gezgin with Docker Compose or Podman Compose. Put your files folder in place of
+# /path/to/your/files, then run `docker compose up -d` (or `podman compose up -d`) and open
+# http://<your server>:8080. Sign in as `admin` with the password the log shows the first time
+# (`docker compose logs gezgin`); Gezgin asks you to choose your own at once.
+#
+# `2` follows the 2.x releases; write `2.1` for the 2.1 releases' fixes alone (2.1.0, 2.1.1, ...),
+# or `2.1.0` to stay on one. The container runs as user 1000, which needs write access to the
+# files folder.
+services:
+  gezgin:
+    image: ghcr.io/drs0me1/gezgin:2
+    container_name: gezgin
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      # WebDAV shares, on a port of their own; leave this and GEZGIN_WEBDAV_PORT out if you do
+      # not need them.
+      - "8092:8092"
+    environment:
+      GEZGIN_WEBDAV_PORT: "8092"
+    volumes:
+      - gezgin-db:/database
+      - gezgin-config:/config
+      - /path/to/your/files:/srv
+
+volumes:
+  gezgin-db:
+  gezgin-config:

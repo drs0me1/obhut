@@ -1695,7 +1695,7 @@ EOF
     local harness install="$V2_ROOT/install.sh" stage0
     # The generation sits beside the release; state.env records it for Konsol's update check.
     grep -A6 '^OBHUT_SURUM="' "$install" | grep -qx 'OBHUT_NESIL="2"'
-    grep -qx 'V2_VERSION="2026.08.06-v2-255"' "$install"
+    grep -qE '^V2_VERSION="[0-9]{4}\.[0-9]{2}\.[0-9]{2}-v2-[0-9]+"$' "$install"
     grep -qx 'OBHUT_NESIL=$OBHUT_NESIL' <<<"$(awk '/^write_state\(\)/,/^}$/' "$install")"
     grep -qx 'NESIL_FILE="/etc/master-stack/nesil"' "$V2_ROOT/config/defaults.env"
     grep -qx 'ESKI_NESIL_IZLERI="/usr/local/sbin/master-modul /usr/local/share/master-stack/moduller /etc/master-stack/moduller"' \
@@ -4350,13 +4350,27 @@ PY
 
 @test "Konsol's backend: route table, Erişim and live events are installed and wired (DD-259)" {
     local install="$V2_ROOT/install.sh" panel="$V2_ROOT/panel/master-panel" caddy="$V2_ROOT/templates/Caddyfile" module stage
-    # Every module the backend imports is installed beside it in SBIN_DIR.
-    for module in $(grep -oE '^import master_[a-z_]+' "$panel" | cut -d' ' -f2); do
-        grep -qE "atomic_write \"\\\$SBIN_DIR/$module\\.py\"|^ *for [a-z_]+ in ([a-z_]+ )*$module( |;)" "$install" ||
-            { echo "not installed: $module"; return 1; }
+    # Every module the backend imports is installed beside it in SBIN_DIR, and so is every module those
+    # import in turn (the inspector reads through master_yaml, master_compose and master_kube).
+    local modules seen=" " todo
+    todo="$(grep -oE '^import master_[a-z_]+' "$panel" | cut -d' ' -f2)"
+    while [ -n "$todo" ]; do
+        modules="$todo"
+        todo=""
+        for module in $modules; do
+            case "$seen" in *" $module "*) continue ;; esac
+            seen+="$module "
+            grep -qE "atomic_write \"\\\$SBIN_DIR/$module\\.py\"|^ *for [a-z_]+ in ([a-z_]+ )*$module( |;)" "$install" ||
+                { echo "not installed: $module"; return 1; }
+            todo+=" $(grep -oE '^(import|from) master_[a-z_]+' "$V2_ROOT/panel/$module.py" | awk '{print $2}' | tr '\n' ' ')"
+        done
+        todo="${todo//[[:space:]]/ }"
+        [ -n "${todo// /}" ] || todo=""
     done
+    case "$seen" in *" master_yaml "*) ;; *) echo "master_yaml not reached"; return 1 ;; esac
+    case "$seen" in *" master_kube "*) ;; *) echo "master_kube not reached"; return 1 ;; esac
     stage="$(awk '/^stage_4\(\) \{/,/^}$/' "$install")"
-    grep -qF 'for panel_module in master_api master_erisim master_olaylar master_uygulamalar master_wireguard master_yayin; do' <<<"$stage"
+    grep -qF 'for panel_module in master_api master_compose master_erisim master_inspector master_kube master_olaylar master_uygulamalar master_wireguard master_yaml master_yayin; do' <<<"$stage"
     grep -qF '[[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1' <<<"$(grep -A3 'for panel_module in' <<<"$stage")"
     # The event stream is never compressed (the encoder would hold small events back); everything else is.
     grep -qx $'\t@sikistir not path /api/konsol/olaylar' "$caddy"

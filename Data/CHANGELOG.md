@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-17 — Konsol reads Compose and Kubernetes files (v2-256, branch `yeni-yapi`)
+
+- Konsol can read an application's own Compose or Kubernetes YAML file and inspect it without changing
+  anything on the server (DD-273): what it refuses and why, line by line; what it asks (each port, each
+  variable and secret, each folder, how each container starts); and, once answered, the definition the
+  next phase will install. Nothing in the interface uses it yet.
+- Obhut reads YAML itself, with no new package: what Compose and Kubernetes files use is read, anything
+  else (anchors, tags, multi-line plain text...) is shown with its line instead of being guessed.
+
 ### 2026-10-17 — A new generation: a clean base without the App Store (v2-255, branch `yeni-yapi`)
 
 - This build starts Obhut's second generation (DD-271, DD-272). It installs only on a clean operating

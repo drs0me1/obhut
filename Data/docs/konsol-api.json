@@ -487,6 +487,67 @@
         }
       }
     },
+    "/api/konsol/uygulamalar/denetle": {
+      "post": {
+        "operationId": "uygulama_denetle",
+        "summary": "Bir Compose ya da Kubernetes dosyasını denetler; yanıtlar verilirse tanımı çıkarır. Hiçbir şey yazılmaz, çalıştırılmaz, indirilmez; gizli değerler yanıtta yer almaz",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Denetim"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DenetimIstegi"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/konsol/ag": {
       "get": {
         "operationId": "ag",
@@ -7335,6 +7396,1669 @@
         },
         "required": [
           "on"
+        ],
+        "additionalProperties": false
+      },
+      "Bulgu": {
+        "type": "object",
+        "properties": {
+          "line": {
+            "type": "integer"
+          },
+          "key": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "line",
+          "key",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "Isaret": {
+        "type": "object",
+        "properties": {
+          "line": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "refuse",
+              "question",
+              "note"
+            ]
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "line",
+          "kind",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "ModelOrtami": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "secret_ref": {
+            "type": "boolean"
+          },
+          "secret_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "value",
+          "line",
+          "secret_ref",
+          "secret_key"
+        ],
+        "additionalProperties": false
+      },
+      "ModelPortu": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "integer"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp"
+            ]
+          },
+          "host_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "line": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "port",
+          "protocol",
+          "host_port",
+          "line"
+        ],
+        "additionalProperties": false
+      },
+      "ModelBaglamasi": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "named",
+              "relative",
+              "absolute",
+              "tmpfs"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "line": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "source",
+          "target",
+          "read_only",
+          "line"
+        ],
+        "additionalProperties": false
+      },
+      "SaglikDenetimi": {
+        "type": "object",
+        "properties": {
+          "test": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timeout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retries": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "start_period": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "test",
+          "interval",
+          "timeout",
+          "retries",
+          "start_period"
+        ],
+        "additionalProperties": false
+      },
+      "Bagimlilik": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "condition": {
+            "type": "string",
+            "enum": [
+              "started",
+              "healthy"
+            ]
+          }
+        },
+        "required": [
+          "service",
+          "condition"
+        ],
+        "additionalProperties": false
+      },
+      "Sinirlar": {
+        "type": "object",
+        "properties": {
+          "cpus": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "memory": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pids": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ulimits": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "soft": {
+                  "type": "integer"
+                },
+                "hard": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "soft",
+                "hard"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "cpus",
+          "memory",
+          "pids",
+          "ulimits"
+        ],
+        "additionalProperties": false
+      },
+      "YenidenBaslatmaKurali": {
+        "type": "string",
+        "enum": [
+          "no",
+          "always",
+          "on-failure",
+          "unless-stopped"
+        ]
+      },
+      "ModelServisi": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "image": {
+            "type": "string"
+          },
+          "image_line": {
+            "type": "integer"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entrypoint": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workdir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelOrtami"
+            }
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelPortu"
+            }
+          },
+          "mounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelBaglamasi"
+            }
+          },
+          "health": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SaglikDenetimi"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "restart": {
+            "$ref": "#/components/schemas/YenidenBaslatmaKurali"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Bagimlilik"
+            }
+          },
+          "caps_add": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "caps_drop": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "no_new_privileges": {
+            "type": "boolean"
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "init": {
+            "type": "boolean"
+          },
+          "hostname": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shm_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limits": {
+            "$ref": "#/components/schemas/Sinirlar"
+          },
+          "labels": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "stop_signal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stop_grace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "line",
+          "image",
+          "image_line",
+          "command",
+          "entrypoint",
+          "workdir",
+          "user",
+          "environment",
+          "ports",
+          "mounts",
+          "health",
+          "restart",
+          "depends_on",
+          "caps_add",
+          "caps_drop",
+          "no_new_privileges",
+          "read_only",
+          "init",
+          "hostname",
+          "shm_size",
+          "limits",
+          "labels",
+          "stop_signal",
+          "stop_grace"
+        ],
+        "additionalProperties": false
+      },
+      "ModelDegiskeni": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "uses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "service": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "field": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "service",
+                "field",
+                "line"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "name",
+          "default",
+          "required",
+          "line",
+          "uses"
+        ],
+        "additionalProperties": false
+      },
+      "SoruAd": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "name"
+            ]
+          },
+          "line": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "suggest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "line",
+          "title",
+          "why",
+          "suggest"
+        ],
+        "additionalProperties": false
+      },
+      "SoruPort": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "port"
+            ]
+          },
+          "line": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp"
+            ]
+          },
+          "guess": {
+            "type": "string",
+            "enum": [
+              "web",
+              "raw"
+            ]
+          },
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "caddy",
+                "raw"
+              ]
+            }
+          },
+          "suggest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "host_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "line",
+          "title",
+          "why",
+          "service",
+          "port",
+          "protocol",
+          "guess",
+          "choices",
+          "suggest",
+          "host_port"
+        ],
+        "additionalProperties": false
+      },
+      "SoruDegisken": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "var"
+            ]
+          },
+          "line": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "boolean"
+          },
+          "generate": {
+            "type": "boolean"
+          },
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "line",
+          "title",
+          "why",
+          "name",
+          "secret",
+          "generate",
+          "default",
+          "required",
+          "services"
+        ],
+        "additionalProperties": false
+      },
+      "SoruGizli": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "secret"
+            ]
+          },
+          "line": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "env": {
+            "type": "string"
+          },
+          "generate": {
+            "type": "boolean"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "uses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "service": {
+                  "type": "string"
+                },
+                "env": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "service",
+                "env"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "line",
+          "title",
+          "why",
+          "service",
+          "env",
+          "generate",
+          "services",
+          "uses"
+        ],
+        "additionalProperties": false
+      },
+      "SoruKlasor": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "mount"
+            ]
+          },
+          "line": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_kind": {
+            "type": "string",
+            "enum": [
+              "named",
+              "relative",
+              "absolute"
+            ]
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "suggest": {
+            "type": "string",
+            "enum": [
+              "app",
+              "srv"
+            ]
+          },
+          "folder": {
+            "type": "string"
+          },
+          "srv_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "line",
+          "title",
+          "why",
+          "service",
+          "target",
+          "source",
+          "source_kind",
+          "read_only",
+          "suggest",
+          "folder",
+          "srv_path"
+        ],
+        "additionalProperties": false
+      },
+      "SoruBaslangic": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "start"
+            ]
+          },
+          "line": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "suggest": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "root"
+            ]
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "direct_user": {
+            "type": "string"
+          },
+          "caps_add": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "open_caps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "line",
+          "title",
+          "why",
+          "service",
+          "suggest",
+          "user",
+          "direct_user",
+          "caps_add",
+          "open_caps"
+        ],
+        "additionalProperties": false
+      },
+      "Soru": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/SoruAd"
+          },
+          {
+            "$ref": "#/components/schemas/SoruPort"
+          },
+          {
+            "$ref": "#/components/schemas/SoruDegisken"
+          },
+          {
+            "$ref": "#/components/schemas/SoruGizli"
+          },
+          {
+            "$ref": "#/components/schemas/SoruKlasor"
+          },
+          {
+            "$ref": "#/components/schemas/SoruBaslangic"
+          }
+        ]
+      },
+      "Inceleme": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "compose",
+                  "kubernetes"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "pod": {
+            "type": "boolean"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelServisi"
+            }
+          },
+          "variables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelDegiskeni"
+            }
+          },
+          "refusals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Bulgu"
+            }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Bulgu"
+            }
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Soru"
+            }
+          },
+          "marks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Isaret"
+            }
+          }
+        },
+        "required": [
+          "format",
+          "name",
+          "pod",
+          "services",
+          "variables",
+          "refusals",
+          "notes",
+          "questions",
+          "marks"
+        ],
+        "additionalProperties": false
+      },
+      "YanitAdres": {
+        "type": "object",
+        "properties": {
+          "use": {
+            "type": "string",
+            "enum": [
+              "caddy"
+            ]
+          },
+          "tailscale_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "use",
+          "tailscale_name"
+        ],
+        "additionalProperties": false
+      },
+      "YanitHamPort": {
+        "type": "object",
+        "properties": {
+          "use": {
+            "type": "string",
+            "enum": [
+              "raw"
+            ]
+          }
+        },
+        "required": [
+          "use"
+        ],
+        "additionalProperties": false
+      },
+      "YanitDeger": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "YanitUygulamaKlasoru": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "enum": [
+              "app"
+            ]
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "YanitSrvKlasoru": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "enum": [
+              "srv"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "to",
+          "path",
+          "read_only"
+        ],
+        "additionalProperties": false
+      },
+      "YanitBaslangic": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "root"
+            ]
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "additionalProperties": false
+      },
+      "Yanit": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/YanitAdres"
+          },
+          {
+            "$ref": "#/components/schemas/YanitHamPort"
+          },
+          {
+            "$ref": "#/components/schemas/YanitDeger"
+          },
+          {
+            "$ref": "#/components/schemas/YanitUygulamaKlasoru"
+          },
+          {
+            "$ref": "#/components/schemas/YanitSrvKlasoru"
+          },
+          {
+            "$ref": "#/components/schemas/YanitBaslangic"
+          }
+        ]
+      },
+      "Yanitlar": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "answers": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Yanit"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "answers"
+        ],
+        "additionalProperties": false
+      },
+      "TanimOrtami": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "secret": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "secret"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "TanimPortu": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "integer"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp"
+            ]
+          },
+          "use": {
+            "type": "string",
+            "enum": [
+              "caddy",
+              "raw"
+            ]
+          },
+          "tailscale_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "port",
+          "protocol",
+          "use",
+          "tailscale_name"
+        ],
+        "additionalProperties": false
+      },
+      "TanimBaglamasi": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string",
+                "enum": [
+                  "app"
+                ]
+              },
+              "folder": {
+                "type": "string"
+              },
+              "read_only": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "target",
+              "to",
+              "folder",
+              "read_only"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string",
+                "enum": [
+                  "srv"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "read_only": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "target",
+              "to",
+              "path",
+              "read_only"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string",
+                "enum": [
+                  "tmpfs"
+                ]
+              }
+            },
+            "required": [
+              "target",
+              "to"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "TanimServisi": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entrypoint": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workdir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "health": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SaglikDenetimi"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "restart": {
+            "$ref": "#/components/schemas/YenidenBaslatmaKurali"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Bagimlilik"
+            }
+          },
+          "labels": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "stop_signal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stop_grace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "start": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "root"
+            ]
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "caps_drop": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "all"
+                ]
+              }
+            ]
+          },
+          "caps_add": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "no_new_privileges": {
+            "type": "boolean"
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "init": {
+            "type": "boolean"
+          },
+          "hostname": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "shm_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limits": {
+            "$ref": "#/components/schemas/Sinirlar"
+          },
+          "environment": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TanimOrtami"
+            }
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TanimPortu"
+            }
+          },
+          "mounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TanimBaglamasi"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "image",
+          "command",
+          "entrypoint",
+          "workdir",
+          "health",
+          "restart",
+          "depends_on",
+          "labels",
+          "stop_signal",
+          "stop_grace",
+          "start",
+          "user",
+          "caps_drop",
+          "caps_add",
+          "no_new_privileges",
+          "read_only",
+          "init",
+          "hostname",
+          "shm_size",
+          "limits",
+          "environment",
+          "ports",
+          "mounts"
+        ],
+        "additionalProperties": false
+      },
+      "Tanim": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "compose",
+              "kubernetes"
+            ]
+          },
+          "pod": {
+            "type": "boolean"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TanimServisi"
+            }
+          },
+          "secrets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "services": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "services"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "name",
+          "format",
+          "pod",
+          "services",
+          "secrets"
+        ],
+        "additionalProperties": false
+      },
+      "DenetimIstegi": {
+        "type": "object",
+        "properties": {
+          "metin": {
+            "type": "string"
+          },
+          "yanitlar": {
+            "$ref": "#/components/schemas/Yanitlar"
+          }
+        },
+        "required": [
+          "metin"
+        ],
+        "additionalProperties": false
+      },
+      "Denetim": {
+        "type": "object",
+        "properties": {
+          "inceleme": {
+            "$ref": "#/components/schemas/Inceleme"
+          },
+          "tanim": {
+            "$ref": "#/components/schemas/Tanim"
+          },
+          "hatalar": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "inceleme"
         ],
         "additionalProperties": false
       }
