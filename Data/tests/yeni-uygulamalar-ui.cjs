@@ -142,8 +142,7 @@ const data = {
       internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: VPN_NOTE, aglar: [] }, sertifikalar: [] } },
   uygulamalar: uygulamalar(apps()),
   // Erişim → Adresler (a port's link leads there): the local names, read with the rows.
-  adlar: { revizyon: "rev-1", alan: "ev", hatalar: [], adlar: [{ ad: "notlar.ev", aile: 4, hedef: "tailscale", kaynak: "uygulama", kapali: false, kilitli: true,
-    satir: NOTLAR_WEB }], kayitlar: [], yonlendirme: false, sunucular: [] },
+  adlar: { revizyon: "rev-1", alan: "ev", hatalar: [], adlar: [{ ad: "notlar.ev", aile: 4, hedef: "tailscale", kaynak: "uygulama", satir: NOTLAR_WEB }], kayitlar: [], yonlendirme: false, sunucular: [] },
 };
 
 const LOG = Array.from({ length: 30 }, (_, i) => `2026-10-13T01:${String(10 + i).padStart(2, "0")}:00+03:00 notlar_web[812]: satır ${i + 1}`);

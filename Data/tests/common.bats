@@ -10,7 +10,6 @@ setup() {
     TMP="$(mktemp -d)"
     # macOS /var is a symlink; no-follow traversal needs the physical fixture root.
     TMP="$(cd "$TMP" && pwd -P)"
-    V2_RETRY_BACKOFF_SECONDS=0
 }
 
 teardown() {
@@ -58,6 +57,8 @@ EOF
         run require_supported_os
         [ "$status" -eq 0 ]
     done
+    # The installer reads /etc/os-release; the environment cannot name another file (a test sets it after sourcing).
+    [ "$(env V2_OS_RELEASE_PATH="$TMP/os" bash -c 'source "$1"; printf %s "$V2_OS_RELEASE_PATH"' _ "$V2_ROOT/common.sh")" = /etc/os-release ]
 }
 
 @test "require_supported_os exports OS_ID and OS_CODENAME for repo lines" {
@@ -235,7 +236,7 @@ EOF
     [ -z "$WAN_IPV6" ]
     # Both are written to state.env; the endpoint is the detected IPv4; no literal address remains.
     awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx 'WAN_IPV6=\$WAN_IPV6'
-    # DD-201: no WireGuard endpoint key anywhere in the base; master-wg uses the detected WAN_IPV4.
+    # DD-272: no WireGuard endpoint key anywhere in the base; master-wg uses the detected WAN_IPV4.
     run ! grep -q 'WG_ENDPOINT_HOST' "$V2_ROOT/install.sh" "$V2_ROOT/config/defaults.env" "$V2_ROOT/panel/master-panel"
     grep -q 'Endpoint = ${WAN_IPV4}:${WG_PUBLIC_PORT}' "$V2_ROOT/scripts/master-wg"
     run grep -nE '([0-9]{1,3}\.){3}[0-9]{1,3}' "$V2_ROOT/install.sh" "$V2_ROOT/scripts/master-wg" \
@@ -560,7 +561,7 @@ EOF
     grep -q 'CHAIN_INPUT:?' "$V2_ROOT/scripts/firewall.sh"
     # DD-143: WireGuard ağları state.env'den değil kayıttan gelir; boş kayıt geçerlidir.
     run ! grep -qE 'WG_PORT_DEFAULT:\?|WG_INTERFACE:\?|WG_ADDR_BASE4:\?' "$V2_ROOT/scripts/firewall.sh"
-    # DD-198/271: the firewall reads WireGuard's own registry and stopped marker, both from state.
+    # DD-272: the firewall reads WireGuard's own registry and stopped marker, both from state.
     grep -q 'WG_NETWORKS_FILE:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q 'WG_STOPPED_FILE:?' "$V2_ROOT/scripts/firewall.sh"
     grep -q '^load_wireguard_rules()' "$V2_ROOT/scripts/firewall.sh"
@@ -666,7 +667,7 @@ EOF
     # DD-271: the root backend answers /api/konsol/* only; no package API path is routed.
     awk '/^\(konsol\) \{$/,/^\}$/' "$V2_ROOT/templates/Caddyfile" | grep -q '@kok path /api/konsol/\*$'
     run ! grep -q '/api/uygulama' "$V2_ROOT/templates/Caddyfile"
-    # DD-151: no base Compose project at all.
+    # No base Compose project at all (DD-152: no Docker).
     [ ! -e "$V2_ROOT/templates/compose.yaml" ]
 }
 
@@ -1005,7 +1006,7 @@ printf '%s\n' '2: tailscale0    inet 100.118.76.122/32 scope global'
 EOF
     chmod +x "$stub"
     set +e
-    PATH="$bin:$PATH" TAILSCALE_IPV4=100.118.76.122 TAILNET_ADDR_WAIT_SECONDS=4 \
+    PATH="$bin:$PATH" TAILSCALE_IPV4=100.118.76.122 \
         "$V2_ROOT/scripts/wait-tailnet-addr"
     rc=$?
     set -e
@@ -1024,7 +1025,7 @@ EOF
     chmod +x "$stub"
     set +e
     out="$(
-        PATH="$bin:$PATH" TAILSCALE_IPV4=100.64.0.1 TAILNET_ADDR_WAIT_SECONDS=4 \
+        PATH="$bin:$PATH" TAILSCALE_IPV4=100.64.0.1 \
             "$V2_ROOT/scripts/wait-tailnet-addr" 2>&1
     )"
     rc=$?
@@ -1044,7 +1045,7 @@ printf '%s\n' '2: tailscale0    inet 100.118.76.122/32 scope global'
 EOF
     chmod +x "$stub"
     set +e
-    PATH="$bin:$PATH" env -u TAILSCALE_IPV4 TAILNET_ADDR_WAIT_SECONDS=4 \
+    PATH="$bin:$PATH" env -u TAILSCALE_IPV4 \
         "$V2_ROOT/scripts/wait-tailnet-addr"
     rc=$?
     set -e
@@ -1217,6 +1218,38 @@ EOF
     run ! grep -q 'docker.service.d' "$V2_ROOT/install.sh"
 }
 
+@test "units name the base's tools through SBIN_DIR and STATE_FILE, rendered like the other units (defaults.env)" {
+    local SP="$TMP/render" u
+    # No unit template and no base script writes the tool folder itself: SBIN_DIR is the single source.
+    run ! grep -rn '/usr/local/sbin' "$V2_ROOT/systemd" "$V2_ROOT/scripts/refresh-tailnet-config"
+    grep -qx 'ExecStart=__SBIN_DIR__/master-firewall apply' "$V2_ROOT/systemd/master-firewall.service"
+    grep -qx 'ExecStartPost=__SBIN_DIR__/master-firewall --check' "$V2_ROOT/systemd/master-firewall.service"
+    grep -qx 'ExecStart=__SBIN_DIR__/refresh-tailnet-config' "$V2_ROOT/systemd/refresh-tailnet-config.service"
+    grep -qx 'ExecStart=__SBIN_DIR__/tailscale-udp-gro' "$V2_ROOT/systemd/tailscale-udp-gro.service"
+    for u in master-firewall refresh-tailnet-config; do
+        grep -qx 'Environment=STATE_FILE=__STATE_FILE__' "$V2_ROOT/systemd/$u.service"
+        grep -qF "render_template \"\$V2_ROOT/systemd/$u.service\" \"\$UNIT_DIR/$u.service\" 0644" "$V2_ROOT/install.sh"
+    done
+    grep -qF 'render_template "$V2_ROOT/systemd/tailscale-udp-gro.service" "$UNIT_DIR/tailscale-udp-gro.service" 0644' "$V2_ROOT/install.sh"
+    run ! grep -qE 'install -m 0644 "\$V2_ROOT/systemd/|atomic_write "\$UNIT_DIR/[a-z-]+\.service" 0644 \\$' "$V2_ROOT/install.sh"
+    # The address refresh takes the firewall tool from state.env like its other values.
+    grep -qx ': "${SBIN_DIR:?}"' "$V2_ROOT/scripts/refresh-tailnet-config"
+    grep -qx 'FIREWALL_BIN="$SBIN_DIR/master-firewall"' "$V2_ROOT/scripts/refresh-tailnet-config"
+    # Rendered with the defaults they are the units as they were; a second render writes nothing (idempotent).
+    mkdir -p "$SP"
+    run bash -c 'set -Eeuo pipefail; cd "$1"; source ./common.sh; source ./config/defaults.env
+        for u in master-firewall refresh-tailnet-config tailscale-udp-gro; do
+            render_template "systemd/$u.service" "$2/$u.service" 0644 SBIN_DIR="$SBIN_DIR" STATE_FILE="$STATE_FILE"
+            render_template "systemd/$u.service" "$2/$u.service" 0644 SBIN_DIR="$SBIN_DIR" STATE_FILE="$STATE_FILE"
+            printf "%s %s\n" "$u" "$V2_LAST_ATOMIC_CHANGED"
+        done' _ "$V2_ROOT" "$SP"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'master-firewall 0\nrefresh-tailnet-config 0\ntailscale-udp-gro 0' ]
+    grep -qx 'ExecStart=/usr/local/sbin/master-firewall apply' "$SP/master-firewall.service"
+    grep -qx 'Environment=STATE_FILE=/etc/master-stack/state.env' "$SP/refresh-tailnet-config.service"
+    grep -qx 'ExecStart=/usr/local/sbin/tailscale-udp-gro' "$SP/tailscale-udp-gro.service"
+}
+
 @test "install carries no migration cleanup for older revisions" {
     # Upgrade path is a fresh install, or a re-run that overwrites what the
     # installer owns. Nothing hunts for leftovers of an older revision, so no
@@ -1336,7 +1369,7 @@ EOF
     grep -q 'FIREWALL_NEEDS_RESTART' "$V2_ROOT/install.sh"
     run ! grep -q 'WEBDAV_NEEDS_RESTART' "$V2_ROOT/install.sh"
     grep -q 'yapılandırması aynı; yeniden başlatılmadı' "$V2_ROOT/install.sh"
-    # DD-151: no base Compose project and no image-pull question any more.
+    # No base Compose project and no image-pull question (DD-152: no Docker).
     [ "$(grep -cE 'COMPOSE_NEEDS_UP|PULL_IMAGES|docker compose' "$V2_ROOT/install.sh")" -eq 0 ]
     grep -q 'V2_LAST_ATOMIC_CHANGED' "$V2_ROOT/common.sh"
     awk '/^stage_5\(\)/,/^apt_get_install_masked_quiet\(\)/' "$V2_ROOT/install.sh" |
@@ -1375,15 +1408,25 @@ EOF
     grep -q 'https://codeload.github.com/\$repo/tar.gz/\$ref' "$kur"
     grep -q 'local repo="drs0me1/obhut"' "$kur"
     grep -q 'local ref="${KUR_REF:-main}"' "$kur"
-    grep -q 'local root="${KUR_ROOT:-/root/debian-server-installer}"' "$kur"
+    # The install folder is fixed; KUR_URL (an unpublished tree as an archive) and KUR_REF are the operator's.
+    grep -qx '    local root="/root/debian-server-installer"' "$kur"
+    run ! grep -q 'KUR_ROOT' "$kur"
+    grep -qF 'local url="${KUR_URL:-https://codeload.github.com/$repo/tar.gz/$ref}"' "$kur"
     grep -q 'exec bash "\$root/install.sh" </dev/tty' "$kur"
     grep -q -- "--exclude='__pycache__'" "$kur"
     grep -q -- '--no-same-owner' "$kur"
     run ! grep -qE '^[^#"]*\b(ssh|scp) ' "$kur"
 }
 
+# A copy of kur.sh that installs into $TMP/root instead of its fixed /root/debian-server-installer.
+kur_copy() {
+    sed "s|^    local root=\"/root/debian-server-installer\"\$|    local root=\"$TMP/root\"|" "$V2_ROOT/../kur.sh" >"$TMP/kur.sh"
+    grep -qxF "    local root=\"$TMP/root\"" "$TMP/kur.sh"
+}
+
 @test "kur.sh ships the runtime tree, swaps it atomically and hands the terminal to the installer" {
-    local kur="$V2_ROOT/../kur.sh" src="$TMP/src/obhut-main" dir
+    local kur="$TMP/kur.sh" src="$TMP/src/obhut-main" dir
+    kur_copy
     mkdir -p "$src/Data"
     for dir in install.sh common.sh config templates scripts systemd panel files-panel console; do
         cp -R "$V2_ROOT/$dir" "$src/Data/"
@@ -1399,7 +1442,7 @@ EOF
     touch "$TMP/root/stale"
     [ "$(id -u)" -eq 0 ] || skip "needs root"
     command -v script >/dev/null || skip "needs script(1) for a terminal"
-    run script -qec "KUR_URL='file://$TMP/kod.tgz' KUR_ROOT='$TMP/root' bash '$kur'" /dev/null
+    run script -qec "KUR_URL='file://$TMP/kod.tgz' bash '$kur'" /dev/null
     case "$output" in *"STUB_INSTALL tty=yes"*) ;; *) false ;; esac
     [ -f "$TMP/root/install.sh" ]
     [ -x "$TMP/root/install.sh" ]
@@ -1424,8 +1467,9 @@ EOF
 
 @test "kur.sh update mode installs only the confirmed commit and version, without a terminal" {
     # DD-233: Konsol's update runs kur.sh pinned to a commit; install.sh gets V2_GUNCELLEME=1 and no tty.
-    local kur="$V2_ROOT/../kur.sh" src="$TMP/src/obhut-x" dir sha=0123456789abcdef0123456789abcdef01234567
+    local kur="$TMP/kur.sh" src="$TMP/src/obhut-x" dir sha=0123456789abcdef0123456789abcdef01234567
     [ "$(id -u)" -eq 0 ] || skip "needs root"
+    kur_copy
     mkdir -p "$src/Data"
     for dir in install.sh common.sh config templates scripts systemd panel files-panel console; do
         cp -R "$V2_ROOT/$dir" "$src/Data/"
@@ -1435,17 +1479,17 @@ EOF
     tar -C "$TMP/src" -czf "$TMP/kod.tgz" obhut-x
     mkdir -p "$TMP/root" && touch "$TMP/root/keep"
     # A branch name, a bad version or another version than the confirmed one changes nothing.
-    run env KUR_URL="file://$TMP/kod.tgz" KUR_ROOT="$TMP/root" KUR_REF=main KUR_GUNCELLE=2026.08.06-v2-212 bash "$kur" </dev/null
+    run env KUR_URL="file://$TMP/kod.tgz" KUR_REF=main KUR_GUNCELLE=2026.08.06-v2-212 bash "$kur" </dev/null
     [ "$status" -ne 0 ]
     case "$output" in *"commit'e sabitlenmeli"*) ;; *) false ;; esac
-    run env KUR_URL="file://$TMP/kod.tgz" KUR_ROOT="$TMP/root" KUR_REF="$sha" KUR_GUNCELLE='v2-212;x' bash "$kur" </dev/null
+    run env KUR_URL="file://$TMP/kod.tgz" KUR_REF="$sha" KUR_GUNCELLE='v2-212;x' bash "$kur" </dev/null
     [ "$status" -ne 0 ]
     case "$output" in *"geçersiz sürüm"*) ;; *) false ;; esac
-    run env KUR_URL="file://$TMP/kod.tgz" KUR_ROOT="$TMP/root" KUR_REF="$sha" KUR_GUNCELLE=2026.08.06-v2-213 bash "$kur" </dev/null
+    run env KUR_URL="file://$TMP/kod.tgz" KUR_REF="$sha" KUR_GUNCELLE=2026.08.06-v2-213 bash "$kur" </dev/null
     [ "$status" -ne 0 ]
     case "$output" in *"onaylanan 2026.08.06-v2-213 değil"*) ;; *) false ;; esac
     [ -f "$TMP/root/keep" ]
-    run env KUR_URL="file://$TMP/kod.tgz" KUR_ROOT="$TMP/root" KUR_REF="$sha" KUR_GUNCELLE=2026.08.06-v2-212 bash "$kur" </dev/null
+    run env KUR_URL="file://$TMP/kod.tgz" KUR_REF="$sha" KUR_GUNCELLE=2026.08.06-v2-212 bash "$kur" </dev/null
     [ "$status" -eq 0 ]
     case "$output" in *"STUB_INSTALL tty=no guncelleme=1"*) ;; *) false ;; esac
     [ ! -e "$TMP/root/keep" ]
@@ -1462,32 +1506,50 @@ EOF
     bash -n "$tool"
     printf 'GUNCELLEME_REPO=drs0me1/obhut\nGUNCELLEME_DURUM_FILE=%s\nGUNCELLEME_LOG_FILE=%s\n' \
         "$TMP/log/guncelleme.durum" "$TMP/log/guncelleme.log" >"$TMP/state.env"
-    printf 'echo "ref=$KUR_REF surum=$KUR_GUNCELLE"\necho "[10:00:00] Aşama 3/7 — servisler"\n' >"$TMP/ok.sh"
-    run env STATE_FILE="$TMP/state.env" KUR_BETIK_URL="file://$TMP/ok.sh" bash "$tool" uygula "$sha" 2026.08.06-v2-212
+    # A fake curl first on PATH records what it is asked for and hands over $TMP/served.sh as kur.sh.
+    mkdir -p "$TMP/bin"
+    cat >"$TMP/bin/curl" <<EOF
+#!/bin/bash
+printf '%s\n' "\$*" >>"$TMP/curl-calls"
+while [ \$# -gt 0 ]; do
+    [ "\$1" != -o ] || { cp "$TMP/served.sh" "\$2"; exit 0; }
+    shift
+done
+exit 1
+EOF
+    chmod +x "$TMP/bin/curl"
+    printf 'echo "ref=$KUR_REF surum=$KUR_GUNCELLE"\necho "[10:00:00] Aşama 3/7 — servisler"\n' >"$TMP/served.sh"
+    run env STATE_FILE="$TMP/state.env" PATH="$TMP/bin:$PATH" bash "$tool" uygula "$sha" 2026.08.06-v2-212
     [ "$status" -eq 0 ]
+    # Only the confirmed commit's kur.sh from GitHub, over HTTPS only.
+    [ "$(wc -l <"$TMP/curl-calls")" -eq 1 ]
+    grep -qxE -- "-fsSL --proto =https --retry 3 --max-time 120 -o /tmp/master-guncelle\.[A-Za-z0-9]+/kur\.sh https://raw\.githubusercontent\.com/drs0me1/obhut/$sha/kur\.sh" \
+        "$TMP/curl-calls"
     grep -qx 'durum=tamam' "$TMP/log/guncelleme.durum"
     grep -qx 'hedef=2026.08.06-v2-212' "$TMP/log/guncelleme.durum"
     grep -qx "commit=$sha" "$TMP/log/guncelleme.durum"
     grep -qx "ref=$sha surum=2026.08.06-v2-212" "$TMP/log/guncelleme.log"
     [ "$(stat -c %a "$TMP/log/guncelleme.log")" = 600 ]
-    printf 'echo "[10:00:01] Aşama 0/7 — kapılar"\necho "[10:00:02] Tailscale oturumu açık değil" >&2\nexit 1\n' >"$TMP/bad.sh"
-    run env STATE_FILE="$TMP/state.env" KUR_BETIK_URL="file://$TMP/bad.sh" bash "$tool" uygula "$sha" 2026.08.06-v2-212
+    printf 'echo "[10:00:01] Aşama 0/7 — kapılar"\necho "[10:00:02] Tailscale oturumu açık değil" >&2\nexit 1\n' >"$TMP/served.sh"
+    run env STATE_FILE="$TMP/state.env" PATH="$TMP/bin:$PATH" bash "$tool" uygula "$sha" 2026.08.06-v2-212
     [ "$status" -ne 0 ]
     grep -qx 'durum=hata' "$TMP/log/guncelleme.durum"
     grep -qx 'mesaj=Tailscale oturumu açık değil' "$TMP/log/guncelleme.durum"
     # systemd-inhibit's closing "env failed with exit status N." names no cause (DD-253).
-    printf 'echo "[10:00:03] apt-update: 3 deneme başarısız (son kod 100)" >&2\necho "env failed with exit status 1."\nexit 1\n' >"$TMP/inhibit.sh"
-    run env STATE_FILE="$TMP/state.env" KUR_BETIK_URL="file://$TMP/inhibit.sh" bash "$tool" uygula "$sha" 2026.08.06-v2-212
+    printf 'echo "[10:00:03] apt-update: 3 deneme başarısız (son kod 100)" >&2\necho "env failed with exit status 1."\nexit 1\n' >"$TMP/served.sh"
+    run env STATE_FILE="$TMP/state.env" PATH="$TMP/bin:$PATH" bash "$tool" uygula "$sha" 2026.08.06-v2-212
     [ "$status" -ne 0 ]
     grep -qx 'mesaj=apt-update: 3 deneme başarısız (son kod 100)' "$TMP/log/guncelleme.durum"
     # Malformed requests never write a result.
     rm -f "$TMP/log/guncelleme.durum"
     for args in "uygula main 2026.08.06-v2-212" "uygula $sha v2-212" "kur $sha 2026.08.06-v2-212" "uygula $sha"; do
         # shellcheck disable=SC2086
-        run env STATE_FILE="$TMP/state.env" bash "$tool" $args
+        run env STATE_FILE="$TMP/state.env" PATH="$TMP/bin:$PATH" bash "$tool" $args
         [ "$status" -ne 0 ]
     done
     [ ! -e "$TMP/log/guncelleme.durum" ]
+    # Nothing was downloaded for them.
+    [ "$(wc -l <"$TMP/curl-calls")" -eq 3 ]
 }
 
 @test "update mode: Konsol re-runs the installer without questions, never a first install" {
@@ -1550,7 +1612,7 @@ EOF
     run ! grep -q 'WebDAV Tailscale publish' "$V2_ROOT/install.sh"
     run ! grep -q 'v2-write-probe' "$V2_ROOT/install.sh"
     run ! grep -q 'docker port wg-easy' "$V2_ROOT/install.sh"
-    # DD-151: no base containers.
+    # No base containers (DD-152: no Docker).
     [ "$(grep -c 'docker port' "$V2_ROOT/install.sh")" -eq 0 ]
     # DD-159/271: stage 7 checks the share's publish surface itself (verify_builtins).
     body="$(awk '/^verify_builtins\(\)/,/^}$/' "$V2_ROOT/install.sh")"
@@ -1581,7 +1643,7 @@ EOF
 }
 
 @test "FileBrowser is gone: no container, account, port, database or file. name" {
-    # DD-146: Konsol's own file manager (upload, multi-select, search) replaced it.
+    # Konsol's own file manager (upload, multi-select, search) replaced it.
     local code
     code="$(grep -hvE '^[[:space:]]*#' "$V2_ROOT/config/defaults.env" \
         "$V2_ROOT/templates/Caddyfile" "$V2_ROOT/templates/dnsmasq.conf" \
@@ -1872,9 +1934,12 @@ EOF
     grep -q 'Ağ seç' "$cmd"
     grep -q 'Ağı yeniden üret' "$cmd"
     grep -q 'master-wg ile --if' <<<"$(grep -A2 'NET=""' "$cmd" | head -5)" || grep -q '"$MASTER_WG" --if "$NET"' "$cmd"
-    # Ağ yoksa kullanıcı Konsol'a yönlendirilir.
-    grep -q 'Konsol' "$cmd"
-    grep -q 'Yapılandır' "$cmd"
+    # Ağ yoksa kullanıcı Konsol'a yönlendirilir: its button is "Aç" now (rebuild phase 5).
+    grep -qF 'Erişim → WireGuard → Aç ile ilk ağı kurun' "$cmd"
+    run ! grep -q 'Yapılandır ile' "$cmd" "$V2_ROOT/scripts/master-wg"
+    grep -qF "Konsol'da Erişim → WireGuard → Aç ile oluşturun" "$V2_ROOT/scripts/master-wg"
+    # An update is started in Sistem → Güncellemeler.
+    [ "$(grep -cF 'Konsol → Sistem → Güncellemeler → Güncelle ile güncelleyin' "$cmd")" -eq 2 ]
     # Sunucuya hiçbir dosya gönderilmez.
     run ! grep -qE '\bscp\b|tar -x|put \$' "$cmd"
     bash -n "$cmd"
@@ -1882,7 +1947,8 @@ EOF
 
 panel_start() {
     # Konsol'un root arka ucu; master-wg her çağrıyı günlükleyen sahte bir araç (DD-133, DD-143, DD-271).
-    # Sahte araçlar state'teki SBIN_DIR'de durur; arka uç onları oradan çalıştırır (--state-env).
+    # The fake tools live in the state's SBIN_DIR: master-wg runs from there and the test harness
+    # (panel-harness.py) puts that folder first on the tools' PATH. panel_start's arguments go to the harness.
     PANEL="$V2_ROOT/panel/master-panel"
     mkdir -p "$TMP/pbin" "$TMP/clients"
     printf '[Interface]\n' >"$TMP/wg0.conf"
@@ -1898,6 +1964,7 @@ SERVER_ROOT=$TMP
 RUNTIME_DIR=$TMP/run
 SBIN_DIR=$TMP/pbin
 WG_PORT_DEFAULT=61001
+WG_PORT_NEXT=61020
 WG_ADDR_BASE4=10.8
 WG_ADDR_BASE6=fdcc:ad94:bacf:61a4
 WG_MTU=1420
@@ -1934,7 +2001,7 @@ EOF
     cat >"$TMP/pbin/systemd-run" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >>"$TMP/sdrun-calls"
-# A worker run (--pipe): its JSON request arrives on stdin and it answers JSON (DD-202, DD-210).
+# A worker run (--pipe): its JSON request arrives on stdin and it answers JSON.
 case " \$* " in *" --pipe "*) cat >>"$TMP/sdrun-stdin"; printf '{"ok": true}\n' ;; esac
 EOF
     cat >"$TMP/pbin/systemctl" <<EOF
@@ -1946,7 +2013,8 @@ EOF
     chmod +x "$TMP/pbin/systemd-run" "$TMP/pbin/systemctl"
     # DD-180: no TCP port; a short socket path (macOS allows 104 bytes).
     PSOCK="$(mktemp -d /tmp/wgp.XXXXXX)/api.sock"
-    python3 "$PANEL" serve --listen "unix:$PSOCK" --state "$TMP/state.env" --state-env >"$TMP/panel.log" 2>&1 &
+    python3 "$V2_ROOT/tests/panel-harness.py" --tools "$TMP/pbin" "$@" \
+        serve --listen "unix:$PSOCK" --state "$TMP/state.env" >"$TMP/panel.log" 2>&1 &
     PANEL_PID=$!
     for _ in $(seq 1 100); do
         curl -s -o /dev/null --unix-socket "$PSOCK" "http://panel.ayc/api/konsol/kaynaklar" && return 0
@@ -2034,10 +2102,11 @@ PY
 #!/bin/bash
 printf 'systemctl %s\n' "$*" >>"$MOCK_LOG"
 case "$*" in *"${SYSTEMCTL_FAIL:-@none@}"*) exit 1 ;; esac
+unit="${!#}"
 case "$1" in
-    is-enabled) [ -e "$MOCK_DIR/en/$3" ] ;;
-    enable) touch "$MOCK_DIR/en/$4" ;;
-    disable) rm -f "$MOCK_DIR/en/$4" ;;
+    is-enabled) [ -e "$MOCK_DIR/en/$unit" ] ;;
+    enable) touch "$MOCK_DIR/en/$unit" ;;
+    disable) rm -f "$MOCK_DIR/en/$unit" ;;
     list-unit-files | list-units) ls "$MOCK_DIR/en" ;;
 esac
 EOF
@@ -2057,7 +2126,7 @@ EOF
     # While stopped, master-wg refuses to open or add a network.
     run master_wg --if wg0 net ac
     [ "$status" -ne 0 ]
-    case "$output" in *"WireGuard durduruldu; önce Konsol → Erişim → WireGuard'dan başlatın"*) ;; *) false ;; esac
+    case "$output" in *"WireGuard kapalı; önce Konsol → Erişim → WireGuard'dan açın"*) ;; *) false ;; esac
     run master_wg net-add 61031 1.1.1.1 x
     [ "$status" -ne 0 ]
     [ "$(grep -c '^    not_stopped$' "$V2_ROOT/scripts/master-wg")" -eq 2 ]
@@ -2069,7 +2138,8 @@ EOF
     [ "$status" -ne 0 ]
     [ "$(cat "$wgd/.durduruldu")" = $'wg0\nwg2' ]
     [ -z "$(ls "$TMP/en")" ]
-    # Start: the firewall first, then only wg0 and wg2 (wg2 deleted meanwhile is skipped); the list goes.
+    # Start: only wg0 and wg2 (wg2 deleted meanwhile is skipped), each enabled first (the firewall admits only
+    # an enabled network), then the firewall, then the interface; the list goes.
     sed -i.bak '/^wg2\t/d' "$wgd/networks"
     : >"$TMP/calls"
     run master_wg baslat
@@ -2077,8 +2147,14 @@ EOF
     [ "$output" = $'calisiyor\t1' ]
     [ "$(ls "$TMP/en")" = 'wg-quick@wg0.service' ]
     [ ! -e "$wgd/.durduruldu" ]
-    awk '/systemctl restart master-firewall.service/ {f = NR} /systemctl enable --now --quiet wg-quick@wg0.service/ {w = NR}
-         END { exit !(f && w && f < w) }' "$TMP/calls"
+    awk '/systemctl enable --quiet wg-quick@wg0.service/ {e = NR} /systemctl restart master-firewall.service/ {f = NR}
+         /systemctl start wg-quick@wg0.service/ {s = NR} END { exit !(e && f && s && e < f && f < s) }' "$TMP/calls"
+    # Without the marker baslat opens every registered network (DD-229); one already enabled is only started.
+    : >"$TMP/calls"
+    run master_wg baslat
+    [ "$status" -eq 0 ]
+    run ! grep -q 'systemctl enable --quiet wg-quick@wg0.service' "$TMP/calls"
+    grep -q 'systemctl start wg-quick@wg0.service' "$TMP/calls"
     # A pending Konsol setting blocks both, and neither takes a network argument.
     printf 'SETTINGS_PENDING_FILE=%s/pending.json\n' "$TMP" >>"$TMP/state.env"
     : >"$TMP/pending.json"
@@ -2101,7 +2177,7 @@ master_wg_worker() {
         bash "$V2_ROOT/scripts/master-wg" "$@"
 }
 
-@test "master-wg's caller mode needs the held install lock and the applying change's id (DD-275)" {
+@test "master-wg's caller mode needs the held install lock and its own change's id, applying or rolling back (DD-275)" {
     command -v python3 >/dev/null || skip "python3 yok"
     wg_mock_bin
     wg_state_fixture
@@ -2119,13 +2195,24 @@ EOF
     # 8: the holder's descriptor; 6: another open of the same file; 7: another file.
     exec 8<"$lock" 6<"$lock" 7<"$TMP/state.env"
     python3 -c 'import fcntl; fcntl.flock(8, fcntl.LOCK_EX)'
-    # A verb without the pending refusal needs only the lock: the phase does not matter (a rollback).
+    # The worker's own rollback (its id, phase "rollback") closes the network it opened, under its lock.
     printf '{"id": "%s", "phase": "rollback"}\n' "$id" >"$TMP/pending.json"
     export WG_ACTIVE=0
     run master_wg_worker 8 "$id" --if wg0 net kapat
-    unset WG_ACTIVE
     [ "$status" -eq 0 ]
     [ "$output" = $'wg0\t0' ]
+    # The same change waiting for its confirmation, or another change, is refused as without the mode.
+    printf '{"id": "%s", "phase": "awaiting"}\n' "$id" >"$TMP/pending.json"
+    run master_wg_worker 8 "$id" --if wg0 net kapat
+    [ "$status" -ne 0 ]
+    case "$output" in *"bekleyen ayar"*) ;; *) false ;; esac
+    printf '{"id": "%s", "phase": "rollback"}\n' "fedcba9876543210fedcba9876543210" >"$TMP/pending.json"
+    run master_wg_worker 8 "$id" --if wg0 net kapat
+    unset WG_ACTIVE
+    [ "$status" -ne 0 ]
+    case "$output" in *"bekleyen ayar"*) ;; *) false ;; esac
+    # A stuck rollback waits for the operator: refused too.
+    printf '{"id": "%s", "phase": "stuck"}\n' "$id" >"$TMP/pending.json"
     # The stop refuses a pending change in another phase or with another id, as without the mode.
     run master_wg_worker 8 "$id" durdur
     [ "$status" -ne 0 ]
@@ -2166,6 +2253,90 @@ EOF
     exec 8<&- 6<&- 7<&-
 }
 
+@test "a pending Konsol setting blocks every verb that changes WireGuard's state; the peer verbs stay open (DD-275)" {
+    wg_mock_bin
+    wg_state_fixture
+    local wgd="$TMP/etc/wireguard" before conf verb f revision
+    master_wg add iphone 1.1.1.1 21 1420 >/dev/null
+    revision="$(sed -n 1p "$wgd/networks" | sha256sum | awk '{print $1}')"
+    printf 'SETTINGS_PENDING_FILE=%s/pending.json\n' "$TMP" >>"$TMP/state.env"
+    printf '{"id": "0123456789abcdef0123456789abcdef", "phase": "awaiting"}\n' >"$TMP/pending.json"
+    before="$(cat "$wgd/networks")" conf="$(cat "$WG0_CONF")"
+    rm -f "$TMP/calls"
+    for verb in "net-add 61031 1.1.1.1 x" "net-remove wg0 --onay" "--if wg0 net ac" "--if wg0 net kapat" \
+        "--if wg0 reset --onay" "durdur" "baslat" "--if wg0 net-settings 9.9.9.9 $revision"; do
+        # shellcheck disable=SC2086
+        run master_wg $verb
+        [ "$status" -ne 0 ]
+        case "$output" in *"bekleyen ayar işlemini"*) ;; *) false ;; esac
+    done
+    [ "$(cat "$wgd/networks")" = "$before" ]
+    [ "$(cat "$WG0_CONF")" = "$conf" ]
+    [ ! -e "$wgd/.durduruldu" ] && [ ! -e "$wgd/wg1.conf" ]
+    [ -f "$wgd/clients-wg0/iphone.conf" ]
+    [ ! -s "$TMP/calls" ]
+    # Each such verb checks it under the lock. No peer verb does: they write only wgN.conf's peer blocks and the
+    # device profiles, which no settings plan snapshots or restores, and start no network a plan closed.
+    for f in cmd_net_add cmd_net_remove cmd_net cmd_net_settings cmd_reset cmd_durdur cmd_baslat; do
+        awk "/^$f\\(\\)/,/^}\$/" "$V2_ROOT/scripts/master-wg" | grep -qx '    no_pending_settings'
+    done
+    for f in cmd_add cmd_remove cmd_dns cmd_keepalive cmd_peer; do
+        run ! grep -q no_pending_settings <<<"$(awk "/^$f\\(\\)/,/^}\$/" "$V2_ROOT/scripts/master-wg")"
+    done
+    # The peer verbs still work while the change waits.
+    for verb in "add ipad 1.1.1.1 21 1420" "dns ipad 9.9.9.9" "keepalive ipad 25" "peer ipad kapat" "peer ipad ac" "remove ipad"; do
+        # shellcheck disable=SC2086
+        run master_wg $verb
+        [ "$status" -eq 0 ]
+    done
+    [ "$(cat "$wgd/networks")" = "$before" ]
+    # reset names the selected network, not wg0.
+    grep -qF 'die "$WG_INTERFACE yeniden üretilemedi; önceki ${WG_INTERFACE}.conf geri alındı"' "$V2_ROOT/scripts/master-wg"
+    [ -z "$(grep -E 'die "[^"]*wg0' "$V2_ROOT/scripts/master-wg" | grep -v 'wg0-wg9')" ]
+}
+
+@test "a network's switch applies the firewall: closing drops its port, opening enables it before the firewall" {
+    wg_mock_bin
+    wg_state_fixture
+    rm -f "$TMP/calls"
+    export WG_ACTIVE=0
+    run master_wg --if wg0 net kapat
+    [ "$status" -eq 0 ]
+    [ "$output" = $'wg0\t0' ]
+    awk '/systemctl disable --now wg-quick@wg0.service/ {d = NR} /systemctl restart master-firewall.service/ {f = NR}
+         END { exit !(d && f && d < f) }' "$TMP/calls"
+    # A firewall that cannot be applied after a close says so; the network stays closed.
+    export SYSTEMCTL_FAIL="restart master-firewall.service"
+    run master_wg --if wg0 net kapat
+    [ "$status" -ne 0 ]
+    case "$output" in *"wg0 kapatıldı ama güvenlik duvarı yeniden uygulanamadı"*) ;; *) false ;; esac
+    # Opening a closed network: it is enabled (the firewall admits only enabled networks), the firewall is applied,
+    # then the interface starts. A firewall that cannot be applied undoes the enable.
+    export WG_ENABLED=0
+    rm -f "$TMP/calls"
+    run master_wg --if wg0 net ac
+    [ "$status" -ne 0 ]
+    case "$output" in *"güvenlik duvarı uygulanamadı; wg0 açılmadı"*) ;; *) false ;; esac
+    grep -q 'systemctl disable --quiet wg-quick@wg0.service' "$TMP/calls"
+    run ! grep -q 'systemctl start wg-quick@wg0.service' "$TMP/calls"
+    unset SYSTEMCTL_FAIL WG_ACTIVE
+    rm -f "$TMP/calls"
+    run master_wg --if wg0 net ac
+    [ "$status" -eq 0 ]
+    [ "$output" = $'wg0\t1' ]
+    awk '/systemctl enable --quiet wg-quick@wg0.service/ {e = NR} /systemctl restart master-firewall.service/ {f = NR}
+         /systemctl start wg-quick@wg0.service/ {s = NR} END { exit !(e && f && s && e < f && f < s) }' "$TMP/calls"
+    # An interface that does not start is closed again, with the firewall.
+    export SYSTEMCTL_FAIL="start wg-quick@wg0"
+    rm -f "$TMP/calls"
+    run master_wg --if wg0 net ac
+    [ "$status" -ne 0 ]
+    case "$output" in *"wg0 açılamadı"*) ;; *) false ;; esac
+    awk '/systemctl disable --now --quiet wg-quick@wg0.service/ {d = NR} /systemctl restart master-firewall.service/ {f = NR}
+         END { exit !(d && f && d < f) }' "$TMP/calls"
+    unset SYSTEMCTL_FAIL WG_ENABLED
+}
+
 @test "the installer's re-run and final check follow WireGuard's own state (DD-229, DD-271)" {
     mkdir -p "$TMP/wg" "$TMP/en" "$TMP/units/wg-quick@.service.d"
     printf 'wg0\t61001\tinet\t10.8.0.1\t10.8.0.0/24\tfd00::1\tfd00::/112\t1.1.1.1\tA\nwg1\t61020\tinet\t10.8.1.1\t10.8.1.0/24\tfd00::1:1\tfd00::1:0/112\t1.1.1.1\tB\n' >"$TMP/wg/networks"
@@ -2177,23 +2348,31 @@ EOF
         WG_NETWORKS_FILE="$T/wg/networks" WG_STOPPED_FILE="$T/wg/.durduruldu"
         WG_MODULES_LOAD_FILE="$T/mod" SBIN_DIR="$T/sbin" UNIT_DIR="$T/units" FILES_PANEL_PORT=61009
         systemctl() {
+            printf "%s\n" "$*" >>"$T/calls"
             case "$1" in
                 is-enabled) [[ -e "$T/en/$3" ]] ;;
-                enable) touch "$T/en/$4" ;;
+                enable) touch "$T/en/${!#}" ;;
+                start) touch "$T/up/${!#}" ;;
             esac
         }
         wg() { echo 1; }
         ip() { echo "5: $5    inet 10.8.0.1/24 scope global $5"; }
         curl() { echo 000; }
         "$@"'
-    # A re-run brings the registered networks up unless WireGuard is stopped.
+    mkdir -p "$TMP/up"
+    # A re-run starts the open networks (their units enabled) unless WireGuard is stopped; it enables none:
+    # a network closed on its own (wg1, its unit disabled) stays closed, as the firewall expects.
+    touch "$TMP/en/wg-quick@wg0.service"
     printf 'wg0\n' >"$TMP/wg/.durduruldu"
     run env T="$TMP" V2_ROOT="$V2_ROOT" bash -c "$harness" _ wireguard_networks_up
-    [ "$status" -eq 0 ] && [ -z "$(ls "$TMP/en")" ]
+    [ "$status" -eq 0 ] && [ -z "$(ls "$TMP/up")" ] && [ ! -e "$TMP/calls" ]
     rm -f "$TMP/wg/.durduruldu"
     run env T="$TMP" V2_ROOT="$V2_ROOT" bash -c "$harness" _ wireguard_networks_up
     [ "$status" -eq 0 ]
-    [ "$(ls "$TMP/en" | tr '\n' ' ')" = 'wg-quick@wg0.service wg-quick@wg1.service ' ]
+    [ "$(ls "$TMP/up")" = 'wg-quick@wg0.service' ]
+    [ "$(ls "$TMP/en")" = 'wg-quick@wg0.service' ]
+    run ! grep -q '^enable' "$TMP/calls"
+    touch "$TMP/en/wg-quick@wg1.service"
     # The final check needs the tool, the module file and the drop-in.
     mkdir -p "$TMP/sbin"; printf '#!/bin/bash\nexit 0\n' >"$TMP/sbin/master-wg"; chmod +x "$TMP/sbin/master-wg"
     run env T="$TMP" V2_ROOT="$V2_ROOT" bash -c "$harness" _ check_wireguard
@@ -2320,11 +2499,13 @@ builtin_harness() {
 @test "stage 6 writes the share's site and name with the base and through Konsol's choices (DD-158, DD-191)" {
     local s6
     s6="$(awk '/^stage_6\(\)/,/^}$/' "$V2_ROOT/install.sh")"
-    # The name: rendered, filtered by Konsol's DNS choices, beside the base names, before dnsmasq's check.
+    # The name: rendered beside the base names, before dnsmasq's check. No managed name is switched off in
+    # Konsol (rebuild phase 6): nothing filters the rendered names.
     grep -qF 'render_template "$V2_ROOT/templates/paylasim-dnsmasq.conf" "$dns_tmp" 0644' <<<"$s6"
     grep -qF 'atomic_write "$DNSMASQ_CONF_DIR/modul-paylasim.conf" 0644 <"$dns_tmp"' <<<"$s6"
-    awk '/templates\/paylasim-dnsmasq.conf/ {r = NR} /filter-dns "\$dns_tmp"/ && r && !f {f = NR} /modul-paylasim.conf/ {w = NR}
-         /dnsmasq --test/ {t = NR} END { exit !(r && f > r && w > f && t > w) }' <<<"$s6"
+    awk '/templates\/paylasim-dnsmasq.conf/ {r = NR} /modul-paylasim.conf/ {w = NR}
+         /dnsmasq --test/ {t = NR} END { exit !(r && w > r && t > w) }' <<<"$s6"
+    run ! grep -qE 'filter-dns|dns-enabled' "$V2_ROOT/install.sh"
     # The site: the filled template is kept as the source Konsol's publication choice reads; Caddy's
     # copy passes that choice, and both come before Caddy's validation.
     grep -qx 'SHARE_CADDY_SOURCE="/usr/local/share/master-stack/paylasim.caddy"' "$V2_ROOT/config/defaults.env"
@@ -2481,10 +2662,8 @@ builtin_harness() {
 
 @test "wg panel marks a peer connected only while data keeps arriving from it" {
     command -v python3 >/dev/null || skip "python3 yok"
-    # DD-137: a 2 s window and a 0.3 s sampler instead of 45 s and 10 s.
-    export PANEL_ACTIVE_WINDOW=2 PANEL_SAMPLE_SECONDS=0.3
-    panel_start
-    unset PANEL_ACTIVE_WINDOW PANEL_SAMPLE_SECONDS
+    # DD-137: a 2 s window and a 0.3 s sampler instead of 45 s and 10 s (the harness sets the constants).
+    panel_start --active-window 2 --sample-seconds 0.3
     echo 1000 >"$TMP/rx"
     echo 5 >"$TMP/hs-age"
     cat >"$TMP/pbin/master-wg.new" <<EOF
@@ -2598,6 +2777,10 @@ EOF
     run ! grep -qE 'konsol_login_summary|ilk giriş kodu|master_auth.py" --state "\$STATE_FILE" kod' "$V2_ROOT/install.sh"
     grep -qF "Tailscale'den parolasız" "$V2_ROOT/install.sh"
     grep -qF 'önce Sistem → Hesap' "$V2_ROOT/install.sh"
+    # The confirmation screen asks for no account either: the tailnet signs in no one, only the internet name needs it.
+    s0="$(awk '/^stage_0\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    run ! grep -q 'kullanıcı adı ve parola' <<<"$s0"
+    grep -qF "Konsol:        Tailscale'den girişsiz; isteğe bağlı internet adı (HTTPS) yalnız Sistem → Hesap'ta açılan hesapla" <<<"$s0"
     run ! grep -qE '"kod"|sub.add_parser\("kod"' "$auth"
     [ -x "$V2_ROOT/scripts/master-konsol" ]
 }
@@ -2670,7 +2853,7 @@ EOF
     # Stage 1 installs the tools with the base; state.env carries every WireGuard key for the
     # server's scripts, which read nothing else (no package folder, no wireguard.env).
     awk '/^stage_1\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx '        wireguard-tools qrencode'
-    for k in WG_PORT_DEFAULT WG_ADDR_BASE4 WG_ADDR_BASE6 WG_MTU WG_CLIENT_KEEPALIVE_DEFAULT WG_CONF_DIR \
+    for k in WG_PORT_DEFAULT WG_PORT_NEXT WG_ADDR_BASE4 WG_ADDR_BASE6 WG_MTU WG_CLIENT_KEEPALIVE_DEFAULT WG_CONF_DIR \
         WG_CLIENTS_DIR WG_NETWORKS_FILE WG_STOPPED_FILE WG_NETWORKS_MAX WG_MODULES_LOAD_FILE; do
         grep -q "^$k=" "$V2_ROOT/config/defaults.env"
         awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx "$k=\$$k"
@@ -2683,7 +2866,7 @@ EOF
     # Stage 7 checks it; the confirmation screen and the summary name it as a built-in.
     s7="$(awk '/^stage_7\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -qx '    check_wireguard' <<<"$s7"
-    grep -qF 'WireGuard (ağları Konsol → Erişim → WireGuard kurar)' <<<"$(awk '/^stage_0\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -qF 'WireGuard (kapalı; ilk ağı Konsol → Erişim → WireGuard → Aç kurar)' <<<"$(awk '/^stage_0\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -qF '  WireGuard: $(summary_wireguard)' "$V2_ROOT/install.sh"
     # Caddy no longer dumps state.env into the journal.
     awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" | grep -qxF 'ExecStart=/usr/bin/caddy run --config $CADDYFILE --adapter caddyfile'
@@ -2758,7 +2941,7 @@ EOF
     # Without a password the gates are the protection: stage 7 proves both on both backends.
     grep -q 'X-Konsol başlığı olmadan HTTP' <<<"$s7"
     grep -q 'yabancı Host ile HTTP' <<<"$s7"
-    # DD-159/171: the built-in Files gate is mandatory, never optional.
+    # DD-159: the built-in Files gate is mandatory, never optional.
     grep -qF 'for gate in "http://127.0.0.1:${FILES_PANEL_PORT}|/api/state" "unix:${PANEL_SOCKET}|/api/konsol/kaynaklar"; do' <<<"$s7"
     run ! grep -q 'files_on' <<<"$s7"
     # DD-180: the socket modes, a real attempt as the downloads account, no TCP admin port, a reload.
@@ -2822,7 +3005,7 @@ fpost() {
     command -v python3 >/dev/null || skip "python3 yok"
     files_panel_start
     local bare=(-s -o /dev/null -w '%{http_code}')
-    # DD-147: no password or login prompt. DD-148: the pages are Caddy's, not this backend's.
+    # DD-147: no password or login prompt. DD-267: the pages are Caddy's, not this backend's.
     [ "$(fp /)" = 404 ]
     run ! grep -qi '^WWW-Authenticate' "$TMP/head"
     [ "$(fp /api/state)" = 200 ]
@@ -3042,7 +3225,7 @@ PY
 }
 
 @test "the base install has no Compose project, no Dozzle and no service account in the input file" {
-    # DD-151, DD-152: the installer brings Konsol, Tailscale, names and the firewall; no Docker.
+    # DD-152: the installer brings Konsol, Tailscale, names and the firewall; no Docker.
     run ! grep -q '^INPUT_KEYS=' "$V2_ROOT/install.sh"
     [ "$(grep -E '^[A-Z_]+=' "$V2_ROOT/config/kurulum.env.example" | cut -d= -f1 | tr '\n' ' ')" = 'SSH_HOST ' ]
     [ ! -e "$V2_ROOT/templates/compose.yaml" ]
@@ -3311,7 +3494,10 @@ EOF
 #!/bin/bash
 printf 'systemctl %s\n' "$*" >>"$MOCK_LOG"
 case "$*" in *"${SYSTEMCTL_FAIL:-@none@}"*) exit 1 ;; esac
-[ "$1" != is-active ] || [ "${WG_ACTIVE:-1}" = 1 ]
+case "$1" in
+    is-active) [ "${WG_ACTIVE:-1}" = 1 ] ;;
+    is-enabled) [ "${WG_ENABLED:-1}" = 1 ] ;;
+esac
 EOF
     printf '#!/bin/bash\nexit 0\n' >"$TMP/bin/flock"
     printf '#!/bin/bash\nprintf "QR:"; cat\n' >"$TMP/bin/qrencode"
@@ -3601,7 +3787,7 @@ wg_revision() {
     [ ! -s "$TMP/calls" ]
 }
 
-@test "master-wg net-add creates the next network, opens the firewall before the interface and undoes a failed step" {
+@test "master-wg net-add creates the next network, enables it, opens the firewall before the interface and undoes a failed step" {
     wg_mock_bin
     wg_state_fixture
     local wgd="$TMP/etc/wireguard" before args a b c d
@@ -3617,9 +3803,10 @@ wg_revision() {
     [ -d "$wgd/clients-wg1" ]
     [ "$(sed -n 2p "$wgd/networks")" = $'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t1.1.1.1, 1.0.0.1\tİş ağı' ]
     [ ! -e "$wgd/caddy-wg-wg1.env" ]
-    # Firewall first, then the interface. No companion listener is created.
-    awk '/systemctl restart master-firewall.service/ {f = NR} /systemctl enable --now wg-quick@wg1.service/ {w = NR}
-         END { exit !(f && w && f < w) }' "$TMP/calls"
+    # The unit enabled (the firewall admits only an enabled network), the firewall, then the interface.
+    # No companion listener is created.
+    awk '/systemctl enable --quiet wg-quick@wg1.service/ {e = NR} /systemctl restart master-firewall.service/ {f = NR}
+         /systemctl start wg-quick@wg1.service/ {w = NR} END { exit !(e && f && w && e < f && f < w) }' "$TMP/calls"
     run ! grep -q caddy-wg "$TMP/calls"
     # An internet-only network takes the next number, with no Caddy.
     rm -f "$TMP/calls"
@@ -3651,7 +3838,7 @@ wg_revision() {
     run master_wg net-add 61099 1.1.1.1 x
     case "$output" in *"başka bir program"*) ;; *) false ;; esac
     # A failing step removes every trace of the new network and puts the firewall back.
-    export SYSTEMCTL_FAIL="enable --now wg-quick@wg3"
+    export SYSTEMCTL_FAIL="start wg-quick@wg3"
     run master_wg net-add 61031 1.1.1.1 Test
     unset SYSTEMCTL_FAIL
     [ "$status" -ne 0 ]
@@ -3983,7 +4170,7 @@ wg_revision() {
 
 @test "firewall builds rules for every WireGuard network and keeps the networks apart" {
     local fw="$V2_ROOT/scripts/firewall.sh" f
-    # DD-198/271: the rules come from WireGuard's own registry, read by the firewall itself.
+    # DD-272: the rules come from WireGuard's own registry, read by the firewall itself.
     for f in load_wireguard_rules container_dns_iface apply_input4 apply_input6 apply_forward apply_nat wan_allow_pairs; do
         eval "$(awk "/^$f\\(\\)/,/^}\$/" "$fw")"
     done
@@ -4000,6 +4187,9 @@ wg_revision() {
     ip6tables() { shift 2; printf '%s\n' "$*" >>"$TMP/in6"; }
     iptables_nat() { shift 2; printf '%s\n' "$*" >>"$TMP/nat4"; }
     ip6tables_nat() { shift 2; printf '%s\n' "$*" >>"$TMP/nat6"; }
+    # A network is open while its wg-quick unit is enabled; a marker here closes it.
+    mkdir -p "$TMP/kapali"
+    systemctl() { [ "$1" = is-enabled ] && [ ! -e "$TMP/kapali/$3" ]; }
     WAN_INTERFACE=eth0 TAILSCALE_IF=tailscale0 TAILSCALE_UDP_PORT=41641 SSH_PUBLIC_PORT=22
     CHAIN_STAGING_PREFIX=MASTER-NEXT- KONTEYNER_BRIDGE_PREFIX=ksl
     eval "$(grep '^VPN_BLOCK_DEST[46]=' "$V2_ROOT/config/defaults.env")"
@@ -4056,6 +4246,23 @@ wg_revision() {
     # NAT: every subnet masqueraded on the WAN.
     [ "$(cat "$TMP/nat4")" = "$(printf -- '-A NAT- -s %s -o eth0 -j MASQUERADE\n' 10.8.0.0/24 10.8.1.0/24 10.8.2.0/24)" ]
     grep -qx -- '-A NAT6- -s fdcc:ad94:bacf:61a4::2:0/112 -o eth0 -j MASQUERADE' "$TMP/nat6"
+    # A network closed on its own (its unit disabled) keeps its registry line but gets no port, forwarding or NAT.
+    touch "$TMP/kapali/wg-quick@wg1.service"
+    load_wireguard_rules
+    [ "${VPN_IFACES[*]}" = "wg0 wg2" ] && [ "${VPN_PORTS[*]}" = "61001 61021" ]
+    [ "${VPN_NET4[*]}" = "10.8.0.0/24 10.8.2.0/24" ]
+    rm -f "$TMP/in4" "$TMP/in6" "$TMP/nat4"
+    apply_input4
+    apply_forward iptables FW-
+    apply_nat iptables_nat NAT- "${VPN_NET4[@]}"
+    run ! grep -qE -- '--dport 61011|-[io] wg1 ' "$TMP/in4"
+    run ! grep -q '10.8.1.0/24' "$TMP/nat4"
+    [ "$(wan_allow_pairs v4 | grep -c '^udp 610[0-2]1$')" -eq 2 ]
+    # Every line is still validated and checked for duplicates, closed or not.
+    touch "$TMP/kapali/wg-quick@wg0.service" "$TMP/kapali/wg-quick@wg2.service"
+    load_wireguard_rules
+    [ "${#VPN_IFACES[@]}" -eq 0 ]
+    rm -f "$TMP/kapali"/*
     # A broken or clashing registry stops before any chain is touched.
     rm -f "$TMP/in4"
     printf 'wg3\t61031\tall\t10.8.3.1\t10.8.3.0/24\tfdcc::3:1\tfdcc::3:0/112\t1.1.1.1\t\n' >>"$WG_NETWORKS_FILE"
@@ -4064,6 +4271,7 @@ wg_revision() {
     case "$output" in *"ağ kaydı bozuk"*"hiçbir kural değiştirilmedi"*) ;; *) false ;; esac
     printf 'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t9.9.9.9\t\n' >"$WG_NETWORKS_FILE"
     printf 'wg2\t61011\tinet\t10.8.2.1\t10.8.2.0/24\tfdcc:ad94:bacf:61a4::2:1\tfdcc:ad94:bacf:61a4::2:0/112\t9.9.9.9\t\n' >>"$WG_NETWORKS_FILE"
+    touch "$TMP/kapali/wg-quick@wg2.service"
     run load_wireguard_rules
     [ "$status" -ne 0 ]
     case "$output" in *"tekrar eden"*) ;; *) false ;; esac
@@ -4072,7 +4280,7 @@ wg_revision() {
     WG_NETWORKS_FILE="$TMP/none"
     load_wireguard_rules
     [ "${#VPN_IFACES[@]}" -eq 0 ]
-    # No wg-quick PostUp rules: the firewall script owns netfilter (DD-16/DD-17).
+    # No wg-quick PostUp rules: the firewall script owns netfilter (DD-17).
     run ! grep -q 'PostUp' <<<"$(grep -vE '^[[:space:]]*#' "$V2_ROOT/install.sh")"
     run ! grep -q 'WG_PUBLIC_PORT' <<<"$(awk '/^docker_return_pairs\(\)/,/^}$/' "$fw")"
 }
@@ -4227,7 +4435,7 @@ PY
     WG_NETWORKS_FILE="$TMP/networks" WG_STOPPED_FILE="$TMP/.durduruldu"
     wg() { printf 'peer-a\npeer-b\n'; }
     run summary_wireguard
-    [ "$output" = 'ağ yok; ilk ağ Konsol → Erişim → WireGuard' ]
+    [ "$output" = 'ağ yok; ilk ağı Konsol → Erişim → WireGuard → Aç kurar' ]
     printf 'wg0\t61001\tinet\t10.8.0.1\t10.8.0.0/24\tfd00::1\tfd00::/112\t1.1.1.1\tA\n' >"$WG_NETWORKS_FILE"
     run summary_wireguard
     [ "$output" = '1 ağ, 2 peer' ]
@@ -4241,6 +4449,13 @@ PY
     grep -qx '  Paylaşım: Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni' <<<"$body"
     grep -qx '  WireGuard: $(summary_wireguard)' <<<"$body"
     run ! grep -qE 'summary_modules|summary_notes|App Store|paket_' <<<"$body"
+    # Konsol's six sections and today's places (rebuild phase 5): Uygulama ekle, the access rows in Erişim → Adresler,
+    # the local domain in Erişim → Yerel adlar.
+    grep -qF '(Genel Bakış, Uygulamalar, Erişim, Dosyalar, Sistem, Gelişmiş; ' <<<"$body"
+    grep -qF 'Uygulamalar → Uygulama ekle' <<<"$body"
+    grep -qF 'Erişim → Adresler → Konsol → İnternet adı' <<<"$body"
+    grep -qF '(değiştirmek için Konsol → Erişim → Yerel adlar)' "$V2_ROOT/install.sh"
+    run ! grep -qE 'Peer ve QR|günlük Sistem|Erişim → Adresler\)' "$V2_ROOT/install.sh"
 }
 
 settings_fixture() {
@@ -4309,14 +4524,15 @@ EOF
 
 # DD-267: the old Settings page's GET /api/konsol/ayarlar is gone; the view it returned still feeds
 # Gelişmiş, Erişim and the firewall page, so a test reads it from the backend in-process (same state
-# and fake tools as the running panel).
+# and fake tools as the running panel: the fake tools' folder first on the tools' PATH).
 settings_view() {
     PYTHONDONTWRITEBYTECODE=1 python3 - "$V2_ROOT/panel/master-panel" "$TMP" <<'PY'
 import importlib.machinery, importlib.util, json, sys, types
 loader = importlib.machinery.SourceFileLoader("master_panel", sys.argv[1])
 module = importlib.util.module_from_spec(importlib.util.spec_from_loader("master_panel", loader))
 loader.exec_module(module)
-p = module.Panel(types.SimpleNamespace(state=sys.argv[2] + "/state.env", state_env=True, allow_host=[]))
+module.TOOL_PATH = sys.argv[2] + "/pbin:" + module.TOOL_PATH
+p = module.Panel(types.SimpleNamespace(state=sys.argv[2] + "/state.env"))
 print(json.dumps(p.settings(fresh=True), ensure_ascii=False))
 PY
 }
@@ -4364,7 +4580,7 @@ assert set(names) == {"panel.ayc", "paylas.ayc"}, names
 assert names["panel.ayc"]["source"] == "base" and names["paylas.ayc"]["source"] == "paylasim"
 assert all(n["address"] == "100.64.0.7" for n in names.values())
 assert d["dns"]["listen"] == ["lo", "tailscale0"] and d["dns"]["domains"] == ["ayc"] and d["dns"]["dhcp"] is False
-# DD-202: the base view knows no application.
+# DD-271: the base view knows no application.
 assert "torrent" not in d, sorted(d)
 PY
     # Read-only: the page's GET never starts a job.
@@ -4438,10 +4654,10 @@ PY
     [ "$(pc /api/konsol/ayarlar/uygula -H 'Content-Type: application/json' --data '{}')" = 403 ]
     [ "$(pc /api/konsol/ayarlar/uygula "${headers[@]}" -H 'Sec-Fetch-Site: cross-site' --data '{}')" = 403 ]
     [ ! -e "$TMP/sdrun-calls" ]
-    [ "$(pc /api/konsol/ayarlar/uygula "${headers[@]}" --data '{"revision":"sample","dns":{"disabled":["health.ayc"],"records":[],"forward":false,"servers":[]}}')" = 200 ]
+    [ "$(pc /api/konsol/ayarlar/uygula "${headers[@]}" --data '{"revision":"sample","dns":{"records":[{"name":"nas.ayc","target":"tailscale","enabled":true}],"forward":false,"servers":[]}}')" = 200 ]
     grep -q -- '--wait --pipe --collect' "$TMP/sdrun-calls"
     grep -q 'master_settings.py --state .* apply$' "$TMP/sdrun-calls"
-    grep -q 'health.ayc' "$TMP/worker-body"
+    grep -q 'nas.ayc' "$TMP/worker-body"
     [ "$(pc /api/konsol/ayarlar/onayla "${headers[@]}" --data '{"id":"sample","client":"100.64.0.9","host":"panel.forged"}')" = 200 ]
     # DD-180: without Caddy's X-Forwarded-For the client is the server itself, never a body value.
     python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["client"] == "yerel"' "$TMP/worker-body"
@@ -4686,4 +4902,56 @@ PY
     grep -qF 'run_tool("master-onar", "--denetle")' "$mod"
     grep -qF 'run_tool("master-konsol", args.eylem)' "$mod"
     python3 -I "$mod" --help >/dev/null
+}
+
+@test "the shipped tree has no switch, variable or hidden option that only tests use (rebuild phase 6)" {
+    # Tests reach these values through tests/panel-harness.py, module constants and fake tools on PATH.
+    run ! grep -rqE --exclude-dir=__pycache__ -- \
+        '--state-env|state_env|--allow-host|allow_host|PANEL_ACTIVE_WINDOW|PANEL_SAMPLE_SECONDS|KUR_BETIK_URL|TAILNET_ADDR_WAIT_SECONDS|\$\{(FIREWALL_BIN|V2_OS_RELEASE_PATH):-' \
+        "$V2_ROOT/panel" "$V2_ROOT/files-panel" "$V2_ROOT/scripts" "$V2_ROOT/systemd" "$V2_ROOT/templates" \
+        "$V2_ROOT/install.sh" "$V2_ROOT/common.sh"
+    # The only environment value the Python programs read is STATE_FILE (the units and the installer set it).
+    [ -z "$(grep -hoE 'os\.(environ\.get|getenv)\("[A-Z_]+"' "$V2_ROOT"/panel/*.py "$V2_ROOT/panel/master-panel" \
+        "$V2_ROOT/files-panel/master-files-panel" | grep -v '"STATE_FILE"')" ]
+    # No hidden option: every option is in its program's --help. Konsol's repair run passes master-onar
+    # --kaynak konsol, and master-onar's help names it.
+    run ! grep -rqF --exclude-dir=__pycache__ 'argparse.SUPPRESS' "$V2_ROOT/panel" "$V2_ROOT/files-panel" "$V2_ROOT/scripts"
+    grep -qF 'tool, "--kaynak", "konsol"]' "$V2_ROOT/panel/master-panel"
+    PYTHONDONTWRITEBYTECODE=1 python3 "$V2_ROOT/panel/master_onar.py" --help | grep -qF -- '[--kaynak {konsol,terminal}]'
+    # kur.sh installs into its fixed folder (tests run a copy with another one).
+    run ! grep -q 'KUR_ROOT' "$V2_ROOT/../kur.sh"
+    # master-guncelle downloads the confirmed commit's kur.sh over HTTPS only.
+    grep -qF "curl -fsSL --proto '=https' " "$V2_ROOT/scripts/master-guncelle"
+}
+
+@test "secret-holding paths stay private and Caddy never prints its environment (rebuild §7.4)" {
+    local code
+    code="$(grep -vE '^[[:space:]]*#' "$V2_ROOT/install.sh")"
+    # The state and the input file, WireGuard's keys and profiles, the Konsol account, the applications' records.
+    grep -qF 'atomic_write "$STATE_FILE" 0600' <<<"$code"
+    grep -qF 'atomic_write "$CONFIG_FILE" 0600' <<<"$code"
+    grep -qF 'install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"' <<<"$code"
+    grep -qF 'install -d -m 0700 -o root -g root -- "$KONSOL_AUTH_DIR"' <<<"$code"
+    grep -qF 'install -d -m 0700 "$KONTEYNER_STATE_DIR" "$UYGULAMA_STATE_DIR" "$UYGULAMA_VERI_DIR"' <<<"$code"
+    grep -qx 'umask 077' "$V2_ROOT/scripts/master-wg"
+    # Debian's caddy.service runs Caddy with --environ, which prints the whole state.env into the journal;
+    # the drop-in clears that ExecStart and starts Caddy without it.
+    grep -qx 'ExecStart=' <<<"$code"
+    grep -qx 'ExecStart=/usr/bin/caddy run --config $CADDYFILE --adapter caddyfile' <<<"$code"
+    run ! grep -qF -- '--environ' <<<"$code"
+}
+
+@test "every listener in the units and templates is a port, socket or address that defaults.env declares (rebuild §7.4)" {
+    local key
+    # No port number is written into a unit or a template: listening addresses come from placeholders only.
+    run ! grep -nE -- '--port[= ][0-9]|([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|localhost|\]):[0-9]+|^[[:space:]]*(http_port|https_port|port=|ListenPort *=)[[:space:]]*[0-9]' \
+        "$V2_ROOT"/templates/* "$V2_ROOT"/systemd/*
+    for key in $(grep -ohE '__[A-Z0-9_]*(PORT|SOCKET|BACKEND)__' "$V2_ROOT"/templates/* "$V2_ROOT"/systemd/* | sed 's/^__//; s/__$//' | sort -u); do
+        grep -qE "^${key}=\"?[^\"]+\"?$" "$V2_ROOT/config/defaults.env" || { echo "undeclared listener key: $key"; false; }
+    done
+    # The two backends' listeners are exactly these (the root backend on its socket only, DD-180).
+    grep -qF -- '--listen unix:__PANEL_SOCKET__ ' "$V2_ROOT/systemd/master-panel.service"
+    grep -qF -- '--listen 127.0.0.1:__FILES_PANEL_PORT__ ' "$V2_ROOT/systemd/master-files-panel.service"
+    grep -qF -- '--listen unix:__SYSTEM_FILES_SOCKET__ ' "$V2_ROOT/systemd/master-sistem-dosya.service"
+    grep -qF -- '--port=__SHARE_PORT__ --wan-listen=__SHARE_WAN_BACKEND__' "$V2_ROOT/systemd/master-paylasim.service"
 }

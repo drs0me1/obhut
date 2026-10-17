@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-259"
+V2_VERSION="2026.08.06-v2-261"
 # DD-260: insanların gördüğü sürüm (anlamlı sürümleme; yalnız bir yayında değişir, vX.Y.Z etiketlenir).
 # V2_VERSION yapı numarasıdır: Konsol güncelleme önerirken sunucular onu karşılaştırır.
 OBHUT_SURUM="1.1.0"
@@ -110,6 +110,7 @@ CADDY_MODULES_DIR=$CADDY_MODULES_DIR
 VPN_BLOCK_DEST4="$VPN_BLOCK_DEST4"
 VPN_BLOCK_DEST6="$VPN_BLOCK_DEST6"
 WG_PORT_DEFAULT=$WG_PORT_DEFAULT
+WG_PORT_NEXT=$WG_PORT_NEXT
 WG_ADDR_BASE4=$WG_ADDR_BASE4
 WG_ADDR_BASE6=$WG_ADDR_BASE6
 WG_MTU=$WG_MTU
@@ -348,7 +349,7 @@ check_nft_iptables() {
     log INFO "iptables henüz kurulu değil (Debian minimal); nft arka uç denetimi aşama 1'e ertelendi"
 }
 
-# DD-208: Podman tabanın parçasıdır (Konsol konteynerlerinin çalışma ortamı). Daemon yok: Debian'ın
+# DD-208: Podman tabanın parçasıdır (uygulama konteynerlerinin çalışma ortamı). Daemon yok: Debian'ın
 # podman.socket, podman.service ve podman-auto-update.timer birimleri kapalı gelir, kurulum açmaz.
 # Aşama 1 kurar ve burada zorunlu denetler; aşama 7 yeniden denetler.
 check_podman() {
@@ -421,7 +422,7 @@ stage_0() {
 
     # DD-228: alan adının varsayılanı yoktur. Sıra: Konsol'da onaylanmış ad (DD-157), önceki
     # kurulumun adı (config.env); ikisi de yoksa (ilk kurulum) sorulur. Sonradan Konsol → Erişim →
-    # Adresler'den değişir. İlk kurulumda ayar dosyası yoktur; henüz Python gerekmez.
+    # Yerel adlar'dan değişir. İlk kurulumda ayar dosyası yoktur; henüz Python gerekmez.
     local saved_domain="" domain_re='^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
     if [[ -f "$SETTINGS_FILE" ]]; then
         saved_domain="$(python3 "$V2_ROOT/panel/master_settings.py" saved-domain "$SETTINGS_FILE")" ||
@@ -431,7 +432,7 @@ stage_0() {
         LOCAL_DOMAIN="$saved_domain"
         log INFO "alan adı Konsol'daki kayıttan: $LOCAL_DOMAIN"
     elif [[ -n "$LOCAL_DOMAIN" ]]; then
-        log INFO "alan adı önceki kurulumdan: $LOCAL_DOMAIN (değiştirmek için Konsol → Erişim → Adresler)"
+        log INFO "alan adı önceki kurulumdan: $LOCAL_DOMAIN (değiştirmek için Konsol → Erişim → Yerel adlar)"
     elif [[ "$UPDATE_MODE" == 1 ]]; then
         die "Konsol'dan güncelleme ilk kurulumu yapmaz (alan adı kaydı yok); kurulumu terminalden çalıştırın"
     else
@@ -472,8 +473,8 @@ stage_0() {
 Kurulum girdileri:
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
-  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları, WireGuard (ağları Konsol → Erişim → WireGuard kurar) ve Podman (konteyner ortamı)
-  Konsol:        kullanıcı adı ve parolayla; Tailscale'den, isteğe bağlı internet HTTPS (DD-194, DD-195)
+  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları, WireGuard (kapalı; ilk ağı Konsol → Erişim → WireGuard → Aç kurar) ve Podman (konteyner ortamı)
+  Konsol:        Tailscale'den girişsiz; isteğe bağlı internet adı (HTTPS) yalnız Sistem → Hesap'ta açılan hesapla (DD-205, DD-195)
   Tailscale:     $ts_note
   full-upgrade:  evet
 
@@ -669,8 +670,8 @@ net.ipv6.conf.all.forwarding = 1
 EOF
     sysctl -p "$SYSCTL_FORWARD_FILE" >/dev/null || true
     install -m 0755 "$V2_ROOT/scripts/tailscale-udp-gro" "$SBIN_DIR/tailscale-udp-gro"
-    install -m 0644 "$V2_ROOT/systemd/tailscale-udp-gro.service" \
-        "$UNIT_DIR/tailscale-udp-gro.service"
+    render_template "$V2_ROOT/systemd/tailscale-udp-gro.service" "$UNIT_DIR/tailscale-udp-gro.service" 0644 \
+        SBIN_DIR="$SBIN_DIR"
     systemctl daemon-reload
     systemctl enable --now tailscale-udp-gro.service ||
         log WARN "tailscale-udp-gro başlatılamadı"
@@ -744,14 +745,17 @@ EOF
     install -d -m 0700 -o root -g root -- "$WG_CONF_DIR"
 }
 
-# DD-229: kurulumun yeniden çalışması kayıttaki ağları açar; durdurulmuş WireGuard (WG_STOPPED_FILE)
-# kapalı kalır. Kayıt yoksa (ağ kurulmamış) yapılacak bir şey yoktur.
+# DD-229: kurulumun yeniden çalışması açık ağları başlatır; durdurulmuş WireGuard (WG_STOPPED_FILE)
+# kapalı kalır. Kayıt yoksa (ağ kurulmamış) yapılacak bir şey yoktur. Each network keeps its own state: only a
+# network whose unit is enabled (open) is started; one closed on its own (master-wg net kapat) stays closed,
+# as the firewall, which admits only enabled networks, expects.
 wireguard_networks_up() {
     local iface
     [[ ! -e "$WG_STOPPED_FILE" && -f "$WG_NETWORKS_FILE" ]] || return 0
     while IFS=$'\t' read -r iface _; do
         [[ "$iface" =~ ^wg[0-9]$ ]] || continue
-        systemctl enable --now --quiet "wg-quick@$iface.service" >/dev/null 2>&1 ||
+        systemctl is-enabled --quiet "wg-quick@$iface.service" 2>/dev/null || continue
+        systemctl start --quiet "wg-quick@$iface.service" >/dev/null 2>&1 ||
             log WARN "WireGuard: $iface açılamadı; Konsol → Erişim → WireGuard'dan bakın"
     done <"$WG_NETWORKS_FILE"
 }
@@ -788,7 +792,7 @@ stage_3() {
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
 
     local d
-    # DD-144/171: downloads, media and trash are siblings.
+    # DD-144: downloads, media and trash are siblings.
     for d in \
         "$SERVER_ROOT" \
         "$DOWNLOADS_PATH" \
@@ -852,7 +856,7 @@ stage_4() {
             FIREWALL_NEEDS_RESTART=1
         fi
     done
-    # DD-226: Konsol konteynerinin birimi her açılışta bağlanan klasörlerini bununla sabitler.
+    # DD-226: bir uygulama konteynerinin birimi her açılışta bağlanan klasörlerini bununla sabitler.
     atomic_write "$SBIN_DIR/master_container_binds.py" 0755 <"$V2_ROOT/panel/master_container_binds.py"
     install -d -m 0700 "$KONTEYNER_STATE_DIR" "$UYGULAMA_STATE_DIR" "$UYGULAMA_VERI_DIR"
     atomic_write "$SBIN_DIR/master-konsol" 0755 <"$V2_ROOT/scripts/master-konsol"
@@ -872,11 +876,11 @@ stage_4() {
     atomic_write "$SBIN_DIR/wait-tailnet-addr" 0755 \
         <"$V2_ROOT/scripts/wait-tailnet-addr"
 
-    atomic_write "$UNIT_DIR/master-firewall.service" 0644 \
-        <"$V2_ROOT/systemd/master-firewall.service"
+    render_template "$V2_ROOT/systemd/master-firewall.service" "$UNIT_DIR/master-firewall.service" 0644 \
+        SBIN_DIR="$SBIN_DIR" STATE_FILE="$STATE_FILE"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && FIREWALL_NEEDS_RESTART=1
-    atomic_write "$UNIT_DIR/refresh-tailnet-config.service" 0644 \
-        <"$V2_ROOT/systemd/refresh-tailnet-config.service"
+    render_template "$V2_ROOT/systemd/refresh-tailnet-config.service" "$UNIT_DIR/refresh-tailnet-config.service" 0644 \
+        SBIN_DIR="$SBIN_DIR" STATE_FILE="$STATE_FILE"
     atomic_write "$UNIT_DIR/refresh-tailnet-config.timer" 0644 \
         <"$V2_ROOT/systemd/refresh-tailnet-config.timer"
     render_template "$V2_ROOT/systemd/master-duvar-denetim.service" "$UNIT_DIR/master-duvar-denetim.service" 0644 \
@@ -994,18 +998,16 @@ EOF
     render_template "$V2_ROOT/templates/dnsmasq.conf" "$dns_tmp" 0644 \
         TAILSCALE_IF="$TAILSCALE_IF" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN"
-    python3 "$SBIN_DIR/master_settings.py" filter-dns "$dns_tmp"
     atomic_write "$DNSMASQ_CONF_FILE" 0644 <"$dns_tmp"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && dnsmasq_changed=1
-    # DD-158/159: Paylaşım'ın adı (paylas.<alan>); Konsol'un DNS seçimi taban adlarınki gibi uygulanır.
+    # DD-158/159: Paylaşım'ın adı (paylas.<alan>); Paylaşımlar satırına aittir, Yerel adlar'da kapatılmaz.
     render_template "$V2_ROOT/templates/paylasim-dnsmasq.conf" "$dns_tmp" 0644 \
         TAILSCALE_IF="$TAILSCALE_IF" \
         LOCAL_DOMAIN="$LOCAL_DOMAIN"
-    python3 "$SBIN_DIR/master_settings.py" filter-dns "$dns_tmp"
     atomic_write "$DNSMASQ_CONF_DIR/modul-paylasim.conf" 0644 <"$dns_tmp"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]] && dnsmasq_changed=1
     rm -f -- "$dns_tmp"
-    # DD-156: rendered defaults consume confirmed operator choices on every re-run.
+    # DD-156: the operator's confirmed records and forwarding (SETTINGS_FILE) are projected on every run.
     python3 "$SBIN_DIR/master_settings.py" project-dns
     # OS/paket sürümü değişince kaybolan bir direktif, aksi hâlde ilk belirtisini
     # "systemctl restart dnsmasq başarısız" olarak verirdi. --test satır numarası
@@ -1127,7 +1129,7 @@ StartLimitBurst=3
 RuntimeDirectory=${caddy_runtime#/run/}
 RuntimeDirectoryMode=0700
 EnvironmentFile=$STATE_FILE
-# DD-196: paket birimi --environ ile tüm ortamı (state.env) günlüğe döker; burada dökülmez.
+# Debian paketinin caddy.service birimi --environ ile tüm ortamı (state.env) günlüğe döker; burada dökülmez.
 ExecStart=
 ExecStart=/usr/bin/caddy run --config $CADDYFILE --adapter caddyfile
 ExecStartPre=+$SBIN_DIR/master-firewall --check
@@ -1371,7 +1373,6 @@ verify_builtins() {
         a="$(http_code -H "Host: paylas.$LOCAL_DOMAIN" "http://$TAILSCALE_IPV4/")"
         b="$(http_code "http://$TAILSCALE_IPV4:$SHARE_PORT/")"
         ans="$(dig +short +time=2 +tries=1 "paylas.$LOCAL_DOMAIN" @"$TAILSCALE_IPV4" 2>/dev/null | head -n1 || true)"
-        python3 "$SBIN_DIR/master_settings.py" dns-enabled "paylas.$LOCAL_DOMAIN" || ans="$TAILSCALE_IPV4"
         [[ "$a" == "$expected" && "$b" == "$expected" && "$ans" == "$TAILSCALE_IPV4" ]] && return 0
         sleep 1
     done
@@ -1428,10 +1429,6 @@ stage_7() {
     local name resolver ans dig_out code line
     # shellcheck disable=SC2086
     for name in $SERVICE_NAMES; do
-        if ! python3 "$SBIN_DIR/master_settings.py" dns-enabled "${name}.${LOCAL_DOMAIN}"; then
-            log INFO "DNS: ${name}.${LOCAL_DOMAIN} Konsol tercihiyle kapalı"
-            continue
-        fi
         for resolver in 127.0.0.1 "$TAILSCALE_IPV4"; do
             ans="$(
                 dig +short +time=2 +tries=1 "${name}.${LOCAL_DOMAIN}" @"$resolver" |
@@ -1504,7 +1501,7 @@ stage_7() {
             -H "Host: baska.ornek" "${gate_url}${gate_path}" || true)"
         [[ "$code" == "403" ]] || die "Konsol ${gate_path}: yabancı Host ile HTTP $code (beklenen 403)"
     done
-    # DD-180: indirme hesabıyla çalışan bir program (ör. bir paketin servisi) root arka uca ve
+    # DD-180: indirme hesabıyla çalışan bir program (ör. WebDAV ya da dosya arka ucu) root arka uca ve
     # Caddy'nin yönetim arayüzüne ulaşamamalı. Soketin izni ve gerçek bir deneme sınanır.
     [[ "$(stat -c '%U:%G:%a' "$PANEL_SOCKET" 2>/dev/null)" == "root:${CADDY_GROUP}:660" ]] ||
         die "Konsol arka ucu soketi root:${CADDY_GROUP} 0660 değil: $PANEL_SOCKET"
@@ -1583,7 +1580,7 @@ summary_wireguard() {
     if [[ -e "$WG_STOPPED_FILE" ]]; then
         printf 'durduruldu (%s ağ)' "$nets"
     elif [[ "$nets" -eq 0 ]]; then
-        printf 'ağ yok; ilk ağ Konsol → Erişim → WireGuard'
+        printf 'ağ yok; ilk ağı Konsol → Erişim → WireGuard → Aç kurar'
     else
         printf '%s ağ, %s peer' "$nets" "$peers"
     fi
@@ -1605,17 +1602,18 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-Konsol: http://panel.${LOCAL_DOMAIN} (Genel Bakış, Uygulamalar, Erişim, Dosyalar, Sistem; Tailscale'den parolasız)
+Konsol: http://panel.${LOCAL_DOMAIN} (Genel Bakış, Uygulamalar, Erişim, Dosyalar, Sistem, Gelişmiş; Tailscale'den parolasız)
   İnternetten HTTPS isteğe bağlı: önce Sistem → Hesap (kullanıcı adı + parola),
-  sonra Erişim → Adresler → Konsol (DNS A kaydı gerekir).
-  Sağlık, güncelleme ve günlük Sistem'de; uygulamalar Uygulamalar'da.
+  sonra Erişim → Adresler → Konsol → İnternet adı (DNS A kaydı gerekir).
+  Uygulama eklemek: Uygulamalar → Uygulama ekle; adresleri Erişim → Adresler'de.
+  Sağlık, güncellemeler ve işlem geçmişi Sistem'de.
 Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Gelişmiş → Podman)
 Yerleşikler:
   Dosyalar: $SERVER_ROOT
   Paylaşım: Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni
   WireGuard: $(summary_wireguard)
   WireGuard cihazları yalnız internete çıkar; sunucu servisleri ve diğer ağlara erişemez.
-  Peer ve QR: Konsol ya da Mac'te wireguard.command.
+  Cihazlar ve QR: Konsol → Erişim → WireGuard ya da Mac'te wireguard.command.
 Tailscale IP: refresh-tailnet-config → Caddy
 EOF
 }

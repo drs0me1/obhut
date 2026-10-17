@@ -1,4 +1,4 @@
-// İşlem geçmişi's words (GET /api/konsol/islemler, DD-196; A7): every line the backends write, in the interface's
+// İşlem geçmişi's words (GET /api/konsol/islemler, DD-276, A7): every line the backends write, in the interface's
 // words. The root backend's own actions (the account, the update, the reboot, repair, the folder shares), the
 // settings transaction's ("ayar-<step>", its detail naming an access row, a WireGuard action or "ayarlar"; the same
 // names the pending banner uses), the applications' ("uygulama-<verb>"), Gelişmiş's cleanup ("temizlik"),

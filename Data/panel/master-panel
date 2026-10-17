@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Konsol'un root arka ucu (DD-133, DD-140, DD-196). Ağ portu açmaz: yalnız bir
+# Konsol'un root arka ucu (DD-133, DD-140). Ağ portu açmaz: yalnız bir
 # Unix soketinde dinler (DD-180); Caddy tailnet'e (http://panel.<alan>) ve isteğe bağlı genel HTTPS
 # adına (DD-195) /api/konsol/* yollarını açar. Statik sayfaları Caddy sunar; burası root çalışır ve
 # sayfa dosyası servis etmez. Hiçbir uygulamayı tanımaz (DD-271): yanıtladığı her yol master_api'nin
@@ -7,7 +7,7 @@
 # Temelin araçları (master-wg, master-guncelle, master-onar, ayar ve paylaşım çalışanları) state.env'deki
 # SBIN_DIR'dedir. Yalnız Python standart kütüphanesi.
 #
-#   master-panel serve --listen unix:SOKET [--socket-group GRUP] --state FILE [--allow-host HOST]
+#   master-panel serve --listen unix:SOKET [--socket-group GRUP] --state FILE
 #   master-panel check --url URL --host HOST [--socket SOKET]   /api/konsol/kaynaklar denetimi
 #
 # DD-180: sunucudaki başka bir hesap (ör. indirme hesabıyla çalışan bir servis) yerel
@@ -64,7 +64,9 @@ import master_publications
 import master_update
 import master_wireguard
 
-SAMPLE_SECONDS = float(os.environ.get("PANEL_SAMPLE_SECONDS", "10"))
+SAMPLE_SECONDS = 10.0
+# The base's tools run with this PATH and LC_ALL only, nothing else from this backend's environment.
+TOOL_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 MAX_BODY = 65536
 # A request body must arrive within this time in all, not only between two packets: a body sent a
 # byte at a time would otherwise hold one of the public site's upstream connections for good.
@@ -470,12 +472,7 @@ class Panel:
         return proc.returncode, out, message
 
     def env(self):
-        env = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C.UTF-8"}
-        if self.args.state_env:
-            env["STATE_FILE"] = self.args.state
-            # Test: sahte systemd-run/systemctl temelin araçlarıyla aynı dizinde (SBIN_DIR) durur.
-            env["PATH"] = self.sbin() + ":" + env["PATH"]
-        return env
+        return {"PATH": TOOL_PATH, "LC_ALL": "C.UTF-8"}
 
     def unit_active(self, unit):
         """`is-active` bitmiş (toplanmış) geçici birimi yüklemeye çalışır ve her sorguda systemd günlüğüne
@@ -533,10 +530,7 @@ class Panel:
             commit, version = self.updates.check_start(env, data, self.unit_active(unit), blocked)
             tool = os.path.join(env.get("SBIN_DIR", ""), "master-guncelle")
             argv = ["systemd-run", "--unit=" + unit, "--collect", "--quiet",
-                    "--description=Konsol güncellemesi: %s" % version]
-            if self.args.state_env:
-                argv.append("--setenv=STATE_FILE=%s" % self.args.state)
-            argv += [tool, "uygula", commit, version]
+                    "--description=Konsol güncellemesi: %s" % version, tool, "uygula", commit, version]
             try:
                 proc = subprocess.run(argv, capture_output=True, timeout=20, env=self.env(), stdin=subprocess.DEVNULL)
             except (OSError, subprocess.TimeoutExpired) as err:
@@ -587,6 +581,17 @@ class Panel:
             raise master_update.UpdateError(502, "Günlük okunamadı.")
         return proc.stdout[-524288:].decode("utf-8", "replace")
 
+    def running_job(self):
+        """The refusal while an application job or the cleanup runs (a repair or a reboot would cut it off); "" when
+        none runs."""
+        with self.containers.lock:
+            running = [j for j in self.containers.jobs.values() if j.get("state") == "running"]
+        if not running:
+            return ""
+        if any(j.get("action") == master_container_manager.CLEANUP_ACTION for j in running):
+            return "Temizlik işlemi sürüyor; bitince yeniden deneyin."
+        return "Bir uygulama işlemi sürüyor; bitince yeniden deneyin."
+
     def repair_start(self, kip):
         env = read_env(self.args.state)
         unit = env.get("ONARIM_UNIT", "")
@@ -599,12 +604,13 @@ class Panel:
                 raise master_update.UpdateError(409, "Onarım zaten sürüyor.")
             if self.unit_active(env.get("GUNCELLEME_UNIT", "") or "-"):
                 raise master_update.UpdateError(409, "Güncelleme sürüyor; bitince yeniden deneyin.")
+            busy = self.running_job()
+            if busy:
+                raise master_update.UpdateError(409, busy)
             tool = os.path.join(env.get("SBIN_DIR", ""), "master-onar")
             argv = ["systemd-run", "--unit=" + unit, "--collect", "--quiet",
-                    "--description=Konsol: " + ("denetle ve onar" if kip == "onar" else "denetle")]
-            if self.args.state_env:
-                argv.append("--setenv=STATE_FILE=%s" % self.args.state)
-            argv += [tool, "--kaynak", "konsol"] + (["--denetle"] if kip == "denetle" else [])
+                    "--description=Konsol: " + ("denetle ve onar" if kip == "onar" else "denetle"),
+                    tool, "--kaynak", "konsol"] + (["--denetle"] if kip == "denetle" else [])
             try:
                 proc = subprocess.run(argv, capture_output=True, timeout=20, env=self.env(), stdin=subprocess.DEVNULL)
             except (OSError, subprocess.TimeoutExpired) as err:
@@ -617,13 +623,25 @@ class Panel:
         return kip
 
     def reboot_start(self):
-        """DD-246: reboot the server from Konsol. Refused beside an update or a repair; the reboot is a
-        transient timer a few seconds out, so this answer still reaches the page."""
+        """DD-246: reboot the server from Konsol. Refused beside an update, a repair, an application job or the cleanup
+        and while a settings change is being applied; the reboot is a transient timer a few seconds out, so this answer
+        still reaches the page."""
         env = read_env(self.args.state)
         with self.install_lock:
             for unit, why in ((env.get("GUNCELLEME_UNIT", ""), "Güncelleme sürüyor"), (env.get("ONARIM_UNIT", ""), "Onarım sürüyor")):
                 if unit and self.unit_active(unit):
                     raise master_update.UpdateError(409, why + "; bitince yeniden deneyin.")
+            busy = self.running_job()
+            if busy:
+                raise master_update.UpdateError(409, busy)
+            # A change waiting for its confirmation is rolled back after the boot (another boot id); one being applied
+            # is not cut off halfway.
+            try:
+                pending = master_settings.read_json(Path(env["SETTINGS_PENDING_FILE"]), None) if env.get("SETTINGS_PENDING_FILE") else None
+            except master_settings.SettingsError as err:
+                raise master_update.UpdateError(409, "Bekleyen ayar işlemi okunamadı; sunucu yeniden başlatılmadı.") from err
+            if isinstance(pending, dict) and pending.get("phase") == "applying":
+                raise master_update.UpdateError(409, "Bir ayar değişikliği uygulanıyor; bitince yeniden deneyin.")
             argv = ["systemd-run", "--unit=" + REBOOT_UNIT, "--collect", "--quiet", "--on-active=%d" % REBOOT_DELAY_SECONDS,
                     "--description=Konsol: yeniden başlat", "systemctl", "reboot"]
             try:
@@ -851,7 +869,7 @@ class Panel:
                 "iface": env.get("WAN_INTERFACE", ""), "tailscale": env.get("TAILSCALE_IPV4", ""),
                 "tailscale6": env.get("TAILSCALE_IPV6", ""),
             },
-            # DD-150: Genel Bakış'ın disk ölçüsü: kullanıcı alanının diski.
+            # Genel Bakış'ın disk ölçüsü: kullanıcı alanının (SERVER_ROOT) diski.
             "root": env.get("SERVER_ROOT", ""),
             "disk": self.disk(env.get("SERVER_ROOT", "")),
         }
@@ -1132,7 +1150,7 @@ class Panel:
             raws.append({"file": path, "text": text})
             for site in parse_caddy(text, ts_ip, source, snippets):
                 for addr in site["addresses"]:
-                    public_share = source.endswith("-wan")  # generated public sites (DD-191/195/199)
+                    public_share = source.endswith("-wan")  # generated public sites (DD-191/195/275)
                     if public_share and addr.startswith(":"):
                         addr = env.get("WAN_IPV4", "") + addr
                     entries.append({"address": addr, "routes": site["routes"], "source": source,
@@ -1182,8 +1200,10 @@ class Panel:
     def settings_compute(self):
         now = time.time()
         env = read_env(self.args.state)
-        # DD-271: WireGuard's networks (no keys); a stopped WireGuard has none.
+        # DD-271: WireGuard's networks (no keys); a stopped WireGuard has none. The firewall admits only an open
+        # one (its unit enabled): the ports and the listener scopes follow it, the list of networks shows them all.
         networks = self.wireguard.networks()
+        admitted = [net for net in networks if net.get("open")]
         data = {
             "read_at": int(now),
             "firewall": self.firewall_check(),
@@ -1196,8 +1216,8 @@ class Panel:
             try:
                 data["manage"] = master_settings.Manager(self.args.state).status()
                 data["firewall"]["rules"] = self.all_firewall_rules(env)
-                data["firewall"]["listeners"] = self.listeners(env, networks)
-                data["firewall"]["ports"] = self.settings_ports(env, networks, data["firewall"]["listeners"])
+                data["firewall"]["listeners"] = self.listeners(env, admitted)
+                data["firewall"]["ports"] = self.settings_ports(env, admitted, data["firewall"]["listeners"])
             except (master_settings.SettingsError, OSError, ValueError, KeyError) as err:
                 data["manage"] = {"error": str(err) if isinstance(err, master_settings.SettingsError) else "Ayar yönetimi okunamadı; kurulumu yenileyin."}
         self.settings_cache = (now, data)
@@ -1489,9 +1509,10 @@ class Panel:
         }
 
     def adlar(self):
-        """GET /api/konsol/adlar: the local names (base, WebDAV, the applications') with their on/off state, the
-        operator's own records and the forwarding of other names, as Erişim → Yerel adlar edits them. Konsol's name
-        and every application's Tailscale name are locked: they are switched in their own row (satir)."""
+        """GET /api/konsol/adlar: the local names (base, WebDAV, the applications'), the operator's own records and
+        the forwarding of other names, as Erişim → Yerel adlar shows them. The managed names are read-only there:
+        Konsol's, WebDAV's (paylas.<alan>, Paylaşımlar' Tailscale switch in Adresler) and every application's
+        Tailscale name change in their own row (satir: panel, paylasim or the access row's id)."""
         env = read_env(self.args.state)
         domain = env.get("LOCAL_DOMAIN", "")
         try:
@@ -1508,14 +1529,14 @@ class Panel:
             owners = {}
             errors.append(str(err))
         owners["panel." + domain] = "panel"
-        off = set(dns.get("disabled") or [])
+        owners["paylas." + domain] = master_publications.BUILTIN_ID
         rows = [{"ad": n["name"], "aile": n.get("family"), "hedef": str(n.get("target") or ""),
-                 "kaynak": str(n.get("source") or ""), "kapali": n["name"] in off,
-                 "kilitli": n["name"] in owners, "satir": owners.get(n["name"])} for n in names]
+                 "kaynak": str(n.get("source") or ""), "satir": owners.get(n["name"])} for n in names]
         # A row's name the projection has not written yet is shown too (its row is its home).
         listed = {r["ad"] for r in rows}
-        rows += [{"ad": name, "aile": 4, "hedef": "tailscale", "kaynak": "uygulama", "kapali": False, "kilitli": True,
-                  "satir": rid} for name, rid in sorted(owners.items()) if name not in listed and rid != "panel"]
+        rows += [{"ad": name, "aile": 4, "hedef": "tailscale", "kaynak": "uygulama", "satir": rid}
+                 for name, rid in sorted(owners.items())
+                 if name not in listed and rid not in ("panel", master_publications.BUILTIN_ID)]
         return {"revizyon": revision, "alan": domain, "adlar": rows,
                 "kayitlar": list(dns.get("records") or []), "yonlendirme": bool(dns.get("forward")),
                 "sunucular": list(dns.get("servers") or []), "hatalar": errors}
@@ -1687,14 +1708,6 @@ def human_bytes(n):
             return ("%d %s" % (n, unit)) if unit == "B" else ("%.1f %s" % (n, unit)).replace(".", ",")
         n /= 1024
     return ("%.2f TB" % n).replace(".", ",")
-
-
-class ApiError(Exception):
-    """An HTTP error answer of a read model (the Uygulamalar detail and log)."""
-    def __init__(self, code, message):
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -1922,7 +1935,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         hosts = set()
         if env.get("LOCAL_DOMAIN"):
             hosts.add("panel.%s" % env["LOCAL_DOMAIN"].lower())
-        hosts.update(h.lower() for h in self.panel.args.allow_host)
         return hosts
 
     def body_json(self, limit=MAX_BODY):
@@ -1977,6 +1989,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.json(200, plan)
 
     def settings_action(self, user, action, data):
+        if action == "apply":
+            # The worker refuses a change that waits for the timed confirmation from the internet channel (as the plan
+            # does); the channel is Caddy's, whatever the body says.
+            data["kanal"] = self.channel()
         if action == "confirm":
             data["client"] = self.client()
             # DD-195: Caddy pins Host to panel.<alan>; the name the browser used is
@@ -2560,9 +2576,6 @@ def main():
     s.add_argument("--listen", required=True)
     s.add_argument("--socket-group", dest="socket_group", default="")
     s.add_argument("--state", required=True)
-    s.add_argument("--allow-host", dest="allow_host", action="append", default=[])
-    s.add_argument("--state-env", dest="state_env", action="store_true",
-                   help="temelin araçlarına STATE_FILE olarak --state verilir (test)")
     c = sub.add_parser("check")
     c.add_argument("--url", required=True)
     c.add_argument("--host", required=True)

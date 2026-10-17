@@ -10,6 +10,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "panel"))
@@ -280,7 +281,11 @@ class PanelStartTests(unittest.TestCase):
         env.update(SETTINGS_PENDING_FILE=str(self.pending), SBIN_DIR=str(self.bin))
         self.state = self.root / "state.env"
         self.state.write_text("".join("%s=%s\n" % kv for kv in env.items()))
-        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=["panel.test"], state_env=True))
+        # The fake systemd tools come first on the base tools' PATH.
+        tools = patch.object(panel, "TOOL_PATH", "%s:%s" % (self.bin, panel.TOOL_PATH))
+        tools.start()
+        self.addCleanup(tools.stop)
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state)))
         self.p.updates = mu.Updates(Fetcher(), Clock())
 
     def calls(self):
@@ -289,8 +294,9 @@ class PanelStartTests(unittest.TestCase):
 
     def test_starts_the_unit_with_the_pinned_commit(self):
         self.assertEqual(self.p.update_start({"surum": NEW, "commit": SHA}), NEW)
+        # master-guncelle reads the installed state.env itself: no environment is handed to the unit.
         self.assertEqual(self.calls(), ["--unit=master-guncelle.service --collect --quiet --description=Konsol güncellemesi: %s "
-                                        "--setenv=STATE_FILE=%s %s uygula %s %s" % (NEW, self.state, self.bin / "master-guncelle", SHA, NEW)])
+                                        "%s uygula %s %s" % (NEW, self.bin / "master-guncelle", SHA, NEW)])
 
     def test_refuses_beside_a_running_update_or_a_pending_setting(self):
         for active, pending, word in [("master-guncelle.service", False, "zaten"), ("", True, "bekleyen bir ayar")]:

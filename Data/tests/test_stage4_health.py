@@ -24,7 +24,7 @@ class HealthTests(unittest.TestCase):
                     "DOWNLOADS_UID": "1000", "SERVER_ROOT": str(self.root)}
         self.state = self.root / "state.env"
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
-        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[], state_env=False))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state)))
         self.props = {}
         self.failed = (0, "")
         self.show = None

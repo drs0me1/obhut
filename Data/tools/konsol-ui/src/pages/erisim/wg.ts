@@ -53,16 +53,8 @@ export function portOwner(state: WgState, port: number): string | null {
   return state.reserved.includes(port) ? "sunucu" : null;
 }
 
-const PORT_START = 61020;
-
-/** The first network gets the installation's default port when it is free; later ones 61020 and up. */
-export function suggestPort(state: WgState): number {
-  const first = state.defaults.port;
-  if (!state.networks.length && first && !portOwner(state, first)) return first;
-  let port = PORT_START;
-  while (portOwner(state, port)) port += 1;
-  return port;
-}
+/** The port the server offers a new network (its defaults, from config/defaults.env); empty when none is free. */
+export const suggestPort = (state: WgState): string => (state.defaults.port ? String(state.defaults.port) : "");
 
 export function portProblem(state: WgState, text: string): string {
   const port = /^\d+$/.test(text.trim()) ? Number(text.trim()) : NaN;

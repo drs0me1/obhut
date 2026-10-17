@@ -1,5 +1,5 @@
 // Gelişmiş's reads (DD-266; read-only since the rebuild's phase 5, K8): the effective Caddy and dnsmasq
-// configuration, Podman's images, volumes and networks (docs/design/container-manager-api.md), and its only write:
+// configuration, Podman's images, volumes and networks (shapes in panel/master_api.py's table), and its only write:
 // the cleanup of what nothing uses (its read model and the job). Paths and shapes come from sema.ts (generated
 // from panel/master_api.py); every reply is checked before a page shows it, a list item without its expected
 // fields is left out, and a collection that could not be read is never shown as an empty one.

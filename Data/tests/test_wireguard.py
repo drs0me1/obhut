@@ -35,9 +35,9 @@ class Fixture(unittest.TestCase):
             "DNS_PORT=53", "CADDY_HTTP_PORT=80", "SSH_PUBLIC_PORT=22", "TAILSCALE_UDP_PORT=41641",
             "WG_NETWORKS_FILE=%s" % self.networks, "WG_STOPPED_FILE=%s" % self.stopped, "WG_NETWORKS_MAX=9",
             'WG_CLIENT_DNS_DEFAULT="1.1.1.1, 1.0.0.1"', "WG_CLIENT_KEEPALIVE_DEFAULT=21", "WG_MTU=1420",
-            "WG_PORT_DEFAULT=61001", ""]))
+            "WG_PORT_DEFAULT=61001", "WG_PORT_NEXT=61020", ""]))
         self.tool = str(self.root / "bin" / "master-wg")
-        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[], state_env=False))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state)))
 
         class Handler(panel.Handler):
             def log_message(self, *_args):
@@ -96,7 +96,8 @@ class RouteTests(Fixture):
         answer = json.loads(raw)
         master_api.check(master_api.ref("WireGuard"), answer)
         self.assertEqual((answer["kurulu"], answer["durduruldu"], answer["endpoint"], answer["max"]), (True, False, "203.0.113.7", 10))
-        self.assertEqual(answer["defaults"], {"dns": "1.1.1.1, 1.0.0.1", "keepalive": 21, "mtu": 1420, "port": 61001})
+        # wg0 holds the default port: a later network is offered the first free one from WG_PORT_NEXT.
+        self.assertEqual(answer["defaults"], {"dns": "1.1.1.1, 1.0.0.1", "keepalive": 21, "mtu": 1420, "port": 61020})
         self.assertEqual(answer["reserved"], [22, 53, 80, 41641, 61001])
         net = answer["networks"][0]
         self.assertEqual((net["iface"], net["label"], net["active"], net["count"]), ("wg0", "Ev ağı", True, 1))
@@ -254,7 +255,7 @@ class SettingsActionTests(Fixture):
                 patch("builtins.print") as out:
             body = {"revision": "r", "wireguard": {"eylem": "ag-kaldir", "iface": "wg0", "onay": "onayla"}}
             self.assertEqual(self.settings_post("uygula", body)[0], 200)
-            self.assertEqual(run.call_args.args, ("apply", body))
+            self.assertEqual(run.call_args.args, ("apply", dict(body, kanal="yerel")))
             self.settings_post("uygula", {"revision": "r", "wireguard": {"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1"}}})
             self.settings_post("uygula", {"revision": "r", "firewall": []})
         lines = [str(c.args[0]) for c in out.call_args_list if " ayar-apply " in str(c.args[0])]
@@ -266,6 +267,21 @@ class SettingsActionTests(Fixture):
             self.settings_post("geri-al", {"id": "a" * 32})
         self.assertTrue(any(" ayar-rollback wireguard ag-ekle wg1 -> hata" in str(c.args[0]) for c in out.call_args_list),
                         out.call_args_list)
+
+    def test_apply_carries_caddy_s_channel_and_never_the_body_s(self):
+        """The worker refuses a timed change asked from the internet (master_settings.TIMED_FROM_INTERNET): the
+        channel it gets is the one Caddy wrote; a body that names one is not a settings request."""
+        body = {"revision": "r", "wireguard": {"eylem": "ag-ac", "iface": "wg0"}}
+        answers = []
+        handler = types.SimpleNamespace(channel=lambda: "internet", panel=self.p, audit=lambda *a: None,
+                                        json=lambda code, result: answers.append(code))
+        with patch.object(self.p, "settings_run", return_value=(400, {"error": "x"})) as run:
+            panel.Handler.settings_action(handler, "konsol", "apply", dict(body, kanal="tailscale"))
+        self.assertEqual(run.call_args.args, ("apply", dict(body, kanal="internet")))
+        self.assertEqual(answers, [400])
+        # Over HTTP a body that names a channel is no settings request: it never reaches the worker.
+        with patch.object(self.p, "settings_run", side_effect=AssertionError("must not run")), patch("builtins.print"):
+            self.assertEqual(self.settings_post("uygula", dict(body, kanal="tailscale"))[0], 400)
 
     def test_the_section_shape_is_checked_before_the_worker(self):
         with patch.object(self.p, "settings_run", side_effect=AssertionError("must not run")):
@@ -285,12 +301,22 @@ class SettingsActionTests(Fixture):
 class ReadTests(Fixture):
     """The networks the Erişim view, the firewall view, the port catalogue and health read."""
 
+    def test_the_port_offered_for_a_new_network_comes_from_the_base(self):
+        """defaults.port: WG_PORT_DEFAULT for the first network while it is free, else the first free port from
+        WG_PORT_NEXT (both in config/defaults.env); 0 when none is free."""
+        env = {"WG_PORT_DEFAULT": "61001", "WG_PORT_NEXT": "61020"}
+        self.assertEqual(master_wireguard.suggest_port(env, [], {22, 53}), 61001)
+        self.assertEqual(master_wireguard.suggest_port(env, [], {61001}), 61020)
+        self.assertEqual(master_wireguard.suggest_port(env, [{"iface": "wg0"}], {61001, 61020, 61021}), 61022)
+        self.assertEqual(master_wireguard.suggest_port(dict(env, WG_PORT_NEXT="65535"), [{"iface": "wg0"}], {65535}), 0)
+        self.assertNotIn("61020", (Path(__file__).resolve().parents[1] / "tools/konsol-ui/src/pages/erisim/wg.ts").read_text())
+
     def test_networks_carry_public_fields_only_and_none_while_stopped(self):
         self.networks.write_text(NET + "\n")
         with patch.object(self.p, "run_tool", return_value=(0, NET + "\t1\t2\n", "")):
             nets = self.p.wireguard.networks()
             self.assertEqual(nets, [{"iface": "wg0", "port": 61001, "label": "Ev ağı", "active": True,
-                                     "server4": "10.8.0.1", "server6": "fdcc::1"}])
+                                     "server4": "10.8.0.1", "server6": "fdcc::1", "open": True}])
             ports = self.p.ports(panel.read_env(str(self.state)), nets)
         self.assertIn({"port": 61001, "proto": "udp", "scope": "internet", "vpn": True, "name": "WireGuard wg0 · Ev ağı"}, ports)
         self.stopped.write_text("wg0\n")

@@ -125,7 +125,7 @@ class ContainerRouteTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name).resolve()
         (root / "state.env").write_text(f"SERVER_ROOT={root}\nLOCAL_DOMAIN=test\nV2_VERSION=test\n")
-        self.p = panel.Panel(types.SimpleNamespace(state=str(root / "state.env"), allow_host=[], state_env=False))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(root / "state.env")))
 
     def test_routes_keep_the_gates_and_never_write(self):
         fake = Ctx()

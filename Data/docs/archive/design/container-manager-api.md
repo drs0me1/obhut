@@ -1,5 +1,7 @@
 # Container manager implementation interface
 
+> **Archived (rebuild phase 6):** the 1.x container manager's API (DD-211), removed by the rebuild (DD-274, DD-276). Current routes: [`konsol-api.json`](../../konsol-api.json), generated from `panel/master_api.py`.
+
 Status: implemented in v2-190 and live-verified on nrm (Debian 13), 2026-10-03. The user accepted the
 [proposal](konsol-konteynerler-v01.md) and requested implementation. Baseline `5b91f65` / v2-189.
 This document records the backend/console interface; exact acceptance evidence and platform limits are in `../../SESSION.md`.

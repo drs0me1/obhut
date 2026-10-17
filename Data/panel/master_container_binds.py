@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DD-226: pin a Konsol container's bind sources at every start.
+"""DD-226: pin an application container's bind sources at every start.
 
 Podman resolves a Volume= source by path whenever the container starts. Under SERVER_ROOT,
 which the downloads account can write, a path component swapped for a symbolic link would

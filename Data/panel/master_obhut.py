@@ -302,7 +302,6 @@ def cmd_geri_al(konsol, args):
 
 def parser():
     p = argparse.ArgumentParser(prog="obhut", description="Sunucunun durumu ve kurtarma (root).")
-    p.add_argument("--state", default=STATE, help=argparse.SUPPRESS)
     sub = p.add_subparsers(dest="komut", required=True, metavar="komut")
     s = sub.add_parser("durum", help="sürüm, sağlık, uygulamalar ve bekleyen değişiklik")
     s.add_argument("--json", action="store_true")
@@ -342,7 +341,7 @@ def main(argv=None):
         print("obhut: root olarak çalıştırın: sudo obhut %s" % " ".join(argv if argv is not None else sys.argv[1:]), file=sys.stderr)
         return 2
     try:
-        konsol = Konsol(read_env(args.state))
+        konsol = Konsol(read_env(STATE))
         return args.run(konsol, args)
     except ObhutError as err:
         print("obhut: %s" % err, file=sys.stderr)

@@ -1,5 +1,7 @@
 # Clean-install readiness
 
+> **Archived (rebuild phase 6):** the clean-install readiness notes of the 1.x line. Generation 2 installs only on a clean operating system (DD-271, DD-272); its installer, stages and success criteria are in [`contract.md`](../contract.md), the clean-server test in [`rebuild.md`](../rebuild.md) phase 6.
+
 ## What ships
 
 Konsol is the task-based interface of DD-258 at `/` (since v2-250, **DD-267**; the

@@ -326,7 +326,7 @@ class PanelEndpointTests(unittest.TestCase):
         (root / "konsol").mkdir(mode=0o700)
         state = root / "state.env"
         state.write_text("SERVER_ROOT=%s\nLOCAL_DOMAIN=test\nV2_VERSION=test\nKONSOL_AUTH_DIR=%s\n" % (root, root / "konsol"))
-        self.p = panel.Panel(types.SimpleNamespace(state=str(state), allow_host=[], state_env=False))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(state)))
         self.store = auth.Store(root / "konsol")
 
         class Handler(panel.Handler):

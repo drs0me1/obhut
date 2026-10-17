@@ -268,7 +268,6 @@ export interface DnsKaydi {
 }
 
 export interface DnsTaslagi {
-  disabled: string[];
   records: DnsKaydi[];
   forward: boolean;
   servers: string[];
@@ -404,8 +403,6 @@ export interface Adlar {
     aile: number | null;
     hedef: string;
     kaynak: string;
-    kapali: boolean;
-    kilitli: boolean;
     satir: string | null;
   })[];
   kayitlar: DnsKaydi[];

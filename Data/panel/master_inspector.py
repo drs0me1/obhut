@@ -377,6 +377,10 @@ class _Inspector:
                 why = "Dosyada boş; değerini siz verirsiniz, Podman secret olur."
             elif secret_name(entry["name"]):
                 why = "Adı gizli bir değer gibi; dosyadaki değer kullanılmaz, değerini siz verirsiniz, Podman secret olur."
+                # The file is kept and shown as given (K3): a value written in it stays readable there.
+                self.note(entry["line"], "gizli-deger",
+                          "%s: %s dosyada açık yazılmış. Bu değer kullanılmaz ama dosyayla birlikte saklanır ve Tanım'da "
+                          "görünür; dosyadan silmeniz önerilir." % (svc["name"], entry["name"]))
             else:
                 self.plain_text(svc, entry, [])
                 continue

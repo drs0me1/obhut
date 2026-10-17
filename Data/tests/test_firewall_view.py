@@ -17,7 +17,7 @@ class FirewallViewTests(unittest.TestCase):
     def setUp(self):
         self.tailnet = patch.object(panel.master_settings, "tailnet_ports", return_value=[]).start()
         self.addCleanup(patch.stopall)
-        self.p = panel.Panel(types.SimpleNamespace(state="/unused", allow_host=[], state_env=False))
+        self.p = panel.Panel(types.SimpleNamespace(state="/unused"))
         self.env = {"TAILSCALE_IF": "tailscale0", "TAILSCALE_IPV4": "100.64.0.2",
                     "TAILSCALE_IPV6": "fd7a:115c:a1e0::2", "WAN_INTERFACE": "eth0",
                     "WAN_IPV4": "192.0.2.1", "WAN_IPV6": "2001:db8::1", "FILES_PANEL_PORT": "61009"}
@@ -99,6 +99,26 @@ class FirewallViewTests(unittest.TestCase):
         self.assertEqual(len(fw["networks"]), 2)
         self.assertEqual(set(fw["networks"][0]), {"iface", "label", "active"})
         self.assertFalse(fw["networks"][1]["active"])
+
+    def test_a_closed_network_has_no_port_or_listener_scope_in_the_view(self):
+        """The firewall admits only an open network (its unit enabled): the ports and listener scopes follow it, the
+        list of networks shows them all."""
+        nets = [dict(self.nets[0], open=True), dict(self.nets[1], open=False)]
+        env = dict(self.env, SETTINGS_FILE="/unused/ayarlar.json")
+        with patch.object(panel, "read_env", return_value=env), \
+             patch.object(self.p.wireguard, "networks", return_value=nets), \
+             patch.object(self.p, "firewall_check", return_value={}), \
+             patch.object(self.p, "web_view", return_value={}), \
+             patch.object(self.p, "dns_view", return_value={}), \
+             patch.object(panel.master_settings.Manager, "__init__", return_value=None), \
+             patch.object(panel.master_settings.Manager, "status", return_value={}), \
+             patch.object(self.p, "all_firewall_rules", return_value={"rows": [], "errors": []}), \
+             patch.object(self.p, "listeners", return_value=[]) as listeners, \
+             patch.object(self.p, "settings_ports", return_value=[]) as ports:
+            fw = self.p.settings(fresh=True)["firewall"]
+        self.assertEqual([n["iface"] for n in fw["networks"]], ["wg0", "wg1"])
+        self.assertEqual([n["iface"] for n in listeners.call_args.args[1]], ["wg0"])
+        self.assertEqual([n["iface"] for n in ports.call_args.args[1]], ["wg0"])
 
     def test_firewall_page_names_ports_and_networks_without_application_fields(self):
         view = {"firewall": {"ok": True, "check": "firewall: tamam",

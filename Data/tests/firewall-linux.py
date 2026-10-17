@@ -107,7 +107,16 @@ def main():
             cmd("ip", "addr", "add", e["WAN_IPV4"] + "/32", "dev", "lo")
             for key in ("SBIN_DIR", "RUNTIME_DIR", "DNSMASQ_CONF_DIR"):
                 Path(e[key]).mkdir()
-            # DD-198/271: the firewall reads WireGuard's registry and stopped marker itself (DD-229).
+            # The firewall admits only an open WireGuard network: its wg-quick unit enabled. A stand-in systemctl
+            # answers is-enabled from this run's own folder, never from the host's units.
+            fake_bin, enabled = root / "fake-bin", root / "enabled"
+            fake_bin.mkdir()
+            enabled.mkdir()
+            (fake_bin / "systemctl").write_text('#!/bin/sh\n[ "$1" = is-enabled ] && [ -e "%s/${3:-none}" ]\n' % enabled)
+            (fake_bin / "systemctl").chmod(0o755)
+            wg0_unit = enabled / "wg-quick@wg0.service"
+            wg0_unit.touch()
+            # DD-272: the firewall reads WireGuard's registry and stopped marker itself (DD-229).
             networks = Path(e["WG_NETWORKS_FILE"])
             stopped = Path(e["WG_STOPPED_FILE"])
             network_record = f"wg0\t{e['WG_PORT_DEFAULT']}\tinet\t10.8.0.1\t10.8.0.0/24\tfd00:3::1\tfd00:3::/112\t1.1.1.1\tTest\n"
@@ -119,7 +128,7 @@ def main():
             for module in sorted((DATA / "panel").glob("master_*.py")):
                 shutil.copy(module, Path(e["SBIN_DIR"]) / module.name)
             worker = ["bash", str(DATA / "scripts/firewall.sh")]
-            env = dict(os.environ, STATE_FILE=str(state))
+            env = dict(os.environ, STATE_FILE=str(state), PATH=str(fake_bin) + ":" + os.environ.get("PATH", "/usr/sbin:/usr/bin:/sbin:/bin"))
             def apply():
                 cmd(*worker, env=env)
                 cmd(*worker, "--check", env=env)
@@ -479,8 +488,19 @@ time.sleep(600)
             repeat()
             check(0, 4, "udp", int(e["WG_PORT_DEFAULT"]), True)
             check(1, 4, "udp", int(e["WG_PORT_DEFAULT"]), True)
+            # A network closed on its own (its unit disabled) keeps its registry line but no port, forwarding or NAT.
+            wg0_unit.unlink()
+            apply()
+            no_wg()
+            repeat()
+            for family in (4, 6):
+                check(0, family, "udp", int(e["WG_PORT_DEFAULT"]), False)
+            assert networks.read_text() == network_record
+            wg0_unit.touch()
+            apply()
+            check(0, 4, "udp", int(e["WG_PORT_DEFAULT"]), True)
             assert_outsiders()
-            print("PASS clean/repeat installs, stopped WireGuard, retained profiles, stale INPUT/FORWARD/NAT repair, untouched third-party chains", flush=True)
+            print("PASS clean/repeat installs, stopped WireGuard, a closed network, retained profiles, stale INPUT/FORWARD/NAT repair, untouched third-party chains", flush=True)
 
             # Both families require a final unconditional DROP. A missing or
             # moved final rule must fail --check, even with the WAN DROP intact.

@@ -7,7 +7,7 @@ StartLimitBurst=10
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/tailscale-udp-gro
+ExecStart=__SBIN_DIR__/tailscale-udp-gro
 RemainAfterExit=yes
 Restart=no
 TimeoutStartSec=30s

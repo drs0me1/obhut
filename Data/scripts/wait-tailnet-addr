@@ -13,7 +13,7 @@
 set -Eeuo pipefail
 
 TAILSCALE_IF="${TAILSCALE_IF:-tailscale0}"
-WAIT_SECONDS="${TAILNET_ADDR_WAIT_SECONDS:-120}"
+WAIT_SECONDS=120
 
 iface_has_any_v4() {
     ip -4 -o addr show dev "$TAILSCALE_IF" scope global 2>/dev/null |

@@ -181,12 +181,21 @@ def main():
                 start("dns")
                 assert "REFUSED" in dig("public.example")
                 d = copy.deepcopy(settings.DEFAULT["dns"])
-                d.update(disabled=["paylas.ayc"], records=[dict(name="nas.ayc", target="192.0.2.10", enabled=True)], forward=True, servers=["9.9.9.9"])
+                # Rebuild phase 6: no managed name is switched off here (WebDAV's is Paylaşımlar' row's); the DNS
+                # object has no "disabled" key.
+                try:
+                    apply(dns=dict(copy.deepcopy(settings.DEFAULT["dns"]), disabled=["paylas.ayc"]))
+                except settings.SettingsError as err:
+                    assert str(err) == "DNS biçimi geçersiz.", err
+                else:
+                    raise AssertionError("the DNS settings took a disabled key")
+                assert m.pending() is None
+                d.update(records=[dict(name="nas.ayc", target="192.0.2.10", enabled=True)], forward=True, servers=["9.9.9.9"])
                 result = apply(dns=d)
                 assert result == {"pending": None, "committed": True}
                 assert m.config()["dns"] == d
                 assert "192.0.2.10" in dig("nas.ayc")
-                assert "100.64.0.2" not in dig("paylas.ayc")
+                assert "100.64.0.2" in dig("paylas.ayc")
                 answer_text = dig("public.example")
                 assert "192.0.2.99" in answer_text, answer_text
                 before = len(forwarded)

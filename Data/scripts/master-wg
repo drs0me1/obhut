@@ -28,9 +28,9 @@
 #   master-wg --if wgN net ac|kapat       ağı (ve arayüzdeki bütün peer'ları) açar/kapatır
 #   master-wg --if wgN net-settings DNS REVİZYON [ETİKET] anahtarları değiştirmeden varsayılan DNS (ve ağın adı, DD-265)
 #
-# WireGuard bütünüyle (DD-229, DD-271): Konsol'un Durdur/Başlat'ı bu iki komutu çalıştırır.
+# WireGuard bütünüyle (DD-229, DD-271): Konsol'un Kapat/Aç'ı bu iki komutu çalıştırır.
 #   master-wg durdur                      açık ağları WG_STOPPED_FILE'a yazar, hepsini kapatır, duvarı yeniden uygular
-#   master-wg baslat                      önce duvar, sonra durdurmadan önce açık olan ağlar (liste yoksa kayıttakilerin hepsi)
+#   master-wg baslat                      durdurmadan önce açık olan ağlar (liste yoksa kayıttakilerin hepsi): birimler, duvar, arayüzler
 #
 # The settings worker's caller mode (DD-275). Konsol's settings transaction runs this tool for the
 # planned WireGuard actions (baslat, durdur, net-add, net-remove, net ac|kapat, reset) while it holds the
@@ -42,9 +42,18 @@
 #                            no lock of its own: a second open of install.lock would wait for the caller.
 #   OBHUT_AYAR_ISLEMI=<id>   the pending change's id (32 hex). The refusal while a Konsol setting is
 #                            pending is skipped only when SETTINGS_PENDING_FILE holds this id in phase
-#                            "applying"; any other id or phase is refused as without the mode.
+#                            "applying" or "rollback" (the worker applying or undoing its own change,
+#                            both under the lock it holds); any other id or phase is refused as without
+#                            the mode.
 # One variable without the other, or a value of another form, is refused. Without them every command
 # works as before.
+#
+# While a Konsol setting is pending, every verb that changes WireGuard's state or the files the settings
+# transaction snapshots and restores (WG_NETWORKS_FILE, WG_STOPPED_FILE) is refused: net-add, net-remove,
+# net ac|kapat, net-settings, reset, durdur and baslat. The peer verbs (add, remove, dns, keepalive,
+# peer ac|kapat) stay open: they write only a network's wgN.conf peer blocks and its device profiles,
+# which no plan snapshots, and they never start a network a plan closed (write_and_apply restarts only
+# an enabled unit).
 set -Eeuo pipefail
 umask 077
 
@@ -194,7 +203,7 @@ select_only_net() {
         names="${names}${names:+ }$name"
     done < <(net_names)
     [[ -n "$names" ]] ||
-        die "sunucuda WireGuard ağı yok; Konsol'da Erişim → WireGuard → Yapılandır ile oluşturun"
+        die "sunucuda WireGuard ağı yok; Konsol'da Erişim → WireGuard → Aç ile oluşturun"
     [[ "$names" != *" "* ]] ||
         die "birden çok ağ var ($names); ağı seçin: master-wg --if wgN KOMUT"
     select_net "$names"
@@ -244,13 +253,13 @@ net_teardown() {
 }
 
 # DD-136: yeni WireGuard ağı. Sıradaki boş wgN seçilir; 10.8.N.0/24 ve …::N:0/112.
-# Sıra: dosyalar ve kayıt → güvenlik duvarı (port açılır, yönlendirme ve NAT gelir)
-# → wg-quick@wgN. Bir adım düşerse ağın bütün
-# izleri silinir ve güvenlik duvarı eski haline döner.
-# DD-229: WireGuard bütünüyle durdurulmuşken ağ açılmaz ve eklenmez; önce Başlat.
+# Order: files and registry → the unit enabled (the firewall admits only enabled networks) → the firewall
+# (port, forwarding and NAT) → the unit started (its ExecStartPre checks the firewall). A failing step
+# removes every trace of the network and puts the firewall back.
+# DD-229: WireGuard bütünüyle kapalıyken ağ açılmaz ve eklenmez; önce Aç.
 not_stopped() {
     [[ ! -e "$WG_STOPPED_FILE" ]] ||
-        die "WireGuard durduruldu; önce Konsol → Erişim → WireGuard'dan başlatın"
+        die "WireGuard kapalı; önce Konsol → Erişim → WireGuard'dan açın"
 }
 
 cmd_net_add() {
@@ -261,6 +270,7 @@ cmd_net_add() {
     check_label "$label"
 
     take_lock
+    no_pending_settings
     not_stopped
     # Tabanın portları (protokolü ne olursa olsun) ve kayıttaki ağların portları ayrılmıştır.
     for p in "ssh:${SSH_PUBLIC_PORT:-}" "tailscale:${TAILSCALE_UDP_PORT:-}" \
@@ -292,11 +302,15 @@ cmd_net_add() {
     { [[ ! -f "$NETWORKS_FILE" ]] || cat -- "$NETWORKS_FILE"
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$iface" "$port" inet "$s4" "$n4" "$s6" "$n6" "$dns" "$label"
     } | registry_write
+    if ! systemctl enable --quiet "wg-quick@$iface.service" >/dev/null 2>&1; then
+        net_teardown "$iface"; systemctl restart master-firewall.service || true
+        die "$iface başlatılamadı; ağ oluşturulmadı"
+    fi
     if ! systemctl restart master-firewall.service; then
         net_teardown "$iface"; systemctl restart master-firewall.service || true
         die "güvenlik duvarı yeni ağla uygulanamadı; ağ oluşturulmadı"
     fi
-    if ! systemctl enable --now "wg-quick@$iface.service" >/dev/null 2>&1; then
+    if ! systemctl start "wg-quick@$iface.service" >/dev/null 2>&1; then
         net_teardown "$iface"; systemctl restart master-firewall.service || true
         die "$iface başlatılamadı; ağ oluşturulmadı"
     fi
@@ -308,6 +322,7 @@ cmd_net_remove() {
     [[ "$iface" =~ $NET_RE ]] || die "geçersiz arayüz '$iface' (wg0-wg9)"
     [[ "${2:-}" == "--onay" ]] || die "kullanım: master-wg net-remove $iface --onay (ağ, anahtarı ve bütün peer'ları silinir)"
     take_lock
+    no_pending_settings
     net_line "$iface" >/dev/null || die "'$iface' diye bir WireGuard ağı yok"
     peers="$(peer_count "$BASE_CONF_DIR/$iface.conf")"
     net_teardown "$iface"
@@ -495,7 +510,7 @@ AllowedIPs = ${v4}/32, ${v6}/128"
     profile=""
     if ! write_and_apply "$content"; then
         rm -f -- "$WG_CLIENTS_DIR/${name}.conf"
-        die "peer uygulanamadı; wg0.conf geri alındı"
+        die "peer uygulanamadı; ${WG_INTERFACE}.conf geri alındı"
     fi
     printf '%s\t%s\n' "$name" "$v4"
 }
@@ -513,7 +528,7 @@ cmd_remove() {
         skip && (/^# peer: / || $0 == "[Peer]") { skip = 0 }
         !skip { print }
     ' "$WG_CONF_FILE" | cat -s)"
-    write_and_apply "$content" || die "peer kaldırılamadı; wg0.conf geri alındı"
+    write_and_apply "$content" || die "peer kaldırılamadı; ${WG_INTERFACE}.conf geri alındı"
     rm -f -- "$WG_CLIENTS_DIR/${name}.conf"
     printf '%s\n' "$name"
 }
@@ -588,27 +603,45 @@ cmd_peer() {
 }
 
 # DD-140: ağın arayüzünü kapatır ya da açar; üzerindeki bütün peer'lar birlikte
-# düşer. Yapılandırma, kayıt ve anahtarlar durur: yalnız birim durumu değişir.
-# Güvenlik duvarındaki UDP portu açık kalır (dinleyen yoktur).
+# düşer. Yapılandırma, kayıt ve anahtarlar durur. The unit's enablement is the one source of "open": the
+# firewall admits a network's UDP port, forwarding and NAT only while its unit is enabled, so both
+# directions apply the firewall again. Opening enables the unit first, then the firewall, then starts the
+# interface (its ExecStartPre checks the firewall); a failure undoes what this call enabled.
 cmd_net() {
-    local want="$1" unit="wg-quick@${WG_INTERFACE}.service"
+    local want="$1" unit="wg-quick@${WG_INTERFACE}.service" was=0
     [[ "$want" == ac || "$want" == kapat ]] || die "kullanım: master-wg [--if wgN] net ac|kapat"
     [[ -f "$WG_CONF_FILE" ]] || die "$WG_CONF_FILE yok; önce kurulumu çalıştırın"
-    # DD-229: uygulamanın Durdur'u bu kilitle durdurulmuş listesini yazar; kilitsiz "ac" onu geçebilirdi.
+    # DD-229: Konsol'un Kapat'ı (durdur) bu kilitle durdurulmuş listesini yazar; kilitsiz "ac" onu geçebilirdi.
     take_lock
+    no_pending_settings
     not_stopped
     if [[ "$want" == kapat ]]; then
         systemctl disable --now "$unit" >/dev/null 2>&1 || die "$WG_INTERFACE kapatılamadı"
         [[ "$(unit_active "$unit")" == 0 ]] || die "$WG_INTERFACE hâlâ çalışıyor"
+        systemctl restart master-firewall.service ||
+            die "$WG_INTERFACE kapatıldı ama güvenlik duvarı yeniden uygulanamadı; 'systemctl status master-firewall' ile denetleyin"
     else
-        systemctl enable --now "$unit" >/dev/null 2>&1 || die "$WG_INTERFACE açılamadı"
-        [[ "$(unit_active "$unit")" == 1 ]] || die "$WG_INTERFACE açılamadı"
+        ! systemctl is-enabled --quiet "$unit" 2>/dev/null || was=1
+        systemctl enable --quiet "$unit" >/dev/null 2>&1 || die "$WG_INTERFACE açılamadı"
+        if ! systemctl restart master-firewall.service; then
+            [[ "$was" -eq 1 ]] || systemctl disable --quiet "$unit" >/dev/null 2>&1 || true
+            systemctl restart master-firewall.service || true
+            die "güvenlik duvarı uygulanamadı; $WG_INTERFACE açılmadı"
+        fi
+        if ! systemctl start "$unit" >/dev/null 2>&1 || [[ "$(unit_active "$unit")" != 1 ]]; then
+            if [[ "$was" -eq 0 ]]; then
+                systemctl disable --now --quiet "$unit" >/dev/null 2>&1 || true
+                systemctl restart master-firewall.service || true
+            fi
+            die "$WG_INTERFACE açılamadı"
+        fi
     fi
     printf '%s\t%s\n' "$WG_INTERFACE" "$(unit_active "$unit")"
 }
 
-# Onay bekleyen bir Konsol ayarı varken WireGuard bütünüyle durdurulmaz ve başlatılmaz. DD-275: the
-# settings worker's own pending change (its id, phase "applying") is the one exception.
+# While a Konsol setting is pending, neither WireGuard's state nor the files the settings transaction
+# restores change (the verbs listed in the header). DD-275: the settings worker's own pending change (its
+# id, phase "applying" while it applies, "rollback" while it undoes the change) is the one exception.
 no_pending_settings() {
     [[ -n "${SETTINGS_PENDING_FILE:-}" && -e "$SETTINGS_PENDING_FILE" ]] || return 0
     if caller_mode && python3 -c 'import json, sys
@@ -617,7 +650,7 @@ try:
         p = json.load(fh)
 except (OSError, ValueError):
     sys.exit(1)
-sys.exit(0 if isinstance(p, dict) and p.get("id") == sys.argv[2] and p.get("phase") == "applying" else 1)' \
+sys.exit(0 if isinstance(p, dict) and p.get("id") == sys.argv[2] and p.get("phase") in ("applying", "rollback") else 1)' \
         "$SETTINGS_PENDING_FILE" "$OBHUT_AYAR_ISLEMI"; then
         return 0
     fi
@@ -661,15 +694,17 @@ cmd_durdur() {
     fi
     wg_networks_down
     systemctl restart master-firewall.service ||
-        die "WireGuard durduruldu ama güvenlik duvarı yeniden uygulanamadı; 'systemctl status master-firewall' ile denetleyin"
+        die "WireGuard kapatıldı ama güvenlik duvarı yeniden uygulanamadı; 'systemctl status master-firewall' ile denetleyin"
     printf 'durduruldu\t%s\n' "$(grep -c . "$WG_STOPPED_FILE" || true)"
 }
 
-# Başlat: önce güvenlik duvarı (portlar ve yönlendirme), sonra durdurmadan önce açık olan ağlar;
-# durdurulmamışsa kayıttaki bütün ağlar. Durmuşken silinen ağ atlanır. Duvar uygulanamazsa liste geri
-# yazılır, WireGuard durdurulmuş kalır. Çıktı: "calisiyor<TAB><açılan ağ sayısı>".
+# Aç (baslat): durdurmadan önce açık olan ağlar; durdurulmamışsa kayıttaki bütün ağlar. Durmuşken silinen ağ
+# atlanır. The networks are enabled first (the firewall admits only enabled networks), then the firewall
+# (ports, forwarding, NAT), then each interface starts. If the firewall cannot be applied, the units this
+# call enabled are disabled again and the list is written back: WireGuard stays stopped.
+# Çıktı: "calisiyor<TAB><açılan ağ sayısı>".
 cmd_baslat() {
-    local list stopped=0 iface n=0 tmp
+    local list stopped=0 iface n=0 tmp open="" enabled=""
     take_lock
     no_pending_settings
     install -d -m 0700 "$BASE_CONF_DIR"
@@ -680,25 +715,37 @@ cmd_baslat() {
     else
         list="$(net_names)"
     fi
+    while IFS= read -r iface; do
+        [[ "$iface" =~ $NET_RE ]] || continue
+        net_line "$iface" >/dev/null || continue
+        if systemctl is-enabled --quiet "wg-quick@$iface.service" 2>/dev/null; then
+            open="${open}${open:+ }$iface"
+        elif systemctl enable --quiet "wg-quick@$iface.service" >/dev/null 2>&1; then
+            open="${open}${open:+ }$iface" enabled="${enabled}${enabled:+ }$iface"
+        else
+            warn "$iface açılamadı"
+        fi
+    done <<<"$list"
     if ! systemctl restart master-firewall.service; then
+        for iface in $enabled; do
+            systemctl disable --quiet "wg-quick@$iface.service" >/dev/null 2>&1 || warn "$iface kapatılamadı"
+        done
         if [[ "$stopped" -eq 1 ]]; then
             tmp="$(mktemp "${WG_STOPPED_FILE%/*}/.durdur.XXXXXX")"
             [[ -z "$list" ]] || printf '%s\n' "$list" >"$tmp"
             chmod 0600 "$tmp"
             mv -f -- "$tmp" "$WG_STOPPED_FILE"
-            systemctl restart master-firewall.service || true
         fi
+        systemctl restart master-firewall.service || true
         die "güvenlik duvarı uygulanamadı; WireGuard açılmadı"
     fi
-    while IFS= read -r iface; do
-        [[ "$iface" =~ $NET_RE ]] || continue
-        net_line "$iface" >/dev/null || continue
-        if systemctl enable --now --quiet "wg-quick@$iface.service" >/dev/null 2>&1; then
+    for iface in $open; do
+        if systemctl start "wg-quick@$iface.service" >/dev/null 2>&1; then
             n=$((n + 1))
         else
             warn "$iface açılamadı"
         fi
-    done <<<"$list"
+    done
     printf 'calisiyor\t%s\n' "$n"
 }
 
@@ -711,6 +758,7 @@ cmd_reset() {
         die "kullanım: master-wg reset --onay (bütün peer'lar ve profiller silinir, yeni sunucu anahtarı üretilir)"
     local peers iface priv content f n=0
     take_lock
+    no_pending_settings
     [[ -f "$WG_CONF_FILE" ]] || die "$WG_CONF_FILE yok; önce kurulumu çalıştırın"
     peers="$(grep -c '^\[Peer\]$' "$WG_CONF_FILE" || true)"
     iface="$(awk '/^# peer: / || /^\[Peer\]$/ {exit} index($0, "PrivateKey = ") != 1 {print}' "$WG_CONF_FILE" |
@@ -723,7 +771,7 @@ PrivateKey = ${priv}"
     priv=""
     if ! write_and_apply "$content"; then
         content=""
-        die "wg0 yeniden üretilemedi; önceki wg0.conf geri alındı"
+        die "$WG_INTERFACE yeniden üretilemedi; önceki ${WG_INTERFACE}.conf geri alındı"
     fi
     content=""
     for f in "$WG_CLIENTS_DIR"/*.conf; do

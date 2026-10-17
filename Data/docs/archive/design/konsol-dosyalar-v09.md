@@ -1,9 +1,11 @@
 # Files v09 — folder navigation and independent WebDAV shares
 
+> **Archived (rebuild phase 6):** the 1.x Files window's proposal. Dosyalar and folder WebDAV are described in [`contract.md`](../../contract.md) §3.8–§3.9 and [`folder-shares.md`](../../folder-shares.md).
+
 Status: implemented as v2-128 / DD-158, 2026-09-25. The original conversation
 preview remains sample-only and frozen. Actual behavior, deviations from the
 tentative implementation direction, protocol limits and acceptance scope are
-recorded in [folder-shares.md](../folder-shares.md) and `Data/SESSION.md`.
+recorded in [folder-shares.md](../../folder-shares.md) and `Data/SESSION.md`.
 The proposal below is retained as the design rationale, not a test certificate.
 
 ## Proposed interaction

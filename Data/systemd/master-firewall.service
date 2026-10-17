@@ -13,9 +13,9 @@ Type=oneshot
 RemainAfterExit=yes
 Restart=on-failure
 RestartSec=10s
-Environment=STATE_FILE=/etc/master-stack/state.env
-ExecStart=/usr/local/sbin/master-firewall apply
-ExecStartPost=/usr/local/sbin/master-firewall --check
+Environment=STATE_FILE=__STATE_FILE__
+ExecStart=__SBIN_DIR__/master-firewall apply
+ExecStartPost=__SBIN_DIR__/master-firewall --check
 
 [Install]
 WantedBy=multi-user.target

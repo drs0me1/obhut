@@ -1,4 +1,4 @@
-// The six sections of Konsol (DD-258, redesign.md): Genel Bakış and Uygulamalar (phase 2), Erişim
+// The six sections of Konsol (DD-258, docs/archive/redesign.md): Genel Bakış and Uygulamalar (phase 2), Erişim
 // (phase 3), Sistem and Gelişmiş (phase 4a), Dosyalar (phase 4b); each section's tabs and add flows.
 import type { IconName } from "./components/icons";
 

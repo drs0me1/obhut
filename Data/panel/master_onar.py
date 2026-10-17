@@ -541,7 +541,7 @@ class Repair:
     def wireguard(self):
         try:
             if master_wireguard.stopped(self.env):
-                return "atlandi", "WireGuard durdurulmuş"
+                return "atlandi", "WireGuard kapalı"
             if not master_wireguard.registered(self.env):
                 return "atlandi", "WireGuard ağı yok"
         except (OSError, KeyError):
@@ -622,7 +622,8 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--denetle", action="store_true", help="yalnız denetle, hiçbir şeyi değiştirme")
     mode.add_argument("--duvar", action="store_true", help="yalnız güvenlik duvarı (saatlik zamanlayıcı)")
-    parser.add_argument("--kaynak", choices=("konsol", "terminal"), default="terminal", help=argparse.SUPPRESS)
+    parser.add_argument("--kaynak", choices=("konsol", "terminal"), default="terminal",
+                        help="raporda başlatan: konsol (Konsol → Sistem → Sağlık) ya da terminal (varsayılan)")
     args = parser.parse_args()
     if os.geteuid() != 0:
         print("HATA: root gerekli (sudo master-onar)", file=sys.stderr)

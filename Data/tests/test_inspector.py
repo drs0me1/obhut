@@ -680,6 +680,23 @@ class EditAndWarningTests(unittest.TestCase):
         answers["answers"]["mount:web:/data"]["read_only"] = True
         self.assertEqual(check(i, answers)[0]["warnings"], [])
 
+    def test_a_secret_written_in_the_file_is_noted_on_its_line(self):
+        # The file is kept as given (K3); its literal secret is not used but stays readable there: say so.
+        i = compose("""\
+            services:
+              web:
+                image: registry.example/web:1
+                environment:
+                  ADMIN_PASSWORD: hunter2
+                  LEVEL: info
+            """)
+        notes = [n for n in i["notes"] if n["key"] == "gizli-deger"]
+        self.assertEqual([(n["line"], n["text"]) for n in notes],
+                         [(5, "web: ADMIN_PASSWORD dosyada açık yazılmış. Bu değer kullanılmaz ama dosyayla birlikte "
+                              "saklanır ve Tanım'da görünür; dosyadan silmeniz önerilir.")])
+        self.assertNotIn("hunter2", repr(i["notes"]) + repr(i["questions"]))
+        self.assertIn({"line": 5, "kind": "note", "text": notes[0]["text"]}, i["marks"])
+
     def test_srv_paths_follow_the_bind_anchor_rule(self):
         # DD-226's anchors pin a non-hidden sub-folder of /srv in plain characters; the answer is refused early.
         i = compose("""\

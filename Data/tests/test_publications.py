@@ -66,7 +66,7 @@ class PublicationTests(unittest.TestCase):
         import test_resources
         panel = test_resources.panel
         import types
-        instance = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[], state_env=False))
+        instance = panel.Panel(types.SimpleNamespace(state=str(self.state)))
         with patch.object(pubs, "https_apps_active", return_value=["Notlar"]), \
                 patch.object(panel.master_settings, "tailnet_ports", return_value=[]), \
                 patch.object(instance, "ports", return_value=[]):

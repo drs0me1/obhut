@@ -20,9 +20,12 @@ source "$STATE_FILE"
 
 : "${TAILSCALE_IF:=tailscale0}"
 
+: "${SBIN_DIR:?}"
+
 BOUND_UNITS="caddy.service"
 FIREWALL_UNIT="master-firewall.service"
-FIREWALL_BIN="${FIREWALL_BIN:-/usr/local/sbin/master-firewall}"
+# The base's tools are in state.env's SBIN_DIR (config/defaults.env, the single source).
+FIREWALL_BIN="$SBIN_DIR/master-firewall"
 # WantedBy=tailscaled tetiklemesi süreç start'ı ile gelir; IP henüz yok olabilir.
 # tailscale wait (1.90+) backend + arayüz + IP hazır olana kadar bekler.
 WAIT_TIMEOUT="${REFRESH_TAILNET_WAIT_TIMEOUT:-120s}"

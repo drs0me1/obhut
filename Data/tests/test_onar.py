@@ -219,7 +219,7 @@ class RepairTests(Fixture):
         (self.fake / "state" / "wg-quick@wg0.service").write_text("inactive")
         _, steps, _ = self.run_repair()
         self.assertEqual(steps["servisler"]["durum"], "ok")
-        self.assertEqual((steps["wireguard"]["durum"], steps["wireguard"]["detay"]), ("atlandi", "WireGuard durdurulmuş"))
+        self.assertEqual((steps["wireguard"]["durum"], steps["wireguard"]["detay"]), ("atlandi", "WireGuard kapalı"))
         self.assertEqual(self.changes(), [])
 
     def test_a_disabled_network_is_left_alone(self):
@@ -445,7 +445,11 @@ class PanelTests(unittest.TestCase):
         self.state = self.root / "state.env"
         self.state.write_text("ONARIM_UNIT=master-onar.service\nONARIM_DURUM_FILE=%s\nGUNCELLEME_UNIT=master-guncelle.service\n"
                               "SBIN_DIR=%s\n" % (self.report, self.bin))
-        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=["panel.test"], state_env=True))
+        # The fake systemd tools come first on the base tools' PATH.
+        tools = patch.object(panel, "TOOL_PATH", "%s:%s" % (self.bin, panel.TOOL_PATH))
+        tools.start()
+        self.addCleanup(tools.stop)
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state)))
 
     def calls(self):
         path = self.bin / "calls"
@@ -456,8 +460,8 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(self.p.repair_start("onar"), "onar")
         tool = self.bin / "master-onar"
         self.assertEqual(self.calls(), [
-            "--unit=master-onar.service --collect --quiet --description=Konsol: denetle --setenv=STATE_FILE=%s %s --kaynak konsol --denetle" % (self.state, tool),
-            "--unit=master-onar.service --collect --quiet --description=Konsol: denetle ve onar --setenv=STATE_FILE=%s %s --kaynak konsol" % (self.state, tool)])
+            "--unit=master-onar.service --collect --quiet --description=Konsol: denetle %s --kaynak konsol --denetle" % tool,
+            "--unit=master-onar.service --collect --quiet --description=Konsol: denetle ve onar %s --kaynak konsol" % tool])
 
     def test_refusals(self):
         with self.assertRaises(mu.UpdateError) as err:
@@ -485,6 +489,38 @@ class PanelTests(unittest.TestCase):
             self.assertEqual(err.exception.status, 409)
             self.assertIn(word, str(err.exception))
         self.assertEqual(self.calls(), [])
+
+    def test_repair_and_reboot_wait_for_application_jobs_and_the_cleanup(self):
+        """A repair restarts services and a reboot cuts everything off: neither starts beside a running job."""
+        for action, word in (("uygulama-kur", "Bir uygulama işlemi sürüyor"), ("temizlik", "Temizlik işlemi sürüyor")):
+            self.p.containers.jobs = {"j1": {"id": "j1", "action": action, "name": "x", "state": "running"}}
+            for start in (lambda: self.p.repair_start("onar"), self.p.reboot_start):
+                with self.subTest(action=action, start=start), self.assertRaises(mu.UpdateError) as err:
+                    start()
+                self.assertEqual(err.exception.status, 409)
+                self.assertIn(word, str(err.exception))
+        self.assertEqual(self.calls(), [])
+        # A finished job is no obstacle.
+        self.p.containers.jobs = {"j1": {"id": "j1", "action": "uygulama-kur", "name": "x", "state": "done"}}
+        self.assertEqual(self.p.repair_start("denetle"), "denetle")
+
+    def test_reboot_waits_for_a_settings_change_being_applied(self):
+        pending = self.root / "ayarlar-bekleyen.json"
+        with self.state.open("a") as fh:
+            fh.write("SETTINGS_PENDING_FILE=%s\n" % pending)
+        pending.write_text(json.dumps({"id": "a" * 32, "phase": "applying"}))
+        with self.assertRaises(mu.UpdateError) as err:
+            self.p.reboot_start()
+        self.assertEqual(err.exception.status, 409)
+        self.assertIn("Bir ayar değişikliği uygulanıyor", str(err.exception))
+        pending.write_text("{")
+        with self.assertRaises(mu.UpdateError) as err:
+            self.p.reboot_start()
+        self.assertIn("okunamadı", str(err.exception))
+        self.assertEqual(self.calls(), [])
+        # A change waiting for its confirmation is rolled back after the boot: the reboot goes ahead.
+        pending.write_text(json.dumps({"id": "a" * 32, "phase": "awaiting"}))
+        self.assertEqual(self.p.reboot_start(), panel.REBOOT_DELAY_SECONDS)
 
     def test_info_reads_the_report_and_a_vanished_run(self):
         self.assertEqual(self.p.repair_info(), {"calisiyor": False, "rapor": None, "kurulu": True})

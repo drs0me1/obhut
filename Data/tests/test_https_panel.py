@@ -27,7 +27,7 @@ class HttpsPanelTests(unittest.TestCase):
                     "SERVER_ROOT": str(self.root), "SETTINGS_FILE": str(self.root / "settings.json")}
         self.state = self.root / "state.env"
         self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
-        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[], state_env=False))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state)))
         self.now = 1800000000
         self.https = {"domain": "files.example.com", "mode": "https", "status": "ready",
                       "message": "Sertifika yerelde doğrulandı", "expires": self.now + 90 * 86400,
@@ -221,7 +221,8 @@ class HttpsPanelTests(unittest.TestCase):
             worker.assert_not_called()
             code, _, _ = resources.unix_get(sock, "/api/konsol/ayarlar/uygula", headers, "POST", json.dumps(payload))
             self.assertEqual(code, 200)
-            worker.assert_called_once_with("apply", payload, seconds=panel.master_settings.WORKER_SECONDS)
+            # The worker also gets the channel Caddy named (here the host itself; master_settings.TIMED_FROM_INTERNET).
+            worker.assert_called_once_with("apply", dict(payload, kanal="yerel"), seconds=panel.master_settings.WORKER_SECONDS)
         # DD-267: the old shell's settings reads are gone; the gate still answers first.
         code, response_headers, _ = resources.unix_get(sock, "/api/konsol/ayarlar/durum", headers)
         self.assertEqual(code, 404)

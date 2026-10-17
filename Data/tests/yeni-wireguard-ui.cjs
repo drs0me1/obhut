@@ -39,8 +39,12 @@ function networks() {
 }
 const wg = { state: null };
 function reset(o = {}) {
-  wg.state = { kurulu: true, durduruldu: false, endpoint: "203.0.113.10", max: 10, reserved: [22, 53, 80, 443, 41641, 61010], defaults: { dns: CF, keepalive: 21, mtu: 1420, port: 61001 },
-    now: NOW, active_window: 45, networks: networks(), revizyon: "rev-wg", ...o };
+  // The server's offer for a new network (master_wireguard.suggest_port): the default port for the first one,
+  // else the first free port from 61020 (wg1 holds 61020 in the fixture).
+  const nets = o.networks ?? networks();
+  wg.state = { kurulu: true, durduruldu: false, endpoint: "203.0.113.10", max: 10, reserved: [22, 53, 80, 443, 41641, 61010],
+    defaults: { dns: CF, keepalive: 21, mtu: 1420, port: nets.length ? 61021 : 61001 },
+    now: NOW, active_window: 45, networks: nets, revizyon: "rev-wg", ...o };
 }
 reset();
 
@@ -83,8 +87,8 @@ function wgPlan(w) {
   const typedMissing = TYPED.includes(w.eylem) && w.onay !== "onayla";
   const timed = OPENING.includes(w.eylem);
   const items = {
-    baslat: [item("ac", "WireGuard", "durduruldu", "çalışıyor")],
-    durdur: [item("kapat", "WireGuard", "çalışıyor", "durduruldu")],
+    baslat: [item("ac", "WireGuard", "kapalı", "açık")],
+    durdur: [item("kapat", "WireGuard", "açık", "kapalı")],
     "ag-ekle": [item("ekle", "WireGuard ağı", null, `UDP ${w.ag?.port}`)],
     "ag-ac": [item("ac", `WireGuard ağı ${w.iface}`, "kapalı", "açık")],
     "ag-kapat": [item("kapat", `WireGuard ağı ${w.iface}`, "açık", "kapalı")],
@@ -518,7 +522,7 @@ const panel = (page) => page.locator(".modal-sheet");
     sheet = panel(page);
     await sheet.getByRole("heading", { name: "Ağ ekle" }).waitFor();
     assert.equal((await sheet.getByTestId("wg-ident").innerText()).replace(/\s+/g, " "), "wg2 10.8.2.0/24 sunucu 10.8.2.1 Yalnız internet");
-    assert.equal(await sheet.getByLabel("UDP portu").inputValue(), "61021", "61020 and up, skipping used ports");
+    assert.equal(await sheet.getByLabel("UDP portu").inputValue(), "61021", "the server's offer for a later network");
     await sheet.getByLabel("UDP portu").fill("61001");
     await sheet.getByText("UDP 61001 kullanımda (wg0); başka bir port yazın.").waitFor();
     await sheet.getByLabel("UDP portu").fill("41641");

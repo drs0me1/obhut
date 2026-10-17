@@ -116,11 +116,12 @@ function names() {
   return {
     revizyon: "rev-1", alan: "ev", hatalar: [],
     adlar: [
-      { ad: "panel.ev", aile: 4, hedef: "tailscale", kaynak: "base", kapali: false, kilitli: true, satir: "panel" },
-      { ad: "panel.ev", aile: 6, hedef: "fd7a:115c:a1e0::2", kaynak: "base", kapali: false, kilitli: true, satir: "panel" },
-      { ad: "paylas.ev", aile: 4, hedef: "tailscale", kaynak: "base", kapali: false, kilitli: false, satir: null },
-      { ad: "yedek.ev", aile: 4, hedef: "tailscale", kaynak: "yedek", kapali: true, kilitli: false, satir: null },
-      { ad: "notlar.ev", aile: 4, hedef: "tailscale", kaynak: "uygulama", kapali: false, kilitli: true, satir: NOTLAR }],
+      { ad: "panel.ev", aile: 4, hedef: "tailscale", kaynak: "base", satir: "panel" },
+      { ad: "panel.ev", aile: 6, hedef: "fd7a:115c:a1e0::2", kaynak: "base", satir: "panel" },
+      { ad: "paylas.ev", aile: 4, hedef: "tailscale", kaynak: "paylasim", satir: "paylasim" },
+      { ad: "notlar.ev", aile: 4, hedef: "tailscale", kaynak: "uygulama", satir: NOTLAR },
+      // A name no row owns (the projection not yet rewritten): read-only too.
+      { ad: "eski.ev", aile: 4, hedef: "tailscale", kaynak: "uygulama", satir: null }],
     kayitlar: [{ name: "yazici.ev", target: "192.0.2.40", enabled: true }], yonlendirme: true, sunucular: ["1.1.1.1", "1.0.0.1"],
   };
 }
@@ -182,7 +183,7 @@ function settingsPlan(body) {
       uyarilar: [{ seviye: "warn", metin: `Değişikliği 5 dakika içinde yeni adresten onaylayın: http://panel.${body.domain}. Tailscale yönetim panelindeki split DNS kaydını da yeni ada çevirin.` }] });
   }
   if (body.dns) {
-    return plan({ degisiklikler: [item("dns", "kapat", "paylas.ev", "açık", "kapalı"), item("dns", "ekle", "nas.ev", null, "192.0.2.50"),
+    return plan({ degisiklikler: [item("dns", "degistir", "yazici.ev", "192.0.2.40", "192.0.2.40 · kapalı"), item("dns", "ekle", "nas.ev", null, "192.0.2.50"),
       item("dns", "degistir", "Dış adlar", "Üst DNS: 1.1.1.1, 1.0.0.1", "Üst DNS: 9.9.9.9, 149.112.112.112")],
     etkiler: ["dnsmasq yeniden başlar; yerel adlar birkaç saniye yanıt vermeyebilir."] });
   }
@@ -486,20 +487,23 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     assert.equal(await hashOf(page), "#/erisim?sekme=adresler");
     await page.context().close();
 
-    // ================= Yerel adlar: the names (draft → plan → apply) and the local domain
+    // ================= Yerel adlar: the managed names read-only, the records (draft → plan → apply) and the local domain
     page = await newPage();
     await page.goto(url("#/erisim?sekme=adlar"));
     const namesCard = page.getByTestId("names");
     await namesCard.locator('tr[data-ad="panel.ev"]').waitFor();
     assert.deepEqual(await namesCard.locator("tbody tr").evaluateAll((trs) => trs.map((t) => t.dataset.ad || "k:" + t.dataset.kayit)),
-      ["panel.ev", "paylas.ev", "yedek.ev", "notlar.ev", "k:yazici.ev"]);
+      ["panel.ev", "paylas.ev", "notlar.ev", "eski.ev", "k:yazici.ev"]);
     assert.equal(await namesCard.locator('tr[data-ad="panel.ev"] td').first().innerText(), "Tailscale adresi · 100.64.0.2 · fd7a:115c:a1e0::2");
-    assert.deepEqual(await namesCard.locator('td[data-label="Sahibi"]').allInnerTexts(), ["Konsol", "Paylaşımlar", "yedek", "notlar", "Elle"]);
+    assert.deepEqual(await namesCard.locator('td[data-label="Sahibi"]').allInnerTexts(), ["Konsol", "Paylaşımlar", "notlar", "Uygulama", "Elle"]);
     assert.equal(await namesCard.locator('tr[data-ad="panel.ev"]').getByTestId("name-locked").innerText(), "Konsol'un adı");
-    assert.equal(await namesCard.getByRole("switch", { name: "panel.ev açık" }).count(), 0, "Konsol's own name has no switch");
-    assert.equal(await namesCard.getByRole("switch", { name: "notlar.ev açık" }).count(), 0, "an application's name is switched with its address");
+    // No managed name has a switch (rebuild phase 6): each changes in its own row; only the operator's records switch.
+    assert.equal(await namesCard.locator("tr[data-ad]").getByRole("switch").count(), 0, "no managed name is switched here");
+    assert.equal(await namesCard.locator('tr[data-ad="eski.ev"]').getByTestId("name-locked").innerText(), "Salt okunur");
     assert.equal(await namesCard.locator('tr[data-ad="notlar.ev"]').getByTestId("name-row").getAttribute("href"), `#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`);
-    assert.equal(await namesCard.getByRole("switch", { name: "yedek.ev açık" }).getAttribute("aria-checked"), "false");
+    // WebDAV's name has one home: Paylaşımlar' Tailscale switch in Adresler.
+    assert.equal(await namesCard.locator('tr[data-ad="paylas.ev"]').getByTestId("name-row").getAttribute("href"), "#/erisim?sekme=adresler&satir=paylasim");
+    assert.equal(await namesCard.getByRole("switch", { name: "yazici.ev açık" }).getAttribute("aria-checked"), "true");
     assert.equal(await namesCard.locator('tr[data-kayit="yazici.ev"] td').first().innerText(), "Sabit adres · 192.0.2.40");
     await noStyles(page, "erisim adlar");
     await shot(page, "1440-light-erisim-adlar.png", true);
@@ -512,10 +516,10 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await sheet.waitFor({ state: "detached" });
     await page.goto(url("#/erisim?sekme=adlar"));
     await namesCard.locator('tr[data-ad="paylas.ev"]').waitFor();
-    // The draft: a name off, a record added, forwarding to Quad9.
+    // The draft: a record off, a record added, forwarding to Quad9.
     assert.equal(await page.getByTestId("dns-draft").count(), 0);
     assert.equal(await guarded(page), false, "no draft, no question");
-    await namesCard.getByRole("switch", { name: "paylas.ev açık" }).click();
+    await namesCard.getByRole("switch", { name: "yazici.ev açık" }).click();
     await page.getByTestId("dns-draft").filter({ hasText: "1 değişiklik kaydedilmedi" }).waitFor();
     assert.equal(await guarded(page), true, "a DNS draft asks before the tab closes");
     await page.getByTestId("add-record").click();
@@ -539,18 +543,17 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await page.getByTestId("review-dns").click();
     sheet = page.getByRole("dialog", { name: "Yerel ad değişiklikleri" });
     await sheet.getByTestId("plan").waitFor();
-    const DNS_BODY = { revision: "rev-1", dns: { disabled: ["yedek.ev", "paylas.ev"], records: [{ name: "yazici.ev", target: "192.0.2.40", enabled: true },
+    const DNS_BODY = { revision: "rev-1", dns: { records: [{ name: "yazici.ev", target: "192.0.2.40", enabled: false },
       { name: "nas.ev", target: "192.0.2.50", enabled: true }], forward: true, servers: ["9.9.9.9", "149.112.112.112"] } };
     assert.deepEqual(lastPost("ayarlar/plan"), DNS_BODY, "the plan asks for exactly the draft");
     assert.equal(await sheet.getByTestId("plan-window").innerText(), "Hemen kaydedilir; onay beklenmez.");
-    assert.deepEqual(await sheet.locator(".plan-item .pill").allInnerTexts(), ["Kapanır", "Eklenir", "Değişir"]);
+    assert.deepEqual(await sheet.locator(".plan-item .pill").allInnerTexts(), ["Değişir", "Eklenir", "Değişir"]);
     assert.deepEqual(await sheet.locator(".plan-group[data-alan] .plan-title").allInnerTexts(), ["Yerel adlar (DNS)"]);
-    const off = sheet.locator('.plan-item[data-islem="kapat"]');
+    const off = sheet.locator('.plan-item[data-islem="degistir"]').first();
     assert.deepEqual([await off.locator(".plan-object").innerText(), await off.locator(".plan-before").innerText(), await off.locator(".plan-after").innerText()],
-      ["paylas.ev", "açık", "kapalı"], "before → after");
+      ["yazici.ev", "192.0.2.40", "192.0.2.40 · kapalı"], "before → after");
     await shot(page, "1440-light-erisim-dns-plan.png");
-    data.adlar = { ...names(), adlar: names().adlar.map((a) => (a.ad === "paylas.ev" ? { ...a, kapali: true } : a)), kayitlar: DNS_BODY.dns.records,
-      sunucular: DNS_BODY.dns.servers };
+    data.adlar = { ...names(), kayitlar: DNS_BODY.dns.records, sunucular: DNS_BODY.dns.servers };
     const namesReads = count("adlar");
     await sheet.getByTestId("apply").click();
     await sheet.waitFor({ state: "detached" });
@@ -558,10 +561,10 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await page.getByTestId("names-note").filter({ hasText: "Yerel adlar kaydedildi." }).waitFor();
     await waitFor(() => count("adlar") > namesReads, "names read again");
     await page.getByTestId("dns-draft").waitFor({ state: "detached" });
-    assert.equal(await namesCard.getByRole("switch", { name: "paylas.ev açık" }).getAttribute("aria-checked"), "false");
+    assert.equal(await namesCard.getByRole("switch", { name: "yazici.ev açık" }).getAttribute("aria-checked"), "false");
     data.adlar = names();
     // A refused plan shows the backend's words and can be asked again.
-    await namesCard.getByRole("switch", { name: "yedek.ev açık" }).click();
+    await namesCard.getByRole("switch", { name: "yazici.ev açık" }).click();
     expectedFailures = ["/api/konsol/ayarlar/plan"];
     planReplies.push({ status: 400, body: { error: "Ayarlar değişmiş. Yenileyip yeniden inceleyin." } });
     await page.getByTestId("review-dns").click();
@@ -1264,8 +1267,8 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
       "and counts, the table's switches: a closing straight to its plan with Geri to the form, an opening with its field focused; a refused apply, " +
       "Adresi kaldır from the sheet and the Tailscale name's switch; raw scopes from the table (Tailscale planned at once, the internet with the " +
       "consent as internet_onayi, Kapalı), internet → Tailscale at once; Adres aç with a Tailscale port and an internet name; Konsol's internet " +
-      "name with the typed word; Paylaşımlar' Tailscale name; deep links and a missing row), Yerel adlar (owners, locked names with their row, " +
-      "DNS draft → plan → apply with exact bodies, a refused plan, the local domain: plan, 300 s, confirmation only from the new address, rollback), " +
+      "name with the typed word; Paylaşımlar' Tailscale name; deep links and a missing row), Yerel adlar (owners, the managed names read-only " +
+      "with their row and no switch, the records' draft → plan → apply with exact bodies, a refused plan, the local domain: plan, 300 s, confirmation only from the new address, rollback), " +
       "Güvenlik duvarı (scopes, the base's ports with rules, locked rows linking to Adresler, a baseline switch and a new rule, checks, IPv6, " +
       "WireGuard only with networks, a failing check, Teknik kurallar to Gelişmiş, plan → apply → 60 s → Onayla and Geri al, a plan that cannot be " +
       "applied), the leave guard on the DNS, domain and firewall drafts, the stuck rollback (retry, typed discard), a refused confirmation, the " +

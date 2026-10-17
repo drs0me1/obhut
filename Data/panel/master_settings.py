@@ -47,8 +47,7 @@ CONFIRM_WORD = "onayla"
 # DD-275: the worker's exit status for a page that showed another revision; the backend answers 409.
 STALE_EXIT = 75
 BASE_ENV = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C.UTF-8"}
-OFF = "# konsol-off: "
-DEFAULT = {"firewall": [], "dns": {"disabled": [], "records": [], "forward": False, "servers": []}}
+DEFAULT = {"firewall": [], "dns": {"records": [], "forward": False, "servers": []}}
 # The applying deadline: a change must be applied (or rolled back by the guard) within this many seconds. An
 # erisim change may restart a container and wait up to 300 s for it to be ready (master_container_worker
 # READY_SECONDS), then publish and wait for a certificate: it gets ERISIM_SECONDS, and the backend runs its
@@ -58,6 +57,9 @@ APPLY_SECONDS = 180
 ERISIM_SECONDS = 900
 WORKER_SECONDS = 150
 ERISIM_WORKER_SECONDS = 1800
+# A change that waits for the timed confirmation, asked from the internet name (plan and apply say the same).
+TIMED_FROM_INTERNET = ("Bu değişiklik süreli onay ister ve onay yalnız Tailscale'den verilir; "
+                       "internet adresinden uygulanamaz.")
 SECTIONS = ("firewall", "dns", "domain", "web", "erisim", "wireguard")
 DOMAIN_RE = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 
@@ -384,7 +386,6 @@ class Manager:
                 continue
             source = path.stem.removeprefix("modul-") if path.name.startswith("modul-") else "base"
             for line in path.read_text().splitlines():
-                line = line.removeprefix(OFF)
                 if line.startswith("interface-name="):
                     record = dns_interface(line.partition("=")[2])
                     if record:
@@ -419,7 +420,6 @@ class Manager:
             c["domain"] = domain
             def rename(name):
                 return name[:-len(old)] + domain if name.endswith("." + old) else name
-            c["dns"]["disabled"] = [rename(n) for n in c["dns"]["disabled"]]
             for record in c["dns"]["records"]:
                 record["name"] = rename(record["name"])
         if "firewall" in data:
@@ -453,15 +453,14 @@ class Manager:
             c["firewall"] = rules
         if "dns" in data:
             d = data["dns"]
-            require(isinstance(d, dict) and set(d) == {"disabled", "records", "forward", "servers"}, "DNS biçimi geçersiz.")
-            require(type(d["forward"]) is bool and isinstance(d["disabled"], list) and isinstance(d["records"], list)
-                    and isinstance(d["servers"], list), "DNS alanları geçersiz.")
-            require(len(d["records"]) <= 100 and len(d["disabled"]) <= 200 and len(d["servers"]) <= 4, "Çok fazla DNS kaydı.")
-            reserved = {n["name"] for n in self.dns_names()}
-            managed_names = set(reserved)
-            # Rebuild phase 4: an application's Tailscale name is switched in its access row, never here.
-            locked = self.app_names()
-            reserved |= set(locked)
+            # Rebuild phase 6: no managed name is switched here (Konsol's, WebDAV's and the applications' names change in
+            # their own rows), so the object has no "disabled" key; an unknown key is refused.
+            require(isinstance(d, dict) and set(d) == {"records", "forward", "servers"}, "DNS biçimi geçersiz.")
+            require(type(d["forward"]) is bool and isinstance(d["records"], list) and isinstance(d["servers"], list),
+                    "DNS alanları geçersiz.")
+            require(len(d["records"]) <= 100 and len(d["servers"]) <= 4, "Çok fazla DNS kaydı.")
+            # A record may not take a managed name: the base's, a modul-*.conf file's or an application row's.
+            reserved = {n["name"] for n in self.dns_names()} | set(self.app_names())
             for r in d["records"]:
                 require(isinstance(r, dict) and set(r) == {"name", "target", "enabled"}, "DNS kaydı biçimi geçersiz.")
                 name = r["name"]
@@ -478,9 +477,6 @@ class Manager:
                         raise SettingsError("DNS hedefi IPv4/IPv6 olmalı.") from err
                     require(not (addr.is_unspecified or addr.is_multicast), "DNS hedefi geçersiz.")
                     r["target"] = str(addr)
-            require(all(isinstance(n, str) and n in managed_names for n in d["disabled"]), "Bilinmeyen DNS adı kapatılamaz.")
-            for name in d["disabled"]:
-                require(name not in locked, "%s bir uygulamanın erişim satırına ait; Erişim → Adresler'den değişir." % name)
             for server in d["servers"]:
                 try:
                     addr = ipaddress.ip_address(server)
@@ -507,23 +503,10 @@ class Manager:
         return {"%s.%s" % (r["satir"]["ad"], self.e["LOCAL_DOMAIN"]): r["id"]
                 for r in self.app_rows() if r["satir"]["tur"] == "adres"}
 
-    def filter_dns(self, text, config=None):
-        disabled = (config or self.current())["dns"]["disabled"]
-        lines = []
-        for raw in text.splitlines():
-            line = raw.removeprefix(OFF)
-            name = line.partition("=")[2].partition(",")[0]
-            lines.append(OFF + line if line.startswith("interface-name=") and name in disabled else line)
-        return "\n".join(lines) + "\n"
-
     def project_dns(self, config=None):
-        import master_applications as apps
+        """SETTINGS_DNS_FILE from the operator's records and forwarding. The managed names' files (the base's,
+        WebDAV's, the applications') are their owners'; nothing here rewrites them."""
         d = (config or self.current())["dns"]
-        for path in self.dns_paths():
-            # The applications' names are not switchable here; their file is the projection's (master_shares publish).
-            if not path.exists() or path.name == apps.DNS_FILE:
-                continue
-            atomic(path, self.filter_dns(path.read_text(), config), 0o644)
         lines = ["# Konsol (DD-156); kalıcı kaynak SETTINGS_FILE."]
         for r in d["records"]:
             if r["enabled"]:
@@ -531,7 +514,7 @@ class Manager:
                              else "host-record=" + r["name"] + "," + r["target"])
         if d["forward"]:
             lines += ["server=" + ip for ip in d["servers"]]
-        # Base local=/DOMAIN/ + no-resolv remain authoritative, even for disabled names.
+        # Base local=/DOMAIN/ + no-resolv remain authoritative: a local name never goes upstream.
         atomic(self.dns_file, "\n".join(lines) + "\n", 0o644)
 
     def rules(self, family, wan=None):
@@ -646,7 +629,7 @@ class Manager:
             raw, info = read_regular(path)
             text = raw.decode()
             # Structured tokens only: no blanket replacement in paths/comments.
-            patterns = [r"(?m)^((?:# konsol-off: )?interface-name=[^,\n]+\.)" + old + r"(?=,)",
+            patterns = [r"(?m)^(interface-name=[^,\n]+\.)" + old + r"(?=,)",
                         r"(?m)^(local=/)" + old + r"(?=/$)",
                         r"(?m)^(http://[a-z0-9.-]+\.)" + old + r"(?=[:\s,{]|$)",
                         # DD-195: the shared Konsol routes name the backends' Host.
@@ -678,9 +661,6 @@ class Manager:
         # Rebuild phase 4: the checked access row change (master_publications.section), False without the section.
         change["erisim"] = self.erisim_section(data["erisim"], candidate) if "erisim" in data else False
         require(any(change.values()), "Değişiklik yok.")
-        if change["dns"]:
-            require("panel." + self.e["LOCAL_DOMAIN"] not in candidate["dns"]["disabled"],
-                    "Panel erişimini korumak için Konsol'un kendi DNS adı kapatılamaz.")
         if change["domain"]:
             require(Path(self.e["CADDYFILE"]).is_file(), "Caddy yapılandırması bulunamadı.")
         return candidate, change
@@ -759,8 +739,7 @@ class Manager:
                              % seconds})
             if kanal == "internet":
                 ok = False
-                warnings.append({"seviye": "bad", "metin": "Bu değişiklik süreli onay ister ve onay yalnız Tailscale'den verilir; "
-                                 "internet adresinden uygulanamaz."})
+                warnings.append({"seviye": "bad", "metin": TIMED_FROM_INTERNET})
         try:
             address = ipaddress.ip_address(client) if client else None
         except ValueError:
@@ -795,10 +774,6 @@ class Manager:
             items.append(plan_item("alan-adi", "degistir", "Yerel alan adı", self.e["LOCAL_DOMAIN"], candidate["domain"]))
         elif change["dns"]:
             b, a = saved.get("dns") or DEFAULT["dns"], candidate["dns"]
-            for name in sorted(set(a["disabled"]) - set(b["disabled"])):
-                items.append(plan_item("dns", "kapat", name, "açık", "kapalı"))
-            for name in sorted(set(b["disabled"]) - set(a["disabled"])):
-                items.append(plan_item("dns", "ac", name, "kapalı", "açık"))
             before = {r["name"]: r for r in b["records"]}
             after = {r["name"]: r for r in a["records"]}
             for name, r in after.items():
@@ -862,6 +837,9 @@ class Manager:
         return master_publications.section(self.e, saved, item)
 
     def apply(self, data):
+        # The channel the request came by (the root backend writes it, never the browser); not a setting.
+        data = dict(data)
+        kanal = data.pop("kanal", "")
         candidate, change = self.prepare(data)
         if change["wireguard"]:
             import master_wireguard
@@ -873,9 +851,12 @@ class Manager:
             require(not change["erisim"]["internet_acilir"] or change["erisim"]["internet_onayi"],
                     master_publications.CONSENT_MISSING)
         seconds = self.confirm_seconds(change)
+        # The plan's rule: a change that waits for the timed confirmation cannot be confirmed from the internet, so it
+        # is not applied from there at all (it would open access until the rollback). Nothing is written before this.
+        require(not (seconds and kanal == "internet"), TIMED_FROM_INTERNET)
         run(["systemctl", "start", GUARD_TIMER])
         run(["systemctl", "is-active", "--quiet", GUARD_TIMER])
-        paths = [*self.dns_paths(), self.dns_file] if change["dns"] else []
+        paths = [self.dns_file] if change["dns"] else []
         files_active = False
         if change["web"]:
             import master_publications
@@ -976,7 +957,7 @@ class Manager:
         import master_wireguard
         try:
             if master_wireguard.stopped(self.e):
-                return "Şu anki durum: WireGuard durdurulmuş."
+                return "Şu anki durum: WireGuard kapalı."
             names = master_wireguard.registered(self.e)
             if not names:
                 return "Şu anki durum: WireGuard ağı yok."
@@ -1126,8 +1107,6 @@ class Manager:
             self.caddy_test()
         blocked = self.client_blocked(p["candidate"], client)
         require(not blocked, blocked)
-        require("panel." + self.e["LOCAL_DOMAIN"] not in p["candidate"]["dns"]["disabled"],
-                "Konsol'un kendi DNS adı kapalıyken değişiklik kalıcılaştırılamaz.")
         # Recheck validators before committing.
         if p["changes"]["dns"]:
             self.dns_test()
@@ -1216,7 +1195,7 @@ def guard_idle(p):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", default=os.environ.get("STATE_FILE", "/etc/master-stack/state.env"))
-    parser.add_argument("action", choices=("apply", "confirm", "rollback", "discard", "guard", "rules", "tailnet-ports", "project-dns", "filter-dns", "dns-enabled", "dns-forward", "status", "saved-domain"))
+    parser.add_argument("action", choices=("apply", "confirm", "rollback", "discard", "guard", "rules", "tailnet-ports", "project-dns", "dns-forward", "status", "saved-domain"))
     parser.add_argument("value", nargs="?")
     parser.add_argument("wan", nargs="?")
     args = parser.parse_args()
@@ -1243,12 +1222,6 @@ def main():
         if args.action == "project-dns":
             m.project_dns()
             return
-        if args.action == "filter-dns":
-            path = Path(args.value)
-            atomic(path, m.filter_dns(path.read_text()), 0o644)
-            return
-        if args.action == "dns-enabled":
-            sys.exit(0 if args.value not in m.current()["dns"]["disabled"] else 1)
         if args.action == "dns-forward":
             sys.exit(0 if m.current()["dns"]["forward"] else 1)
         if args.action == "status":

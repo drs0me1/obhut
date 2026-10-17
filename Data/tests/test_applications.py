@@ -262,16 +262,16 @@ class RowTests(Case):
         self.assertEqual(named("sayac"), {})
         self.assertEqual(named("notlar"), {question: "notlar.ev adı zaten kullanılıyor."}, "another application's row")
         Path(self.env["DNSMASQ_CONF_FILE"]).write_text("interface-name=panel.ev,tailscale0/4\ninterface-name=temel.ev,tailscale0/4\n")
-        (self.root / "dnsmasq/modul-paylasim.conf").write_text("# konsol-off: interface-name=kapali.ev,tailscale0/4\n")
+        (self.root / "dnsmasq/modul-paylasim.conf").write_text("interface-name=ek.ev,tailscale0/4\n")
         (self.root / "dnsmasq" / apps.DNS_FILE).write_text("interface-name=eski.ev,tailscale0/4\n")
         Path(self.env["SETTINGS_FILE"]).write_text(json.dumps({"dns": {"records": [{"name": "kayit.ev", "target": "tailscale",
                                                                                    "enabled": True}]}}))
-        for name in ("temel", "kapali", "kayit"):
+        for name in ("temel", "ek", "kayit"):
             with self.subTest(name=name):
                 self.assertEqual(named(name), {question: "%s.ev adı zaten kullanılıyor." % name})
         self.assertEqual(named("eski"), {}, "the applications' own DNS file is their projection; the rows decide")
         taken = apps.taken_names(self.env)
-        self.assertLessEqual({"panel.ev", "paylas.ev", "notlar.ev", "temel.ev", "kapali.ev", "kayit.ev"}, taken)
+        self.assertLessEqual({"panel.ev", "paylas.ev", "notlar.ev", "temel.ev", "ek.ev", "kayit.ev"}, taken)
         # A row renamed in Erişim holds its new name; an edit of the same application keeps its own names.
         records = apps.Records(self.env)
         rows = records.load("notlar")["rows"]

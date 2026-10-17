@@ -1,5 +1,7 @@
 # Container management proposal
 
+> **Archived (rebuild phase 6):** the 1.x container manager's proposal (DD-211). Applications are now added from their own Compose or Kubernetes file ([`contract.md`](../../contract.md) §4).
+
 Status: accepted by the user; implementation authorized, 2026-10-03. Baseline: `5b91f65`, v2-189.
 This is the accepted design and implementation plan; delivery is in progress.
 Astra owns the technical design and integration; Opus owns the companion visual prototype.

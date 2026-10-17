@@ -345,7 +345,7 @@ function open(p: Panel): void {
     fIndex.value = nextNetwork(s);
     if (fIndex.value === null) return;
     fLabel.value = "";
-    fPort.value = String(suggestPort(s));
+    fPort.value = suggestPort(s);
     fDns.value = DNS_PRESETS[0].ips;
   }
   const switching = panel.value !== null;

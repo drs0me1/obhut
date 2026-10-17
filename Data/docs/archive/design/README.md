@@ -1,5 +1,7 @@
 # Konsol — design mockups
 
+> **Archived (rebuild phase 6):** mockups and proposals of the 1.x Konsol; nothing here is current. Konsol's sections are described in [`contract.md`](../../contract.md) §6 and its routes in [`konsol-api.json`](../../konsol-api.json).
+
 Frozen HTML mockups of **Konsol**, the single admin console at
 `http://panel.<domain>` that replaces the separate WireGuard (`wg.`) and
 file (`dosya.`) panels. Each file is a self-contained page with sample

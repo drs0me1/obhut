@@ -140,7 +140,7 @@ SCHEMAS = {
     "KuralTaslagi": obj({"id": STR, "name": STR, "family": INT, "scope": enum("wan", "tail"), "proto": enum("tcp", "udp"),
                          "port": INT, "source": STR, "allow": BOOL}),
     "DnsKaydi": obj({"name": STR, "target": STR, "enabled": BOOL}),
-    "DnsTaslagi": obj({"disabled": arr(STR), "records": arr(ref("DnsKaydi")), "forward": BOOL, "servers": arr(STR)}),
+    "DnsTaslagi": obj({"records": arr(ref("DnsKaydi")), "forward": BOOL, "servers": arr(STR)}),
     # A fixed row (Konsol: panel, WebDAV: paylasim): its Tailscale switch, its internet switch and name; Konsol's
     # internet name needs the typed word (DD-195).
     "WebSatiri": obj({"service": enum("panel", "paylasim"), "tail": BOOL, "enabled": BOOL, "domain": STR, "confirm": STR},
@@ -177,17 +177,17 @@ SCHEMAS = {
                            "kural": STR, "sahip": STR})),
         "aglar": arr(obj({"arayuz": STR, "ad": STR, "etkin": BOOL})), "hatalar": arr(STR),
     }),
-    # kilitli: the name is switched in its own row, not here (Konsol's; an application's, satir its row id).
+    # adlar: the managed names, read-only; each changes in its own row (satir: panel, paylasim or an application's
+    # access row id; null when no row owns it).
     "Adlar": obj({
         "revizyon": STR, "alan": STR,
-        "adlar": arr(obj({"ad": STR, "aile": null(INT), "hedef": STR, "kaynak": STR, "kapali": BOOL, "kilitli": BOOL,
-                          "satir": null(STR)})),
+        "adlar": arr(obj({"ad": STR, "aile": null(INT), "hedef": STR, "kaynak": STR, "satir": null(STR)})),
         "kayitlar": arr(ref("DnsKaydi")), "yonlendirme": BOOL, "sunucular": arr(STR), "hatalar": arr(STR),
     }),
     # A job's record (an application's or the cleanup's), never its request.
     "KonteynerIsi": open_obj({"id": STR, "action": STR, "name": STR, "state": STR, "step": STR}),
-    # DD-266 (phase 4a): the Podman list (docs/design/container-manager-api.md). Rows stay open objects and
-    # carry fields of their own. An application's container names it.
+    # DD-266 (phase 4a): the Podman list; this table is its contract (docs/konsol-api.json is generated from it).
+    # Rows stay open objects and carry fields of their own. An application's container names it.
     "KonteynerPortu": open_obj({"host_ip": STR, "host_port": INT, "container_port": INT, "protocol": STR, "scope": STR}),
     "KonteynerSatiri": open_obj({
         "id": STR, "name": STR, "image": STR, "state": STR, "status": STR, "unit": STR, "network": STR,
@@ -284,8 +284,10 @@ SCHEMAS = {
         "active": BOOL, "count": INT, "revision": STR, "peers": arr(ref("WireGuardCihazi")),
     }),
     # kurulu: master-wg works; durduruldu: WireGuard is stopped as a whole; max: how many networks there may be;
-    # reserved: UDP ports a new network may not take; revizyon: the settings revision a planned action sends
-    # (DD-275; "" when it cannot be read, and such a request is refused).
+    # reserved: UDP ports a new network may not take; defaults.port: the UDP port offered for a new network
+    # (WG_PORT_DEFAULT for the first, then the first free one from WG_PORT_NEXT; 0 when none is free);
+    # revizyon: the settings revision a planned action sends (DD-275; "" when it cannot be read, and such a
+    # request is refused).
     "WireGuard": obj({
         "kurulu": BOOL, "durduruldu": BOOL, "endpoint": STR, "max": INT, "reserved": arr(INT),
         "defaults": obj({"dns": STR, "keepalive": INT, "mtu": INT, "port": INT}),

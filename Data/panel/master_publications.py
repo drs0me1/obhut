@@ -10,7 +10,7 @@ function, master_applications.access_rows. Their files:
                                               Tailscale port (K5, http://{$TAILSCALE_IPV4}:<port>), both to the
                                               row's 127.0.0.1 pool port
   CADDY_MODULES_DIR/uygulama-<app>-wan.caddy  every internet name: bind WAN_IPV4, TLS-ALPN, X-Forwarded-For; the
-                                              application's own login is the guard (the layout of DD-252's sites)
+                                              application's own login is the guard (DD-275)
   DNSMASQ_CONF_DIR/modul-uygulama.conf        one interface-name line per address row (master_applications.DNS_FILE)
 
 Stale uygulama-* files are removed. A raw port is the container guard's (master_container_network), never
@@ -34,6 +34,8 @@ APP_FILE_PREFIX = "uygulama-"
 WAN_SUFFIX = "-wan"
 SCOPE_TEXT = {"kapali": "kapalı", "tailscale": "Tailscale", "internet": "İnternet"}
 # A2: what opening a raw port to the internet means; the request carries internet_onayi: true.
+APP_GUARD_TEXT = ("İnternet adında Konsol giriş istemez; bu adrese internetten gelen herkesi yalnız uygulamanın kendi "
+                  "girişi durdurur.")
 CONSENT_TEXT = ("Ham port internete doğrudan açılır: arada Caddy, HTTPS ve Konsol girişi olmaz; şifreleme ve giriş "
                 "uygulamanın kendisindedir.")
 CONSENT_MISSING = "Ham portu internete açmak için bu uyarıyı onaylayın (internet onayı)."
@@ -292,7 +294,7 @@ def extra_sites(env):
 
 def dns_text(env):
     """modul-uygulama.conf: one interface-name line per address row; "" when there is none (the file is removed).
-    These names are not switchable in Yerel adlar: their row is their home."""
+    Their row is their home; Yerel adlar lists them read-only."""
     lines = ["interface-name=%s.%s,%s/4" % (item["satir"]["ad"], env["LOCAL_DOMAIN"], env["TAILSCALE_IF"])
              for item in app_rows(env) if item["satir"]["tur"] == "adres"]
     if not lines:
@@ -607,6 +609,8 @@ def plan_notes(env, change):
         effects.append("Yerel adlar (dnsmasq) yeniden başlar.")
     if new["tur"] == "adres" and new["internet"] and new["internet"] != (old.get("internet") if old["tur"] == "adres" else ""):
         effects.append("İnternet adı için HTTPS sertifikası alınır (en çok 1 dakika).")
+        # DD-275: Konsol puts no sign-in in front of an application's internet name.
+        warnings.append({"seviye": "warn", "metin": APP_GUARD_TEXT})
     if claims(change["anahtar"], old) != claims(change["anahtar"], new) or restarts(change):
         effects.append("Güvenlik duvarı ve konteyner koruması yeniden kurulur.")
     if old["tur"] == "adres" and (new["tur"] != "adres" or new["ad"] != old["ad"]):

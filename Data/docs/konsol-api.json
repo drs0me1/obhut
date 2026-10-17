@@ -4318,12 +4318,6 @@
       "DnsTaslagi": {
         "type": "object",
         "properties": {
-          "disabled": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
           "records": {
             "type": "array",
             "items": {
@@ -4341,7 +4335,6 @@
           }
         },
         "required": [
-          "disabled",
           "records",
           "forward",
           "servers"
@@ -4904,12 +4897,6 @@
                 "kaynak": {
                   "type": "string"
                 },
-                "kapali": {
-                  "type": "boolean"
-                },
-                "kilitli": {
-                  "type": "boolean"
-                },
                 "satir": {
                   "anyOf": [
                     {
@@ -4926,8 +4913,6 @@
                 "aile",
                 "hedef",
                 "kaynak",
-                "kapali",
-                "kilitli",
                 "satir"
               ],
               "additionalProperties": false

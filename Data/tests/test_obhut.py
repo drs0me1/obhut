@@ -197,6 +197,16 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("sudo obhut durum", err)
 
+    def test_it_reads_the_installed_state_only(self):
+        # Rebuild phase 6: no hidden --state; obhut reads the installer's state.env and nothing else.
+        konsol = FakeKonsol({"/api/konsol/bekleyen": {"bekleyen": None}})
+        with patch.object(obhut, "read_env", return_value={}) as read, patch.object(obhut, "Konsol", return_value=konsol), \
+             patch.object(obhut.os, "geteuid", return_value=0), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(obhut.main(["geri-al"]), 0)
+        read.assert_called_once_with("/etc/master-stack/state.env")
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            obhut.parser().parse_args(["--state", "/tmp/state.env", "durum"])
+
 
 class SocketTests(Fixture):
     def setUp(self):

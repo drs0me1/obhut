@@ -31,12 +31,12 @@ IFACE_RE = re.compile(r"^wg[0-9]$")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 # DD-137: "Bağlı" = son ACTIVE_WINDOW saniyede cihazdan veri geldi (istemci 21 sn'de bir
 # canlı tutma paketi yollar). Sayaçlar SAMPLE_SECONDS'ta bir, sayfa açık olmasa da okunur.
-ACTIVE_WINDOW = float(os.environ.get("PANEL_ACTIVE_WINDOW", "45"))
-SAMPLE_SECONDS = float(os.environ.get("PANEL_SAMPLE_SECONDS", "10"))
+ACTIVE_WINDOW = 45.0
+SAMPLE_SECONDS = 10.0
 HANDSHAKE_FRESH = 180
 CONFIRM_WORD = "onayla"
 KEYS = ("SBIN_DIR", "WG_NETWORKS_FILE", "WG_STOPPED_FILE", "WG_NETWORKS_MAX", "WG_CLIENT_DNS_DEFAULT",
-        "WG_CLIENT_KEEPALIVE_DEFAULT", "WG_MTU", "WG_PORT_DEFAULT")
+        "WG_CLIENT_KEEPALIVE_DEFAULT", "WG_MTU", "WG_PORT_DEFAULT", "WG_PORT_NEXT")
 # The networks file's columns (DD-136, DD-177): interface, UDP port, the fixed scope "inet", server and
 # subnet IPv4, server and subnet IPv6, the default DNS and the name.
 FIELDS = ("iface", "port", "scope", "server4", "subnet4", "server6", "subnet6", "dns", "label")
@@ -50,9 +50,9 @@ TYPED = ("ag-kaldir", "yeniden-uret")
 NETWORK_ACTIONS = ("ag-kaldir", "ag-ac", "ag-kapat", "yeniden-uret")
 SECTION_KEYS = ("SBIN_DIR", "WG_NETWORKS_FILE", "WG_STOPPED_FILE", "WG_NETWORKS_MAX", "WG_CONF_DIR", "WG_ADDR_BASE4")
 TYPED_TEXT = "Bu işlem geri alınamaz; uygulamak için %s yazın." % CONFIRM_WORD
-STOPPED_TEXT = "WireGuard durduruldu; önce Konsol → Erişim → WireGuard'dan başlatın"
+STOPPED_TEXT = "WireGuard kapalı; önce Konsol → Erişim → WireGuard'dan açın"
 # master-wg's message when it gives none.
-FAILED = {"baslat": "WireGuard başlatılamadı.", "durdur": "WireGuard durdurulamadı.", "ag-ekle": "Ağ eklenemedi.",
+FAILED = {"baslat": "WireGuard açılamadı.", "durdur": "WireGuard kapatılamadı.", "ag-ekle": "Ağ eklenemedi.",
           "ag-kaldir": "Ağ kaldırılamadı.", "ag-ac": "Ağ açılamadı.", "ag-kapat": "Ağ kapatılamadı.",
           "yeniden-uret": "Ağ yeniden üretilemedi."}
 
@@ -186,11 +186,11 @@ def section(env, item, unit):
               "aglar": [{k: n[k] for k in ("iface", "port", "label", "subnet4")} for n in nets]}
     if action == "baslat":
         if not is_stopped:
-            raise WireGuardError(400, "WireGuard zaten çalışıyor.")
+            raise WireGuardError(400, "WireGuard zaten açık.")
         change["acilacak"] = [name for name in listed if name in names]
     elif action == "durdur":
         if is_stopped:
-            raise WireGuardError(400, "WireGuard zaten durdurulmuş.")
+            raise WireGuardError(400, "WireGuard zaten kapalı.")
     elif action == "ag-ekle":
         if is_stopped:
             raise WireGuardError(400, STOPPED_TEXT)
@@ -258,6 +258,19 @@ def app_ports(env):
     return {r["satir"]["port"]: r["id"] for r in rows if r["satir"]["tur"] == "ham" and r["satir"]["kapsam"] != "kapali"}
 
 
+def suggest_port(env, networks, reserved):
+    """The UDP port Konsol offers a new network: WG_PORT_DEFAULT for the first one while it is free, else the
+    first free port from WG_PORT_NEXT upward (DD-143; reserved holds the base's and the networks' ports).
+    0 when none is free; master-wg net-add checks whatever is sent."""
+    first = num_or(env["WG_PORT_DEFAULT"], 0)
+    if not networks and first and first not in reserved:
+        return first
+    port = num_or(env["WG_PORT_NEXT"], 0)
+    while port and port in reserved:
+        port += 1
+    return port if 1024 <= port <= 65535 else 0
+
+
 def network_name(change, iface):
     label = next((n["label"] for n in change["aglar"] if n["iface"] == iface), "")
     return "WireGuard ağı %s%s" % (iface, " · " + label if label else "")
@@ -274,9 +287,9 @@ def plan_items(change):
     def item(islem, nesne, once, sonra):
         return {"alan": "wireguard", "islem": islem, "nesne": nesne, "once": once, "sonra": sonra}
     if action == "baslat":
-        return [item("ac", "WireGuard", "durduruldu", "çalışıyor")]
+        return [item("ac", "WireGuard", "kapalı", "açık")]
     if action == "durdur":
-        return [item("kapat", "WireGuard", "çalışıyor", "durduruldu")]
+        return [item("kapat", "WireGuard", "açık", "kapalı")]
     if action == "ag-ekle":
         ag = change["ag"]
         added = item("ekle", "WireGuard ağı %s%s" % (iface, " · " + ag["label"] if ag["label"] else ""), None,
@@ -303,7 +316,8 @@ def plan_notes(change):
     effects, warnings = [], []
     closing = {"seviye": "warn", "metin": "Onay beklemeden hemen kalıcı olur; bağlı cihazların bağlantısı kopar."}
     if action == "baslat":
-        ports = ", ".join(str(n["port"]) for n in change["aglar"])
+        # Only the networks that open get a port (a network closed on its own keeps none).
+        ports = ", ".join(str(n["port"]) for n in change["aglar"] if n["iface"] in change["acilacak"])
         effects.append("Güvenlik duvarı yeniden kurulur: WireGuard'ın UDP portları internete açılır%s; yönlendirme ve NAT gelir."
                        % (" (%s)" % ports if ports else ""))
         effects.append("Durdurmadan önce açık olan ağlar açılır: %s." % ", ".join(change["acilacak"]) if change["acilacak"]
@@ -320,15 +334,18 @@ def plan_notes(change):
             change["ag"]["port"], "; yönlendirme ve NAT gelir" if not change["aglar"] else ""))
     elif action == "ag-ac":
         effects.append("%s arayüzü açılır; cihazları yeniden bağlanabilir." % iface)
-        effects.append("UDP %d güvenlik duvarında zaten açık; güvenlik duvarı değişmez." % network_port(change, iface))
+        effects.append("Güvenlik duvarı yeniden kurulur: UDP %d internete açılır; ağın yönlendirmesi ve NAT'ı gelir."
+                       % network_port(change, iface))
     elif action == "ag-kapat":
         effects.append("%s arayüzü kapanır; bağlı cihazların bağlantısı kopar." % iface)
-        effects.append("UDP %d güvenlik duvarında açık kalır; dinleyen olmaz." % network_port(change, iface))
+        effects.append("Güvenlik duvarı yeniden kurulur: UDP %d kapanır; ağın yönlendirmesi ve NAT'ı kalkar."
+                       % network_port(change, iface))
         warnings.append(closing)
     elif action == "ag-kaldir":
         effects.append("%s kapanır; ağın anahtarı, bütün cihazları ve profilleri silinir." % iface)
+        # A closed network (its unit disabled) or a stopped WireGuard has no port to close.
         effects.append("Güvenlik duvarı yeniden kurulur%s." % (
-            ": UDP %d kapanır" % network_port(change, iface) if not change["durduruldu"] else ""))
+            ": UDP %d kapanır" % network_port(change, iface) if not change["durduruldu"] and change["birim"]["etkin"] else ""))
         warnings += [closing, {"seviye": "warn", "metin": "Geri alınamaz: ağın anahtarı ve cihaz profilleri silinir."}]
     else:
         effects.append("%s ağının sunucu anahtarı yeniden üretilir; bütün cihazları ve profilleri silinir." % iface)
@@ -392,7 +409,8 @@ class WireGuard:
 
     def networks(self):
         """The networks for Erişim, the firewall view, the port catalogue and listener scopes (no keys).
-        A stopped WireGuard has none: its ports, forwarding and NAT are gone (DD-229)."""
+        A stopped WireGuard has none: its ports, forwarding and NAT are gone (DD-229). open: the network's
+        unit is enabled, the state the firewall admits a network by (a closed one has no port)."""
         try:
             env = keys(self.env())
             if stopped(env) or not registered(env):
@@ -401,7 +419,12 @@ class WireGuard:
         except (WireGuardError, OSError, ValueError) as err:
             self.log("panel: wireguard: ağ listesi okunamadı (%s)" % err)
             return []
-        return [{k: n[k] for k in ("iface", "port", "label", "active", "server4", "server6")} for n in rows]
+        return [dict({k: n[k] for k in ("iface", "port", "label", "active", "server4", "server6")}, open=self.enabled(n["iface"]))
+                for n in rows]
+
+    def enabled(self, iface):
+        """Whether a network's wg-quick unit is enabled (master-wg net ac|kapat, net-add, baslat|durdur write it)."""
+        return self.run_tool(["systemctl", "is-enabled", "--quiet", "wg-quick@%s.service" % iface], timeout=10)[0] == 0
 
     def peers(self, net, seen=None):
         rc, out, message = self.run("info", net=net)
@@ -487,8 +510,7 @@ class WireGuard:
                 "dns": env["WG_CLIENT_DNS_DEFAULT"],
                 "keepalive": num_or(env["WG_CLIENT_KEEPALIVE_DEFAULT"], 0),
                 "mtu": num_or(env["WG_MTU"], 0),
-                # DD-143: ilk ağa önerilen UDP portu; sonrakiler 61020'den sıralanır.
-                "port": num_or(env["WG_PORT_DEFAULT"], 0),
+                "port": suggest_port(env, networks, reserved),
             },
             "now": int(time.time()),
             "active_window": int(ACTIVE_WINDOW),

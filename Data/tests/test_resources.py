@@ -65,7 +65,7 @@ class ResourceTests(unittest.TestCase):
         state = root / "state.env"
         state.write_text(f"SERVER_ROOT={root}\nLOCAL_DOMAIN=test\nV2_VERSION=test\n"
                          f"WG_NETWORKS_FILE={root / 'wg-networks'}\nWG_STOPPED_FILE={root / 'wg-stopped'}\n")
-        self.p = panel.Panel(types.SimpleNamespace(state=str(state), allow_host=[], state_env=False))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(state)))
 
     def test_resources_do_not_enumerate_wireguard_ports_or_processes(self):
         with patch.object(self.p.wireguard, "networks", side_effect=AssertionError("WG")), \

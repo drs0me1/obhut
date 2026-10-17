@@ -343,10 +343,10 @@ each application's live rate comes from its own bridge's counters (the operator'
 
 ### Phase 6: documents, sweep and the clean-server test
 
-- [ ] `contract.md`, `architecture.md`, `CLAUDE.md`, `README.md`, `tests/README.md` describe only the
+- [x] `contract.md`, `architecture.md`, `CLAUDE.md`, `README.md`, `tests/README.md` describe only the
       new structure
-- [ ] Superseded DD entries retired to the archive; new entries complete
-- [ ] Final leftover sweep and back-door review (section 7), including the switches that exist only
+- [x] Superseded DD entries retired to the archive; new entries complete
+- [x] Final leftover sweep and back-door review (section 7), including the switches that exist only
       for tests: `master-panel --state-env`, `--allow-host` in both backends, the `PANEL_ACTIVE_WINDOW`
       and `PANEL_SAMPLE_SECONDS` environment variables, the hidden `--state` of `obhut` and `--kaynak` of
       `master-onar`: each one is removed or moved behind the test harness

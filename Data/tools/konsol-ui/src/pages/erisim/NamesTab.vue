@@ -1,9 +1,9 @@
 <!-- Erişim → Yerel adlar (rebuild phase 5, A7; GET /api/konsol/adlar): the names the server's DNS answers under the
      local domain with who owns each, the operator's records, the forwarding of other names and the local domain.
-     Switches, records and forwarding are collected as a draft and saved through the plan review (they commit at
-     once). Konsol's own name is never switched off; an application's name is switched with its address in
-     Adresler (locked here, with a link to its row). The local domain change: plan, apply, then a 300 s
-     confirmation from the new address. -->
+     The managed names are read-only here: Konsol's, Paylaşımlar' and every application's name change in their own
+     row in Adresler (linked from here). Records and forwarding are collected as a draft and saved through the plan
+     review (they commit at once). The local domain change: plan, apply, then a 300 s confirmation from the new
+     address. -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
@@ -78,21 +78,20 @@ function ownerOf(name: string, kaynak: string, satir: string | null): string {
 }
 
 const nameRows = computed(() => {
-  const out: { ad: string; hedef: string; sahibi: string; kilitli: boolean; satir: string | null }[] = [];
+  const out: { ad: string; hedef: string; sahibi: string; satir: string | null }[] = [];
   for (const a of names.value?.adlar ?? []) {
     let row = out.find((r) => r.ad === a.ad);
     if (!row) {
-      row = { ad: a.ad, hedef: "", sahibi: ownerOf(a.ad, a.kaynak, a.satir), kilitli: a.kilitli, satir: a.satir };
+      row = { ad: a.ad, hedef: "", sahibi: ownerOf(a.ad, a.kaynak, a.satir), satir: a.satir };
       out.push(row);
     }
     const target = a.hedef === "tailscale" ? `Tailscale adresi${tailscaleV4.value ? " · " + tailscaleV4.value : ""}` : a.hedef;
     if (target && !row.hedef.includes(target)) row.hedef = row.hedef ? `${row.hedef} · ${target}` : target;
-    row.kilitli ||= a.kilitli;
     row.satir ??= a.satir;
   }
   return out;
 });
-/** A locked name's own row in Adresler (an application's), or "" for Konsol's (it is never switched off). */
+/** A managed name's own row in Adresler (Paylaşımlar' or an application's), or "" for Konsol's (always on). */
 const nameRow = (r: { satir: string | null }) => (r.satir && r.satir !== "panel" ? r.satir : "");
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -100,7 +99,6 @@ const savedDns = computed<DnsTaslagi | null>(() => {
   const n = names.value;
   if (!n) return null;
   return {
-    disabled: [...new Set(n.adlar.filter((a) => a.kapali).map((a) => a.ad))],
     records: n.kayitlar.map((r) => ({ name: r.name, target: r.target, enabled: r.enabled })),
     forward: n.yonlendirme,
     servers: [...n.sunucular],
@@ -113,14 +111,12 @@ watch(savedDns, (now, before) => {
   if (draft.value && now && before && JSON.stringify(now) !== JSON.stringify(before)) draft.value = null;
 });
 const sameDns = (a: DnsTaslagi, b: DnsTaslagi) =>
-  JSON.stringify([[...a.disabled].sort(), a.records, a.forward, a.servers]) === JSON.stringify([[...b.disabled].sort(), b.records, b.forward, b.servers]);
+  JSON.stringify([a.records, a.forward, a.servers]) === JSON.stringify([b.records, b.forward, b.servers]);
 const dirty = computed(() => Boolean(draft.value && savedDns.value && !sameDns(draft.value, savedDns.value)));
 const changes = computed(() => {
   const d = draft.value, s = savedDns.value;
   if (!d || !s) return 0;
   let n = 0;
-  const off = new Set(d.disabled), was = new Set(s.disabled);
-  for (const x of new Set([...off, ...was])) if (off.has(x) !== was.has(x)) n += 1;
   for (const r of d.records) {
     const old = s.records.find((x) => x.name === r.name);
     if (!old || JSON.stringify(old) !== JSON.stringify(r)) n += 1;
@@ -135,13 +131,6 @@ function editDraft(change: (d: DnsTaslagi) => void): void {
   if (!base) return;
   change(base);
   draft.value = savedDns.value && sameDns(base, savedDns.value) ? null : base;
-}
-
-const isOff = (name: string) => dns.value?.disabled.includes(name) ?? false;
-function setName(name: string, on: boolean): void {
-  editDraft((d) => {
-    d.disabled = on ? d.disabled.filter((n) => n !== name) : [...d.disabled.filter((n) => n !== name), name];
-  });
 }
 
 function setRecord(name: string, on: boolean): void {
@@ -313,7 +302,7 @@ const panelAddress = (d: string) => tailnetKonsol(d);
           <Icon name="plus" :size="16" />Kayıt ekle
         </button>
       </div>
-      <p class="meter-note">.{{ domain || UNKNOWN }} altındaki adları sunucunun DNS'i yanıtlar. Bir adı kapatmak hizmeti durdurmaz.</p>
+      <p class="meter-note">.{{ domain || UNKNOWN }} altındaki adları sunucunun DNS'i yanıtlar. Konsol'un, Paylaşımlar'ın ve uygulamaların adları burada değişmez; kendi kayıtlarınızı ekleyip kapatabilirsiniz.</p>
       <p v-if="namesError" class="form-error" role="alert">{{ namesError }}</p>
       <ul v-if="names?.hatalar.length" class="notice-list">
         <li v-for="(x, i) in names.hatalar" :key="i" class="warn-text">{{ x }}</li>
@@ -335,12 +324,12 @@ const panelAddress = (d: string) => tailnetKonsol(d);
               <td data-label="Yanıt">{{ r.hedef || UNKNOWN }}</td>
               <td data-label="Sahibi">{{ r.sahibi }}</td>
               <td data-label="Açık">
-                <span v-if="r.kilitli && !nameRow(r)" class="lock-line" data-testid="name-locked"><Icon name="lock" :size="14" />Konsol'un adı</span>
-                <span v-else-if="r.kilitli" class="cell-stack">
+                <span v-if="r.satir === 'panel'" class="lock-line" data-testid="name-locked"><Icon name="lock" :size="14" />Konsol'un adı</span>
+                <span v-else-if="nameRow(r)" class="cell-stack">
                   <span class="lock-line"><Icon name="lock" :size="14" />Adresiyle açık</span>
                   <RouterLink :to="accessRoute('adresler', nameRow(r))" class="cell-note" data-testid="name-row">Adresler'de değişir</RouterLink>
                 </span>
-                <Switch v-else :model-value="!isOff(r.ad)" :label="`${r.ad} açık`" hide-label :disabled="locked" @update:model-value="setName(r.ad, $event)" />
+                <span v-else class="lock-line" data-testid="name-locked"><Icon name="lock" :size="14" />Salt okunur</span>
               </td>
               <td class="col-act"></td>
             </tr>

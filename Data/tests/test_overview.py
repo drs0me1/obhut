@@ -26,7 +26,7 @@ class Fixture(unittest.TestCase):
         self.state = self.root / "state.env"
         self.state.write_text("SERVER_ROOT=%s\nLOCAL_DOMAIN=test\nV2_VERSION=test\nKONSOL_AUTH_DIR=%s\nWAN_INTERFACE=eth0\n"
                               % (self.root, self.root / "konsol"))
-        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[]))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(self.state)))
 
 
 class Clock:

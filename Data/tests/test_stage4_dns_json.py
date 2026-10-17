@@ -49,7 +49,7 @@ class DnsTests(unittest.TestCase):
                         "interface-name=dual.ayc,tailscale0\n"
                         "interface-name=other.ayc,eth0/4\n"
                         "host-record=fixed.ayc,2001:db8::9\n"
-                        "# konsol-off: interface-name=off.ayc,tailscale0/4\n")
+                        "# interface-name=off.ayc,tailscale0/4\n")
         parsed = {n["name"]: n for n in self.p.dns_view(self.env)["names"]}
         for name, family, address in (("v4", 4, self.env["TAILSCALE_IPV4"]),
                                       ("v6", 6, self.env["TAILSCALE_IPV6"]),
@@ -63,18 +63,20 @@ class DnsTests(unittest.TestCase):
         names = {n["name"]: n for n in self.m.dns_names()}
         self.assertEqual((names["v4.ayc"]["iface"], names["v4.ayc"]["target"]), ("tailscale0", "tailscale"))
         self.assertEqual(names["v6.ayc"]["target"], self.env["TAILSCALE_IPV6"])
-        self.assertEqual(names["off.ayc"]["family"], 4)
+        # A commented-out line is no name in either view.
+        self.assertNotIn("off.ayc", names)
 
-    def test_explicit_ipv6_choices_survive_projection_and_disabled_names(self):
+    def test_explicit_ipv6_choices_survive_projection(self):
         base = Path(self.env["DNSMASQ_CONF_FILE"])
         base.write_text("interface=lo\ninterface=tailscale0\nlocal=/ayc/\nno-resolv\ninterface-name=panel.ayc,tailscale0/4\n")
+        # WebDAV's name file beside the base's: a managed name, never rewritten by the projection.
         module = Path(self.env["DNSMASQ_CONF_DIR"]) / "modul-paylasim.conf"
         module.write_text("interface-name=paylas.ayc,tailscale0/4\n")
         records = [dict(name="auto.ayc", target="tailscale", enabled=True),
                    dict(name="v6.ayc", target="2001:db8::9", enabled=True),
                    dict(name="v4.ayc", target="192.0.2.9", enabled=True),
                    dict(name="off.ayc", target="tailscale", enabled=False)]
-        dns = self.fixture.dns(records=records, disabled=["paylas.ayc"], forward=True, servers=["2606:4700:4700::1111"])
+        dns = self.fixture.dns(records=records, forward=True, servers=["2606:4700:4700::1111"])
         result = self.m.apply(self.fixture.payload(dns=dns))
         self.assertTrue(result["committed"])
         expected = self.m.dns_file.read_text()
@@ -82,14 +84,13 @@ class DnsTests(unittest.TestCase):
                      "host-record=v4.ayc,192.0.2.9", "server=2606:4700:4700::1111"):
             self.assertIn(line + "\n", expected)
         self.assertNotIn("off.ayc", expected)
-        self.assertEqual(module.read_text(), settings.OFF + "interface-name=paylas.ayc,tailscale0/4\n")
+        self.assertEqual(module.read_text(), "interface-name=paylas.ayc,tailscale0/4\n")
         self.m.project_dns()
         self.assertEqual(self.m.dns_file.read_text(), expected)
-        self.assertEqual(self.m.filter_dns(module.read_text(), settings.DEFAULT), "interface-name=paylas.ayc,tailscale0/4\n")
         shown = {n["name"]: n for n in self.p.dns_view(self.env)["names"]}
         self.assertEqual(shown["auto.ayc"]["address"], self.env["TAILSCALE_IPV4"])
         self.assertEqual(shown["v6.ayc"]["address"], "2001:db8::9")
-        self.assertNotIn("paylas.ayc", shown)
+        self.assertEqual(shown["paylas.ayc"]["address"], self.env["TAILSCALE_IPV4"])
         self.assertEqual(self.m.current()["dns"]["records"], records)
 
     def test_domain_apply_and_rollback_keep_family_and_custom_ipv6(self):
@@ -120,7 +121,7 @@ class JsonTests(unittest.TestCase):
         self.root = Path(tmp.name).resolve()
         state = self.root / "state.env"
         state.write_text("LOCAL_DOMAIN=test\n")
-        self.p = panel.Panel(types.SimpleNamespace(state=str(state), allow_host=[], state_env=False))
+        self.p = panel.Panel(types.SimpleNamespace(state=str(state)))
 
     def test_deep_http_json_returns_400_keeps_gates_and_does_not_run_worker(self):
         class Handler(panel.Handler):

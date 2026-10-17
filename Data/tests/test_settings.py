@@ -68,6 +68,10 @@ class Fixture(unittest.TestCase):
     def dns(self, **kwargs):
         return dict(copy.deepcopy(settings.DEFAULT["dns"]), **kwargs)
 
+    def nas(self, **kwargs):
+        """A DNS-only change: one operator record."""
+        return self.dns(records=[dict(dict(name="nas.ayc", target="tailscale", enabled=True), **kwargs)])
+
     def confirm(self):
         return self.m.confirm({"id": self.m.pending()["id"], "client": "100.64.0.9", "kanal": "tailscale"})
 
@@ -76,7 +80,7 @@ class SettingsTests(Fixture):
     def test_defaults_and_no_secrets_in_status(self):
         s = self.m.status()
         self.assertEqual(s["config"], settings.DEFAULT)
-        # DD-202: the base's status knows no application account or folder.
+        # DD-271: the base's status knows no application account or folder.
         self.assertFalse({"username", "save"} & set(s), sorted(s))
 
     def test_stale_revision_and_external_dns_change(self):
@@ -198,14 +202,31 @@ class SettingsTests(Fixture):
                             client="100.64.0.9", kanal="tailscale")
         self.assertTrue(other["uygulanabilir"])
 
+    def test_a_timed_change_from_the_internet_is_refused_before_anything_is_written(self):
+        """The plan's rule holds in apply: a change that waits for the timed confirmation cannot be confirmed from the
+        internet name, so it is not applied from there (access would open until the rollback)."""
+        before = Path(self.env["DNSMASQ_CONF_FILE"]).read_bytes()
+        with self.assertRaises(settings.SettingsError) as err:
+            self.m.apply(dict(self.payload(firewall=[self.rule()]), kanal="internet"))
+        self.assertEqual(str(err.exception), settings.TIMED_FROM_INTERNET)
+        self.assertIsNone(self.m.pending())
+        self.assertFalse(self.m.config_path.exists())
+        self.assertEqual(self.calls, [], "not even the guard timer starts")
+        self.assertEqual(Path(self.env["DNSMASQ_CONF_FILE"]).read_bytes(), before)
+        # The plan says the same words.
+        plan = self.m.plan(self.payload(firewall=[self.rule()]), kanal="internet")
+        self.assertIn({"seviye": "bad", "metin": settings.TIMED_FROM_INTERNET}, plan["uyarilar"])
+        # A change that commits at once may still come from there; over Tailscale the timed one waits as before.
+        self.assertTrue(self.m.apply(dict(self.payload(dns=self.nas()), kanal="internet"))["committed"])
+        self.assertEqual(self.m.apply(dict(self.payload(firewall=[self.rule()]), kanal="tailscale"))["pending"]["seconds"], 60)
+
     def test_plan_of_dns_and_domain_changes(self):
-        dns = self.dns(disabled=["health.ayc"], records=[{"name": "nas.ayc", "target": "192.0.2.5", "enabled": True}],
-                       forward=True, servers=["9.9.9.9"])
+        dns = self.dns(records=[{"name": "nas.ayc", "target": "192.0.2.5", "enabled": True}], forward=True, servers=["9.9.9.9"])
         plan = self.m.plan(self.payload(dns=dns))
         self.assertEqual(plan["onay_sn"], 0, "DNS alone commits at once")
         self.assertEqual([(i["alan"], i["islem"], i["nesne"]) for i in plan["degisiklikler"]],
-                         [("dns", "kapat", "health.ayc"), ("dns", "ekle", "nas.ayc"), ("dns", "degistir", "Dış adlar")])
-        self.assertEqual(plan["degisiklikler"][2]["sonra"], "Üst DNS: 9.9.9.9")
+                         [("dns", "ekle", "nas.ayc"), ("dns", "degistir", "Dış adlar")])
+        self.assertEqual(plan["degisiklikler"][1]["sonra"], "Üst DNS: 9.9.9.9")
         Path(self.env["CADDYFILE"]).write_text("http://panel.ayc {\n}\n")
         plan = self.m.plan(self.payload(domain="ev"), client="100.64.0.9", kanal="tailscale")
         self.assertEqual(plan["onay_sn"], 300)
@@ -214,18 +235,21 @@ class SettingsTests(Fixture):
         self.assertTrue(any("http://panel.ev" in w["metin"] for w in plan["uyarilar"]))
         self.assertEqual(self.calls, [])
 
-    def test_disable_panel_is_rejected_before_mutation(self):
+    def test_no_managed_name_is_switched_off_and_an_unknown_dns_key_is_refused(self):
+        """Rebuild phase 6: every managed name changes in its own row, so the DNS object has no "disabled" key."""
         before = Path(self.env["DNSMASQ_CONF_FILE"]).read_bytes()
+        self.assertNotIn("disabled", settings.DEFAULT["dns"])
         for extra in ({}, {"firewall": []}):
-            with self.subTest(extra=extra), self.assertRaises(settings.SettingsError):
-                self.m.apply(self.payload(dns=self.dns(disabled=["panel.ayc"]), **extra))
+            for dns in (dict(self.dns(), disabled=["panel.ayc"]), dict(self.dns(), disabled=[]), dict(self.dns(), other=1)):
+                with self.subTest(extra=extra, dns=dns), self.assertRaisesRegex(settings.SettingsError, "^DNS biçimi geçersiz.$"):
+                    self.m.apply(self.payload(dns=dns, **extra))
         self.assertEqual(before, Path(self.env["DNSMASQ_CONF_FILE"]).read_bytes())
         self.assertIsNone(self.m.pending())
         self.assertFalse(self.m.config_path.exists())
         self.assertEqual(self.calls, [])
 
     def test_dns_only_commits_immediately_and_survives_deadline_and_reboot(self):
-        dns = self.dns(disabled=["health.ayc"])
+        dns = self.nas()
         result = self.m.apply(self.payload(dns=dns))
         self.assertEqual(result, {"pending": None, "committed": True})
         self.assertIsNone(self.m.pending())
@@ -241,7 +265,7 @@ class SettingsTests(Fixture):
     def test_mixed_dns_keeps_confirmation_even_with_unchanged_firewall(self):
         for extra in ({"firewall": []},):
             with self.subTest(extra=extra):
-                self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"]), **extra))
+                self.m.apply(self.payload(dns=self.nas(), **extra))
                 self.assertEqual(self.m.status()["pending"]["seconds"], 60)
                 self.assertEqual(self.m.config()["dns"], settings.DEFAULT["dns"])
                 self.now += 61
@@ -249,17 +273,17 @@ class SettingsTests(Fixture):
                 self.assertEqual(self.m.current()["dns"], settings.DEFAULT["dns"])
 
     def test_dns_restart_or_commit_failure_restores_previous_config(self):
-        self.m.apply(self.payload(dns=self.dns(records=[dict(name="nas.ayc", target="tailscale", enabled=True)])))
+        self.m.apply(self.payload(dns=self.nas()))
         before = self.m.config()
         for failure in ("restart", "commit"):
             with self.subTest(failure=failure):
                 if failure == "restart":
                     self.fail_cmd = "restart dnsmasq"
                     with self.assertRaises(settings.SettingsError):
-                        self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"])))
+                        self.m.apply(self.payload(dns=self.nas(enabled=False)))
                 else:
                     with patch.object(self.m, "commit", side_effect=OSError("disk failure")), self.assertRaises(OSError):
-                        self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"])))
+                        self.m.apply(self.payload(dns=self.nas(enabled=False)))
                 self.assertIsNone(self.m.pending())
                 self.assertEqual(self.m.config(), before)
                 self.assertIn("interface-name=nas.ayc", self.m.dns_file.read_text())
@@ -267,7 +291,7 @@ class SettingsTests(Fixture):
     def test_dns_crash_recovery_before_and_after_durable_commit(self):
         for committed in (False, True):
             with self.subTest(committed=committed):
-                dns = self.dns(disabled=["health.ayc"])
+                dns = self.nas()
                 def crash(p):
                     if committed:
                         settings.save_json(self.m.config_path, dict(p["candidate"], _transaction=p["id"]))
@@ -285,14 +309,16 @@ class SettingsTests(Fixture):
             self.m.apply(self.payload(dns=self.dns(), firewall=[], committed=True))
         self.assertIsNone(self.m.pending())
 
-    def test_dns_projection_survives_rerender_and_private_zone_stays_local(self):
-        self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"], forward=True, servers=["1.1.1.1"],
-                         records=[{"name": "nas.ayc", "target": "192.0.2.10", "enabled": True}])))
+    def test_dns_projection_writes_only_its_own_file_and_private_zone_stays_local(self):
         base = Path(self.env["DNSMASQ_CONF_FILE"])
-        self.assertIn(settings.OFF + "interface-name=health.ayc", base.read_text())
-        base.write_text(base.read_text().replace(settings.OFF, ""))
+        before = base.read_bytes()
+        self.m.apply(self.payload(dns=self.dns(forward=True, servers=["1.1.1.1"],
+                         records=[{"name": "nas.ayc", "target": "192.0.2.10", "enabled": True}])))
+        # The managed names' files are their owners': the projection never rewrites them.
+        self.assertEqual(base.read_bytes(), before)
+        self.m.dns_file.unlink()
         self.m.project_dns()
-        self.assertIn(settings.OFF, base.read_text())
+        self.assertEqual(base.read_bytes(), before)
         self.assertIn("local=/ayc/", base.read_text())
         self.assertIn("no-resolv", base.read_text())
         self.assertIn("host-record=nas.ayc,192.0.2.10", self.m.dns_file.read_text())
@@ -321,7 +347,7 @@ class SettingsTests(Fixture):
         # Works on Linux and macOS (the fallback validator is dnsmasq --test).
         with patch.object(self.m, "dns_test", side_effect=[settings.SettingsError("test"), None]):
             with self.assertRaises(settings.SettingsError):
-                self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"])))
+                self.m.apply(self.payload(dns=self.nas()))
         self.assertEqual(before, Path(self.env["DNSMASQ_CONF_FILE"]).read_bytes())
         self.assertIsNone(self.m.pending())
 
@@ -352,7 +378,7 @@ class SettingsTests(Fixture):
 
     def test_recovery_failure_keeps_pending_for_timer_retry(self):
         with patch.object(self.m, "dns_test", side_effect=settings.SettingsError("retry")), self.assertRaises(settings.SettingsError):
-            self.m.apply(self.payload(dns=self.dns(disabled=["health.ayc"])))
+            self.m.apply(self.payload(dns=self.nas()))
         self.assertEqual(self.m.pending()["phase"], "rollback")
         self.assertEqual((self.m.pending()["attempts"], self.m.pending()["error"]), (1, "retry"))
         # DD-182: the next automatic attempt waits for the backoff.
@@ -471,8 +497,7 @@ class SettingsTests(Fixture):
         (self.root / "caddy-modules/paylasim.caddy").write_text(site)
         (self.root / "dns/modul-paylasim.conf").write_text("interface-name=paylas.ayc,tailscale0/4\n")
         settings.save_json(self.m.config_path, dict(copy.deepcopy(settings.DEFAULT), dns=self.dns(
-            disabled=["paylas.ayc"], records=[dict(name="nas.ayc", target="192.0.2.8", enabled=False)],
-            forward=True, servers=["1.1.1.1"])))
+            records=[dict(name="nas.ayc", target="192.0.2.8", enabled=False)], forward=True, servers=["1.1.1.1"])))
 
     def test_domain_migration_templates_names_and_new_host_confirmation(self):
         self.domain_fixture()
@@ -489,7 +514,7 @@ class SettingsTests(Fixture):
         for unit in ("master-files-panel.service", "master-sistem-dosya.service"):
             self.assertIn("--domain=ev ", (self.root / "units" / unit).read_text())
         self.assertIn("local=/ev/", Path(self.env["DNSMASQ_CONF_FILE"]).read_text())
-        self.assertEqual(self.m.current()["dns"]["disabled"], ["paylas.ev"])
+        self.assertIn("interface-name=health.ev,tailscale0\n", Path(self.env["DNSMASQ_CONF_FILE"]).read_text())
         self.assertEqual(self.m.current()["dns"]["records"], [dict(name="nas.ev", target="192.0.2.8", enabled=False)])
         self.assertEqual(self.m.current()["dns"]["servers"], ["1.1.1.1"])
         for host in ("panel.ayc", "127.0.0.1", "panel.ev.evil", ""):
@@ -649,7 +674,7 @@ class WireGuardSectionTests(Fixture):
     def test_plan_items_and_the_window_of_every_action(self):
         """Decision 4: an opening waits 60 s, a closing action commits at once. The plan writes nothing and
         runs no tool; it only reads the units."""
-        cases = [({"eylem": "durdur"}, 0, [("kapat", "WireGuard", "çalışıyor", "durduruldu")], None),
+        cases = [({"eylem": "durdur"}, 0, [("kapat", "WireGuard", "açık", "kapalı")], None),
                  ({"eylem": "ag-kapat", "iface": "wg0"}, 0, [("kapat", "WireGuard ağı wg0 · Ev ağı", "açık", "kapalı")], None),
                  ({"eylem": "ag-kaldir", "iface": "wg0", "onay": "onayla"}, 0,
                   [("kaldir", "WireGuard ağı wg0 · Ev ağı", "UDP 61001 · açık", None), ("kapat", "WireGuard", "açık", "kapalı")], None),
@@ -659,7 +684,7 @@ class WireGuardSectionTests(Fixture):
                  ({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1 ,9.9.9.9", "label": " Misafir "}}, 60,
                   [("ekle", "WireGuard ağı wg1 · Misafir", None, "UDP 61020 · 10.8.1.0/24 · DNS 1.1.1.1, 9.9.9.9")], None),
                  ({"eylem": "ag-ac", "iface": "wg0"}, 60, [("ac", "WireGuard ağı wg0 · Ev ağı", "kapalı", "açık")], "closed"),
-                 ({"eylem": "baslat"}, 60, [("ac", "WireGuard", "durduruldu", "çalışıyor")], "stopped")]
+                 ({"eylem": "baslat"}, 60, [("ac", "WireGuard", "kapalı", "açık")], "stopped")]
         for item, seconds, items, state in cases:
             with self.subTest(item=item):
                 self.units = {"wg0": [False, False] if state else [True, True]}
@@ -682,6 +707,23 @@ class WireGuardSectionTests(Fixture):
         plan = self.m.plan(self.wg(eylem="durdur"))
         self.assertIn("Güvenlik duvarı yeniden kurulur: WireGuard'ın UDP portları kapanır (61001); yönlendirme ve NAT kalkar.",
                       plan["etkiler"])
+        # The firewall admits only an open network: a network's switch applies it, its port, forwarding and NAT come
+        # and go with it, and removing a closed network closes no port.
+        self.units = {"wg0": [False, False]}
+        plan = self.m.plan(self.wg(eylem="ag-ac", iface="wg0"))
+        self.assertIn("Güvenlik duvarı yeniden kurulur: UDP 61001 internete açılır; ağın yönlendirmesi ve NAT'ı gelir.", plan["etkiler"])
+        self.assertIn("Güvenlik duvarı yeniden kurulur.", self.m.plan(self.wg(eylem="ag-kaldir", iface="wg0", onay="onayla"))["etkiler"])
+        self.units = {"wg0": [True, True]}
+        plan = self.m.plan(self.wg(eylem="ag-kapat", iface="wg0"))
+        self.assertIn("Güvenlik duvarı yeniden kurulur: UDP 61001 kapanır; ağın yönlendirmesi ve NAT'ı kalkar.", plan["etkiler"])
+        self.assertFalse(any("açık kalır" in e or "değişmez" in e for e in plan["etkiler"]), plan["etkiler"])
+        # Starting again opens only the ports of the networks that were open (wg1 was closed on its own).
+        self.networks.write_text(NET0 + "\n" + NET1 + "\n")
+        self.marker.write_text("wg0\n")
+        plan = self.m.plan(self.wg(eylem="baslat"))
+        self.assertIn("Güvenlik duvarı yeniden kurulur: WireGuard'ın UDP portları internete açılır (61001); yönlendirme ve NAT gelir.",
+                      plan["etkiler"])
+        self.marker.unlink()
         self.networks.unlink()
         (self.wgdir / "wg0.conf").unlink()
         plan = self.m.plan(self.wg(eylem="ag-ekle", ag={"port": 61001, "dns": "1.1.1.1"}))
@@ -698,7 +740,7 @@ class WireGuardSectionTests(Fixture):
                  ({"eylem": "ag-kaldir", "iface": "wg0", "onay": True}, "metin olmalı"),
                  ({"eylem": "ag-ac", "iface": "wg10"}, "Geçersiz arayüz"), ({"eylem": "ag-ac", "iface": "wg0\n"}, "Geçersiz arayüz"),
                  ({"eylem": "ag-kaldir", "iface": "wg3"}, "'wg3' diye bir WireGuard ağı yok"),
-                 ({"eylem": "baslat"}, "zaten çalışıyor"), ({"eylem": "ag-ac", "iface": "wg0"}, "wg0 zaten açık"),
+                 ({"eylem": "baslat"}, "WireGuard zaten açık"), ({"eylem": "ag-ac", "iface": "wg0"}, "wg0 zaten açık"),
                  ({"eylem": "ag-ekle", "ag": {"port": "61020", "dns": "1.1.1.1"}}, "1024-65535"),
                  ({"eylem": "ag-ekle", "ag": {"port": True, "dns": "1.1.1.1"}}, "1024-65535"),
                  ({"eylem": "ag-ekle", "ag": {"port": 80, "dns": "1.1.1.1"}}, "1024-65535"),
@@ -721,8 +763,8 @@ class WireGuardSectionTests(Fixture):
         with self.assertRaisesRegex(settings.SettingsError, "wg0 zaten kapalı"):
             self.m.plan(self.wg(eylem="ag-kapat", iface="wg0"))
         self.marker.write_text("wg0\n")
-        for item, message in (({"eylem": "durdur"}, "zaten durdurulmuş"), ({"eylem": "ag-ac", "iface": "wg0"}, "WireGuard durduruldu"),
-                              ({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1"}}, "WireGuard durduruldu")):
+        for item, message in (({"eylem": "durdur"}, "WireGuard zaten kapalı"), ({"eylem": "ag-ac", "iface": "wg0"}, "WireGuard kapalı; önce"),
+                              ({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1"}}, "WireGuard kapalı; önce")):
             with self.subTest(item=item), self.assertRaisesRegex(settings.SettingsError, message):
                 self.m.plan(self.wg(**item))
         self.marker.unlink()
@@ -853,7 +895,7 @@ class WireGuardSectionTests(Fixture):
         with self.assertRaisesRegex(settings.SettingsError, "Şu anki durum: wg0 açık"):
             self.m.apply(self.wg(eylem="durdur"))
         self.marker.write_text("")
-        self.assertEqual(self.m.wireguard_left(), "Şu anki durum: WireGuard durdurulmuş.")
+        self.assertEqual(self.m.wireguard_left(), "Şu anki durum: WireGuard kapalı.")
 
     def test_the_revision_covers_the_networks_file_and_the_stopped_marker(self):
         stale = self.wg(eylem="durdur")

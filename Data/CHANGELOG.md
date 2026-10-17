@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-18 — Documents, sweep and fixes before the clean-server test (v2-261, branch `yeni-yapi`)
+
+- The documents describe the new generation only (DD-278): the contract, the architecture, the folder-share
+  guide, README, OKUBENI and the test guide; old interface documents and superseded decisions are archived.
+- A WireGuard network closed in Konsol stays closed after a re-run or an update, and its internet port is
+  closed with it; adding, removing, opening, closing or renewing a network from the terminal waits while a
+  Konsol change is pending.
+- A change that waits for confirmation cannot be applied from the internet address (it could not be confirmed
+  there); restarting the server or running the repair waits until an application job or a cleanup ends.
+- Yerel adlar shows Konsol's, Paylaşımlar' and the applications' names read-only, each changed where it
+  belongs; the switch that hid such a name is gone. Your own DNS records work as before.
+- Opening an internet name for an application says that only the application's own login guards it; a
+  password written in a Compose file is pointed out on its line (it is not used, but it stays in the file).
+- The installed programs no longer carry options that only tests used.
+
 ### 2026-10-17 — Konsol's new screens (v2-259, branch `yeni-yapi`)
 
 - Uygulamalar → "Uygulama ekle" (DD-276): paste or upload a Compose or Kubernetes file, or start from an

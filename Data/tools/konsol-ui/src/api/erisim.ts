@@ -80,10 +80,10 @@ export async function readNames(): Promise<Adlar> {
   const value = shaped<Adlar>(await getJson(YOLLAR.adlar), (v) => isText(v.revizyon) && isText(v.alan) && isList(v.adlar) && isList(v.kayitlar));
   return {
     ...value,
-    // A locked name is switched in its own row (satir: panel or an application's access row).
+    // The managed names are read-only; each changes in its own row (satir: panel, paylasim or an access row).
     adlar: value.adlar
-      .filter((a) => isObject(a) && isText(a.ad) && isBool(a.kapali))
-      .map((a) => ({ ...a, kilitli: a.kilitli === true, satir: isText(a.satir) && a.satir ? a.satir : null })),
+      .filter((a) => isObject(a) && isText(a.ad))
+      .map((a) => ({ ...a, satir: isText(a.satir) && a.satir ? a.satir : null })),
     kayitlar: value.kayitlar.filter((r) => isObject(r) && isText(r.name) && isText(r.target) && isBool(r.enabled)),
     yonlendirme: value.yonlendirme === true,
     sunucular: isList(value.sunucular) ? value.sunucular.filter(isText) : [],

@@ -485,7 +485,6 @@ def taken_names(env, skip_app=None, skip_rows=(), records=None):
         except (OSError, UnicodeDecodeError, settings.SettingsError) as err:
             raise AppError(503, "Yerel DNS adları okunamadı; Tailscale adı denetlenemedi.") from err
         for line in text.splitlines():
-            line = line.removeprefix(settings.OFF)
             if line.startswith("interface-name="):
                 names.add(line.partition("=")[2].partition(",")[0])
     if env.get("SETTINGS_FILE"):

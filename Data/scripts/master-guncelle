@@ -46,9 +46,8 @@ trap 'rm -rf -- "$tmp"' EXIT
 rc=0
 {
     echo "==> $repo@$commit ($version) indiriliyor"
-    # KUR_BETIK_URL yalnız testler içindir.
-    curl -fsSL --proto '=https,file' --retry 3 --max-time 120 -o "$tmp/kur.sh" \
-        "${KUR_BETIK_URL:-https://raw.githubusercontent.com/$repo/$commit/kur.sh}" &&
+    curl -fsSL --proto '=https' --retry 3 --max-time 120 -o "$tmp/kur.sh" \
+        "https://raw.githubusercontent.com/$repo/$commit/kur.sh" &&
         KUR_REF="$commit" KUR_GUNCELLE="$version" bash "$tmp/kur.sh"
 } 2>&1 | tee -a "$log_file" || rc=$?
 

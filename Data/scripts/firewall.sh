@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Host INPUT + VPN FORWARD/NAT politikası. Staging zincir, atomik swap.
 # Üçüncü taraf kurallar silinmez. Docker yoktur (DD-152): DOCKER-USER'a dokunulmaz.
-# DD-198/271: WireGuard ağlarını bu betik kendisi okur (WG_NETWORKS_FILE) ve kuralları yalnız o
+# DD-272: WireGuard ağlarını bu betik kendisi okur (WG_NETWORKS_FILE) ve kuralları yalnız o
 # yazar ve denetler: her ağ için WAN UDP ucu, tailnet izni, internet-only yönlendirme (DD-177) ve
-# NAT. WireGuard durdurulmuşsa (WG_STOPPED_FILE, DD-229) hiçbiri yoktur. Bozuk bir kayıt satırı
+# NAT. WireGuard durdurulmuşsa (WG_STOPPED_FILE, DD-229) hiçbiri yoktur; a network closed on its own
+# (its wg-quick unit disabled) has none either. Bozuk bir kayıt satırı
 # hiçbir kuralı değiştirmez; korumasız açılışta kurtarma erişimi kalır.
 set -Eeuo pipefail
 
@@ -77,9 +78,13 @@ load_share_wan() {
 # DD-136/143: kayıt satırı (sekmeyle) arayüz, UDP portu, sabit inet alanı (DD-177), sunucu IPv4, alt
 # ağ IPv4, sunucu IPv6, alt ağ IPv6, varsayılan DNS ve etikettir. DD-229: durdurulmuş WireGuard'ın
 # kaydı korunur ama hiçbir portu ya da kuralı açılmaz. Kayıt dışı bir kapsam ya da eksik alan betiği
-# durdurur: hiçbir kural değişmez.
+# durdurur: hiçbir kural değişmez. Every line is validated (and checked for duplicates); only an open
+# network gets rules. "Open" is its wg-quick unit's enablement, the one state master-wg net ac|kapat,
+# net-add and baslat|durdur write: a network closed on its own keeps its registry line but no WAN port,
+# tailnet port, forwarding or NAT.
 load_wireguard_rules() {
     local iface port scope n4 n6 i j
+    local all_ifaces=() all_ports=() all_net4=() all_net6=()
     VPN_IFACES=() VPN_PORTS=() VPN_NET4=() VPN_NET6=()
     [[ ! -e "$WG_STOPPED_FILE" && -f "$WG_NETWORKS_FILE" ]] || return 0
     [[ ! -L "$WG_NETWORKS_FILE" ]] || die "WireGuard ağ kaydı bir sembolik bağ; hiçbir kural değiştirilmedi"
@@ -89,14 +94,19 @@ load_wireguard_rules() {
             "$port" =~ ^[0-9]{1,5}$ && "$port" -ge 1 && "$port" -le 65535 &&
             "$n4" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ && "$n6" =~ ^[0-9a-f:]+/[0-9]{1,3}$ ]] ||
             die "WireGuard ağ kaydı bozuk ('$iface $port ${scope:-kapsam-yok}'); hiçbir kural değiştirilmedi"
-        VPN_IFACES+=("$iface") VPN_PORTS+=("$port")
-        VPN_NET4+=("$n4") VPN_NET6+=("$n6")
+        all_ifaces+=("$iface") all_ports+=("$port")
+        all_net4+=("$n4") all_net6+=("$n6")
     done <"$WG_NETWORKS_FILE"
-    for ((i = 0; i < ${#VPN_IFACES[@]}; i++)); do
-        for ((j = i + 1; j < ${#VPN_IFACES[@]}; j++)); do
-            [[ "${VPN_IFACES[i]}" != "${VPN_IFACES[j]}" && "${VPN_PORTS[i]}" != "${VPN_PORTS[j]}" ]] ||
-                die "WireGuard ağ kaydında tekrar eden arayüz ya da port (${VPN_IFACES[j]}); hiçbir kural değiştirilmedi"
+    for ((i = 0; i < ${#all_ifaces[@]}; i++)); do
+        for ((j = i + 1; j < ${#all_ifaces[@]}; j++)); do
+            [[ "${all_ifaces[i]}" != "${all_ifaces[j]}" && "${all_ports[i]}" != "${all_ports[j]}" ]] ||
+                die "WireGuard ağ kaydında tekrar eden arayüz ya da port (${all_ifaces[j]}); hiçbir kural değiştirilmedi"
         done
+    done
+    for ((i = 0; i < ${#all_ifaces[@]}; i++)); do
+        systemctl is-enabled --quiet "wg-quick@${all_ifaces[i]}.service" 2>/dev/null || continue
+        VPN_IFACES+=("${all_ifaces[i]}") VPN_PORTS+=("${all_ports[i]}")
+        VPN_NET4+=("${all_net4[i]}") VPN_NET6+=("${all_net6[i]}")
     done
 }
 
@@ -327,7 +337,7 @@ apply_input6() {
     activate_named "$bin" INPUT "$staging" "$CHAIN_INPUT"
 }
 
-# DD-177/198: WireGuard networks are internet-only. Deny private destinations even when routed via WAN.
+# DD-177: WireGuard networks are internet-only. Deny private destinations even when routed via WAN.
 # All ingress guards precede return-path permits (including between WG networks).
 apply_forward() {
     local bin="$1" prefix="$2" staging i dest blocked="$VPN_BLOCK_DEST4"
@@ -353,7 +363,7 @@ apply_forward() {
 }
 
 # DD-120: VPN alt ağı WAN'a çıkarken maskelenir (wg-quick PostUp'ı yok;
-# kural sahibi bu betik, DD-16/DD-17).
+# kural sahibi bu betik, DD-17).
 apply_nat() {
     local bin="$1" prefix="$2" subnet staging
     shift 2

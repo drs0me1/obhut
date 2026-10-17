@@ -586,7 +586,7 @@ class RouteTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name).resolve()
         (root / 'state').write_text(f'SERVER_ROOT={root}\nLOCAL_DOMAIN=test\nKONTEYNER_STATE_DIR={root}/containers\n')
-        p = panel.Panel(types.SimpleNamespace(state=str(root / 'state'), allow_host=[], state_env=False))
+        p = panel.Panel(types.SimpleNamespace(state=str(root / 'state')))
         audits = []
 
         class Handler(panel.Handler):

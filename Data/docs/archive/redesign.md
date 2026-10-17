@@ -1,5 +1,7 @@
 # Konsol redesign
 
+> **Archived (rebuild phase 6):** the plan of the 1.x Konsol redesign (DD-258), finished in v2-252. The rebuild (DD-271, [`rebuild.md`](../rebuild.md)) replaced its App Store, packages, Yayınla and container definitions; current behaviour is in [`contract.md`](../contract.md) and [`architecture.md`](../architecture.md).
+
 Status: direction accepted on 2026-10-13 (**DD-258**). Phase 0 is done: the clickable prototype (a
 private design canvas with the overview, the application list and an application page, Erişim with
 its WireGuard tab, the Yayınla flow, Dosyalar, Sistem, Gelişmiş, the command palette and two phone

@@ -205,8 +205,11 @@ class SectionTests(AccessFixture):
         with patch.object(pubs, "plain_http_active", return_value=True):
             self.refused(self.request(WEB, address(internet="notlar.example.net")), "şifresiz HTTP ile açık")
         tls.check_dns.reset_mock()
-        self.m.plan(self.request(WEB, address(internet="notlar.example.net")))
+        plan = self.m.plan(self.request(WEB, address(internet="notlar.example.net")))
         tls.check_dns.assert_called_once_with(self.m.e, "notlar.example.net")
+        # DD-275: Konsol puts no sign-in in front of an application's internet name; the plan says so.
+        self.assertIn({"seviye": "warn", "metin": pubs.APP_GUARD_TEXT}, plan["uyarilar"])
+        self.assertNotIn(pubs.APP_GUARD_TEXT, [w["metin"] for w in self.m.plan(self.request(WEB, address(port=6881)))["uyarilar"]])
         # A fixed row may not take an application's internet name either.
         self.set_row(WEB, address(internet="notlar.example.net"))
         with self.assertRaisesRegex(settings.SettingsError, "uygulamanın erişim satırında"):
@@ -618,7 +621,7 @@ class FirewallAndNamesTests(AccessFixture):
         self.set_row(WEB, address(port=9000))
         self.set_row(RAW, raw("tailscale", 7000))
         self.set_row(PEER, raw("internet", 6881))
-        instance = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[], state_env=False))
+        instance = panel.Panel(types.SimpleNamespace(state=str(self.state)))
         with patch.object(instance, "ports", return_value=[]):
             rows = instance.settings_ports(self.env, [], listeners=[])
         fixed = sorted((r["scope"], r["proto"], r["port"], r["row"]) for r in rows if r.get("fixed"))
@@ -633,29 +636,31 @@ class FirewallAndNamesTests(AccessFixture):
         self.assertEqual((row["sabit"], row["satir"], row["kapsam"], row["ad"]),
                          (True, RID[PEER], "wan", "notlar · web 6881/udp · ham port"))
 
-    def test_application_names_are_locked_in_local_names(self):
+    def test_managed_names_are_read_only_in_local_names(self):
         Path(self.env["DNSMASQ_CONF_FILE"]).write_text("local=/ayc/\ninterface-name=panel.ayc,tailscale0/4\n")
         self.s.publish()
         dns = copy.deepcopy(settings.DEFAULT["dns"])
-        with self.assertRaisesRegex(settings.SettingsError, "notlar.ayc bir uygulamanın erişim satırına ait"):
+        # Rebuild phase 6: no managed name is switched in Yerel adlar; the DNS object has no "disabled" key.
+        with self.assertRaisesRegex(settings.SettingsError, "^DNS biçimi geçersiz.$"):
             self.m.validate({"revision": self.m.revision(), "dns": dict(dns, disabled=["notlar.ayc"])})
         with self.assertRaisesRegex(settings.SettingsError, "zaten tanımlı"):
             self.m.validate({"revision": self.m.revision(), "dns": dict(dns, records=[
                 {"name": "sayac.ayc", "target": "tailscale", "enabled": True}])})
-        # The DNS tab's projection leaves the applications' file alone.
-        path = self.root / "dns" / apps.DNS_FILE
-        before = path.read_text()
-        cfg = self.m.config()
-        cfg["dns"]["disabled"] = ["notlar.ayc"]
-        self.m.project_dns(cfg)
-        self.assertEqual(path.read_text(), before)
-        instance = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[], state_env=False))
+        (self.root / "dns" / "modul-paylasim.conf").write_text("interface-name=paylas.ayc,tailscale0/4\n")
+        # The DNS tab's projection leaves the managed names' files alone (the applications' and WebDAV's).
+        paths = [self.root / "dns" / apps.DNS_FILE, self.root / "dns" / "modul-paylasim.conf"]
+        before = [path.read_text() for path in paths]
+        self.m.project_dns(self.m.config())
+        self.assertEqual([path.read_text() for path in paths], before)
+        instance = panel.Panel(types.SimpleNamespace(state=str(self.state)))
         answer = instance.adlar()
         master_api.check(master_api.ref("Adlar"), answer)
         names = {n["ad"]: n for n in answer["adlar"]}
-        self.assertEqual((names["notlar.ayc"]["kilitli"], names["notlar.ayc"]["satir"], names["notlar.ayc"]["kaynak"]),
-                         (True, RID[WEB], "uygulama"))
-        self.assertEqual((names["panel.ayc"]["kilitli"], names["panel.ayc"]["satir"]), (True, "panel"))
+        self.assertEqual((names["notlar.ayc"]["satir"], names["notlar.ayc"]["kaynak"]), (RID[WEB], "uygulama"))
+        self.assertEqual(names["panel.ayc"]["satir"], "panel")
+        self.assertEqual((names["paylas.ayc"]["satir"], names["paylas.ayc"]["kaynak"]), (pubs.BUILTIN_ID, "paylasim"))
+        self.assertEqual(sum(n["ad"] == "paylas.ayc" for n in answer["adlar"]), 1, "listed once, from its own file")
+        self.assertEqual({k for n in answer["adlar"] for k in n}, {"ad", "aile", "hedef", "kaynak", "satir"}, "no on/off state")
 
     def test_a_wireguard_network_may_not_take_an_application_port(self):
         self.set_row(RAW, raw("internet", 51820))
@@ -702,7 +707,7 @@ class AuditAndShapeTests(AccessFixture):
         class Handler(panel.Handler):
             def log_message(self, *_args):
                 pass
-        instance = panel.Panel(types.SimpleNamespace(state=str(self.state), allow_host=[], state_env=False))
+        instance = panel.Panel(types.SimpleNamespace(state=str(self.state)))
         Handler.panel = instance
         _server, sock = test_resources.start_unix(self, Handler)
         headers = {"X-Konsol": "1", "Content-Type": "application/json", "Host": "panel.ayc"}
@@ -711,7 +716,8 @@ class AuditAndShapeTests(AccessFixture):
                 patch.object(instance, "pending", return_value={"bekleyen": None}):
             code, _, _ = test_resources.unix_get(sock, "/api/konsol/ayarlar/uygula", headers, "POST", json.dumps(body))
             self.assertEqual(code, 200)
-            worker.assert_called_once_with("apply", body, seconds=settings.ERISIM_WORKER_SECONDS)
+            # The worker gets the channel Caddy named (here the host itself), never the body's.
+            worker.assert_called_once_with("apply", dict(body, kanal="yerel"), seconds=settings.ERISIM_WORKER_SECONDS)
         with patch.object(instance, "settings_run", return_value=(200, {"ok": True})) as worker, \
                 patch.object(instance, "pending", return_value={"bekleyen": {"id": "abc", "erisim": RID[RAW]}}):
             test_resources.unix_get(sock, "/api/konsol/ayarlar/geri-al", headers, "POST", json.dumps({"id": "abc"}))

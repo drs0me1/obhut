@@ -1,5 +1,7 @@
 # Ayarlar management proposal — v08
 
+> **Archived (rebuild phase 6):** a proposal for the 1.x Ayarlar page. Its settings now live in Erişim, Sistem and Gelişmiş ([`contract.md`](../../contract.md) §5.5, §6.2).
+
 Date: 2026-09-24. Interactive reference: `konsol-ayarlar-v08.html`.
 
 The operator requested a redesign and then explicitly chose a clickable

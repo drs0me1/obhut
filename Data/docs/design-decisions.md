@@ -17,6 +17,57 @@ Konsol's old interface was removed in DD-267 (v2-250). Live entries written
 before it still name its places (Ayarlar → Caddy, Ayarlar → Sistem, App Store,
 the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 
+The rebuild (DD-271, phases DD-272 to DD-276) removed the App Store with its
+store engine and packages (qBittorrent, Gezgin), package forms and publications,
+Konsol's single-container definitions and adoption, Yayınla and the manual
+`elle-*` addresses. Entries that only described them moved to the archive in its
+phase 6; live entries that still mention them end with a note naming what no
+longer applies and which entry replaced it.
+
+### DD-278: The rebuild's phase 6: documents, sweep and back doors (v2-261)
+
+- **Scope (`rebuild.md` phase 6):** the documents describe only generation 2, superseded decisions are
+  archived, the switches that existed only for tests are gone, the leftover sweep and the back-door review are
+  done, and what documenting the code found is fixed. The clean-server test and the release follow.
+- **Version numbers:** the last 1.x release on `main` is 1.2.0 with build v2-260 (its entry is DD-277 on that
+  line); this branch skips v2-260 and the merge becomes 2.0.0 (the operator's decision, 2026-10-17).
+- **Documents:** `contract.md`, `architecture.md`, `folder-shares.md`, `CLAUDE.md` (the operator's rules kept;
+  two facts corrected), `README.md`, `OKUBENI.txt`, `tests/README.md` and the Cursor rules rewritten against the
+  code; `redesign.md`, `model-a-clean-install.md` and `design/` moved to `docs/archive/`. Twenty-five entries
+  that describe removed things moved to `archive/design-decisions-retired.md`; forty-four that stay carry a note
+  naming what no longer applies.
+- **No switch for tests in the shipped tree:** `master-panel --state-env`, `--allow-host` in both backends,
+  `PANEL_ACTIVE_WINDOW`/`PANEL_SAMPLE_SECONDS` (now constants), the hidden `--state` of `obhut`,
+  `master-guncelle`'s `KUR_BETIK_URL` (the updater fetches only the fixed GitHub address over https),
+  `TAILNET_ADDR_WAIT_SECONDS`, the `FIREWALL_BIN` and `V2_OS_RELEASE_PATH` overrides and `kur.sh`'s `KUR_ROOT`
+  are gone; tests patch module constants or start the backend through `tests/panel-harness.py`. `master-onar
+  --kaynak` is used by Konsol and is now shown in its help; `kur.sh`'s `KUR_URL` stays to install a tree that is
+  not on GitHub yet (section 7). A bats guard fails if a removed switch or a hidden option comes back.
+- **Back doors:** route-table tests for the root backend, the files backend and its system-files mode (any
+  other path 404, other methods 501); every listener's port or socket is a `defaults.env` key (bats); private
+  modes of state, settings, WireGuard, the Konsol account and the application records (bats).
+- **Found while documenting, fixed:**
+  - A re-run (and Konsol's update) reopened a WireGuard network the operator had closed; a closed network kept
+    its WAN port. The wg-quick unit's enablement is now the one source of "open": the installer starts only
+    enabled networks, the firewall admits only them, `net ac|kapat` apply the firewall.
+  - `master-wg` refuses every verb that changes networks or the stopped marker while a settings change is
+    pending, except the settings worker's own documented caller mode (phase `applying` or `rollback`).
+  - A timed change sent from the internet channel was applied and then rolled back after 60 s; apply now
+    refuses it before writing anything.
+  - Reboot and repair refuse while an application job or the cleanup runs; reboot also while a change is
+    being applied.
+  - `paylas.<domain>` could be switched in two places; with it, every managed local name is read-only in Yerel
+    adlar (its row is its home), so the name switch (`dns.disabled`, `filter-dns`, the off marker) is removed;
+    the operator's own records, forwarding and the local domain stay.
+  - An application's new internet name warns in the plan that only the application's own login guards it.
+  - A Compose file that writes a secret-looking value in clear gets a note on that line: the value is not used,
+    but the file is kept as given and shows it.
+  - Unit templates take `SBIN_DIR` like the rest; WireGuard's next suggested port is `WG_PORT_NEXT` in
+    `defaults.env`; the installer's and `master-wg`'s operator strings match Konsol (Yerel adlar, Aç/Kapat,
+    six sections).
+- **Tests:** Python 881 with only the eight known macOS failures; `bats` 187/187; the eight Konsol suites and the
+  sign-in suite with the layout audit.
+
 ### DD-276: The rebuild's phase 5: Konsol (v2-259)
 
 - **Scope (`rebuild.md` phase 5):** Konsol's screens follow the prototype the operator approved (sections,
@@ -110,14 +161,17 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   to the pool port) and `uygulama-<app>-wan.caddy` (internet names, DD-252's site shape);
   `modul-uygulama.conf` with one `interface-name` per address, written by the projection, not switchable in
   Yerel adlar (shown locked with a link to the row). The 443 gate and DD-190's plaintext-WebDAV rule include
-  application internet names. DD-172 amended: each K5 port is a configured tailnet entry
+  application internet names. An application's internet name is guarded only by the application's own login:
+  Konsol puts no sign-in in front of it (DD-252's trade-off, carried over; the plan says so). DD-172 amended:
+  each K5 port is a configured tailnet entry
   (`konsol-base:tail-tcp-<port>`). Raw ports: `PublishPort=<Tailscale or WAN IPv4>:<host>:<port>/<proto>`;
   the guard's per-address ingress permit is back (only for an address the host has now; a malformed
   publication fails the guard closed). `master_container_worker.py --adres-yenile` rewrites the units of
   applications whose raw rows' address changed; `refresh-tailnet-config` starts it.
 - **WireGuard through the plan:** a `wireguard` section; `master-wg` has one documented caller mode for the
   settings worker (`OBHUT_KILIT_FD`, an inherited descriptor that holds `install.lock`, verified by device,
-  inode and lock state; `OBHUT_AYAR_ISLEMI`, the pending change's id in phase `applying`). Only the networks
+  inode and lock state; `OBHUT_AYAR_ISLEMI`, the pending change's id in phase `applying`, and since phase 6
+  also `rollback`, when the worker undoes its own change). Only the networks
   file and the stopped marker enter the pending file, never a key or a profile. The immediate routes for
   the planned actions are gone.
 - **Read models:** Erişim has one row per application port (and keeps containers no application owns with
@@ -129,8 +183,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   `UYGULAMA_PORT_ILK`/`UYGULAMA_PORT_SON`.
 - **Known limits:** a busy settings worker still answers 400 with "biraz sonra yeniden deneyin" (as before
   this phase); closing one WireGuard network leaves its UDP port open while the network is registered
-  (phase 1 behaviour); `paylas.<domain>` can still be switched both in Yerel adlar and by WebDAV's Tailscale
-  switch (phase 5); an `erisim` apply holds its request until the worker ends; an internet name was not
+  (phase 1 behaviour; fixed in phase 6: the firewall admits only open networks); `paylas.<domain>` can still
+  be switched both in Yerel adlar and by WebDAV's Tailscale switch (phase 5; fixed in phase 6: no managed name
+  is switched in Yerel adlar any more, DD-156); an `erisim` apply holds its request until the worker ends; an internet name was not
   issued live (it needs a domain whose A record points at the test host).
 - **Tests:** the access rows 34 (every validation and conflict class, plan items and `onay_sn`, apply and
   each rollback, rendering, K5, firewall view, locked names, closed request shapes), settings 50 (13 for
@@ -232,7 +287,8 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   with a tool error.
 - **Limits for later phases:** an edit restarts every service of the application; the address is shown as
   given (with its query); Ubuntu 24.04 is not live-verified for applications; `contract.md`,
-  `architecture.md` and `design/container-manager-api.md` still describe removed routes (phase 6).
+  `architecture.md` and `design/container-manager-api.md` still describe removed routes (phase 6 rewrote the
+  first two and moved the third to `archive/design/container-manager-api.md`).
 - **Tests:** the generator 35 (golden unit files for every accepted fixture; every Quadlet key checked
   against Podman 4.9's set; no secret value in any plan), the inspector 30, the records, pool and drafts
   19, the worker 31 (every install step's rollback, a restarted or vanished container, takeover, edit,
@@ -314,8 +370,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   same generation; otherwise it says why (`master_update.py`).
 - **Built-ins installed directly:** the Files and WebDAV units are rendered into `UNIT_DIR`; WebDAV's site
   source is installed at `SHARE_CADDY_SOURCE` and filtered by `master_publications.py filter-caddy paylasim`
-  into the Caddy import folder; its name goes through `master_settings.py filter-dns`; stage 7 runs
-  `verify_builtins`. The live file names (`paylasim.caddy`, `modul-paylasim.conf`) are kept.
+  into the Caddy import folder; its name went through `master_settings.py filter-dns` (gone in phase 6 with
+  the name switches, DD-156); stage 7 runs `verify_builtins`. The live file names (`paylasim.caddy`,
+  `modul-paylasim.conf`) are kept.
 - **WireGuard built in (K6):** its keys live in `config/defaults.env` and `state.env`; `master-wg` is a base
   script with two new subcommands, `durdur` (writes the open networks to `WG_STOPPED_FILE`, disables their
   units, re-applies the firewall) and `baslat` (firewall first, then the listed networks); both take the
@@ -423,76 +480,6 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   tells a changed picture, not a broken one); a sweep on every run (the resize changes some states, and
   seven widths take a suite's time several times over).
 
-### DD-269: After the redesign: what only the old interface used is removed (v2-253)
-
-- **Request (user, 2026-10-16):** "Tamamlanan yol haritasına göre tekrar kontrol et. Ölü kod işlevsiz alan
-  kalıntı alanları temizle." The redesign is complete (DD-268); the backend, the packages, the installer,
-  the tests and the documents still carried code, reply fields and wording only the old interface read.
-- **How it was found:** a read-only survey per area (backend, installer and scripts, packages, the Vue
-  sources, tests, documents), every claim checked by searching the whole tree for a reader: the Vue
-  sources, `obhut`, the packages, the other backends and the tests. A field read only by tests counts as
-  unread.
-- **Removed from the backend:** the old Settings page's firewall rule groups (`classify_rules`, per-chain
-  `iptables -S` reads, six commands on every settings refresh; Erişim's technical rows come from
-  `iptables-save`, the check from `master-firewall --check`, DD-155); unread settings-view fields
-  (version, domain, addresses, `vpn_installed`, the networks' `server4/6`, the networks' subnets from
-  packages); the 12-sample CPU history and the memory graph (`kaynaklar` sends the last CPU sample, `cpu`
-  is a number or null); the WAN rate history (`ag` sends the last rate, none older than 120 s, and the
-  packages' `{down, up}` only, DD-206); `Modul.runtime`; `GET /api/konsol/konteynerler/gunluk` (an
-  application's log is `uygulamalar/gunluk`, DD-266); `master_settings` status `names`/`folders`;
-  `master_https` status `wan_ip`/`https_port` (DD-193); the WebDAV row's `mode`/`wan_active` (a share
-  walk on every read); the share manager's `pause` action (DD-192); a job label for `uygula`, which never
-  runs as a job.
-- **Removed from the packages:** qBittorrent's `POST /hesap` and `/dizin` and their worker actions (the
-  Ayarlar tab saves through `/ayar`, DD-210), `/durum` down to the form's `username` and `save` (no
-  `systemctl` call), `APP_NAME`; the audit template is now `ayar`'s. WireGuard's masked profile preview
-  (`?masked=1`, DD-133; the profile is a download or a QR only). The traffic modules' `since`/`at` (one
-  `systemctl show` per read for WireGuard). `konsol.json` `ton` (the old tiles' colours) and
-  `gunluk_kaynak`.
-- **Removed from the installer and scripts:** the always-true full-upgrade switch (DD-228 made it
-  unconditional), `master-modul`'s unread `ARACLAR_DEGISTI`, `master-firewall`'s `DEFAULTS_FILE` hook
-  nobody sets. Operator messages that named Ayarlar, App Store, Ana Menü, the WireGuard page or the
-  archive tool now name Erişim, Uygulamalar, the application's page and the pending-change bar.
-- **Documents:** `Data/SESSION.md`, 46 builds behind (it stopped at v2-206), moved verbatim to
-  `docs/archive/SESSION-to-v2-206.md`; runs are recorded in CHANGELOG and each DD entry's live check.
-  DD-119, superseded by DD-228, moved to the retired entries; DD-154 has a note on what changed since.
-- **Removed from the interface:** two functions and two style rules nothing used, comments naming the
-  old files. Tests: always-true checks (a `legacy` placeholder, links to `/#/`), the `/yeni` branch and
-  unused exports of the harness, the `sayfa` fixture field, a fixture folder nothing read. Four live
-  scripts that still asked for `ayarlar/durum` or `/konsol.js` read the current routes and files.
-- **Old installs (user, the same day: "Eski kurulumları kaldıralım"):** code kept only for installs from
-  before v2-190 goes. The reserved `.pay` name (DD-171, the share tree before v2-145) is no longer hidden in
-  Files, WebDAV, qBittorrent, container binds or the permission repair; since that tree may hold old
-  account data, stage 0 refuses to install while `SERVER_ROOT/.pay` exists, before anything is written
-  (fail closed rather than expose it). The check for the native `qbittorrent-nox@` unit (DD-209), the
-  `/data` user area (DD-144), the firewall's default bridge prefix for a state file without
-  `KONTEYNER_BRIDGE_PREFIX` (it now stops), the read-only container view and the update-check refusal for
-  a state file without `KONTEYNER_STATE_DIR` (DD-211) and the permission helper's private-mode path (only
-  the retired archive workspace used it) are removed. The files backend still accepts `--share` for one
-  release beside `--archive-dir`, for a unit rendered before the upgrade.
-- **Kept on purpose:** the old hash addresses and `/yeni` redirects (bookmarks, DD-267); the one-release
-  `--archive-dir` and `--share` shims and the re-run removals of DD-267's leftovers; the files backend's
-  `--version`/`--downloads-dir` options and their state fields (removing them needs the script and both
-  units to change in one step; a separate change); the schema-3 share registry migration, which the
-  current contract still names (DD-192); the three read models' skip of the container inventory when the
-  manager's store is not provisioned (they also keep a broken install readable).
-- **Amends:** DD-133 (no masked preview), DD-144 (no `/data`), DD-155 (no rule groups), DD-171 (no reserved
-  name, an install gate instead), DD-192 (no pause action), DD-193 (no `https_port`), DD-202 (one settings
-  route), DD-206 (last rate, totals only), DD-209 (no native-unit check), DD-211 (no view without the
-  store), DD-266 (no `konteynerler/gunluk`).
-- **Live check (test host, 2026-10-16, v2-253):** the installer with its defaults ran every stage, the
-  system upgrade unconditionally; the replies of `kaynaklar`, `ag`, `guvenlik-duvari` (the check and
-  111 technical rows), `gelismis`, `erisim`, `yayinlar`, `moduller` and `saglik` had the trimmed shapes,
-  `konteynerler/gunluk` answered 404 and an application's log still read. qBittorrent installed from the
-  catalogue: `/durum` gave the user name and folder, `/hesap` and `/dizin` 404, `/ayar` saved and wrote the
-  `torrent:ayar` journal line, Genel Bakış listed its totals; it was removed with its data afterwards. A
-  browser tour of twelve pages had no console error and no 4xx/5xx reply; the backend journal had no
-  traceback.
-  After the old-install removal, a second run: with an empty `/srv/.pay` stage 0 stopped before any
-  write (`state.env` unchanged); without it every stage ran, the files unit passed no `--share`, the
-  WebDAV unit hid only the trash and the private state, `master-firewall --check` passed, the container
-  routes read the manager's view, and the same route checks and browser tour were clean.
-
 ### DD-268: The redesign's phase 5: Konsol as an installable app and the `obhut` recovery tool (v2-252)
 
 - **Request (user, 2026-10-16):** "Faz 5 e geçelim" (phase 5 of DD-258). Choices: the app is a manifest
@@ -529,6 +516,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Rejected:** a service worker (stale state and builds for no gain on a live panel); an `obhut` that
   mirrors every interface action (the interface stays the place for planned changes; the tool is for
   getting back in).
+- **Partly retired by the rebuild (DD-272, DD-275):** `obhut yayin` is now `obhut erisim liste|kapat`
+  (DD-275), and Gezgin with its own shares is gone (DD-272); the app manifest, `sudo obhut` and Konsol's
+  folder shares hold.
 
 ### DD-267: The redesign's phase 4b: Dosyalar, Paylaşımlar, Konsol at `/` and the old interface removed (v2-250)
 
@@ -618,6 +608,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   working; the operator chose to remove it now); renaming `console/yeni/` (pure churn across the build,
   its digest and the tests); keeping archive jobs in the backend without an interface (an
   untrusted-input parser nobody can reach is still attack surface).
+- **Partly retired by DD-272 (v2-255, the rebuild):** the `/yeni` redirect, the old hash addresses, the re-run
+  removals of earlier runs' leftovers, the catalogue, the packages' APIs and every Gezgin mention are gone;
+  Dosyalar, the share routes, Konsol at `/` and the console placement rules hold.
 
 ### DD-266: The redesign's phase 4a: Sistem, Gelişmiş, adding applications and their settings (v2-249)
 
@@ -685,10 +678,14 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   creating a missing volume silently on container creation (a removed volume would come back empty).
 - **Amended by DD-269 (v2-253):** `GET /api/konsol/konteynerler/gunluk` is gone; an application's log is
   `uygulamalar/gunluk`.
+- **Partly retired by the rebuild (DD-272, DD-274, DD-276):** the add flows (catalogue with install forms, an
+  image, adoption), an application's Ayarlar tab, `uygulamalar/hesap` and `kur` (DD-272, DD-274), Gelişmiş's
+  create and remove actions, `konteynerler/ayrinti|islem`, `ayarlar/klasorler` and Görünüm (DD-276) are gone;
+  Sistem, the routes moved into the table, the copy button, the leave guard and the workers' lock wait hold.
 
 ### DD-265: The redesign's third phase: Erişim, the Yayınla flow and the settings plan (v2-248)
 
-- **Request (user, 2026-10-15):** "faz 3'e başlayalım" (phase 3 of DD-258, [`redesign.md`](redesign.md)).
+- **Request (user, 2026-10-15):** "faz 3'e başlayalım" (phase 3 of DD-258, [`archive/redesign.md`](archive/redesign.md)).
   Choices: Yayınla works from both channels as the current Konsol does; a Konsol container with no
   loopback port is published in two steps in order; a WireGuard network's name can be changed
   afterwards; the WireGuard functions stay as they are.
@@ -751,35 +748,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   deleting and adding it again (new keys and profiles for every device).
 - **Amended by DD-267 (v2-250):** the Podman page is gone; a container managed outside Konsol is adopted
   through Uygulamalar' add flow (DD-266) before Yayınla can choose it.
-- **Retired by DD-275 (v2-258, the rebuild):** Yayınla and `/api/konsol/yayinlar` are gone; every access change is a row's settings plan. The plan itself (DD-156's dry run) stays.
-
-### DD-264: Gezgin's WebDAV shares on the Tailscale address (v2-251)
-
-- **Request (user, 2026-10-13):** after a clean install of nrm with the Gezgin package, "paylaşım
-  ekranları tasarladığımız gibi değil", then "nrm de geçerli yapıyı kuracak şekilde ayarlama yapalım.
-  nrm güncel ve paylaşım için gerekli portları açabilsin".
-- **Found:** nrm ran the right image (Gezgin 1.0.0, `77ca4882`, digest pinned by DD-262), its page
-  the current one. The package set no `GEZGIN_WEBDAV_PORT` and published only the interface on
-  loopback, and Gezgin hides WebDAV without its port: the share window had no "Tür" choice, the share
-  settings and information windows held links alone. The same image with the port set shows them.
-- **Decision:** `GEZGIN_WEBDAV_PORT=62984` (beside the interface's 62983, DD-219), set inside the
-  container and published as `@TAILSCALE_IPV4@:62984:62984/tcp`: Gezgin writes a share's address
-  from the name it is opened by and this port (`http://gezgin.<domain>:62984/<hash>/`), so the port
-  inside and outside is one. The container guard lets a package's Tailscale publication through
-  (DD-217); the tailnet INPUT allowlist (DD-172) stays as it is, since the traffic is forwarded to
-  the bridge. The port catalogue names it (`PAKET_PORTLAR`, scope `tailscale`), the hook checks both
-  publications, the App Store text names the address.
-- **Not on the internet:** Gezgin's WebDAV is plain HTTP; a WAN or public HTTPS route for it is a
-  later decision (Gezgin's own HANDOVER keeps the public-address question).
-- **The address is the placement's, not the template's:** the installer renders package files in
-  stage 2, before it reads the Tailscale address (stage 3), so `__TAILSCALE_IPV4__` would be unset on a
-  first install. `master-modul`'s `paket_konteyner_koy` fills `@TAILSCALE_IPV4@` from `state.env`
-  (which refresh-tailnet keeps) each time it places a unit, refuses to place one without an address,
-  and leaves a unit that did not change as it is. A node that comes back with a new address gets it at
-  the package's next start, restart or the installer; nothing rewrites a running unit.
-- **Delivered after phase 4b (v2-251):** written on v2-247 and kept on the test host since 2026-10-13, it
-  reached `main` after DD-265–DD-267, so its build number is v2-251; Gezgin's quadlet no longer covers
-  Konsol's archive folder (DD-267), the rest is as written.
+- **Partly retired by DD-275 (v2-258, the rebuild):** Yayınla and `/api/konsol/yayinlar` are gone; every
+  access change is a row's settings plan. The plan itself (DD-156's dry run) stays, and so do
+  `/guvenlik-duvari`, `/adlar`, Erişim's warnings with their fix target and the WireGuard network's name.
 
 ### DD-263: Container CPU and memory come from cgroup files, not `podman stats` (v2-246)
 
@@ -814,77 +785,13 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   `resource_errors.stats` ("Kaynak kullanımı okunamadı: <ad>."); a first reading without a CPU figure
   is not an error. The detail (`ayrinti`) carries the same numbers; before, its nulls hid the list's
   numbers in the page's detail panel.
-
-### DD-262: Gezgin is an App Store container package (v2-245)
-
-- **Request (user, 2026-10-13):** DD-258's plan ("Gezgin becomes an App Store container package") and
-  "faz 2 ye başlayalım o zaman".
-- **Package (`magaza/gezgin/`), like qBittorrent (DD-209):** the image `ghcr.io/drs0me1/gezgin` pinned by
-  the digest of its 1.0.0 index (amd64 and arm64). Konsol checks the `1.0` tag and moves the pin only on
-  the operator's confirmation (DD-214). Its own bridge `gezgin` (DD-217) carries one publication,
-  `127.0.0.1:62983` (DD-219: outside Linux's outgoing range, away from the 610xx block), and Caddy serves
-  `gezgin.<domain>` on the tailnet. The process runs as the Files account (DD-227) with every capability
-  dropped and `no-new-privileges`: Gezgin's image already runs unprivileged and needs none.
-- **The user area is one mount:** Gezgin keeps its trash, unfinished uploads and archive jobs in its own
-  folders at the root (`.gezgin-cop`, `.gezgin-yukleme`, `.gezgin-arsiv`) and moves items there by
-  rename, which fails across bind mounts, so `SERVER_ROOT` is mounted whole at `/srv`. Inside the
-  container Konsol's trash (`.cop`) and archive work (`.arsiv`) are covered by an empty, read-only,
-  root-owned folder: Gezgin shows two empty folders and cannot write there. The three Gezgin folders
-  are the package's declared folders (DD-203): Files does not offer or share them and WebDAV hides them.
-- **Application data in `/var/lib/gezgin`** (`database` and `config` belong to the Files account, 0700;
-  the folder itself is root's, 0750), not a named volume: removal with data is a plain folder removal.
-- **The first administrator comes from the install form (DD-210):** a user name and a password of 12 to
-  72 bytes (bcrypt reads at most 72). Python's standard library has no bcrypt and Gezgin's own `hash`
-  command takes the password as an argument, so the base's Caddy hashes it from standard input
-  (`caddy hash-password`, cost 14); the seed holds only the hash. `kur-uygula` writes the name and the
-  hash to `/var/lib/gezgin/ilk.env` (root, 0600), which Podman reads itself (`EnvironmentFile=`, so the
-  hash's `$` stays literal). Gezgin's quick setup takes a hash there, never a password, and creates the
-  account only while its database is empty. Once the first start is verified (an anonymous API call
-  gets 401) the hook empties the file. A database kept from an earlier install keeps its users and the
-  form's account is not created; the form says so. Without a form Gezgin would print a random password
-  in its log; Konsol's log view masks that line.
-- **Verification** (install, start, restart, apply): the unit is active, the process runs as the Files
-  account, the mounts are exactly the five above, `/health` answers on loopback, `podman port` lists
-  only the loopback publication and nothing listens on the port off loopback; then the tailnet name
-  through Caddy and DNS.
-- **A same-named container of another manager stops the package:** Quadlet replaces a container of the
-  same name, so a Konsol definition called `gezgin`, or a running `gezgin` container of another unit
-  (the hand-made setup before this package), must be removed first. Konsol already refuses the name
-  for new definitions: a package's container name is reserved.
-- **Internet publication (DD-191, DD-199):** Settings → Caddy has a Gezgin row to the loopback port.
-  Nothing in Gezgin bypasses its sign-in: user name and password is its only method (a database naming
-  another one refuses to start), there is no self sign-up, and failed sign-ins from outside private
-  ranges spend a per-address budget. Gezgin takes the client from `X-Forwarded-For` only when the peer
-  is private, which the loopback publication's bridge gateway is, and Caddy writes that header. So the
-  check (`yayin.py`) has nothing to read while the row is on; turning the row on proves that `/health`
-  answers and an anonymous API call is refused.
-- **No Konsol page or API:** Gezgin is managed in its own interface, opened in a new tab; Konsol's
-  session does not open it. Gezgin's WebDAV shares stay off (no `GEZGIN_WEBDAV_PORT`); Konsol's folder
-  WebDAV keeps sharing until DD-258's phase 5. (DD-264 turned Gezgin's WebDAV on, on the Tailscale
-  address; DD-268 keeps Konsol's folder shares for good.)
-- **Removal:** `kaldir` keeps `/var/lib/gezgin` and the image; with data it removes both (users,
-  settings, link shares). The user area and Gezgin's folders in it are never touched.
-- **Live check on the test host:** install through the API with the form and sign-in with its account;
-  stop, start, restart and the update action through the new action route; the publication probe;
-  removal without data, a reinstall with another account (the kept user signs in, the new one does not
-  exist) and removal with data.
-- **Found by it, for every container package:** right after an install the firewall check called the
-  container guard stale. The guard (DD-217) counts only registered packages, and `master-modul kur`
-  writes the registry line after the hooks that placed the Quadlet and built the guard; until the
-  hourly check or a repair rebuilt it, the new bridge had no rules of its own (for qBittorrent: its
-  peer port stayed closed). `cmd_kur` now builds the guard once more after the registry line; a
-  failure there is a warning, since the application already runs and the check shows it.
-- **Rejected:** mounting only the downloads and media folders (Gezgin's trash and uploads would cross
-  mounts); a named Podman volume for the data (removal and backups by name instead of by path); a
-  vendored bcrypt in Python; framing Gezgin or a trusted-header sign-in (DD-258).
-- **Amended by DD-267 (v2-250):** with Konsol's archive jobs gone the container mounts only the empty
-  cover over `.cop` (four mounts in all, which the verification expects exactly), and `paket_gerekli`
-  checks only the trash's mount point. The publication row is in Erişim → Adresler.
+- **Amended by DD-276 (v2-259, the rebuild):** `konteynerler/ayrinti` is gone; the same figures feed
+  Uygulamalar and an application's page.
 
 ### DD-261: The redesign's second phase: Genel Bakış, Uygulamalar and the application page (v2-245)
 
 - **Request (user, 2026-10-13):** "faz 2 ye başlayalım o zaman. adres kısmını tam anlamamışım" (phase 2
-  of DD-258, [`redesign.md`](redesign.md)).
+  of DD-258, [`archive/redesign.md`](archive/redesign.md)).
 - **`GET /api/konsol/uygulamalar` (`panel/master_uygulamalar.py`):** every application in one list:
   App Store packages, Konsol's own containers and the built-ins (Files, WebDAV). Each has its state
   (`calisiyor`, `durduruldu`, `islemde`, `hata`, `bilinmiyor`), a running operation, its Tailscale and
@@ -937,6 +844,10 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Amended by DD-267 (v2-250):** `Uygulama.sayfa` (the old interface's page) and the old sidebar's link
   to `/yeni/` are gone; a built-in's "Aç" leads to its section (Files to Dosyalar, WebDAV to Dosyalar →
   Paylaşımlar).
+- **Partly retired by the rebuild (DD-272, DD-274, DD-276):** `master_uygulamalar.py` (packages, the
+  catalogue, built-ins, `ayrinti` and the one action entry) is gone: applications come from their records with
+  their own routes (DD-274), on DD-276's pages. Request shapes checked from the table and the background
+  image-update check hold.
 
 ### DD-260: Releases carry a semantic version beside the build number (v2-244, 1.0.0)
 
@@ -964,7 +875,7 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 ### DD-259: The redesign's first phase: route table, Erişim read model, live events, the shell at /yeni/ (v2-243)
 
 - **Request (user, 2026-10-13):** "commit ve push et, faz 1 geçelim tasarım onaylıyorum" (phase 1 of
-  DD-258, [`redesign.md`](redesign.md)).
+  DD-258, [`archive/redesign.md`](archive/redesign.md)).
 - **Route table (`panel/master_api.py`):** the new interface's routes with the shape of each reply (a
   subset of JSON Schema). The backend dispatches them from the table; tests check real replies against
   the shapes and generate the OpenAPI description (`docs/konsol-api.json`) and the interface's
@@ -1013,6 +924,10 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   return to `/`, `geri=yeni` is gone and the installer places the build at the console's root.
   Nearly every route is in the table now; outside it the backend keeps only the session check, the
   sign-in POST and the packages' own APIs.
+- **Partly retired by the rebuild (DD-272, DD-275):** `moduller` and the packages' VPN networks are gone
+  (WireGuard is built in, DD-272); the Erişim read model projects the access rows instead of container port
+  scopes and manual addresses (DD-275), and `islemler` carries no App Store lines. The route table, the
+  generated types, the event stream and its limits hold.
 
 ### DD-258: Konsol is redesigned around tasks, with Gezgin as its file application (accepted 2026-10-13)
 
@@ -1020,7 +935,7 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   kullanıcı arayüzü ve görünümleri tamamen değiştirmek, daha kullanışlı bir biçime geçmek istiyor …
   akışkan bir menü tasarımı … hangi yapıları önerirsin". After the review: "önerileri kabul ediyorum
   başlayabilirsin".
-- **Decision:** the plan in [`redesign.md`](redesign.md). Navigation by task (Genel Bakış, Uygulamalar,
+- **Decision:** the plan in [`archive/redesign.md`](archive/redesign.md). Navigation by task (Genel Bakış, Uygulamalar,
   Erişim, Dosyalar, Sistem, Gelişmiş); one reachability view and a "Yayınla" flow; two save models; one
   component per kind; health first on the overview; view state in the URL. Backend stays standard-library
   Python, split behind a declared route table, with an exposure read model, Server-Sent Events and a
@@ -1047,6 +962,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   redirects there and the old interface is gone (DD-267). Of the revisits listed here, DD-204 and DD-216
   are retired, DD-159 and DD-212 amended and `contract.md`'s page sections rewritten; sharing's move to
   Gezgin, planned for phase 5, was dropped by DD-268.
+- **Partly retired by the rebuild (DD-272, DD-275):** Gezgin as an App Store package and the Yayınla flow are
+  gone; the six sections, the Vue 3 + TypeScript build, the route table, the exposure read model, the event
+  stream and the dry-run plan hold (`rebuild.md` 4.5).
 
 ### DD-257: Security and stability review after Gezgin (v2-241)
 
@@ -1080,6 +998,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   backend's loopback port answering any local process; the channel default when the header is
   missing (DD-195 keeps it); a container publication whose address is missing blocking every
   container's start (DD-223); App Store bind sources not pinned like DD-226's.
+- **Partly retired by DD-272 (v2-255, the rebuild):** the firewall's package declarations and qBittorrent's
+  settings worker are gone; the backend's body deadline and path refusal, the trash's one-device purge and the
+  update, repair and WireGuard locks hold.
 
 ### DD-256: The Obhut mark is the letter O wearing a roof (v2-239)
 
@@ -1172,35 +1093,6 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Amended by DD-267 (v2-250):** the RAR repository refresh went with the RAR source (DD-267); a re-run
   deletes that source file before stage 1's refresh.
 
-### DD-252: Manual Caddy addresses for a loopback port, guarded by the application's own login (v2-235)
-
-- **Request (user, 2026-10-10):** "caddy için local kullanıcı bağlantısı ekleyelim. podman gezgin
-  kontainer arayüzü gezgin.<alan adı> olarak bağlayalım", then "kullanıcı caddy manuel adres
-  girebilsin". The operator's choices: open on the internet and on Tailscale; the application's own
-  login (Konsol's sign-in is not put in front, so its share links keep working); the target only a
-  port on this server's loopback.
-- **Amends DD-191** ("not a general proxy editor … no arbitrary upstream"): Settings → Caddy now also
-  holds addresses the operator enters. Each has a name, a tailnet name (`<local>.<LOCAL_DOMAIN>`,
-  never renamed: remove and add again) and an upstream `127.0.0.1:<port>`, plus the usual Tailscale
-  and internet switches and HTTPS name. Stored in `SETTINGS_FILE` as `elle` (definitions) and `web`
-  (switches), id `elle-<local>`; at most 16.
-- **What it writes:** `CADDY_MODULES_DIR/elle-<local>.caddy` (`http://<local>.<LOCAL_DOMAIN>`, Tailscale
-  IPv4 via `default_bind`), `elle-<local>-wan.caddy` (the public name on `WAN_IPV4:SHARE_HTTPS_PORT`,
-  TLS-ALPN, `X-Forwarded-For` set by Caddy) and one `interface-name` line per open tailnet name in
-  `DNSMASQ_CONF_DIR/modul-elle.conf` (under the DNS tab's off switches). The share publisher writes
-  the sites with the other projections; Settings writes the DNS file in the same revision-checked
-  transaction, snapshots it and restores it on failure. A local-domain change renames both like any
-  module file. Public rows count in the shared HTTPS port, its budgets and the WAN firewall line.
-- **Limits:** only `127.0.0.1:<port>`; Konsol's own loopback backends (`FILES_PANEL_PORT`, which has
-  no login, and `SHARE_PORT`) and every package publication's upstream (qBittorrent keeps its row and
-  checks) are refused. The tailnet name may not be one another owner already answers (panel, paylas,
-  a package's name, a base/package DNS line or the operator's DNS records). No other host, port range,
-  path or Konsol route; no Tunnel or DNS API token; the public DNS A record stays manual.
-- **Trade-off (flagged, the operator's choice):** nothing checks the application's login the way
-  qBittorrent's row is checked (DD-199): the public name exposes whatever answers on that port, and
-  its own password is the only guard. The status line says when nothing answers on the port.
-- **Retired by DD-275 (v2-258, the rebuild):** manual `elle-*` addresses are gone; an application port's access row replaces them, with this entry's site and DNS shapes.
-
 ### DD-251: Container logs in full and unfiltered (v2-234)
 
 - **Request (user, 2026-10-08):** after a filebrowser test container's first password could not be found
@@ -1219,6 +1111,8 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   tokens — is shown to whoever opens the page, also over the public HTTPS name when that is on (it
   needs the Konsol account). Environment variables stay hidden as before (DD-208). Package pages'
   own logs (`master-modul gunluk`, e.g. qBittorrent's temporary password line) are not part of this.
+- **Amended by the rebuild (DD-272, DD-274):** Konsol definitions, App Store containers and package logs are
+  gone; an application's Günlük reads each service unit's journal the same way (`journalctl -u`), unmasked.
 
 ### DD-249: Files text editor (CodeMirror 6); saves as root in "Sistem (/)" (v2-231)
 
@@ -1320,6 +1214,8 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Amended by DD-267 (v2-250):** the reboot is Sistem → Sunucu's "Yeniden başlat" (the typed word,
   tailnet only; the page waits and loads itself again, DD-266); the Sağlık card layout went with the old
   interface. The route and the on-demand timer are unchanged.
+- **Amended by DD-272 (v2-255, the rebuild):** with no packages, the reboot is refused beside an update or a
+  repair only.
 
 ### DD-241: `master-onar` covers what the installer sets up; Sağlık shows the last run and a log (v2-223)
 
@@ -1482,6 +1378,8 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Amended by DD-267 (v2-250):** the button is in Sistem → Güncellemeler (DD-266), which follows the
   run in the activity list and reloads the page when it ends well; the check, the pin and the unattended
   re-run are unchanged.
+- **Amended by DD-272 (v2-255, the rebuild):** with no packages, the start is refused beside a pending
+  settings change or another update only.
 
 ### DD-229: Overview controls, WireGuard as a whole, and a host closed to containers (v2-207)
 
@@ -1526,6 +1424,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   icons) and Files' list view went with the old interface. WireGuard's stop as a whole
   (`PAKET_DURDURULABILIR=1`, `WG_STOPPED_FILE`) and the host closed to containers (the nft `input`
   chain) are unchanged.
+- **Amended by DD-272 (v2-255, the rebuild):** WireGuard is a built-in: `master-wg durdur` and `baslat` stop
+  and start it as a whole through `WG_STOPPED_FILE`, without `PAKET_DURDURULABILIR` or `paket_*` hooks, and
+  the firewall reads the marker itself.
 
 ### DD-228: Install from the public repository with one curl line on the server (v2-206)
 
@@ -1551,6 +1452,10 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Trade-offs:** integrity rests on HTTPS to GitHub and on who can push to `main`; there is
   no embedded SHA-256 to compare. `kur.sh` prints the archive's SHA-256, and `KUR_REF` pins a
   commit. Every push to `main` reaches the next install, so `main` must stay installable.
+- **Amended by the rebuild (phase 6):** the install folder is fixed (`KUR_ROOT`, used only by tests, is
+  gone; the Bats tests run a copy of `kur.sh` with the folder replaced). `KUR_URL` stays as the operator's
+  way to install a tree not yet on GitHub as an archive (`https://` or a `file://` path on the server,
+  `rebuild.md` section 7.5); unset, the GitHub archive of `KUR_REF` is downloaded.
 
 ### DD-227: Writable server folders only through the Files account (v2-205)
 
@@ -1664,6 +1569,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   and WebDAV (open transfers are cut) once.
 - **Amended by DD-267 (v2-250):** `.arsiv` left with the archive jobs: WebDAV's one `InaccessiblePaths=`
   line lists the trash, `-.pay` and `PRIVATE_STATE_ROOT`, and no unrar child runs.
+- **Amended by the rebuild (DD-272, DD-274):** `-.pay` left WebDAV's line with the 1.x leftovers (DD-272), and
+  the package rule is the base's: applications' data lives under `UYGULAMA_VERI_DIR`, inside
+  `PRIVATE_STATE_ROOT` (DD-274).
 
 ### DD-224: Containers may reach the internet, not private or tailnet destinations (v2-202)
 
@@ -1732,140 +1640,8 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Upgrade:** the next installer run re-places qBittorrent's Quadlet and restarts it once. That
   goes through the DD-222 path, so a failed run cannot skip it. Existing Konsol containers keep their
   old unit, with `Requires=`, until they are saved once in Konsol; there is no migration code.
-
-### DD-222: A package's unapplied change survives a failed install (v2-200)
-
-- **Finding (nrm, 2026-10-04):** stage 7 re-applied a package only when `MODULES_CHANGED`
-  named it, and that list existed only in the running installer's memory. Stage 4 had
-  already written the new files to `MODULES_DIR/<id>/`, so after a failure in stage 5
-  (`master-firewall`) the next successful run rendered byte-identical files, reported no
-  change and never ran `master-modul uygula <id>`. The placed Quadlet/unit stayed old until
-  someone ran it by hand. A change to a WebDAV or Files helper had the same gap: its restart
-  signal for `master-modul yerlesik` was lost the same way.
-- **Decision:** a durable marker per package, `MODULES_PENDING_DIR/<id>`
-  (`/etc/master-stack/moduller-bekleyen/`, 0700 root, empty files). `render_package_dir`
-  writes it at the first changed or removed file, before the package's remaining files are
-  processed. Stage 4 writes `paylasim` when `master_shares.py` or `master_webdav.py` changes,
-  and stage 6 writes `dosya` when the Files code or unit changes. `ensure_module_files` puts
-  every marked package into `MODULES_CHANGED`, together with changed packages and
-  `PAKET_UYGULA_HEP=1` packages. `reapply_modules` removes a marker only after `uygula`
-  succeeded, or when the package is not installed (Konsol's `kur` places the current rendered
-  files). It also removes the built-ins' markers, because `yerlesik` ran earlier in stage 7
-  and stops the install if it fails. A failing `uygula` stays a warning, as before, and
-  keeps the marker, so the next run tries again. A marker that cannot be written stops the
-  install.
-- **Why not `/run`:** `RUNTIME_DIR` is tmpfs; a reboot between the failed and the next run
-  would drop the marker and bring the bug back. Why not compare rendered and placed files:
-  only the hooks know where each file goes, and the engine stays application-neutral.
-  `MODULES_DIR` cannot hold it either: the renderer deletes anything that is not a package
-  file.
-- **Bounds:** markers stand only for "rendered, not yet applied". They are not a reconcile
-  queue. Nothing else reads them, no timer runs, and a marker for a package that was
-  removed from the repository is never read. An extra re-apply is harmless (`uygula` is
-  idempotent); a missed one is the bug. Hosts that missed a reapply before v2-200 are not
-  detected (no migration); run `master-modul uygula <id>` once there.
-- **Not covered:** `PANEL_HELPERS_CHANGED` (Konsol backend restart in stage 6) and
-  `FIREWALL_NEEDS_RESTART` are in-memory signals of the same kind. They are outside this
-  decision.
-
-### DD-221: The Podman page changes qBittorrent's peer port (v2-199)
-
-- **Request (user, 2026-10-05):** "portların boş olduğunu denetleyen sisteme gerek yok. eş portunu
-  Podman sayfasından değiştirme imkânı eklenebilir." Asked how the ports are chosen (fixed numbers in
-  `torrent.env`, no decision mechanism), the user declined an install-time free-port search and asked
-  for the peer port to be editable like the interface port.
-- **Decision:** the package adapter declares `peer_port` next to `listener_port` and `save` (`config`
-  and `editable`); the base page shows the field only for an adapter that declares it and still names
-  no application. A request without `peer_port` keeps the current one.
-- **What moves together** (one transaction under the settings lock: stop → write → daemon-reload →
-  guard → start → interface answers; any failure restores every file, reloads, reapplies the guard and
-  only then restores the previous service state): both WAN `PublishPort` lines (TCP and UDP) and the image's
-  `TORRENTING_PORT` in the rendered and the placed Quadlet, the profile's `Session\Port`, and
-  `TORRENT_PEER_PORT` in the durable override (now in `PAKET_AYAR_ANAHTARLAR`), so the installer renders
-  the same values and the hook's `podman port` check, Settings' port catalogue and the container guard
-  agree. The guard (`master_container_network.py apply`) runs before the start: it reads the placed
-  Quadlet, so the new publication is let through and the old one no longer. The main Quadlet is
-  patched, not a drop-in: Quadlet merges `PublishPort` lists from drop-ins, and the patched file is
-  exactly what the installer writes from the override (the DD-214/DD-217 pattern). `TORRENTING_PORT`
-  is patched in the same `Environment=` line, so each value has one place.
-- **Checks (the edit's own, before the service stops):** an integer 1024–65535, different from the
-  interface port, not another project service's port (base `*_PORT` values, other packages' declared
-  ports, saved Konsol container definitions over TCP or UDP), and bindable on the WAN address over
-  TCP and UDP (catches a WireGuard network's UDP port or another container's publication). No
-  install-time free-port search exists or was added (the user's call). The form recommends
-  61000–65535 (outside the ephemeral range, DD-219) but does not enforce it.
-- **Consistency:** only a changed peer port is recorded (DD-219's rule) and `kaldir --veri` keeps it
-  like the interface port (DD-220). The App Store text no longer names the number, which is rendered at
-  install time and would go stale after an edit; the Podman page and Settings show the effective port.
-  The Quadlet's comment lines no longer repeat port numbers for the same reason.
-- **Limits:** existing peer connections drop with the restart; trackers and the DHT learn the new port
-  on the next announce. qBittorrent's own listening-port option is overwritten by `TORRENTING_PORT` at
-  every start, so the port is changed here, not in its UI.
-- **Amended by DD-267 (v2-250):** the peer port is changed in the adapter card on qBittorrent's Ayarlar
-  tab (DD-266) instead of the Podman page; the transaction is unchanged.
-
-### DD-220: Removing qBittorrent with its data keeps Konsol's port and image choice (v2-198)
-
-- **Request (user, 2026-10-05):** "öneriyi çalış ve düzeltelim" — the follow-up a multi-agent review
-  of v2-197 found and filed as a separate task.
-- **Problem:** the package's durable choices (`PAKET_AYAR_ANAHTARLAR`: `TORRENT_UI_PORT` from the
-  Podman page, `TORRENT_IMAGE` from an approved update, DD-214) are baked into rendered files by the
-  installer: the Quadlet's `PublishPort` loopback line, `WEBUI_PORT` and `Image=`, the manifest's
-  `PAKET_IMAJ`, the seed's `WebUI\Port`. `kaldir --veri` deleted the override (and the port drop-in
-  `85-konteyner.conf`) but no one re-rendered those files, so a reinstall from App Store before the
-  next installer run placed a Quadlet on the chosen port while the hook, Caddy's filter
-  (`master_publications.private_site`, override-aware) and the publication expected the package
-  default: `torrent_verify` failed and `torrent.<domain>` pointed at the wrong port.
-- **Decision:** `--veri` deletes what its dialog names — the profile, the torrent list, the folder
-  drop-in and the image — and keeps Konsol's choices: the override and the port drop-in. Every consumer
-  then agrees again (rendered files, hook, Caddy filter, publication). The dialog says so. Rejected:
-  rewriting the rendered lines back to defaults on `--veri` (a second renderer outside the installer,
-  and it would silently downgrade an approved image to the package's older pinned digest).
-- **Consequence:** a reinstall after `--veri` uses the chosen port and re-pulls the approved image
-  digest. A recorded choice wins over the package's `torrent.env` on every render (`paket_ayar_oku`,
-  DD-203/DD-214), so a newer package's `TORRENT_IMAGE` pin or default port does not reach an install
-  that has one: the image moves only by another approved update (to the channel's digest), and
-  entering the default port on the Podman page records that value as a choice too. There is no
-  in-product way back to following the package's values; the manual step is to delete
-  `PACKAGE_OVERRIDES_DIR/torrent.env` and `qbittorrent.container.d/85-konteyner.conf` as root and run
-  the installer (found by the v2-198 review: the first draft of this entry wrongly promised that a
-  newer package version restores the pin).
-- Supersedes DD-214's sentence "`kaldir --veri` drops the override with the other package settings".
-
-### DD-219: qBittorrent back to its own defaults; its ports moved to uncommon fixed ports (v2-197)
-
-- **Request (user, 2026-10-04):** "ayar değişikliğini iptal edelim image dosyası varsayılan config
-  ayarları ile kurulsun değişikliği geri alalım. arayüz portunu ve peer portlarını değiştirelim. wan
-  arayüzden internete açılan portları random taramalardan uzak portlar olarak güncelleyelim." Asked
-  to choose, the user picked qBittorrent's own defaults (not the image's `/defaults/qBittorrent.conf`,
-  whose `/downloads` paths do not match the same-path mounts; its only other difference is UPnP off),
-  kept SSH on 22, left the share HTTP (61010), WireGuard (61001) and Tailscale (41641) ports alone
-  ("aralık uzak zaten"), and chose fixed uncommon ports over per-install random ones.
-- **Revert:** DD-218 (v2-196) is retired; the seed is again the six integration keys of DD-178 with
-  DD-217's `WebUI\Address=*`. A profile seeded by v2-196 keeps its values (fresh-install rule; nrm's
-  live profile never received them).
-- **Ports:** `TORRENT_UI_PORT=62947` (published on loopback only) and `TORRENT_PEER_PORT=63851` (TCP+UDP
-  on the WAN IPv4 address). Both are outside Linux's ephemeral range (32768–60999, so an outgoing
-  connection can never hold them first), away from the 610xx block of the other services, and not a
-  commonly scanned or registered service port. Everything that names them renders from the package's
-  `torrent.env`: Quadlet `PublishPort`/`WEBUI_PORT`/`TORRENTING_PORT`, Caddy upstream, publication
-  upstream, the Settings port catalogue, the guard and the hook's checks.
-- **Honest limits:** an uncommon port only keeps opportunistic scans of common ports away; full-range
-  scanners still find an open TCP port. The peer port is announced to every tracker and peer by
-  design, so it cannot be hidden from the swarm. 443 stays (Let's Encrypt TLS-ALPN needs it); UDP
-  WireGuard/Tailscale ports do not answer unauthenticated probes.
-- **Existing installs:** an installer run re-renders the package and recreates the container on the
-  new ports; qBittorrent takes both from its start flags. An operator override of `TORRENT_UI_PORT`
-  (Podman page) keeps its value. Before v2-197 every Podman-page save of qBittorrent, even a
-  folder-only one, recorded the port shown at the time as such an override, so such an install stays
-  on 61006 (loopback only); the manual step is to enter the new port there. Since v2-197 only a
-  changed port is recorded.
-- **Review fixes (multi-agent review, v2-197):** the App Store text claimed "İnternete eş portu
-  açılmaz" since DD-217; it now states the rendered peer port and that it is WAN IPv4 only. Settings'
-  port catalogue showed the peer port as an IPv4+IPv6 INPUT permission with a toggle that cannot
-  affect a forwarded container publication; package internet ports of a bridge package are now IPv4
-  rows marked fixed (no toggle). Stale "host network / outgoing only" statements in the contract
-  (R10/R12/R18, §3.1), README, architecture, defaults.env and the Cursor rules were corrected.
+- **Amended by the rebuild (DD-272, DD-274):** package units and the package engine's writer are gone; every
+  application unit keeps the `Wants=`/`After=` order and the guard check in `ExecStartPre` (DD-274).
 
 ### DD-217: qBittorrent on its own bridge; ports published per address in its Quadlet (v2-195)
 
@@ -1909,6 +1685,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Amended (v2-201, DD-223):** `After=master-firewall.service` did not hold the start back when the
   firewall failed. The package Quadlet now also checks the guard in `ExecStartPre` and retries
   every 10 s until it is in place.
+- **Partly retired by the rebuild (DD-272, DD-275):** qBittorrent and the package publications are gone. Its
+  guard rules hold for applications: each runs on its own bridge (`ksl-<app>`, DD-274), and a raw port's
+  Tailscale or WAN publication is let in only as the DNAT Podman made for it (DD-275).
 
 ### DD-215: The Podman page shows the ports a host-network container listens on (v2-194)
 
@@ -1935,6 +1714,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   host-network container.
 - **Amended by DD-267 (v2-250):** the listening sockets are shown in the container details on the
   application's page (DD-266).
+- **Amended by the rebuild (DD-272, DD-274, DD-276):** qBittorrent is gone and applications never use the host
+  network (DD-274); the reader serves host-network containers Obhut does not manage, listed read-only in
+  Gelişmiş → Podman (DD-276).
 
 ### DD-214: Konsol checks image updates, the operator applies them; row controls before the name (v2-193)
 
@@ -1975,50 +1757,10 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Amended by DD-267 (v2-250):** the Podman page's row controls are gone. The check and the approved
   update are the application page's "Güncellemeleri denetle" and "İmajı güncelle" (DD-266), and
   Uygulamalar lists the update state (DD-261); the check, its cache and the apply path are unchanged.
-
-### DD-212: Installed application home tiles and one fixed network widget (v2-191)
-
-Presentation amended by DD-213; installed-only tiles and cumulative traffic semantics remain.
-
-- **Request (2026-10-04):** simplify the overview to installed applications and the
-  network widget. Dosyalar, Ayarlar and App Store keep their sidebar navigation;
-  Paylaşımlar remains a tab inside Dosyalar, not a separate sidebar entry. None has a
-  duplicate home card. This changes the overview composition from DD-204 and DD-206
-  and extends the DD-210 action row.
-- **Stable action positions:** every installed application has three bare-icon slots
-  in this order: settings, start/stop, logs. Unsupported slots remain blank and
-  non-interactive, so other actions do not move; WireGuard's start/stop slot is empty.
-  Keep accessible labels/tooltips, focus, existing settings forms and lifecycle
-  confirmation/progress. Logs open a dialog through the existing module journal.
-- **Sidebar context:** move clock/date below CPU, memory and disk; retain WAN and
-  Tailscale addresses, version and uptime there. Remove the separate home clock/system
-  widgets and their unused SVG/CSS. Resource information remains available without
-  repeating it in home widgets.
-- **Layout compatibility:** `ag` is the only widget, always full width (four columns).
-  Keep hide/show, tile reordering and the existing server layout API/schema and safe
-  writer. The frontend ignores removed saved widget/tile IDs and normalizes any older
-  `ag` width to 4 while retaining its visibility. There is no server data migration
-  or per-device layout; new installed tiles follow the saved order as before. On phones
-  the edit toolbar stays in normal flow below the tiles, preventing a short viewport
-  from covering a card; the desktop toolbar retains its sticky behavior.
-- **Network presentation:** equal-width and equal-height sections place live server
-  download/upload rates and chart beside a borderless three-column application table:
-  icon/name, cumulative download total, cumulative upload total. The table has a
-  fixed-height overflow area so more applications do not stretch the widget.
-- **Measurement meaning:** the user's clarified contract keeps application `down`/`up`
-  counters as cumulative totals formatted in byte units, never bytes/s. Only the server
-  rates/chart section shows live speeds. Missing, non-finite or stale measurements stay
-  unknown rather than zero, without suppressing other rows or server measurements.
-  Existing backend traffic sources and authentication stay unchanged: no new rate
-  module or additional qBittorrent login. qBittorrent's existing all-time totals can
-  lag between its statistics-file saves; they are not live measurements.
-- **Delivery and evidence:** source and repository portable installers are v2-191.
-  Per the user's clarified workflow, every version change rebuilds the root and
-  `Data/app` installers for the version commit, without a Desktop copy or separate
-  snapshot. Local validation is recorded in `SESSION.md`; no live acceptance is claimed.
-- **Amended by DD-267 (v2-250):** the home tiles, their action slots, the sidebar context and the layout
-  went with the old interface. The measurement meaning holds for Genel Bakış's Ağ card: the
-  applications' figures are cumulative totals in bytes; only the server's rates are live speeds.
+- **Amended by the rebuild (DD-272, DD-274):** the App Store's apply path (`PAKET_IMAJ_KANAL`, qBittorrent's
+  adapter, the override) and Konsol definitions are gone; an application's update pulls its own tags on the
+  operator's confirmation and changes nothing when no digest moved (DD-274). The check, its cache and the
+  no-automatic-update rule hold.
 
 ### DD-211: Main-sidebar container management with explicit ownership (v2-190)
 
@@ -2027,7 +1769,7 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
 
 - **Request (2026-10-03):** move Containers out of Settings and implement the accepted
   Portainer-like prototype: lifecycle, editable ports/mounts and real resource management.
-  The frozen proposal is `docs/design/konsol-konteynerler-v01.html`; corrected semantics
+  The frozen proposal is `docs/archive/design/konsol-konteynerler-v01.html`; corrected semantics
   and the implementation interface are recorded alongside it.
 - **Ownership:** App Store applications retain `master-modul` and package-owned settings.
   Generic containers created/adopted in Konsol have private persisted definitions and
@@ -2085,156 +1827,10 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   unchanged.
 - **Amended by DD-269 (v2-253):** the read-only container view for a state file without
   `KONTEYNER_STATE_DIR` is gone; the routes always read the manager's view.
-
-### DD-210: App Store install form, direct app launch and the tile action row (v2-187…v2-189)
-
-- **Request (user via the project lead, 2026-10-03):** qBittorrent's App Store "Kur" opens a window
-  asking for a username, a password and the download folder, and the install uses them; afterwards the
-  application's icon on the main menu opens qBittorrent's own web UI, and a small settings icon beneath
-  it changes the same three values.
-- **Why the install takes the values (instead of the temporary password, DD-151):** with a password
-  chosen up front there is no temporary-password step and no window in which the web UI runs with a
-  journal password. A "temporary default, patch later" install was rejected: the container would start
-  once with credentials the operator did not choose, and a failed patch would leave it that way.
-- **Generic, two declarations:** `konsol.json` `form` (generic field types `metin`, `parola`, `klasor`,
-  texts, the package API's read and write routes) drives the shell's dialogs; the manifest key
-  `PAKET_KUR_AYAR` names the worker that validates the form. The shell, the backend and the engine name
-  no application. A package without `PAKET_KUR_AYAR` (WireGuard) installs exactly as before and refuses
-  a form.
-- **Validation before anything starts:** the backend, under one lock per install, refuses a busy or
-  installed package, runs the package worker as a transient root unit with the form on stdin
-  (`kur-hazirla`; the same `run_worker` path as every settings write, so the password never reaches
-  argv, environment or journal) and spawns `master-modul kur` only after the worker accepted. The worker
-  reuses the package's own rules: username pattern, password 8–256 printable characters, the base's
-  `safe_dir(writable=True)` user-area policy probed as the downloads user, and the same-path bind-mount
-  character check. A refusal is the request's 400; no image is pulled and nothing is written.
-- **Seed, not a password, crosses into the engine:** the engine runs detached (`systemd-run`, DD-148), so
-  stdin cannot reach it. The worker writes `RUNTIME_DIR/modul-<id>.kur` (tmpfs, 0600, root) with the
-  validated username, folder and the password **already hashed** in qBittorrent's PBKDF2 format; no
-  plaintext is ever stored. The engine refuses to install such a package without a fresh (≤10 min),
-  private, root-owned seed, exposes its path to the hooks as `KUR_TOHUM` and removes it and the hook's
-  snapshot on every exit; the backend removes it when the engine could not be started.
-- **Before the first start, and reversible:** the hook writes the seed into the new or kept profile
-  (`kur-uygula`: only `WebUI\Username`, `WebUI\Password_PBKDF2` and the two save-path keys, plus the
-  folder drop-in when outside the downloads tree) after `torrent_profile` and before the quadlet and the
-  first `systemctl start`; the image's init copies its defaults only when no profile exists, so the
-  values hold. The files as they were are snapshotted next to the seed; every failure path of `kur`
-  (`torrent_kur_geri`) stops and removes the unit, then restores the profile and the drop-in
-  (`kur-geri`), so a failed reinstall never loses the previous working account, folder, unrelated
-  preferences or torrents.
-- **Edit:** `POST /api/uygulama/torrent/ayar` takes any of the three fields; the worker validates all of
-  them first and makes one stop/write/start (`change()`, DD-165 direct apply with rollback), keeping a
-  stopped app stopped. A blank password is simply not sent and the stored hash stays. The dialog reads
-  current values from `/durum`, which never carries the hash.
-- **Launch:** an app with publication names (`urls`, DD-195/199) opens its web UI in a new tab
-  (`noopener noreferrer`) from the tile, the sidebar entry (removed by DD-216) and App Store's "Aç" while it runs — the
-  public name on the public HTTPS address, the tailnet name on the tailnet. Stopped, busy or (on the
-  public address) unpublished apps open their Konsol page instead; no name is constructed in the page
-  and the public address never falls back to a private one. The page remains reachable from App Store
-  details and its route, and it keeps its own forms.
-- **Stopped apps keep their settings (review fix):** the tile keeps the settings action while the app is
-  stopped, so the root backend hands a stopped (`durduruldu`) package's own `/api/uygulama/<id>/*`
-  requests to its API module too (`package_api(..., stopped=True)`). For that object `start()` is not run,
-  and background callers (`package_apis()`: the sampler, VPN networks) never get it; a state change
-  rebuilds the object (stopping a running one). Absent packages still answer 404/409. The qBittorrent page
-  reads its status while stopped for the same reason.
-- **Dialog ownership (review fix):** the form shares Konsol's one dialog with every other flow. Each call
-  puts its content under its own root node and owns the dialog only while that node is the content and
-  the dialog has not closed since. A late install or save answer then closes only its own dialog (else it
-  only toasts), a late refusal toasts instead of writing into another dialog, and a late settings read
-  never replaces a newer dialog; closing still clears the call's password fields and returns focus.
-- **Tile action row (v2-188, user: "ana ekran uygulamalarının altında ayarlar, durdur başlat iki seçenek
-  olsun"):** v2-187's single settings icon became a compact row beneath the icon of every installed
-  App Store application: **Ayarlar** (the declared form; without one, a link to the package's page, so
-  WireGuard gets its page) and, only for packages that declare `PAKET_DURDURULABILIR=1`, one
-  **Durdur/Başlat** button. WireGuard cannot stop as a whole (its networks switch one by one) and gets no
-  invented all-networks switch; built-in navigation tiles get no row. The tile is a container with a
-  stretched launch link and the row as a sibling (no nested interactive elements). Durdur asks the App
-  Store's own confirmation (`askStop`, the package's stop note); both actions use the same lifecycle
-  request and progress (`modStart`), so no backend change. From the click until the server's operation
-  ends the button is `aria-disabled` (still focusable, so keyboard focus survives the 1.5 s progress
-  redraws) and ignores clicks; its visible label is the short "Duruyor…"/"Başlıyor…" (the narrow tile),
-  its accessible name "<app>: Durduruluyor…/Başlatılıyor…". A refused request is a toast and the button
-  is usable again; the label follows the server's state when the operation ends. **v2-189** (user: "fon
-  rengi olmadan sadece simge"): the controls are bare icons — no visible text, background or border, also
-  on hover/press; the name is the `aria-label` and the `title` tooltip, the focus ring stays, the touch area
-  is an invisible 44 px pseudo-element. The redraw at the end of a lifecycle request keeps whatever has focus
-  by then instead of pulling it back to the tile. Edit mode renders the
-  tiles exactly as before (no row, no link). A poll that redraws the tiles keeps keyboard focus on the same
-  tile part (`data-act`), and closing the settings dialog returns focus to Ayarlar.
-- **Amended by DD-267 (v2-250):** the tiles, their action row, the sidebar launch, App Store's "Aç" and
-  the shared-dialog rules went with the old interface; launching and the actions are Uygulamalar' and
-  the application page's (DD-261). The install form (`konsol.json` `form`, `PAKET_KUR_AYAR`, the private
-  seed) and a stopped package's own API stay: the catalogue in Uygulamalar installs through the same
-  `module_install` and the application's Ayarlar tab edits the form (DD-266).
-
-### DD-209: qBittorrent runs as a Podman container: quadlet, digest-pinned image, host network (v2-186)
-
-- **Request (user, 2026-10-03):** "sunucuda podman üzerinden yüklü qbittorrent ama ekranda ve app
-  store içerisinde uygulama gibi görülmesi daha iyi olur" — after the Podman trial
-  (DD-208) and having removed the native qBittorrent from Konsol themselves, the qBittorrent that
-  runs in Podman should be *the* qBittorrent application. An earlier message had already named
-  qBittorrent as the one application worth moving into a container.
-- **Decision:** one App Store application `torrent`, now a container. No second "qBittorrent
-  (container)" entry: two would collide on the UI port, the Caddy name `torrent.<domain>`, the
-  publication row, the page route and the downloads folder. The Debian package `qbittorrent-nox`
-  is no longer installed (fresh-install rule: an old enabled `qbittorrent-nox@` unit stops the
-  install with the manual `systemctl disable --now …` step instead of a migration).
-- **Engine (generic, no application name):** `PAKET_CALISMA=konteyner` (Konsol shows a
-  "Konteyner" chip; liveness is the unit's, like `host`); `PAKET_KONTEYNER` names the package's
-  quadlet file, placed into `KONTEYNER_BIRIM_DIR` (`/etc/containers/systemd`, from
-  `defaults.env`/state) with a `daemon-reload` when it changed, removed on `kaldir`, checked by
-  the engine's and the installer's leftover checks and pruned for uninstalled packages like a
-  drop-in; `PAKET_IMAJ` is the image, accepted only as `name@sha256:<64 hex>`;
-  `paket_imaj_cek` pulls it only when `podman image exists` says no (bounded by `timeout 900`),
-  `paket_imaj_sil` removes it by image id (`podman rmi NAME@sha256:…` answers "tag not known",
-  found live) and leaves an image that another tag or container uses.
-- **Quadlet (`magaza/torrent/qbittorrent.container`):** `Network=host` (no bridge, no
-  netavark NAT chains: the firewall stays the project's), `Pull=never` (boots and re-runs never
-  download), journald logging (`podman logs` and `journalctl -u` both work), `StopTimeout=45`,
-  `DropCapability=NET_BIND_SERVICE SETFCAP SYS_CHROOT`, PUID/PGID = the downloads account,
-  `UMASK=002`, `WEBUI_PORT=TORRENT_UI_PORT`, `[Service] Nice=10 CPUWeight=50` (DD-181),
-  `After=master-firewall.service`, `[Install] WantedBy=multi-user.target`. Two mounts only: the
-  profile `TORRENT_PROFILE_DIR` as `/config` (the image's layout `/config/qBittorrent/` equals the
-  native XDG layout, so `ayar.py`, `yayin.py`, `klasorler.py`, `trafik.py` read the same paths) and
-  `DOWNLOADS_PATH` **at the same path**, so every path qBittorrent stores is a host path (Files'
-  protected folders, share validation and `save_inside` keep working). The trash and the share
-  root are simply absent inside. The image is the linuxserver build pinned by its OCI index
-  digest (amd64 + arm64) in the package's own `torrent.env` (`TORRENT_IMAGE`; `TORRENT_SURUM`
-  only for the App Store text); an update is a new digest plus an installer run (the changed
-  quadlet recreates the container). No `AutoUpdate=` and no `podman-auto-update.timer`.
-  Amended by DD-214: Konsol checks the channel and the operator may apply a newer digest.
-  Amended by DD-217 (v2-195): the container runs on its own bridge with per-address publications,
-  not on the host network.
-- **Live findings that shaped it (nrm, 2026-10-03):** with `NoNewPrivileges=true` the image's s6
-  init ignored SIGTERM and was SIGKILLed after the stop timeout (30–45 s instead of 3 s, the unit
-  left "failed" — qBittorrent writes settings and resume data on shutdown), so the quadlet
-  carries no `NoNewPrivileges` and the hook resets a failed unit when it stops it. The seeded
-  `WebUI\Address=127.0.0.1` survives the image's init (it copies its defaults only when no
-  `qBittorrent.conf` exists), so the profile seed must precede the first start. The unit is
-  `active` before qBittorrent listens, so the worker waits (≤40 s) for the loopback port before a
-  change counts. Journal lines of the container carry the unit's `_SYSTEMD_INVOCATION_ID`, so the
-  first-login password is read exactly as before.
-- **Lifecycle:** a generated unit cannot be enabled or disabled; `durdur` stops it and removes the
-  quadlet (nothing starts at boot), `baslat` places it again, an installer run keeps a stopped app
-  stopped. `kaldir` keeps the image (as a kept Debian package was); `--veri` deletes the profile,
-  the folder drop-in and the image. Verification on `kur`/`baslat`/`uygula`: the
-  `qbittorrent-nox` process's host uid (`podman top … huid`) is `DOWNLOADS_UID`; no mount is `/`,
-  `SERVER_ROOT`, the trash or the share root; the UI port listens on `127.0.0.1` only; first
-  install still requires the unauthenticated 403 on loopback and through `torrent.<domain>`.
-- **Folder choice:** a download folder inside the downloads tree needs nothing; one outside it
-  (the library) becomes one quadlet drop-in `qbittorrent.container.d/90-konsol.conf` with a
-  same-path `Volume=` (Podman merges drop-ins), replacing the old `ReadWritePaths` drop-in.
-  Names with whitespace, `:` or `%` cannot be expressed as a bind mount and are refused.
-- **Trade-offs, stated:** memory ~100 MB for the service cgroup versus ~53 MB native; a 228 MB
-  image (pulled once, ~1 min); the container's init runs as root inside its namespaces (the app
-  itself as PUID), weaker than the native unit's `ProtectSystem=strict` + `NoNewPrivileges`, but
-  the container sees only its two mounts. Updates no longer come from apt; they are a digest
-  bump in the repository. Not done: rootless/user-namespace mapping, image signature checks,
-  automatic updates, a container log view on the app's own page (it links to Settings →
-  Konteynerler instead).
-- **Amended by DD-269 (v2-253):** the check for an active native `qbittorrent-nox@` unit is gone
-  (installs before v2-186 are not supported).
+- **Partly retired by the rebuild (DD-272, DD-274):** App Store ownership, package settings, single-container
+  definitions, adoption and the controls for unmanaged containers are gone; applications replace them
+  (DD-274). The broker (a transient root unit, operation records, locks, stale revisions refused), the managed
+  bridges with their forward guard and DNS exception, and the resource rules hold.
 
 ### DD-208: Podman is base infrastructure; Settings → Konteynerler is its read-only view (v2-185, v2-186)
 
@@ -2286,6 +1882,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   application's page in Uygulamalar, Podman's images, volumes and networks in Gelişmiş → Podman
   (DD-266); the read routes and their safety rules are unchanged. An old `#/ayarlar/konteynerler/<name>`
   address opens the container's application page.
+- **Amended by DD-272 (v2-255, the rebuild):** there is no App Store; Podman runs the applications (DD-271),
+  and its resources are read-only in Gelişmiş → Podman apart from the cleanup (DD-276).
 
 ### DD-207: A package's backend write paths exist before the backend starts (v2-184)
 
@@ -2320,6 +1918,10 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   of three cards and a summary column; DNS options take two lines (name and badge, then
   description · addresses), so the network settings, peer add and peer edit windows show the
   whole list without an inner scroll; the network settings window has one hint instead of two.
+- **Partly retired by DD-272 (v2-255, the rebuild):** packages and their declared write paths are gone, and so
+  are the installer's mountinfo check and the engine's restart after `kur`. The rule holds for the base's
+  WireGuard folder: stage 4 creates `WG_CONF_DIR` before the backend starts, and `master-wg` checks that its
+  folder is writable before a writing command.
 
 ### DD-206: Overview edit mode, a server-side layout and a network card (v2-183)
 
@@ -2374,6 +1976,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   `PAKET_TRAFIK` modules feed Genel Bakış's Ağ card, read every 5 s while it is shown.
 - **Amended by DD-269 (v2-253):** `ag` gives the last WAN rate (none older than 120 s) instead of a
   history, and each package's `{down, up}` only; the traffic modules no longer report `since`/`at`.
+- **Partly retired by the rebuild (DD-272, DD-276):** the packages' `PAKET_TRAFIK` modules and their totals
+  are gone; each application's live rate comes from its bridge's counters (DD-276). The WAN sampler and `GET
+  /api/konsol/ag` hold.
 
 ### DD-205: No sign-in on the tailnet; the account is the public name's credential (v2-181)
 
@@ -2416,397 +2021,6 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   records them as `hesap-kur` and `parola-degis` with the device's address.
 - **Not done:** no per-device identity on the tailnet (`tailscale whois`), no roles, no
   second factor for the public name, no account deletion in the UI.
-
-### DD-203: Package-declared folders, settings and backend write paths, phase 3 (v2-177)
-
-- **Scope (user, 2026-10-02: "Faz 3 tamamla, kalan kozmetik temizliği de yap"):** the crumbs
-  DD-202 left in the base and every remaining application name in base code and comments.
-  After this phase the base — installer, `defaults.env`, `state.env`, root backend,
-  settings/share/WebDAV helpers, file backend, Konsol shell, unit templates — carries no
-  application name or key; adding an application means writing `Data/magaza/<id>/` only.
-- **Declared folders (`PAKET_KLASORLER`, `PAKET_KLASOR_MODUL`).** A package declares, as
-  absolute paths the installer renders, the folders it writes into
-  (`__DOWNLOADS_PATH__/incomplete`: qBittorrent's conventional incomplete folder) and,
-  optionally, a Python module (`klasorler.py`, `yazilan(env) → [paths]`) that reports what
-  it writes into right now (the temporary folder the user chose in qBittorrent itself, read
-  from its profile). The base applies one policy to both: the file backend receives every
-  catalogued package's declared folders as root-relative `path=owner` pairs (`--protected`,
-  `/api/state.protected`), so the Files page refuses to select, share or trash them and
-  says which application writes there; the share manager refuses a share on, inside or
-  around them (`validate_path`: declared + reported, fail closed when a report cannot be
-  read); the WebDAV server hides and refuses them inside any share that contains them (the
-  registry's `protected` list, root-relative, recomputed by `read()` from the catalogue and
-  the reports instead of trusted from the saved file). Protection is by actual path, not by
-  folder name as before: a folder merely named `incomplete` elsewhere is ordinary.
-  `TORRENT_TEMP_DIR`, `temp_name`, `--temp-dir` and the base's reader of qBittorrent's
-  profile are gone.
-- **Package settings (`<id>.env`).** `magaza/torrent/torrent.env` holds `TORRENT_UI_PORT`
-  and `TORRENT_PROFILE_DIR`, as `wireguard.env` holds the `WG_*` keys (DD-201). The
-  installer fills a package's own `__KEY__` placeholders from its env file before its own
-  variables (`paket_ayar_oku`), so the templates, `PAKET_YAYIN_UPSTREAM` and
-  `PAKET_KLASORLER` render without base keys; `defaults.env`/`state.env` carry no
-  `TORRENT_*`. The hook sources the file; `api.py`, `ayar.py`, `yayin.py` and
-  `klasorler.py` merge it over the state (`package_env`). A `PAKET_PORTLAR` key resolves
-  from the state or, failing that, from the package's own env file (root backend `ports()`,
-  `master-wg declared_ports`), keeping DD-198's key semantics.
-- **Backend write paths (`PAKET_ARKAUC_YOLLAR`).** `master-panel.service` no longer names
-  `/etc/wireguard`: the installer renders `ReadWritePaths` from every catalogued manifest's
-  declaration (`__WG_CONF_DIR__` for WireGuard), each with `-` so an absent folder never
-  keeps the backend down, installed or not — the same catalogue-wide rule as the port
-  reservation (DD-201), chosen over a per-install drop-in because that would restart the
-  backend the Konsol is talking to in the middle of an install. **Amended by DD-207:** a
-  `-` path is bound only if it exists when the backend starts; the installer now creates
-  them first.
-- **One package-module loader.** `master_settings.load_package_module(env, mid, name,
-  attr, label)` replaces the publication-only loader of DD-199: regular file, no symlink,
-  mtime cache, `sys.dont_write_bytecode` while executing — the `__pycache__` the base used
-  to write into the rendered package folder (found on nrm) is gone. `yayin.py`
-  (`security`) and `klasorler.py` (`yazilan`) both load through it.
-- **Cosmetics.** The installer's summaries list the catalogue's `PAKET_AD` names
-  (`paket_katalog_adlar`), stale WAN sites are removed by the `*-wan.caddy` pattern, the
-  Files page's protected-folder notice names the owner the backend reports, the Settings
-  port descriptions and the public-panel warning name no application, and base comments
-  describe roles ("a package's service", "the download account's services") instead of
-  products. Historical DD entries and archived documents keep their names.
-- **Fresh install only**, like the rest of the store model (DD-196); an in-place host gets
-  the new unit lines, state and package files on the next installer run.
-
-### DD-202: The qBittorrent page and its settings in the package, phase 2c (v2-176)
-
-- **Scope (user, 2026-10-02: "Öneri ile devam" on the phase 2c recommendation):** the last
-  application piece leaves the base. The qBittorrent page (service bar, first-login card,
-  account and download-folder form) is the package's `sayfa.js`/`sayfa.css`, registered
-  through `window.Konsol.sayfa` like WireGuard's; its reads and writes go to the package's
-  `api.py` behind `/api/uygulama/torrent/*`; the base settings transaction
-  (`master_settings.py`, `ayarlar.js`) has no `torrent` family, no application tab and no
-  application draft. The shell, the settings page, `index.html` and the root backend contain
-  no qBittorrent code.
-- **Option chosen (A, direct apply through a package worker)** over keeping the
-  account/folder change inside the base's reviewed transaction. That transaction exists for
-  changes that can lock the operator out (firewall, DNS, domain) and so needs the
-  confirmation window; a wrong qBittorrent account or folder locks nobody out of Konsol,
-  and the account-only path already committed directly (**DD-165**). The folder change
-  therefore loses the 60 s confirmation it had; in exchange the base knows nothing about
-  the application. A generic "package settings" family inside the base transaction (option
-  B) would have kept application knowledge in the base and was not taken.
-- **Worker.** `magaza/torrent/ayar.py` (`--state STATE hesap|dizin|durum`, JSON on stdin,
-  JSON on stdout, exit 1 with `{"error"}`): validation (username `[A-Za-z0-9._@-]{1,64}`,
-  password 8–256 printable characters; the folder through the base's
-  `Manager.safe_dir(writable=True)`, so the downloads/library policy and the write probe as
-  the service user stay the base's), then stop → snapshot → optional drop-in +
-  `daemon-reload` → INI patch of the touched keys only (0640, downloads uid) → start →
-  `is-active`; any failure restores both files, reloads systemd and starts the service
-  again. The drop-in is `UNIT_DIR/qbittorrent-nox@.service.d/90-konsol.conf` with one
-  `ReadWritePaths` line. The worker takes the base settings lock (`Manager.locked()`), so it
-  never interleaves with a base transaction. `durum` is the page's read-only view: paths,
-  inside-downloads flags, interface, peer port and account name; never the hash.
-- **Backend.** `PackageContext.worker(argv, data)` runs a script that must sit under
-  `MODULES_DIR/<id>/` (real path; a symlink out of the folder is refused with 400) through
-  the same `systemd-run --wait --pipe --collect` path as the base settings/share workers
-  (`run_worker`), so a password reaches stdin only, never argv, the environment, the journal
-  or the reply; `PackageContext.state_path()` hands the state file to the worker, and the
-  module passes the engine's folder as `--lib` so the standalone process finds the base's
-  `master_settings.py` (a hand run finds `master-modul` on `PATH`; found live, the first run
-  answered 502 because the worker could not import the base). `api.py`
-  checks shapes before starting the worker (400), audits `torrent:hesap` with `kullanıcı
-  adı`/`parola` and `torrent:dizin` with the path, and returns the worker's error as the
-  request's error. `torrent_view`, `TORRENT_KEYS` and `read_torrent_conf` are gone from
-  `master-panel`; `GET /api/konsol/ayarlar` carries no `torrent` key and `manage` no
-  `username`/`save`.
-- **Settings transaction.** Families are firewall, dns, domain, https and web.
-  `ini_values`, `ini_patch`, `password_hash`, `q_unit`, `torrent_apply` and the account-only
-  shortcut left `master_settings.py`; the package's publication check `yayin.py`
-  (**DD-199**) carries its own `ini_values`. A mixed DNS request needs confirmation only
-  together with firewall or domain.
-- **Shell.** `PAGE_API` gained `credRow`, `copyButton`, `copyText`, `module(id)`, `modPill`,
-  `modAct(id, action)` and `reloadModules()`, so a package page can show an account card and
-  drive its own service through Konsol's module API; `loadModules` calls the current page's
-  `modules()` hook. The page keeps the DD-151/DD-195 behaviour: the temporary password is
-  read only on request, shown for 30 s, hidden on tab change or navigation; the Web UI link
-  follows the Konsol address in use.
-- **Remaining base knowledge, left for a later step on purpose:** `master_shares.py` still
-  reads the qBittorrent profile for the incomplete-folder guard of folder shares, the Files
-  page still names qBittorrent next to the downloads temp folder, and
-  `TORRENT_PROFILE_DIR`/`TORRENT_UI_PORT`/`TORRENT_TEMP_DIR` are still base defaults.
-  Moving them needs a package declaration for "folders a package writes to" (done in
-  **DD-203**).
-- **Hooks.** The package's `paket_kur` places the page (`paket_sayfa_koy`) after the service
-  and its name are verified and before the registry line, `paket_uygula` places it on every
-  re-run, and the rollback removes it; found live on nrm, where the first v2-176 run left
-  `CONSOLE_WEB_DIR/uygulama/torrent` absent because only WireGuard's hooks called the helper.
-  The engine's `kaldir` removes the folder for every package (DD-200).
-- **Fresh install only**, like the rest of the store model; an in-place host gets the new
-  package files on the next installer run (`master-modul uygula`).
-- **Amended by DD-267 (v2-250):** the package's page (`sayfa.js`/`sayfa.css`) is gone and its hooks
-  place none. qBittorrent's account and download folder are its settings form on the application's
-  Ayarlar tab (`konsol.json` `form` with `oku: /durum` and `yaz: /ayar`, DD-266), and its first-login
-  account is that tab's account card. The worker, `api.py` and the direct apply are unchanged.
-- **Amended by DD-269 (v2-253):** the `/hesap` and `/dizin` routes and worker actions are gone (the
-  Ayarlar tab saves through `/ayar`, DD-210); `/durum` gives the form's `username` and `save` only,
-  without a `systemctl` call; the audit word is `torrent:ayar`.
-
-### DD-201: A neutral backend, package-owned settings and self-checking packages, phase 2b (v2-175)
-
-- **Scope (user, 2026-10-02: "faz 2b ye başla"):** the second half of phase 2 of the store
-  model (DD-196). After it the base names no application in its code, state or defaults:
-  the root backend and its socket are renamed, WireGuard's settings live in its package,
-  stage 7 asks installed packages to verify themselves, and the launcher and the peer tool
-  know other packages only through their manifests. The qBittorrent page and its Settings
-  form are the one remaining application piece in the shell (phase 2c, with the settings
-  transaction they use).
-- **Rename.** `master-wg-panel` → `master-panel` (file, unit, journal unit, `HEALTH_UNITS`,
-  `server_version`), `WG_PANEL_SOCKET` → `PANEL_SOCKET` = `/run/master-panel/api.sock`,
-  `WG_PANEL_RUNTIME` → `PANEL_RUNTIME`, `ensure_wg_panel` → `ensure_panel`. A fresh-install
-  change like the rest of the store model; historical entries and archived documents keep
-  the old names.
-- **Package-owned settings.** `Data/magaza/wireguard/wireguard.env` holds every `WG_*`
-  default (address bases, MTU, client DNS/keepalive/AllowedIPs defaults, config and
-  profile directories, the network registry path and slot limit, the modules-load file,
-  the suggested first port). The installer copies it into the rendered package folder like
-  any other package file; `master-wg`, the hooks (`kanca`, sourced wherever
-  `MODULES_DIR` is known: engine, firewall, installer) and the Konsol API module
-  (`ctx.read_env`) read it there. `defaults.env` and `state.env` carry no `WG_*` key any
-  more; the VPN endpoint is the detected `WAN_IPV4` (no `WG_ENDPOINT_HOST`), and the
-  destination block lists the firewall applies to every `vpn` declaration are the base's
-  own vocabulary, `VPN_BLOCK_DEST4/6`. The Mac launcher reads the peer-prompt defaults
-  from the package file. `master_settings.py` no longer hashes the network registry into
-  its revision: a package's own state changes go through its API.
-- **Self-checking packages.** Stage 7 runs, for every registered package, the hook
-  `paket_denetle` (sourced in a subshell with the installer's variables; a failure prints
-  its reason and stops the install under the package's name) and, for every absent
-  package, checks that none of its declared tools or drop-ins remain; the re-run prune
-  removes such leftovers from the manifests instead of naming WireGuard. The summary takes
-  each installed package's note from `paket_not` and its counts from `paket_ozet`, which
-  now computes them itself. WireGuard's `paket_denetle` carries the former stage-7 block:
-  `master-wg version`, the modules-load file, each registry network's listen port and
-  address, and that the file backend does not answer on a VPN address.
-- **Reserved ports.** `master-wg net-add` reserves the base ports (SSH, Tailscale, DNS,
-  HTTP) and every `PAKET_PORTLAR` key of every package manifest in `MODULES_DIR`,
-  installed or not, instead of naming qBittorrent, Files and WebDAV.
-- **Still in the shell (phase 2c):** the qBittorrent page (`ROUTES.torrent`,
-  `renderTorrentStatus`, the account card) and the Settings form (`torrent` key of the
-  settings transaction in `master_settings.py`, `ayarlar.js`).
-
-### DD-200: Konsol pages and application API from packages, phase 2a (v2-174)
-
-- **Scope (user, 2026-10-01: "faz 2 ye başla"):** the first half of phase 2 of the store
-  model (DD-196): Konsol's App Store texts, an installed application's page and its
-  root-backend API come from the package. The base shell and the root backend no
-  longer contain the word WireGuard. The second half (phase 2b) renames the backend and
-  socket (`master-wg-panel` → a neutral name), moves the `WG_*` state keys and the
-  qBittorrent page/settings form into their package, and fixes the launcher text and
-  `master-wg`'s port-collision list. Each phase is a fresh-install change.
-- **Declaration.** Three optional manifest keys: `PAKET_KONSOL="konsol.json"` (App
-  Store texts, the page declaration `sayfa {rota, baslik, ustbilgi, detay}` and the
-  journal templates `gunluk {verb: "…{detail}…{0}…"}`; a JSON object rendered by the
-  installer, so `__LOCAL_DOMAIN__`-style placeholders are filled), `PAKET_SAYFA="sayfa.js
-  sayfa.css"` (the page files) and `PAKET_API="api.py"` (the backend module). Names are
-  plain file names; folder paths and other extensions are refused.
-- **Page files.** `master-modul` copies the declared page files to
-  `CONSOLE_WEB_DIR/uygulama/<id>/` on `kur`/`uygula` (`paket_sayfa_koy`, 0644 root) and
-  removes the folder on `kaldir`; the trace check fails a removal that leaves it. Caddy
-  serves them like the shell's own files, behind the same session gate and CSP
-  (`script-src 'self'`). The installer removes an `uygulama/<id>/` folder whose package
-  is not registered. Konsol loads `/uygulama/<id>/<file>` only for an installed package
-  whose listing carries `sayfa`; the script registers with `window.Konsol.sayfa(id,
-  factory)` and receives a small, frozen API (`h`, `svg`, `api`, `post`, `ask`, the
-  shared dialog, the clock, the current route and a header repaint). The shell creates
-  the section and the sidebar link (removed by DD-216) from `konsol.json`, keeps a bookmark of an
-  application until the module list arrives, sends a bookmark of an absent application
-  to App Store and unmounts the page when the package is removed; a package that is
-  removed and reinstalled is mounted again from the already loaded factory.
-- **API module.** The root backend loads `MODULES_DIR/<id>/<PAKET_API>` with importlib
-  only while the package is registered `calisiyor` (regular file, cached by mtime; a
-  changed file is reloaded, a removed package's object is stopped). `/api/uygulama/<id>/*`
-  passes the existing Host, CSRF, channel and session gates first and is then handed to
-  `module.create(ctx).handle(request)`. The module sees only `ctx` (state.env, its own
-  tool beside `master-modul`, a subprocess runner with the backend's environment, the
-  read-only port catalogue, `error(code, text)`, a settings-cache reset and a journal
-  line) and the request (method, sub-path, query, JSON body, actor, `audit(verb, detail,
-  ok)`). Audit lines are `<id>:<verb>`; Konsol labels the event by the package and reads
-  the sentence from the package's templates. A missing, broken or failing module answers
-  404/409/502 for that package alone. An absent package: `409 <Ad> kurulu değil; Konsol →
-  App Store'dan kurun` on POST, 404 on GET.
-- **What the base still knows about VPNs.** Settings → Güvenlik Duvarı keeps its VPN
-  category: the networks come from the package modules' `networks()` hook (validated
-  fields, no keys), the tab is named after the first such package (`vpn_name`), the port
-  rows carry a structural `vpn` flag instead of a name prefix, and the rule kind is `vpn`.
-  The resources sampler also refreshes the package API list every 10 s so a package's own
-  sampler (WireGuard's connected-peer window, DD-137) runs before any page asks.
-- **Still base, by design for now (phase 2b):** the unit and socket names, the `WG_*`
-  keys in `state.env` (`WG_CLIENT_DNS_DEFAULT`/`WG_CLIENT_KEEPALIVE_DEFAULT` joined them
-  so the package reads its defaults from state instead of unit environment lines), the
-  qBittorrent page and its Settings form, `master-wg`'s port-collision list and the
-  launcher's intro text.
-- **Amended by DD-267 (v2-250):** packages ship no page any more: `PAKET_SAYFA`, `sayfa.js`/`sayfa.css`,
-  the `konsol.json` `sayfa` declaration, `CONSOLE_WEB_DIR/uygulama/<id>/` and `window.Konsol.sayfa` are
-  gone, and a re-run deletes the old page folders. The new interface draws a package from its
-  declarations (App Store texts, install and settings forms, account, stop and removal words; DD-266)
-  and loads no package script. The API module behind `/api/uygulama/<id>/*` and the journal templates
-  are unchanged; an absent package's 409 now says to install it from the catalogue in Uygulamalar.
-  Settings → Güvenlik Duvarı's VPN category is the WireGuard tab of Erişim → Güvenlik duvarı (DD-265).
-
-### DD-199: Publication rows from package declarations, phase 1b (v2-173)
-
-- **Scope:** the last base piece that named an application: Settings → Caddy. The
-  built-in WebDAV row and the Konsol row stay fixed (they belong to the base); every
-  other row comes from a package manifest.
-- **Declaration.** A package publishes by setting `PAKET_YAYIN=1`, `PAKET_YAYIN_AD`
-  (row name), `PAKET_YAYIN_YEREL` (local name, `<local>.<domain>` on the tailnet),
-  `PAKET_YAYIN_UPSTREAM` (must be `127.0.0.1:PORT`; a placeholder is filled by the
-  installer) and optionally `PAKET_YAYIN_DENETIM`, a Python file inside the package
-  folder with `security(env, name, probe)`. A manifest that declares publication
-  without a loopback upstream produces no row at all: the catalogue never guesses an
-  upstream, and no tunnel or arbitrary host can be declared.
-- **Engine side.** `master_publications.packages(env)` reads the rendered manifests
-  (shared `master_settings.read_manifests`, line pattern, never sourced) and builds
-  the rows, the private 403 stubs, the generated `<id>-wan.caddy` sites (one name,
-  TLS-ALPN, the loopback upstream, `Host`/`X-Forwarded-Host`/`X-Forwarded-For`
-  headers) and the status messages from the declared name. The security module is
-  loaded from the package folder as a regular file, cached by mtime; a missing,
-  broken or failing module closes the row instead of exposing the app. Saved rows
-  of a package that no longer ships stay in the file unused, and its leftover
-  public site is removed at the next publish.
-- **Consumers.** Settings transactions snapshot every module site, `https_apply`
-  waits for the certificate only when the package is active, the share publisher
-  signs its projection with the active publication names, the firewall helper opens
-  TCP 443 while any publication is active, and Konsol's module listing carries each
-  publishing package's tailnet and public addresses. qBittorrent's checks moved
-  verbatim into `magaza/torrent/yayin.py`; nothing in the base names it any more.
-- **Still base:** the WebDAV row's HTTPS machinery (`master_https`, `master_shares`)
-  and the Konsol row (DD-195). Phase 2 moves Konsol's App Store texts and pages into
-  packages and renames the backend.
-- **Retired by DD-275 (v2-258, the rebuild):** no package rows remain (DD-272 removed the packages).
-
-### DD-198: Firewall, health and port catalogue from package declarations, phase 1b (v2-172)
-
-- **Scope (user, 2026-10-01):** the second half of phase 1 of the store model
-  (DD-196/197): the base derives firewall rules, health units and the port
-  catalogue from what installed packages declare. Publication rows (Settings →
-  Caddy) follow in the next version; Konsol metadata and the backend rename are
-  phase 2.
-- **Firewall.** Packages never write rules. `master-firewall` reads the registry
-  and, for every package in state `calisiyor` whose `kanca` defines
-  `paket_firewall`, sources the hook in a subshell and collects its output lines.
-  The vocabulary is deliberately one word today: `vpn IFACE UDP_PORT NET4 NET6`,
-  which means a WAN UDP endpoint, a tailnet permit for that port, internet-only
-  forwarding (DD-177 destination blocks from `WG_BLOCK_DEST4/6`) and NAT for the
-  subnets. Every line is validated against strict patterns, interfaces and ports
-  must be unique across packages, and a malformed or unknown line stops the run
-  before any chain changes, exactly as a corrupt registry did before. The
-  WireGuard package's hook prints one `vpn` line per network of its own registry
-  and a deliberately invalid line for a non-`inet` scope. `--check` recomputes
-  expectations from the same declarations. The recovery guards keep the static
-  `-i wg+ DROP`; a package cannot change recovery behaviour. No WAN TCP word
-  exists: web interfaces reach the internet only through Caddy's publication port.
-- **Health.** `master-modul saglik` prints `id<TAB>unit<TAB>gerekli|ag` for every
-  installed package: `paket_saglik` when the hook defines it (WireGuard: one
-  `wg-quick@wgN.service` per network, type `ag`, which may be disabled from
-  Konsol), otherwise the unit from `paket_birim` as `gerekli`. A hook that finds
-  a corrupt registry fails the call and the card says the package services could
-  not be verified. The backend keeps its base units and its registry format check
-  and no longer knows qBittorrent's or WireGuard's units.
-- **Port catalogue.** `PAKET_PORTLAR="KEY:proto:scope:name;…"` in a manifest adds
-  rows to Settings → Güvenlik Duvarı while the package is registered; `dosya` got
-  a manifest (built-in) for its loopback row and `paylasim` declares the WebDAV
-  port. The backend reads manifests with the engine's line pattern (never
-  sourcing them) and skips a malformed manifest's rows instead of guessing. The
-  base rows are only Tailscale, SSH, Caddy and dnsmasq.
-- **Trust:** hooks run as root in the firewall and the engine, like `master-modul`
-  did before DD-197; packages come only from this repository, and the firewall's
-  validation treats their output as data.
-
-### DD-197: The store engine and package format, phase 1a (v2-171)
-
-- **Scope (user, 2026-10-01: "Faz 1'e başla"):** the first half of phase 1 of the
-  store model (DD-196): the engine and the package format. The second half (phase
-  1b) makes firewall, health, port catalogue and publication rows derive from
-  package declarations; phase 2 renames the backend and loads Konsol pages from
-  packages.
-- **Package format.** A package is `Data/magaza/<id>/`, rendered by the installer to
-  `MODULES_DIR/<id>/`. It holds:
-  - `paket.env`, the manifest: `PAKET_AD`, `PAKET_SIRA` (catalogue order),
-    `PAKET_CALISMA` (`host`/`konsol`), `PAKET_DURDURULABILIR`, `PAKET_HESAP`,
-    `PAKET_APT` (Debian packages), `PAKET_ARACLAR` (files placed in `SBIN_DIR`
-    0755), `PAKET_EKLER` (`source:unit.d/file` drop-ins placed under `UNIT_DIR`),
-    `PAKET_ADLAR` (has `<id>.caddy` and `dnsmasq.conf` names), `PAKET_GUNLUK`
-    (journal unit patterns), `PAKET_KUR_ADIM` (progress total), `PAKET_YAYIN`
-    (registry changes republish Caddy), `PAKET_UYGULA_HEP`/`PAKET_UYGULA_NEDEN`
-    (re-applied on every installer run, and why) and `PAKET_YERLESIK` (built-in:
-    outside the catalogue, never removable). The engine reads it line by line
-    with a strict pattern and never sources it.
-  - `kanca`, the hooks: a bash file the engine sources, defining only `paket_*`
-    functions: `paket_kur`, `paket_kaldir`, `paket_uygula STATE`, `paket_baslat`,
-    `paket_durdur`, `paket_birim` (the unit name), `paket_hesap`, `paket_veri_sil`,
-    `paket_gunluk_suz` (log filter) and `paket_ozet` (installer summary). Hooks run
-    as root like the engine did before; packages come only from this repository.
-  - Slot files: `<id>.caddy`, `dnsmasq.conf`, units, drop-ins, tools and seeds.
-    Any file with `__KEY__` placeholders is a template filled from the installer's
-    own variable of that name; a missing variable stops the install.
-- **Engine.** `master-modul` knows no application: the catalogue is the set of
-  rendered package folders with a manifest, ordered by `PAKET_SIRA`; `liste`,
-  `kur`, `baslat`, `durdur`, `kaldir [--veri]`, `gunluk`, `hesap` and `uygula`
-  keep their names, locks, progress file and output format. Apt packages, tools,
-  drop-ins and names are placed and removed by engine helpers the hooks call in
-  the order the package needs (`paket_apt`, `paket_araclar_koy`, `paket_ekler_koy`,
-  `paket_adlar_ac`, their `kaldir`/`kapat` counterparts, `progress_step`,
-  `registry_set`, `firewall_apply`). After `kaldir` the engine removes every
-  declared artifact itself and fails the operation if any trace remains
-  (`paket_iz_kontrol`), so a package cannot leave a tool, drop-in or name behind.
-  Built-in Files and WebDAV keep their installer-only `yerlesik` path; `paylasim`
-  carries a manifest with `PAKET_YERLESIK=1` so the renderer treats it like any
-  package while the catalogue excludes it.
-- **Installer.** `render_package_dir` renders or copies every file of every
-  package folder (executables 0755); `ensure_module_files` marks a package for
-  `uygula` when a file changed or the manifest says always. Summary lines take the
-  name from the manifest and one line from the package's `paket_ozet` hook.
-- **Unchanged for now:** Konsol's `MOD_META` texts and routes, the backend's
-  `ACCOUNT_MODULES`/`PORT_MODULES`/health units and `master_publications`'
-  module ids, the firewall's WireGuard registry logic, the `WG_*` state keys.
-  Those are phase 1b and phase 2.
-
-### DD-196: The store model, phase 0 (v2-170)
-
-- **Request (user, 2026-10-01):** after a clean install without WireGuard, Konsol's log
-  still showed "WireGuard" rows and errors. The user asked for a fully independent App
-  Store: an app sets up everything it needs on install and takes it all away on removal,
-  and for a structural "store" design. They approved the model below and the folder name
-  `magaza`, and asked to start with phase 0.
-- **Finding:** the rows were mislabelled base events. Konsol's log called every root-backend
-  event that was not a module action "WireGuard" (sign-ins, settings, shares), and failed
-  sign-ins became "WireGuard errors". Beyond that, the base owned real WireGuard pieces
-  with the package absent: the `master-wg` tool and the `wg-quick@` drop-in were installed
-  unconditionally, `/etc/wireguard` was created by the base, the root backend's unit was
-  described as the "WireGuard backend", the installer probed it through `/api/wg/state`,
-  the summary always printed "WireGuard: 0 ağ, 0 peer", Caddy's `--environ` dumped every
-  `WG_*` variable of `state.env` into the journal, and the five-minute tailnet timer scanned
-  for `wg-quick@` units.
-- **Model (approved):** the base knows no app. A package is a folder under `Data/magaza/<id>/`
-  that will carry a manifest, lifecycle hooks (`kur`, `kaldir`, `baslat`, `durdur`, `uygula`,
-  `saglik`, `hesap`, `gunluk`, `firewall`) and slot files (`<id>.caddy`, `dnsmasq.conf`,
-  units, `konsol.js`). One root engine runs the hooks, keeps the registry with each package's
-  footprint and verifies that a removal leaves nothing behind. Firewall, health, port catalogue,
-  publication rows and Konsol pages derive from installed packages' declarations, validated
-  against a narrow vocabulary; packages never write rules themselves. The catalogue stays in
-  this repository; no remote store, no third-party packages.
-- **Phase 0 (this version):** the repo folder `modules/` became `magaza/`; `master-wg` and
-  `wg-quick-master-stack.conf` moved into `magaza/wireguard/`. The installer only renders
-  them into `MODULES_DIR/wireguard/`; `master-modul kur`/`uygula wireguard` place the tool
-  and the drop-in, `kaldir` removes them (the key folder is data, removed with `--veri`),
-  and a re-run removes a tool or drop-in left by an older base install when the package is
-  absent. Stage 7 checks the tool only with the package and its absence without it, and
-  probes the backend with `/api/konsol/kaynaklar`. The unit is "Konsol root backend"; Caddy
-  starts without `--environ`; the tailnet timer and the module log route look at WireGuard
-  only while it is installed; the summary and the confirmation screen name WireGuard only
-  as a package. Konsol's log labels events by source (Konsol, Ayarlar, Paylaşımlar, Dosyalar,
-  Uygulamalar, WireGuard) with words for sign-in, settings and share events, and offers filter
-  chips only for kinds present.
-- **Still base, by design for now:** `WG_*` keys in `state.env` and `defaults.env` (the
-  firewall reads the network registry and block lists), the service and socket names
-  `master-wg-panel`, the `/api/wg/*` route and the `wireguard_installed` gates. Phase 1 moves
-  the hooks and declarations into the package folders and makes the firewall, health and port
-  views manifest-driven; phase 2 renames the backend and API and loads Konsol pages from
-  packages. Each phase is a fresh-install change; no compatibility code for earlier state.
 
 ### DD-195: Konsol over public HTTPS through the publication table (v2-167)
 
@@ -2873,6 +2087,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   only while the qBittorrent publication is active, DD-191); the page picks by
   its own scheme and otherwise points to Settings → Caddy. Konsol never proxies
   qBittorrent under its own name: the app keeps its Host/CSRF checks and login.
+- **Amended by the rebuild (DD-272, DD-275):** qBittorrent's row and `urls` are gone; Konsol's internet name
+  is its fixed row in Erişim, opened through the settings plan with the 60 s confirmation (DD-275). The
+  snippet, the channel, the budgets and the account rule hold.
 
 ### DD-194: Konsol sign-in with a one-time setup code (v2-166)
 
@@ -2998,6 +2215,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   schema-3 migration.
 - **Amended by DD-269 (v2-253):** `master_https.status()` no longer adds `https_port` or `wan_ip`;
   nothing read them after DD-267.
+- **Partly retired by the rebuild (DD-272, DD-275):** qBittorrent's listener check, the stored `https` key
+  with its writer (DD-275) and the schema-3 migration (DD-272) are gone; the other fixes hold.
 
 ### DD-192: Per-connection WebDAV policies and dual-card Shares (v2-164)
 
@@ -3041,7 +2260,7 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   Share edits still restart active WebDAV and interrupt all transfers; retain
   that warning. This does not add hot reload, new listeners or a new ACL model.
 - **Verification:** see [the test runbook](../tests/README.md) for fixture and
-  opt-in live/UI checks, and [SESSION.md](../SESSION.md) for the main implementation
+  opt-in live/UI checks, and [SESSION-to-v2-206.md](archive/SESSION-to-v2-206.md) for the main implementation
   task's exact v2-164 results and host health. Main reports successful `nrm`
   deployment, exact migration preservation, real HTTPS/Tailscale acceptance with
   byte-identical registry cleanup, and read-only installed UI acceptance.
@@ -3051,6 +2270,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   refresh-page message.
 - **Amended by DD-269 (v2-253):** the share manager's `pause` action is gone (an unknown action is
   refused); old fields still ask for a reload.
+- **Amended by the rebuild (DD-272, DD-275):** the schema-3 conversion is gone: only schema 4 loads, and a
+  share record with a key this version does not write fails closed (DD-272). The DD-191 global gate is
+  Paylaşımlar' fixed row in Erişim (DD-275).
 
 ### DD-191: Fixed publication table with independent private and public gates (v2-162)
 
@@ -3108,6 +2330,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
 - Unit/browser fixtures are not public reachability or native-client proof.
   Live acceptance must separately check DNS, real TLS, both network gates,
   private API isolation, rerun persistence and unchanged folder accounts.
+- **Partly retired by the rebuild (DD-272, DD-275):** qBittorrent's row and the manual addresses are gone; the
+  table keeps the fixed Konsol and Paylaşımlar rows (`web.panel`, `web.paylasim`), shown in Erişim beside the
+  applications' access rows (DD-275).
 
 ### DD-190: Optional public WebDAV HTTPS without widening private administration (v2-161)
 
@@ -3167,6 +2392,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   removes its own fixtures and checks the original registry digest;
   `--configure` deliberately leaves the real public domain saved. Run instructions are in `tests/README.md`;
   execution results belong in `CHANGELOG.md`/`SESSION.md`, not inferred here.
+- **Amended by DD-275 (v2-258, the rebuild):** the `https` key and its writer are gone; WebDAV's public name
+  is its `web.paylasim` row. With no row ever saved, a folder's internet connection is the consented HTTP; a
+  saved row without an enabled name closes WAN.
 
 ### DD-189: Audit stage 4 distinguishes unknown health and IPv4-only names (v2-160)
 
@@ -3245,6 +2473,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
 - **Linux verification follow-up:** Bash 5.2 enables `patsub_replacement`, unlike
   macOS Bash 3.2. Template rendering temporarily disables it, then restores the
   caller's option, so literal `&` and backslashes are not interpreted as a match.
+- **Partly retired by DD-272 (v2-255, the rebuild):** the module lock, the third qBittorrent read and the
+  `.pay`/`.arsiv` exclusions are gone; the recovery guard, the final DROP, the pinned repair and the
+  inherited-descriptor check hold.
 
 ### DD-186: Audit stage 1 separates admission queues from workload limits (v2-159)
 
@@ -3271,6 +2502,8 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   exposure changes or new dependencies. The historical 670 MB memory peak
   may include page cache but cannot be attributed retrospectively without
   that invocation's `memory.stat` samples.
+- **Partly retired by the rebuild (DD-267, DD-272):** the qBittorrent readers and the `.pay`/`.arsiv` source
+  guards are gone (the trash, `.cop`, stays reserved); the listen queues hold.
 
 ### DD-185: Fresh-install-only cleanup and a documentation index (v2-158)
 
@@ -3306,6 +2539,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   the installer no longer rewrites its WireGuard registry, settings or shares.
 - **Amended by DD-267 (v2-250):** the archive API's `nested`/`layers` options kept here left with the
   archive jobs.
+- **Amended by DD-269 and DD-272 (the rebuild):** what it kept on purpose (the `.pay` protection, the archive
+  options, DD-192's schema-3 exception) is gone, and no migration code remains (K1, DD-271). The documentation
+  index holds.
 
 ### DD-184: Tailscale and Caddy join unattended upgrades, at night (v2-158)
 
@@ -3401,6 +2637,7 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
 - **Not done:** folder-size caching in Files, reusing the WireGuard sampler for
   `/api/wg/state`, building the settings view from one `iptables-save`.
 - **Amended by DD-267 (v2-250):** Konsol's archive jobs, and with them the niced job threads, are gone.
+- **Amended by DD-272 (v2-255, the rebuild):** qBittorrent's CPU priority went with its package.
 
 ### DD-180: Private sockets, shared login limits, disk reserve, sandboxed unrar, firewall-first WireGuard (v2-154)
 
@@ -3472,6 +2709,9 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   (uid 1000 already owns its data), HTTP on WAN (DD-179), Konsol identity.
 - **Amended by DD-267 (v2-250):** unrar no longer runs on the server (Konsol's archive jobs were
   removed); the Files unit keeps this sandbox for the files and requests the browser sends it.
+- **Amended by DD-272 (v2-255, the rebuild):** qBittorrent is gone; the socket, peer-credential and
+  relayed-host checks, the login budgets, the disk reserve, the smuggling fix and WireGuard's firewall-first
+  order hold.
 
 ### DD-179: Per-folder HTTP WAN opt-in with separate admission budgets (v2-153)
 
@@ -3502,6 +2742,7 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
   edits still interrupt all DAV streams and reset in-memory attempt blocks.
   Conntrack can retain closing sockets temporarily. TLS and native-client/fresh
   Ubuntu acceptance remain separate from this initial disposable-host test.
+- **Amended by DD-272 (v2-255, the rebuild):** the schema-3 conversion is gone too; only schema 4 loads.
 
 ### DD-1: Atomic staging-chain swap for firewall rules
 
@@ -4473,6 +3714,8 @@ separate document with its own numbering.
   directly under `debian-server-installer/`. The portable archive uses an
   `installer/` staging directory, atomically replaces the dedicated remote
   root, and starts `/root/debian-server-installer/install.sh`.
+- **Amended by DD-228:** the portable `.command`, its exporter and the embedded digest are gone; `kur.sh`
+  keeps the staged, atomic replacement of `/root/debian-server-installer`.
 
 ### DD-68: Stage 7 covers the cheap contract §14 checks (2026-08-07)
 
@@ -4506,6 +3749,8 @@ separate document with its own numbering.
   path.
 - **Trade-off:** Operators who want updates on every re-run must answer
   yes or set `V2_FULL_UPGRADE=1`.
+- **Amended by DD-228 (and DD-152):** full-upgrade runs on every run (no question, no `V2_FULL_UPGRADE`), and
+  Compose is gone; the edge restarts stay change-driven.
 
 ### DD-66: Runtime firewall values come from state, not script fallbacks (2026-08-07)
 
@@ -6310,6 +5555,10 @@ failure with an early, named one.
     firewall, and a probe would be traffic it never asked for.
 - **Verified (2026-09-15):** bats 146 ok. Live on `nrm` with the Mac as a peer:
   "Bağlı" 2–5 s after connecting, "Boşta" 47–48 s after disconnecting.
+- **Amended by the rebuild (phase 6):** the two environment variables are gone (no switch exists only for
+  tests); `ACTIVE_WINDOW` (45 s) and `SAMPLE_SECONDS` (10 s) are plain constants in `master_wireguard.py`
+  and `master-panel`. The Bats test sets them through the test harness `tests/panel-harness.py`
+  (`--active-window`, `--sample-seconds`), which is never installed.
 
 ### DD-138: The server's IPv4 and IPv6 are detected and stored, never written by hand (2026-09-15)
 
@@ -6445,36 +5694,6 @@ failure with an early, named one.
       units. The operator's accounts were restored and the file panel
       restarted; the test account now gets 401 on both panels.
 
-### DD-178: Seed qBittorrent integration, not user preferences (2026-09-29)
-
-- **Request:** limit configuration to panel integration and correct service
-  operation; leave UPnP/automatic port mapping and local peer discovery to users.
-- **Decision (v2-152):** remove forced UPnP, port-mapping and LSD values, and
-  forced separate temporary storage, from the new-profile template. Keep only
-  the writable default download location (current/compatibility keys), loopback
-  WebUI address/port, localhost authentication and the existing headless-startup
-  notice acceptance. Absent keys use the installed application's defaults;
-  removing `false` does not mean writing `true` instead.
-- **Preserve:** nonroot service account, profile ownership, systemd sandbox,
-  DNS/Caddy integration and host firewall. No new peer-port permission, routing
-  change, automatic tuning or extra package. Existing Files/share guards for the
-  conventional incomplete path remain; they do not enable temporary storage.
-- **Existing profiles:** no automatic deletion or migration of preference keys;
-  old installer defaults cannot be distinguished safely from deliberate user
-  choices. Reapply and remove/reinstall without data deletion preserve all of
-  them. Users change their current preferences in qBittorrent's own settings.
-- **Verification:** exact seed-key allowlist and lifecycle/profile-preservation
-  Bats tests; isolated native Linux comparison against the same qBittorrent's
-  defaults, anonymous/login gates, nonroot startup and preference persistence
-  after restart. Live installed accounts/services are not used by this fixture.
-- Supersedes DD-151's enforced UPnP/LSD/temporary-storage defaults only; the
-  firewall and other module lifecycle decisions are unchanged.
-- **Amended (v2-195, DD-217):** on its own bridge the seeded and installed `WebUI\Address` is `*`
-  (loopback is now the Quadlet's only interface publication), and the peer port 61008 is published
-  on the WAN address by the user's choice.
-- **Amended (v2-196, DD-218; reverted v2-197, DD-219):** chosen fresh-profile defaults were seeded for
-  one version and then reverted; the seed is again integration keys only.
-
 ### DD-177: Retire Local access; WireGuard is internet-only (2026-09-28)
 
 - **Changed in v2-158:** the stage-4 upgrade helper (`master_wg_upgrade.py`)
@@ -6530,6 +5749,9 @@ failure with an early, named one.
   stale INPUT/FORWARD/NAT detection/removal and untouched third-party chains.
   Packet tests exercise IPv4/IPv6 allow/deny behavior. This is not a new OS image
   installation, reboot or real WireGuard-client throughput acceptance.
+- **Amended by DD-272 (v2-255, the rebuild):** WireGuard is built in: the firewall builds the rules of the
+  networks in its networks file, not from a module record, and none while the stopped marker exists; the
+  qBittorrent UI rule is gone.
 
 ### DD-174: Remove synthetic closed WAN and tunnel-local port rows (2026-09-28)
 
@@ -6548,6 +5770,8 @@ failure with an early, named one.
   synthetic defaults disappear. Loopback inventory, raw listeners and all technical
   rules are untouched. No service, saved rule, WG network or actual firewall policy
   is removed; unlisted ingress remains blocked by the existing default deny.
+- **Amended (DD-177, DD-272):** the tunnel-local qBittorrent rows went with Local access (DD-177) and
+  qBittorrent (DD-272).
 
 ### DD-173: Tailnet port catalogue is configuration-driven, not socket-driven (2026-09-28)
 
@@ -6595,36 +5819,6 @@ failure with an early, named one.
   needed to close unnecessary *new inbound* qBittorrent peer connections.
 - **Amended by DD-275 (v2-258, the rebuild):** each application address row's Tailscale port (K5) is a configured tailnet entry, `konsol-base:tail-tcp-<port>`, read from the access rows.
 
-### DD-171: Remove dead sharing lifecycle without deleting legacy data (2026-09-28)
-
-- **Changed in v2-158:** the retired `/api/paylas` and `/api/paylas/kaldir`
-  routes lost their 410 handlers and now answer like any unknown route (404). The
-  reserved `.pay` name and its exclusions below stay.
-
-- **Decision (v2-145):** remove unreachable public Files/WebDAV lifecycle and
-  data-deletion branches, legacy marker readers/writers, shared-password command
-  plumbing and credential-path defaults. Built-ins retain their installer-only
-  lifecycle and internal registry IDs used by firewall, settings and DNS.
-- Fresh installs create no `.pay/w` or `.pay/acik`. Existing `.pay` contents are
-  neither migrated/deleted nor included in permission repair. Keep the reserved
-  name and service/path exclusions: removing them would expose old metadata.
-  The WebDAV unit tolerates a missing legacy path, not an accessible existing one.
-- Retired Files endpoints return explicit 410 after security gates; `/api/state`
-  stops reporting the misleading marker-derived summary. Current per-folder
-  accounts remain exclusively in root-owned `webdav.json` and its gated API.
-- Remove dead frontend helpers/styles and stale operational instructions. Keep
-  historical decisions/designs/releases as history. Optional-app profiles, keys,
-  user files, active API aliases and all actual runtime dependencies remain.
-- Dependencies are already minimal for the current feature set: Python/RAR,
-  network/firewall/DNS tools, systemd/core utilities and security-update packages
-  all have callers. No apt purge/autoremove, package upgrades solely for cleanup,
-  replacement runtime or new background service.
-- Regression coverage exercises absent legacy directories, preserved metadata
-  and private modes, marker symlinks, explicit retired-route errors/gates,
-  built-in idempotency, current module lifecycle and temporary-login secrecy.
-- **Amended by DD-269 (v2-253):** the reserved `.pay` name and its exclusions are gone; stage 0 refuses
-  to install while `SERVER_ROOT/.pay` exists, so an old tree is never exposed.
-
 ### DD-169: Compact trash confirmation and inline share controls (2026-09-28)
 
 - **Shares layout superseded by DD-192:** two connection cards replace the
@@ -6669,6 +5863,7 @@ failure with an early, named one.
 - Regression tests reject seven characters before a write, accept eight,
   preserve blank edits, and check real HTTP authentication using isolated
   WebDAV fixtures and a disposable native qBittorrent profile.
+- **Amended by DD-272 (v2-255, the rebuild):** qBittorrent is gone; the minimum holds for folder WebDAV.
 
 ### DD-167: Edit a WireGuard network without regenerating it (2026-09-28)
 
@@ -6702,28 +5897,8 @@ failure with an early, named one.
   retains Host/header/origin/module gates and validates IPs before delegation.
   Invalidate Settings' read cache after the attempt. Polling never overwrites
   the open form; failures preserve the draft and stale forms must be reopened.
-
-### DD-165: One-click qBittorrent account save (2026-09-27)
-
-- **Decision (v2-135):** replace account staging/review/60-second confirmation
-  with one explicit Save. The former first button only staged credentials;
-  opening the Web UI immediately afterward therefore still required the old
-  login. Native browser username validation also needs an escaped hyphen for
-  the modern HTML pattern `v` flag.
-- Only an isolated username/password request commits immediately. Eligibility
-  is decided by the worker, never a client flag. Folder and mixed requests keep
-  confirmation, as do firewall edits; domain migration retains five minutes.
-  Account edits cannot remove Konsol's network access, so connectivity approval
-  adds no protection here. Successful saves do not revert after disconnect.
-- Preserve revision/lock validation, stop/flush/snapshot/write/restart, durable
-  pre-write recovery, commit markers and guard recovery for failure/process death.
-  Keep stopped services stopped and unrelated profile keys untouched. A blank
-  password preserves a stored hash, not a rotating temporary startup password.
-- The UI reports success only for an explicit committed response, disables
-  duplicate submission, clears secret fields and never stages the password.
-  Unrelated drafts remain unapplied and use the refreshed revision afterward.
-  Failed/ambiguous requests ask the operator to refresh and re-enter the password;
-  no automatic credential retry or new dependency is introduced.
+- **Amended (DD-177, DD-272):** the local-access scope went with DD-177; the default DNS (and the name,
+  DD-265) is saved through the typed `/api/konsol/wireguard` routes (DD-272).
 
 ### DD-164: Incoming-network firewall tabs, not service buckets (2026-09-27)
 
@@ -6757,6 +5932,8 @@ failure with an early, named one.
 - Protect `panel.<LOCAL_DOMAIN>` before any mutation and disable its UI switch.
   Previously its disable could be staged but could never be confirmed. This
   preserves that restriction without relying on a now-removed confirmation.
+  *Amended in the rebuild's phase 6:* no managed name can be switched off any
+  more (DD-156's note), so this guard went with the switches.
 - Keep locks, revision checks, validators, snapshots and the independent guard
   for apply failures/process death. Share the existing durable commit marker
   with confirmed transactions: a post-commit crash must not undo saved DNS.
@@ -6799,7 +5976,7 @@ failure with an early, named one.
   never optional apps or old credentials. No new production dependencies,
   external assets, auth bypass, network ports or automatic restore are introduced.
 - v130 is prepared locally. Deployment/reset and fresh Debian/Ubuntu acceptance
-  are separate steps; details and verification are in `model-a-clean-install.md`.
+  are separate steps; details and verification are in `archive/model-a-clean-install.md`.
 - **Amended by DD-267 (v2-250):** the page set described here (Files as the landing route, the sidebar,
   Settings' and Files' tabs, qBittorrent's own page, archive jobs) went with the old interface; Genel
   Bakış is the landing page and the sections are DD-258's. The separate CPU sampling thread and the
@@ -6833,6 +6010,9 @@ failure with an early, named one.
   package (DD-262), and `desktop-and-archives.md` moved to `docs/archive/` as history. The catalogue
   is WireGuard, qBittorrent and Gezgin. Files and folder WebDAV stay built in with their internal
   `dosya`/`paylasim` IDs.
+- **Amended by DD-272 (v2-255, the rebuild):** there is no catalogue; the installer installs Files and WebDAV
+  directly, without manifests or `master-modul yerlesik`, and keeps the live file names (`paylasim.caddy`,
+  `modul-paylasim.conf`).
 
 ### DD-158: Independent folder accounts and descriptor-safe WebDAV (2026-09-25)
 
@@ -6872,8 +6052,9 @@ failure with an early, named one.
   an empty Caddy response; HTTP status alone is not evidence of a health route.
 - **Scope:** a single validated local suffix, not an arbitrary Caddy editor or
   public-domain/HTTPS workflow. All installer-owned active and staged names move
-  together. Custom DNS targets and disabled state survive; account/profile/data
-  files and IP-based share links are not part of the write set.
+  together. Custom DNS targets and disabled state survive (since the rebuild's
+  phase 6 only the records' own switch: no managed name is switched off, DD-156);
+  account/profile/data files and IP-based share links are not part of the write set.
 - **Transaction:** use DD-156's worker, durable snapshots and independent guard,
   but prohibit combining a domain change with other settings. Give five minutes
   for a new-address connection. Only the HTTP Host supplied by the server, not
@@ -6948,6 +6129,17 @@ failure with an early, named one.
   firewall order/tailscale preservation and rollback; real systemd timer/worker;
   Python/Bats tests and Playwright on the production page at desktop/mobile
   widths. Ubuntu was not freshly provisioned for this revision.
+- **Amended by the rebuild (DD-272, DD-275):** the qBittorrent fields (moved to its package by DD-202) are
+  gone with it; the transaction also carries Konsol's and Paylaşımlar' rows, the applications' access rows and
+  WireGuard (DD-275).
+- **Amended by the rebuild (phase 6):** the DNS part's disabled marker is gone. Every managed name has its
+  own row (Konsol's `panel.`, WebDAV's `paylas.` behind Paylaşımlar' Tailscale switch, each application's
+  address row, DD-275), so switching one off in Yerel adlar had nothing left to act on. Removed:
+  `dns.disabled` with its validation and plan items, the `# konsol-off: ` marker, `filter-dns` and
+  `dns-enabled` (and their callers in stages 6 and 7), the name switches in Konsol and the `kapali` and
+  `kilitli` fields of `/api/konsol/adlar`. Yerel adlar lists the managed names read-only with their owner and
+  a link to their row; the settings file's `dns` holds `records`, `forward` and `servers` only, and any other
+  key is refused. Records (with their own switch), forwarding and the local domain are unchanged.
 
 ### DD-155: Konsol shows the server's settings, read-only (2026-09-19)
 
@@ -6957,7 +6149,7 @@ failure with an early, named one.
 
 - **Context:** the user wanted to see, in Konsol, the firewall rules, the
   Caddy addresses, qBittorrent's download path and dnsmasq's names. The
-  design (`docs/design/konsol-ayarlar-v07.html`, values read from `nrm`) was
+  design (`docs/archive/design/konsol-ayarlar-v07.html`, values read from `nrm`) was
   accepted with three choices the user confirmed: read-only, raw views kept
   in closed boxes, packet counters shown.
 - **Decision:**
@@ -6997,6 +6189,8 @@ failure with an early, named one.
   feeds Erişim's reads (`erisim`, `guvenlik-duvari`) and Gelişmiş (`gelismis`, DD-259, DD-265, DD-266).
 - **Amended by DD-269 (v2-253):** the old Settings page's rule groups are gone; the view keeps the
   `master-firewall --check` result, and Erişim's technical rows come from `iptables-save`.
+- **Amended by DD-272 (v2-255, the rebuild):** the `TORRENT_KEYS` read left with qBittorrent (DD-202, DD-272);
+  the Caddy and dnsmasq parser and the firewall check behind Erişim and Gelişmiş hold.
 
 ### DD-154: One console name, one current export (2026-09-19)
 
@@ -7043,6 +6237,8 @@ failure with an early, named one.
   clarity (`coreutils`, `util-linux`, `diffutils`).
 - **Upgrading:** a host installed earlier keeps the packages; nothing removes
   them (fresh-install rule).
+- **Amended (DD-158, DD-272):** `apache2-utils` is not installed at all (WebDAV has no htpasswd since DD-158)
+  and `master-modul` is gone (DD-272); `python3` serves Konsol.
 
 ### DD-152: No Docker — Paylaşım runs rclone on the host, Arşiv açıcı is dropped (2026-09-19)
 
@@ -7124,158 +6320,6 @@ failure with an early, named one.
   most). rclone exits with 143 on SIGTERM; `SuccessExitStatus=143` keeps a
   stopped share from showing as failed.
 
-### DD-151: qBittorrent is a host module; Dozzle and the base Compose project go (2026-09-18)
-
-- **Context:** stage 4 of **DD-148**. qBittorrent (LinuxServer image) and
-  Dozzle were the base Compose project, the input file held both accounts and
-  **DD-129** rewrote qBittorrent's settings on every run. The approved design
-  lists qBittorrent as a Konsol module. The operator chose (2026-09-18): the
-  settings are written once, no peer port is opened, the package stays on
-  removal.
-- **Decision — qBittorrent:**
-  - It becomes the `torrent` module with runtime `host`: the distribution's
-    `qbittorrent-nox`, run through the package's template unit as
-    `qbittorrent-nox@<downloads account>.service`. Its files keep the owner
-    Konsol and Arşiv açıcı use. No image, no container, no bind mounts; its log
-    is the unit's journal.
-  - The drop-in `qbittorrent-nox@.service.d/master-stack.conf` does what the
-    container's mount list did: profile in `TORRENT_PROFILE_DIR`
-    (`/var/lib/qbittorrent`, `HOME` and `XDG_*`), `UMask=0002`,
-    `ProtectSystem=strict` and `ProtectHome` with only the profile and
-    `DOWNLOADS_PATH` writable, the trash and the share root inaccessible (the
-    **DD-144** promise), no new privileges, kernel and clock protections,
-    address families limited to UNIX, IPv4, IPv6 and netlink.
-  - **Settings once (reverses DD-129):** when the profile has no
-    `qBittorrent.conf`, `master-modul` seeds a minimal one — save and
-    temporary paths, web UI on `127.0.0.1:TORRENT_UI_PORT` with localhost
-    authentication on, UPnP and port forwarding off, the legal notice
-    accepted. Nothing rewrites it afterwards; `uygula` refreshes only the
-    drop-in and the names. What the operator changes in qBittorrent stays.
-  - **No account in the installer:** `TORRENT_USER`/`TORRENT_PASS` and
-    `DOZZLE_USER`/`DOZZLE_PASS` leave the input file, which now holds only
-    `SSH_HOST` and `LOCAL_DOMAIN`. Until a password is set in its UI,
-    qBittorrent prints a temporary one to its journal on every start.
-    `master-modul hesap torrent` reads only the current start's journal
-    (`_SYSTEMD_INVOCATION_ID`), so an old password is never shown. Konsol's
-    card shows the user and whether the password is temporary. The temporary
-    password itself appears only on request, for 30 s, and is audited like
-    Paylaşım's. `gunluk` masks that line.
-  - **No inbound peer port (reverses DD-63's publication and the torrent half
-    of R12):** qBittorrent only connects out. `TORRENT_PUBLIC_PORT`, the WAN
-    `ACCEPT` in `MASTER-INPUT`, the `RETURN` in `MASTER-DOCKER` and the port
-    rows go. Trade-off, accepted: fewer peers on poorly seeded torrents, and
-    nothing of the torrent client listens on the WAN.
-  - **Names:** `torrent.<domain>` comes and goes with the module (a Caddy
-    import and a dnsmasq file, as for Paylaşım). `caddy-wg` keeps serving only
-    the qBittorrent port on `ui` networks; without the module it answers `502`.
-  - **Install checks:** the unit is active, runs as `DOWNLOADS_UID` and
-    carries the two inaccessible paths; the API answers `403` without a login
-    on loopback and through `torrent.<domain>`; the name resolves. A failed
-    install is taken back.
-  - **Removal:** `kaldir` removes the names and the drop-in and disables the
-    unit; the package stays, as WireGuard's do (**DD-150**). `--veri` deletes
-    the profile (settings and torrent list), only under `/var/lib`. A
-    downloaded file is never deleted.
-- **Superseded in part by DD-209 (2026-10-03):** qBittorrent now runs as a Podman container
-  (quadlet, digest-pinned image); the settings seed, account, journal and folder rules below
-  still hold. The paragraph that follows is the 2026-09-18 reasoning.
-- **Why host and not the container:** one image fewer to follow and pin, a
-  sandbox that says what the mounts said, the first-login password in a
-  journal Konsol already reads, and the same start/stop path as the other host
-  units.
-- **Dozzle goes:** every module card has a Günlük panel (**DD-148**) and the
-  only containers left belong to modules. Dozzle was the last input-file
-  account and an image to follow.
-- **No base Compose project:** the installer still installs the Docker engine
-  and the Compose plugin for the Docker modules, but renders no
-  `/root/docker/compose.yaml`, pulls no image and asks no pull question on
-  re-runs. Stage 7 no longer checks containers.
-- **Upgrading a v2-117 host:** per the fresh-install rule there is no clean-up
-  or adoption code: the old containers, `/root/docker` and the old qBittorrent
-  data stay until the host is reset. The four account lines must leave
-  `kurulum/kurulum.env`, or the unknown-field gate stops the run before any
-  change.
-- **Verified:** bats (module lifecycle with fakes, first-login parsing, the
-  root backend's account route, Konsol's card) and the Konsol page against a
-  mock backend; live on `nrm` (Debian 13, `qbittorrent-nox` 5.1.0) on
-  2026-09-18 with v2-119: install, stop/start, remove and reinstall (settings
-  file unchanged), `--veri` (profile gone, new temporary password), reboot.
-  Inside the unit's mount namespace the trash and the share root are
-  unreadable and only `DOWNLOADS_PATH` and the profile are writable.
-- **Local Peer Discovery off (v2-120):** the live run showed qBittorrent
-  announcing on UDP 6771 on every interface, the provider's LAN included —
-  it multicasts the info-hashes of what the server downloads to that
-  segment, and there are no local peers to find on a server. The first
-  settings now carry `Session\LSDEnabled=false`. The random peer port itself
-  still listens on every interface; binding it to the WAN interface was
-  rejected because a renamed interface would stall every torrent without a
-  clear error, and the firewall already drops new WAN traffic to it.
-
-### DD-150: Dosya yöneticisi and WireGuard are Konsol modules (2026-09-18)
-
-- **Context:** stage 3 of **DD-148**. The file backend and the WireGuard layer
-  were part of every install; the approved design (v06) lists both as
-  one-click Konsol modules, with Paylaşım depending on the file manager.
-- **Decision:**
-  - `dosya` (Dosya yöneticisi) and `wireguard` (WireGuard) join the catalogue
-    as Konsol modules. They are installed or removed, never stopped: a
-    stopped file manager or WireGuard layer would only be a broken page.
-  - The installer still installs the tools (`master-files-panel`, `master-wg`),
-    the downloads account, the `SERVER_ROOT` tree, the `caddy-wg@` template and
-    `Caddyfile.wg`. It renders the file backend's unit to `MODULES_DIR/dosya/`
-    instead of `UNIT_DIR`, and no longer installs WireGuard packages, loads the
-    kernel module or starts networks.
-  - `master-modul kur dosya` places the unit, starts it and proves what stage 7
-    used to prove (runs as `DOWNLOADS_UID`, answers through Caddy, `403`
-    without `X-Konsol`); a failed start is taken back. `kaldir` removes the
-    unit; `--veri` empties the trash, which the operator had already deleted.
-  - `master-modul kur wireguard` installs the packages, loads the kernel module,
-    registers itself, re-applies the firewall and starts the registry's
-    networks. `kaldir` closes every `wg-quick@`/`caddy-wg@` unit, unregisters,
-    re-applies the firewall and keeps `/etc/wireguard` (a reinstall brings the
-    networks back); `--veri` deletes the keys, profiles and registry. The
-    packages stay installed: removing them buys nothing and a reinstall
-    would only fetch them again.
-- **Firewall hook:** `master-firewall` reads the module registry and ignores
-  the network registry unless `wireguard` is registered, so a kept registry
-  never opens ports after removal. It checks the registry, not a running unit:
-  the firewall must be right at boot, before any unit starts. The module is
-  registered before the firewall is re-applied on install and unregistered
-  before it is re-applied on removal.
-- **Other consumers:** `master-wg` refuses every command but `version` without
-  the module (wireguard.command then shows why). The root backend never runs
-  `master-wg` without it: `/api/wg/state` answers `installed: false` with no
-  networks, changes get `409`, profiles `404`.
-- **Dependencies:** `kur paylasim` needs `dosya`, `kaldir dosya` refuses while
-  `paylasim` is installed. Konsol queues the pair: "… ile birlikte kur"
-  installs the dependency first; "Birlikte kaldır" removes the dependent
-  first (keeping its data). The queue lives in the page; if the page closes
-  mid-way the operator clicks again.
-- **Konsol without the modules:** the Dosyalar and WireGuard pages and menu
-  items appear with their modules; a bookmark to a missing page opens Modüller.
-  The page never asks a backend that is not there (the file backend is behind
-  Caddy, which would answer 502). The disk card takes total and free from the
-  root backend (`/api/konsol/kaynaklar` → `root`, `disk`) and shows the
-  downloads/trash breakdown only with the file manager.
-- **Re-runs:** a changed unit or script re-applies an installed file manager
-  (restart and checks); WireGuard is re-applied on every run while installed
-  (packages after an OS upgrade, kernel module, networks). Stage 7 checks each
-  only while its module is installed.
-- **Fixed in v2-119:** the root backend's sandbox makes `/etc/wireguard`
-  writable, and systemd refuses to start a unit whose `ReadWritePaths=` is
-  missing. Before DD-150 `wireguard-tools` created the folder during the
-  install; after it, a fresh v2-118 install stopped in stage 7 with Konsol
-  down. The installer now creates the folder (`0700`) before starting the
-  backend, and the unit marks the path optional (`-`), so a folder deleted by
-  hand degrades WireGuard changes instead of taking Konsol down. The folder is
-  created in the base rather than by the module because the backend's mount
-  namespace is fixed at its start: a folder that appears later is read-only
-  inside it until a restart.
-- **Upgrading a host installed before v2-117:** its file backend and WireGuard
-  layer were started by the installer and are not in the module registry.
-  Per the fresh-install rule there is no adoption code; reset the host and
-  install the modules from Konsol.
-
 ### DD-149: Paylaşım is a module with a generated account (2026-09-18)
 
 - **Partly superseded by DD-158 (and DD-152, DD-159, DD-171):** the generated
@@ -7287,7 +6331,7 @@ failure with an early, named one.
 - **Context:** stage 2 of **DD-148**. The share WebDAV (rclone, `paylas.<domain>`,
   `<ts-ip>:61010` for Infuse) was wired into every installer stage and took
   its account from `SHARE_USER`/`SHARE_PASS` in `kurulum.env`. The approved
-  design (`docs/design/konsol-moduller-v06.html`) makes it a Konsol module
+  design (`docs/archive/design/konsol-moduller-v06.html`) makes it a Konsol module
   that generates a strong account and offers "Yeni parola".
 - **Decision:**
   - The base Compose file keeps Dozzle and qBittorrent. `modules/paylasim/`
@@ -7354,72 +6398,9 @@ failure with an early, named one.
   is no migration code; the leftover network is harmless.
 - **Not doing:** a periodic sweep of expired shares (they are still swept
   when Konsol lists them) and account changes other than a new password.
-
-### DD-148: A clean install is the base; Konsol installs modules (2026-09-16)
-
-- **Context:** the installer shipped a fixed bundle. The user wants the server
-  to come up with the base only and to add parts from Konsol with one click,
-  as an administrator would — "temiz kurulumda sadece docker hazır olarak
-  gelsin kalan kontainer yapıyı panelden ayarlalım". The model was tried in
-  mockups first (`docs/design/konsol-moduller-v04…v06.html`, v06 approved).
-- **Decision (user):**
-  - **Base (installer):** Konsol, Tailscale by login link, dnsmasq + Caddy,
-    the firewall and an empty Docker engine.
-  - **Modules (Konsol → Modüller):** Dosya yöneticisi and WireGuard (Konsol
-    pages), qBittorrent (on the host, Debian's `qbittorrent-nox`, no settings
-    sync), Paylaşım (rclone, needs Dosya yöneticisi) and Arşiv açıcı
-    (Unpackerr, its own module). Dozzle goes; each module card has a
-    **Günlük** panel instead.
-  - Delivered in stages, each verified on `nrm`: (1) the module mechanism and
-    Arşiv açıcı (v2-115); (2) Paylaşım; (3) Dosya yöneticisi and WireGuard;
-    (4) qBittorrent on the host and Dozzle's removal.
-- **Mechanism:**
-  - **The installer renders, Konsol runs.** Module files are templates with
-    installer-only values (image pins, uid, paths, log limits), and
-    `render_template` refuses leftovers. So the installer renders every
-    module's files to `MODULES_DIR/<id>/` on each run and Konsol never renders
-    anything; `config/defaults.env` stays the single source.
-  - **One root helper, a fixed vocabulary.** `master-modul` accepts a
-    catalogued id and `liste`, `kur`, `baslat`, `durdur`, `kaldir [--veri]`,
-    `gunluk`. The root backend validates the id against `liste` before
-    calling it, so a request can name a module but never a path or an
-    argument.
-  - **Operations outlive the request.** The backend runs
-    `systemd-run --unit=master-modul-<id>.service --collect`. The unit is
-    outside the backend's sandbox (an image pull or a package install needs
-    more than the backend may do), keeps running when the page closes, and its
-    name doubles as the busy check (`systemctl is-active` → `409`). Tried on
-    `nrm` before writing it.
-  - **State the page can read.** `/etc/master-stack/moduller` holds only
-    installed modules and whether the operator left them running or stopped;
-    a missing line means "not installed". Progress is one tab-separated line
-    in `RUNTIME_DIR/modul-<id>.ilerleme`, ending in `bitti` or `hata` with the
-    reason. Changes run under one `flock`, so two modules never pull or
-    install at the same time.
-  - **Each Docker module is its own Compose project** (`-p <id>`): the base
-    project's `--remove-orphans` never touches a module, and removing a module
-    (`down --rmi all`) never touches the base.
-  - **Re-runs respect the operator's choice.** A module whose rendered file
-    changed is restarted only if it is registered as running; a stopped module
-    stays stopped and an absent one stays absent. The installer never runs
-    `kur`, `durdur` or `kaldir`.
-  - **Removal keeps user files.** `kaldir --veri` deletes only what the module
-    owns (for Arşiv açıcı, the contents of `downloads/.unpackerr`); files under
-    `SERVER_ROOT` are never part of a module's data.
-- **Checks move with the module.** Stage 7 no longer checks Unpackerr; `kur`
-  checks that the container cannot see the trash or the share folder
-  (**DD-144**) and takes the container down if it can.
-- **Trade-off:** anyone who can open Konsol can now start root operations —
-  bounded to the catalogue and verbs above. That follows from **DD-147**
-  (tailnet membership is the boundary) and is why the Host and `X-Konsol` gates
-  cover `/api/konsol/*` too.
-- **Not doing:** a plugin system, remote catalogues or module versions chosen
-  at runtime. The catalogue lives in this repository and changes with a
-  release, like everything else.
-- **Pages:** Caddy now serves the Konsol pages itself (`file_server`, same
-  security headers). A page that must show modules the file backend may not
-  exist any more once Dosya yöneticisi becomes a module, so pages cannot
-  depend on that backend.
+- **Amended by DD-272 (v2-255, the rebuild):** `master-modul` and the module lifecycle are gone; the installer
+  and the settings and share writers keep the import folder (`CADDY_MODULES_DIR`), the `modul-*.conf` names,
+  validation before the swap, Caddy's reload and dnsmasq's restart.
 
 ### DD-147: Konsol without a password; Tailscale joins by link only (2026-09-16)
 
@@ -7553,7 +6534,7 @@ failure with an early, named one.
 
 - **Context:** after the file panel the user asked for the WireGuard and file
   pages to become one server-administration tool. The design was iterated as a
-  mockup until they approved it (frozen in `docs/design/konsol-v01.html`).
+  mockup until they approved it (frozen in `docs/archive/design/konsol-v01.html`).
   Their decisions: the address is `panel.<domain>` with `wg.` and `dosya.`
   redirecting, the browser's own login prompt is enough, no services page or
   status collector anywhere, and a network turned off in the console comes back
@@ -7582,7 +6563,10 @@ failure with an early, named one.
     disables `wg-quick@wgN` (and `caddy-wg@wgN`); the registry, keys and
     profiles stay. The firewall keeps the UDP port open — nothing listens on
     it — instead of a second, drifting source of truth for "which port is
-    open".
+    open". *Amended in the rebuild's phase 6:* the unit's enablement stays the
+    one source of "open", and the firewall now reads it: a closed network keeps
+    its registry line but no port, forwarding or NAT, and `net ac|kapat` apply
+    the firewall again (opening enables the unit before the firewall).
   - **The overview reads the server, not the containers.** The root backend
     samples `/proc/stat` and `/proc/meminfo` every 10 s and keeps the last two
     minutes, reads `/proc/uptime` and `/etc/os-release`, and builds the ports
