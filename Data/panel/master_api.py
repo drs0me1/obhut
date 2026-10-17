@@ -76,23 +76,31 @@ SCHEMAS = {
     "Islem": obj({"tur": enum("uygulama", "konteyner", "guncelleme", "onarim"), "id": STR, "ad": STR,
                   "durum": enum("calisiyor", "tamam", "hata"), "adim": STR, "bitis": null(INT)}),
     "Islemler": obj({"items": arr(ref("Islem"))}),
+    # erisim: the id of the access row the change is about (rebuild phase 4).
     "BekleyenDegisiklik": obj({"id": STR, "phase": enum("applying", "awaiting", "committed", "rollback", "stuck"),
                                "seconds": INT, "attempts": INT, "error": STR, "retry_in": INT,
-                               "domain": obj({"old": STR, "new": STR}), "web": BOOL},
-                              optional=("attempts", "error", "retry_in", "domain", "web")),
+                               "domain": obj({"old": STR, "new": STR}), "web": BOOL, "erisim": STR,
+                               "wireguard": obj({"eylem": ref("WireGuardEylemi"), "iface": null(STR)})},
+                              optional=("attempts", "error", "retry_in", "domain", "web", "erisim", "wireguard")),
     "Bekleyen": obj({"bekleyen": null(ref("BekleyenDegisiklik"))}),
     "Kapat": obj({"neden": enum("sure", "oturum")}),
     "ErisimDurumu": enum("acik", "kismen", "kapali", "yok", "hata"),
     "ErisimHucresi": obj({"durum": ref("ErisimDurumu"), "adresler": arr(STR), "not": STR, "uyari": STR}),
+    # Rebuild phase 4: an application port's row (tur "uygulama", id uygulama:<app>:<service>:<port>/<proto>) carries
+    # its service, its stored row (satir) and its key; Konsol's and WebDAV's rows (ids panel, paylasim) their fixed
+    # row (web: the request's fields). Everything else has null there.
     "Hizmet": obj({
-        "id": STR, "ad": STR, "tur": enum("konsol", "konteyner", "elle", "paylasim", "sistem", "vpn", "kural"),
-        "aciklama": STR, "uygulama": null(STR), "calisiyor": null(BOOL),
+        "id": STR, "ad": STR, "tur": enum("konsol", "uygulama", "konteyner", "paylasim", "sistem", "vpn", "kural"),
+        "aciklama": STR, "uygulama": null(STR), "servis": null(STR), "anahtar": null(STR), "calisiyor": null(BOOL),
         "yerel": ref("ErisimHucresi"), "tailscale": ref("ErisimHucresi"), "wireguard": ref("ErisimHucresi"),
-        "internet": ref("ErisimHucresi"), "yayinlar": arr(STR), "ayrinti": arr(obj({"baslik": STR, "deger": STR})),
+        "internet": ref("ErisimHucresi"), "satir": null(ref("ErisimSatiri")),
+        "web": null(obj({"tail": BOOL, "enabled": BOOL, "domain": STR})),
+        "ayrinti": arr(obj({"baslik": STR, "deger": STR})),
     }),
-    # DD-265: the row a warning is about (its id; "" when none) and where it is fixed.
+    # DD-265: the row a warning is about (its id; "" when none) and where it is fixed: adresler (Erişim → Adresler;
+    # hedef the row id), uygulama (an application's page; hedef its name), tailscale.
     "Uyari": obj({"seviye": enum("warn", "bad"), "hizmet": STR, "metin": STR,
-                  "duzelt": null(obj({"bolum": enum("yayinlar", "uygulama", "tailscale"), "hedef": STR}))}),
+                  "duzelt": null(obj({"bolum": enum("adresler", "uygulama", "tailscale"), "hedef": STR}))}),
     "Ag": obj({"read_at": INT, "sampled_at": null(INT), "rx": null(INT), "tx": null(INT)}),
     "OnarimAdimi": obj({"id": STR, "ad": STR, "durum": enum("ok", "onarildi", "sorun", "hata", "atlandi", "calisiyor"),
                         "detay": STR}),
@@ -107,8 +115,9 @@ SCHEMAS = {
     "Guncelleme": obj({"kurulu": STR, "kurulu_surum": STR, "son": null(STR), "son_surum": null(STR), "commit": null(STR),
                        "yeni": BOOL, "denetlendi": null(INT),
                        "hata": STR, "is": ref("GuncellemeIsi"), "baslatilabilir": BOOL}),
+    # revizyon: the settings revision an access change sends ("" when it cannot be read).
     "Erisim": obj({
-        "read_at": INT, "alan": STR,
+        "read_at": INT, "alan": STR, "revizyon": STR,
         "ozet": obj({
             "tailscale": obj({"ipv4": STR, "ipv6": STR, "durum": enum("bagli", "bagli-degil", "bilinmiyor"),
                               "anahtar_bitis": null(INT), "ad": STR, "surum": STR, "adresler": arr(STR),
@@ -128,11 +137,24 @@ SCHEMAS = {
                          "port": INT, "source": STR, "allow": BOOL}),
     "DnsKaydi": obj({"name": STR, "target": STR, "enabled": BOOL}),
     "DnsTaslagi": obj({"disabled": arr(STR), "records": arr(ref("DnsKaydi")), "forward": BOOL, "servers": arr(STR)}),
-    "YayinSatiri": open_obj({"service": STR, "tail": BOOL, "enabled": BOOL, "domain": STR, "confirm": STR, "sil": BOOL,
-                             "elle": obj({"name": STR, "local": STR, "upstream": STR})}),
-    "AyarIstegi": open_obj({"revision": STR, "firewall": arr(ref("KuralTaslagi")), "dns": ref("DnsTaslagi"),
-                            "domain": STR, "web": ref("YayinSatiri")}),
-    "PlanDegisikligi": obj({"alan": enum("guvenlik-duvari", "dns", "alan-adi", "yayin"),
+    # A fixed row (Konsol: panel, WebDAV: paylasim): its Tailscale switch, its internet switch and name; Konsol's
+    # internet name needs the typed word (DD-195).
+    "WebSatiri": obj({"service": enum("panel", "paylasim"), "tail": BOOL, "enabled": BOOL, "domain": STR, "confirm": STR},
+                     optional=("confirm",)),
+    # Rebuild phase 4: one access row of one application; internet_onayi is A2's consent for a raw port opened to
+    # the internet.
+    "ErisimIstegi": obj({"uygulama": STR, "anahtar": STR, "satir": ref("ErisimSatiri"), "internet_onayi": BOOL},
+                        optional=("internet_onayi",)),
+    # The settings transaction's requests, each a closed shape: the firewall and DNS (together or alone), the local
+    # domain, a fixed row, an application's access row, a WireGuard action.
+    "AyarKurallari": obj({"revision": STR, "firewall": arr(ref("KuralTaslagi")), "dns": ref("DnsTaslagi")},
+                         optional=("firewall", "dns")),
+    "AyarAlanAdi": obj({"revision": STR, "domain": STR}),
+    "AyarWeb": obj({"revision": STR, "web": ref("WebSatiri")}),
+    "AyarErisim": obj({"revision": STR, "erisim": ref("ErisimIstegi")}),
+    "AyarWireGuard": obj({"revision": STR, "wireguard": ref("WireGuardIstegi")}),
+    "AyarIstegi": one_of(ref("AyarKurallari"), ref("AyarAlanAdi"), ref("AyarWeb"), ref("AyarErisim"), ref("AyarWireGuard")),
+    "PlanDegisikligi": obj({"alan": enum("guvenlik-duvari", "dns", "alan-adi", "erisim", "wireguard"),
                             "islem": enum("ekle", "kaldir", "degistir", "ac", "kapat"), "nesne": STR,
                             "once": null(STR), "sonra": null(STR)}),
     "PlanUyarisi": obj({"seviye": enum("info", "warn", "bad"), "metin": STR}),
@@ -143,37 +165,21 @@ SCHEMAS = {
     "Tamam": open_obj({"ok": BOOL}),
     "GuvenlikDuvari": obj({
         "revizyon": STR, "denetim": obj({"ok": BOOL, "metin": STR}), "kurallar": arr(ref("KuralTaslagi")),
-        "portlar": arr(obj({"ad": STR, "aile": INT, "proto": STR, "port": INT, "kapsam": enum("wan", "tail", "lo"), "sabit": BOOL})),
+        # sabit: the port belongs to a configured row and changes there; satir: an application access row's id.
+        "portlar": arr(obj({"ad": STR, "aile": INT, "proto": STR, "port": INT, "kapsam": enum("wan", "tail", "lo"), "sabit": BOOL,
+                            "satir": null(STR)})),
         "dinleyiciler": null(arr(obj({"proto": STR, "aile": INT, "port": INT, "adres": STR, "kapsam": STR}))),
         "teknik": arr(obj({"aile": INT, "tablo": STR, "zincir": STR, "sira": STR, "paket": INT, "bayt": INT,
                            "kural": STR, "sahip": STR})),
         "aglar": arr(obj({"arayuz": STR, "ad": STR, "etkin": BOOL})), "hatalar": arr(STR),
     }),
+    # kilitli: the name is switched in its own row, not here (Konsol's; an application's, satir its row id).
     "Adlar": obj({
         "revizyon": STR, "alan": STR,
-        "adlar": arr(obj({"ad": STR, "aile": null(INT), "hedef": STR, "kaynak": STR, "kapali": BOOL, "kilitli": BOOL})),
+        "adlar": arr(obj({"ad": STR, "aile": null(INT), "hedef": STR, "kaynak": STR, "kapali": BOOL, "kilitli": BOOL,
+                          "satir": null(STR)})),
         "kayitlar": arr(ref("DnsKaydi")), "yonlendirme": BOOL, "sunucular": arr(STR), "hatalar": arr(STR),
     }),
-    # DD-265: the Yayınla flow.
-    # DD-271 (phase 3): a container is published from a port it already listens on at 127.0.0.1 (an
-    # application's address port); the step that added one to a container definition is gone.
-    "YayinAdayi": obj({
-        "id": STR, "tur": enum("konsol", "konteyner", "elle", "paylasim"), "ad": STR, "servis": null(STR),
-        "yerel_ad": null(STR), "tailscale": BOOL, "internet": BOOL, "alan_adi": STR, "durum": STR, "mesaj": STR,
-        "bitis": null(INT), "hedef": null(STR), "giris": STR, "onay_kelimesi": BOOL, "internet_engel": STR,
-        "kullanilabilir": BOOL, "neden": STR,
-        "konteyner": null(obj({"ad": STR, "kaynak": enum("uygulama", "dis"), "uygulama": null(STR), "calisiyor": BOOL,
-                               "yerel_portlar": arr(obj({"host_port": INT, "container_port": INT})),
-                               "diger_portlar": arr(obj({"kapsam": STR, "host_port": INT, "container_port": INT}))})),
-    }),
-    "Yayinlar": obj({"revizyon": STR, "alan": STR, "wan_ipv4": STR, "adaylar": arr(ref("YayinAdayi")), "hatalar": arr(STR)}),
-    "YayinIstegi": obj({"hedef": STR, "revizyon": STR, "tailscale": BOOL, "internet": BOOL, "alan_adi": STR,
-                        "ad": STR, "yerel": STR, "onay": STR},
-                       optional=("ad", "yerel", "onay")),
-    "YayinAdimi": obj({"tur": enum("ayar"), "baslik": STR, "aciklama": STR, "istek": open_obj({})}),
-    "YayinPlani": obj({"hedef": ref("YayinAdayi"), "adimlar": arr(ref("YayinAdimi")), "plan": null(ref("AyarPlani")),
-                       "engel": STR, "dns": null(obj({"ad": STR, "tur": STR, "deger": STR})),
-                       "uyarilar": arr(ref("PlanUyarisi"))}),
     # Gelişmiş's Podman resource jobs (DD-211, until phase 5): an image action names the image, the others a name.
     "KonteynerIstegi": obj({"action": enum("image-pull", "image-remove", "volume-create", "volume-remove", "network-create",
                                            "network-remove"),
@@ -264,25 +270,26 @@ SCHEMAS = {
         "active": BOOL, "count": INT, "revision": STR, "peers": arr(ref("WireGuardCihazi")),
     }),
     # kurulu: master-wg works; durduruldu: WireGuard is stopped as a whole; max: how many networks there may be;
-    # reserved: UDP ports a new network may not take.
+    # reserved: UDP ports a new network may not take; revizyon: the settings revision a planned action sends
+    # (DD-275; "" when it cannot be read, and such a request is refused).
     "WireGuard": obj({
         "kurulu": BOOL, "durduruldu": BOOL, "endpoint": STR, "max": INT, "reserved": arr(INT),
         "defaults": obj({"dns": STR, "keepalive": INT, "mtu": INT, "port": INT}),
-        "now": INT, "active_window": INT, "networks": arr(ref("WireGuardAgi")),
+        "now": INT, "active_window": INT, "networks": arr(ref("WireGuardAgi")), "revizyon": STR,
     }),
-    "WireGuardCalismasi": obj({"durduruldu": BOOL}),
+    # DD-275: the settings transaction's WireGuard section (AyarIstegi.wireguard): start or stop WireGuard,
+    # add (ag), remove, open or close a network (iface) or regenerate its key. Removing and regenerating
+    # need the typed word (onay) before they apply; an opening waits for the 60 s confirmation.
+    "WireGuardEylemi": enum("baslat", "durdur", "ag-ekle", "ag-kaldir", "ag-ac", "ag-kapat", "yeniden-uret"),
     "WireGuardAgIstegi": obj({"port": INT, "dns": STR, "label": STR}, optional=("label",)),
-    "WireGuardAgEklendi": obj({"iface": STR, "port": INT}),
-    "WireGuardAgKaldirildi": obj({"iface": STR, "peers": INT}),
-    "WireGuardAgDurumu": obj({"iface": STR, "active": BOOL}),
-    "WireGuardYenidenUretildi": obj({"peers": INT, "profiles": INT}),
+    "WireGuardIstegi": obj({"eylem": ref("WireGuardEylemi"), "iface": STR, "ag": ref("WireGuardAgIstegi"), "onay": STR},
+                           optional=("iface", "ag", "onay")),
     "WireGuardAgAyari": obj({"dns": STR, "revision": STR, "label": STR}, optional=("label",)),
     "WireGuardAgAyarSonucu": obj({"iface": STR, "dns": STR, "label": STR}, optional=("label",)),
     "WireGuardCihazIstegi": obj({"name": STR, "dns": STR, "keepalive": INT, "mtu": INT}),
     "WireGuardCihazEklendi": obj({"name": STR, "ipv4": STR}),
     "WireGuardDns": obj({"dns": STR}),
     "WireGuardKeepalive": obj({"keepalive": INT}),
-    "Onay": obj({"confirm": STR}),
     "Acik": obj({"on": BOOL}),
     # DD-271 (phase 2): the inspector's dry run (master_inspector). The model both readers return, the
     # questions, the answers and the checked definition phase 3 installs from; no secret value in a reply.
@@ -391,8 +398,15 @@ SCHEMAS = {
     # A secret answer as stored: never its value.
     "YanitSakli": obj({"set": BOOL}),
     "KayitliYanitlar": obj({"name": STR, "answers": map_of(one_of(ref("Yanit"), ref("YanitSakli")))}),
-    "UygulamaPortu": obj({"port": INT, "protokol": enum("tcp", "udp"), "kullanim": enum("caddy", "raw"),
-                          "tailscale_adi": null(STR), "yerel_port": null(INT)}),
+    # Rebuild phase 4: an application port's access row as erisim.json holds it (master_applications): an address
+    # (TCP: Tailscale name, Tailscale port, internet name) or a raw port (closed, Tailscale or internet; host port).
+    "ErisimAdresi": obj({"tur": enum("adres"), "ad": STR, "tailscale_portu": null(INT), "internet": STR}),
+    "ErisimHamPortu": obj({"tur": enum("ham"), "kapsam": enum("kapali", "tailscale", "internet"), "port": INT}),
+    "ErisimSatiri": one_of(ref("ErisimAdresi"), ref("ErisimHamPortu")),
+    # id: the row's id everywhere (uygulama:<app>:<service>:<port>/<proto>); kullanim and tailscale_adi say what the
+    # row is; yerel_port is an address's 127.0.0.1 pool port.
+    "UygulamaPortu": obj({"port": INT, "protokol": enum("tcp", "udp"), "id": STR, "erisim": ref("ErisimSatiri"),
+                          "kullanim": enum("caddy", "raw"), "tailscale_adi": null(STR), "yerel_port": null(INT)}),
     "UygulamaBaglamasi": obj({"hedef": STR, "tur": enum("app", "srv", "tmpfs"), "yol": null(STR), "salt_okunur": BOOL}),
     "UygulamaServisAyrintisi": obj({
         "ad": STR, "durum": ref("UygulamaDurumu"), "baslangic": enum("direct", "root"), "kullanici": null(STR), "imaj": STR,
@@ -522,7 +536,8 @@ ROUTES = (
           "Bir ayar değişikliğinin planı: ne değişir, ne yeniden başlar, süreli onay ister mi; hiçbir şey değişmez",
           ref("AyarPlani"), request=ref("AyarIstegi")),
     Route("POST", "/api/konsol/ayarlar/uygula", "ayarlar_uygula",
-          "Ayar değişikliğini uygular; güvenlik duvarı 60 sn, alan adı 300 sn içinde onay bekler", ref("AyarSonucu"),
+          "Ayar değişikliğini uygular; güvenlik duvarı ve erişimi açan ya da genişleten değişiklik 60 sn, alan adı "
+          "300 sn içinde onay bekler, yalnız kapatan değişiklik hemen kalıcı olur; sayfa eskiyse 409", ref("AyarSonucu"),
           request=ref("AyarIstegi")),
     Route("POST", "/api/konsol/ayarlar/onayla", "ayarlar_onayla", "Bekleyen değişikliği kalıcılaştırır; yalnız Tailscale'den",
           ref("Tamam"), request=ref("IslemKimligi")),
@@ -534,9 +549,6 @@ ROUTES = (
           "Güvenlik duvarı: kurallar, port kataloğu, dinleyiciler ve teknik kurallar; ?yenile önbelleği atlar",
           ref("GuvenlikDuvari"), query={"yenile": STR}),
     Route("GET", "/api/konsol/adlar", "adlar", "Yerel DNS adları, kayıtlar ve dış ad yönlendirmesi", ref("Adlar")),
-    Route("GET", "/api/konsol/yayinlar", "yayinlar", "Yayınla: neyin, nasıl yayımlanabileceği (DD-265)", ref("Yayinlar")),
-    Route("POST", "/api/konsol/yayinlar/plan", "yayin_plani",
-          "Bir yayının adımları ve planı; hiçbir şey değişmez", ref("YayinPlani"), request=ref("YayinIstegi")),
     Route("POST", "/api/konsol/konteynerler/islem", "konteyner_islemi",
           "Gelişmiş'in Podman kaynak işi: imaj, birim ya da ağ (DD-211); iş arka planda sürer, ilerleme olay akışında",
           ref("KonteynerIsi"), request=ref("KonteynerIstegi"), status=202),
@@ -580,24 +592,12 @@ ROUTES = (
           "Gelişmiş: etkin Caddy ve dnsmasq yapılandırması (salt okunur); ?yenile önbelleği atlar", ref("Gelismis"),
           query={"yenile": STR}),
     # DD-271: WireGuard (Erişim → WireGuard); every change through master-wg, the audit line wireguard-<verb>.
+    # DD-275: starting, stopping, adding, removing, opening, closing and regenerating a network are settings
+    # actions (ayarlar/plan, ayarlar/uygula with "wireguard"); devices and a network's DNS and name stay here.
     Route("GET", "/api/konsol/wireguard/state", "wireguard",
           "WireGuard: ağlar ve cihazları, yeni ağın varsayılanları, durdurulmuş mu", ref("WireGuard")),
-    Route("POST", "/api/konsol/wireguard/durdur", "wireguard_durdur",
-          "WireGuard'ı bütünüyle durdurur: ağlar kapanır, portları ve yönlendirmesi kalkar (DD-229)",
-          ref("WireGuardCalismasi"), request=ref("Bos")),
-    Route("POST", "/api/konsol/wireguard/baslat", "wireguard_baslat",
-          "WireGuard'ı başlatır: durdurmadan önce açık olan ağlar geri gelir", ref("WireGuardCalismasi"), request=ref("Bos")),
-    Route("POST", "/api/konsol/wireguard/nets", "wireguard_ag_ekle", "Yeni WireGuard ağı (wg0…wg9); ilk ağ WireGuard'ı açar",
-          ref("WireGuardAgEklendi"), request=ref("WireGuardAgIstegi"), status=201),
-    Route("POST", "/api/konsol/wireguard/nets/{iface}/remove", "wireguard_ag_kaldir",
-          "Ağı, anahtarını ve bütün cihazlarını siler (onayla yazılarak)", ref("WireGuardAgKaldirildi"), request=ref("Onay")),
-    Route("POST", "/api/konsol/wireguard/nets/{iface}/reset", "wireguard_ag_yeniden_uret",
-          "Ağın sunucu anahtarını yeniden üretir; bütün cihazlar silinir (onayla yazılarak)", ref("WireGuardYenidenUretildi"),
-          request=ref("Onay")),
     Route("POST", "/api/konsol/wireguard/nets/{iface}/peers", "wireguard_cihaz_ekle", "Ağa yeni cihaz ekler",
           ref("WireGuardCihazEklendi"), request=ref("WireGuardCihazIstegi"), status=201),
-    Route("POST", "/api/konsol/wireguard/nets/{iface}/durum", "wireguard_ag_durum", "Ağı açar ya da kapatır",
-          ref("WireGuardAgDurumu"), request=ref("Acik")),
     Route("POST", "/api/konsol/wireguard/nets/{iface}/ayarlar", "wireguard_ag_ayarlar",
           "Ağın varsayılan DNS'i ve adı; revizyon eskiyse 409", ref("WireGuardAgAyarSonucu"), request=ref("WireGuardAgAyari")),
     Route("POST", "/api/konsol/wireguard/nets/{iface}/peers/{name}/remove", "wireguard_cihaz_kaldir", "Cihazı siler",

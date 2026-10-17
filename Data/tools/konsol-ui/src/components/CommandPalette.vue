@@ -1,5 +1,5 @@
 <!-- Command palette (DD-258): ⌘K / Ctrl+K or the search field. Pages (with the tabs of Erişim, Dosyalar,
-     Sistem and Gelişmiş), the applications (each opens its own page) and actions ("Yayınla" among them),
+     Sistem and Gelişmiş), the applications (each opens its own page) and actions (the theme, İşlemler),
      matched with Turkish case rules ("İŞ" finds "iş", "ıs" does not find "is"). A combobox
      over a listbox: focus stays in the field, ↑/↓ move, Enter opens, Esc closes. -->
 <script setup lang="ts">
@@ -7,7 +7,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Icon, type IconName } from "./icons";
 import { trapTab } from "./focus";
-import { SECTIONS, SECTION_TABS, accessRoute } from "../sections";
+import { SECTIONS, SECTION_TABS } from "../sections";
 import { apps } from "../live";
 import { FORMAT_TEXT } from "../apps";
 import { appRoute } from "../router";
@@ -68,15 +68,6 @@ const items = computed<Item[]>(() => {
       run: { kind: "theme", value: t.id },
     });
   }
-  list.push({
-    key: "yayinla",
-    group: "Eylemler",
-    label: "Yayınla",
-    hint: "Erişim",
-    icon: "globe",
-    words: "yayın adres alan adı internet tailscale https aç paylaş",
-    run: { kind: "route", to: accessRoute("genel", "sec") },
-  });
   list.push({
     key: "islemler",
     group: "Eylemler",

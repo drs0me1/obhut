@@ -1,6 +1,6 @@
-"""Shared fixtures for the application tests (DD-271, phase 3): a neutral two-service Compose file, its
-answers, a state.env for a temporary root and a complete application record written through
-master_applications. Images are registry.example's; nothing here names a real application."""
+"""Shared fixtures for the application tests (DD-271, phases 3 and 4): a neutral two-service Compose file, its
+answers, a state.env for a temporary root and a complete application record (with its access rows) written
+through master_applications. Images are registry.example's; nothing here names a real application."""
 import copy
 from pathlib import Path
 import sys
@@ -83,7 +83,8 @@ def env(root):
             "KONTEYNER_BAGLAMA_DIR": str(root / "run/konteyner-baglama"), "KONTEYNER_BRIDGE_PREFIX": "ksl",
             "KONTEYNER_NFT_TABLE": "master_containers", "TAILSCALE_IF": "tailscale0", "SBIN_DIR": str(root / "sbin"),
             "SERVER_ROOT": "/srv", "FILES_PANEL_TRASH": ".cop", "STATE_FILE": str(root / "state.env"), "DOWNLOADS_UID": "1000", "DOWNLOADS_GID": "1000",
-            "YAYIN_PORT_ILK": "62100", "YAYIN_PORT_SON": "62109", "FILES_PANEL_PORT": "61009", "SHARE_PORT": "61010",
+            "UYGULAMA_PORT_ILK": "62100", "UYGULAMA_PORT_SON": "62109", "FILES_PANEL_PORT": "61009", "SHARE_PORT": "61010",
+            "LOCAL_DOMAIN": "ev", "TAILSCALE_IPV4": "100.64.0.2", "WAN_IPV4": "203.0.113.10",
             "VPN_BLOCK_DEST4": "0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 "
                                "224.0.0.0/4 240.0.0.0/4",
             "VPN_BLOCK_DEST6": "::/96 ::ffff:0:0/96 64:ff9b::/96 64:ff9b:1::/48 fc00::/7 fe80::/10 ff00::/8"}
@@ -103,16 +104,20 @@ def checked(text, given, existing=frozenset()):
     return inspection, definition, values
 
 
-def record(values, text=None, given=None, app="notlar", stopped=False, ports=None, revision="a" * 32, source=None):
-    """A complete record through master_applications.Records (as the worker writes it): pinned images, a pool
-    port per address port and a Podman secret name per secret."""
+def record(values, text=None, given=None, app="notlar", stopped=False, ports=None, revision="a" * 32, source=None, rows=None):
+    """A complete record through master_applications.Records (as the worker writes it): the rows seeded from the
+    answers (or the given rows), the stored definition, pinned images, a pool port per address row and a Podman
+    secret name per secret."""
     text = text if text is not None else TEXT
     given = given if given is not None else answers()
     inspection, definition, _values = checked(text, given)
+    rows = rows if rows is not None else apps.next_rows(definition)
+    stored = apps.stored_definition(definition)
     images = {s["name"]: apps.reference(s["image"])[0] + "@sha256:" + "%02x" % n * 32 for n, s in enumerate(definition["services"], 1)}
-    ports = ports if ports is not None else {k: 62100 + n for n, k in enumerate(apps.wanted_ports(definition))}
+    ports = ports if ports is not None else {k: 62100 + n for n, k in enumerate(apps.address_keys(rows))}
     secrets = {s["name"]: "obhut_%s_%08x" % (app, n) for n, s in enumerate(definition["secrets"], 1)}
     places = {"revision": revision, "stopped": stopped, "ports": ports, "secrets": secrets, "images": images}
     apps.Records(values).write(app, text=text, source=apps.source_record(source or {"tur": "dosya"}, text, 1_800_000_000),
-                               answers=apps.stored_answers(inspection, given), definition=definition, places=places)
-    return {"inspection": inspection, "definition": definition, "places": copy.deepcopy(places), "text": text}
+                               answers=apps.stored_answers(inspection, given), definition=stored, places=places, rows=rows)
+    return {"inspection": inspection, "definition": stored, "checked": definition, "places": copy.deepcopy(places),
+            "text": text, "rows": copy.deepcopy(rows)}

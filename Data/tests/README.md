@@ -82,11 +82,12 @@ that `docs/konsol-api.json` and `tools/konsol-ui/src/api/sema.ts` are exactly wh
 `python3 panel/master_api.py ts > tools/konsol-ui/src/api/sema.ts`), that the schema check refuses
 wrong shapes, and that the table's routes answer through the real handler with their declared shapes.
 `test_erisim.py` feeds `master_erisim.build()` the shapes the backend's sources return (documentation
-addresses only): the four cells of each service, a package's peer port as a partly open internet cell,
-a manual address joining its container, WireGuard closed for every service, warnings (plain HTTP
-WebDAV, a container port straight on the WAN, an unknown publication address, a publication that is on
-but failing, Tailscale disconnected, certificate expiry), operator rules, unreadable sources as error
-lines; then the route on a temporary Unix socket and its gates. `test_container_manager.py` checks
+addresses only): the four cells of each service, one row per application port from its access row (an
+address's pool port, Tailscale name, Tailscale port and internet name; a raw port open only on its scope;
+rebuild phase 4), the fixed rows' `web` fields, WireGuard closed for every service, warnings (plain HTTP
+WebDAV, a raw port or another container's port straight on the WAN, an unknown publication address, a
+name that is on but failing, Tailscale disconnected, certificate expiry) with `duzelt` on Adresler,
+operator rules, unreadable sources as error lines; then the route on a temporary Unix socket and its gates. `test_container_manager.py` checks
 `Inventory.reach()` (one `podman ps`; an application's container names its application, DD-271 phase 3).
 `test_olaylar.py` drives the producer with a fake clock (changed topics only, a failing topic logged
 once, a slow topic in its own thread, the per-channel limit, the producer stopping when idle), the
@@ -183,30 +184,23 @@ style attribute and no horizontal scroll. Screenshots go to a fresh temporary di
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulamalar-ui.cjs
 ```
 
-## New interface phase 3: Erişim, the Yayınla flow and the pending change (DD-258)
+## Erişim, access rows and the pending change (DD-258, DD-275)
 
-Two suites drive the committed build through `yeni-harness.cjs`, which since phase 3 also answers a reply
-with `contentType` as it is (a PNG, a text file) and takes `h.dynamic` handlers for paths with variable
-parts (an application's `/api/konsol/uygulamalar/<app>/…` routes, WireGuard's networks).
+Two suites drive the committed build through `yeni-harness.cjs`, which also answers a reply with
+`contentType` as it is (a PNG, a text file) and takes `h.dynamic` handlers for paths with variable parts (an
+application's `/api/konsol/uygulamalar/<app>/…` routes, WireGuard's networks).
 
 `yeni-erisim-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8771`): Erişim → Genel (warnings first, each
-"Düzelt" by its `duzelt`: the Yayınla flow on Adresler, the application's page or the Tailscale tab; the
-summaries; every service's four cells in plain words, `teknik=1` adding addresses and the technical lines),
-Tailscale (device, addresses, version, key expiry under 14 days, exit node, the admin console link, the
-disconnected state), Adresler (the publications with state, certificate and who guards them; the local names
-with Konsol's own locked; a DNS draft → `POST /api/konsol/ayarlar/plan` → `…/uygula` with the exact same
-body; a refused plan and "Yeniden denetle"; the local domain with its 300 s window, confirmed only from
-`http://panel.<new>`, rolled back from the banner; removing a manual address with `{web: {service, sil: true}}`),
-the Yayınla flow (a package's internet name with the DNS record and the certificate wait; the Konsol row,
-planned only after the typed word, sent as `onay`; an application's address port named from its 127.0.0.1
-pool port through the settings request alone (DD-271 phase 3: no container step), a failing settings step
-and "Yeniden denetle"; containers without a loopback port offered but not usable; another port as a new
-manual address through `ayarlar/plan`; an `engel` and "Yeniden denetle"; both names off; a stopped package; an
-unknown target), Güvenlik duvarı (the catalogue merged with the rules, listeners, locked rows, a baseline
-switch and a new `u_…` rule with its checks, IPv6, the network tabs, the technical rules with counters, plan
-→ apply → the 60 s banner → Onayla and Geri al, a plan that cannot be applied), a stuck rollback (retry,
-typed discard), a refused confirmation, the internet channel's message (`newHttpsPage`), a warning's
-"Düzelt" leading to an application's page by its name, the palette, and 1440/390/320 px in both themes.
+"Düzelt" by its `duzelt`: the access row's sheet on Adresler, the application's page or the Tailscale tab; the
+summaries; every service's cells in plain words), Tailscale, Adresler (one list of Konsol, Paylaşımlar and
+every application port; each row's sheet with its exact settings body: a Tailscale name, a Tailscale port,
+an internet name, "Adres aç" and "Adresi kaldır", a raw port to Tailscale or the internet with the consent;
+openings wait for the 60 s banner, closings commit at once; `?satir=` deep links; the local names with
+application names locked and linked to their row; a DNS draft → plan → apply; the local domain with its 300 s
+window), Güvenlik duvarı (the catalogue merged with the rules, listeners, application rows locked with a link,
+a new rule with its checks, plan → apply → the 60 s banner → Onayla and Geri al), a stuck rollback, a refused
+confirmation, the internet channel's message, the palette, and 1440/390/320 px in both themes. Yayınla is
+gone: the suite checks that no button, query or palette entry opens it and nothing asks `/yayinlar`.
 
 `yeni-wireguard-ui.cjs` (default `http://127.0.0.1:8772`) feeds a fixture of the WireGuard package's own API
 that changes as the page asks: networks as tabs (`ag=`), on at once and off after a question, devices with
@@ -229,19 +223,11 @@ PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-wireguard-ui.
 The backend (DD-265): `test_settings.py` checks the plan of firewall, DNS, domain and publication
 changes (before/after, restarts, the confirmation window, a plan refused like `apply`, nothing written,
 `uygulanabilir` false from the internet channel and for a rule that would cut the caller off);
-`test_publications.py` the plan of one publication row; `test_yayin.py` the candidates (Konsol, an
-application's containers and foreign ones, a container joined to its manual address or offered from its
-127.0.0.1 port, the reasons an internet name is blocked), the one-step plan (DD-271 phase 3: the step that
-added a loopback port to a container is gone), `engel` and the routes through the real handler, where the
-container route takes only Gelişmiş's resource jobs;
-`test_erisim.py` the warnings' row ids and `duzelt` and the Tailscale summary; `test_wg_settings.py` a
-network's new name through the package's API and its rejected names. Bats checks the routes in the table,
-`master-wg net-settings` renaming a network without touching keys, profiles or services (and refusing bad
-names) and that the installer ships `master_yayin.py`.
-
-```bash
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_yayin.py'
-```
+`test_publications.py` the plan of a fixed row; `test_erisim.py` the warnings' row ids and `duzelt` and the
+Tailscale summary; `test_wg_settings.py` a network's new name through the package's API and its rejected
+names. Bats checks the routes in the table and `master-wg net-settings` renaming a network without touching
+keys, profiles or services (and refusing bad names). Yayınla and its routes went in rebuild phase 4 (see its
+section).
 
 ## New interface phase 4a: Sistem and Gelişmiş (DD-258, DD-266)
 
@@ -487,7 +473,7 @@ the 5-second publication cache, and the budget re-check after a hash slot.
 backend Host and that a confirmation through the public channel is refused.
 `common.bats` checks the snippet, the Caddy-written channel header, the backend
 connection cap, the forwarded host and channel on confirmations, and the
-installer cleanup; `yeni-erisim-ui.cjs` drives the Konsol row in the Yayınla flow
+installer cleanup; `yeni-erisim-ui.cjs` drives the Konsol row's sheet in Adresler
 with the typed word; `giris-ui.cjs` the Tailscale/internet label.
 
 v2-168: `test_resources.py` checks the module listing's `urls` for qBittorrent
@@ -563,8 +549,8 @@ python3 Data/tests/panel-public-live.py --host nrm --domain konsol.example.com
 
 `panel-public-live.py` is opt-in and **mutating**: it needs the operator's existing
 Konsol account and a name with a DNS-only A record to the host's WAN IPv4 (no
-AAAA). It publishes Panel on that name through the real settings API (`ayarlar/uygula`; the
-rows come from `yayinlar`), checks HSTS, the sign-in page, session protection of pages/Files/root
+AAAA). It publishes Panel on that name through the real settings API (`ayarlar/uygula`, confirmed from
+Tailscale as decision 1 asks; the rows come from Erişim's read model), checks HSTS, the sign-in page, session protection of pages/Files/root
 APIs, account creation refused over the internet, one wrong sign-in and a root-issued automation session over the public
 address, then restores the Panel row exactly and checks that the name no longer
 reaches Konsol. It exits 3 without changes when there is no account or Panel is
@@ -806,12 +792,8 @@ on a host with Caddy, another failing repository or a host without Caddy stops, 
 untouched; stage 1 uses it, stage 6's first-install refresh stays strict, and the
 repository URL lives only in `defaults.env`. The root-only `master-guncelle` test checks that the
 closing "env failed with exit status N." line is skipped in Konsol's message.
-Manual addresses (v2-235, DD-252): the tailnet and public sites and the `modul-elle.conf` line, no
-Konsol routes on the public site, refused upstreams (other hosts, Konsol's own and package ports,
-malformed ports) and names (fixed, package, DNS-answered, invalid), the limit, the tailnet switch and
-removal leaving no file, a failed dnsmasq restart rolling back sites, name and settings, a local-domain
-rename, and stale-site cleanup that keeps a name ending in `-wan`. `yeni-erisim-ui.cjs` adds one
-through the plan and removes one.
+Manual addresses (v2-235, DD-252) were removed in rebuild phase 4 with their tests; an application's
+access rows replace them (`test_access_rows.py`).
 
 `python3 Data/tests/publications-live.py --host nrm` is an opt-in **mutating**
 test for a provisioned disposable host with verified DAV HTTPS and qBittorrent
@@ -849,8 +831,10 @@ From the repository root, run the local tests without a live domain:
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_https_*.py'
 ```
 
-`test_https_settings.py` covers full-domain/DNS validation (exact assigned WAN
-IPv4, no AAAA/proxy), pinned chain/hostname verification, durable commit,
+`test_https_settings.py` covers WebDAV's internet name through its fixed row `web.paylasim` (the old
+`https` section is refused and a stored key of its shape is not read; rebuild phase 4), full-domain/DNS
+validation (exact assigned WAN IPv4, no AAAA/proxy), pinned chain/hostname verification, durable commit
+after the confirmation an opening waits for,
 failure/crash rollback, explicit off without HTTP downgrade, retained renewal
 listener after last-share pause, preserved accounts/local domain and legacy
 HTTP consent. `test_https_panel.py` covers status/expiry warnings at 14 days or
@@ -876,7 +860,7 @@ python3 Data/tests/https-live.py --host nrm --domain dav.example.com --configure
 Replace the example domain; the script uses public TCP 443. `--configure` is a
 real, persistent settings change: **the domain remains saved after cleanup**.
 Without that flag, the script requires the matching saved domain to be ready (the shares' WAN
-mode and domain from `paylasim`, the certificate state from the WebDAV row of `yayinlar`).
+mode and domain from `paylasim`, the certificate state from Erişim's certificates).
 It verifies public TLS trust, denies `/` and administrative routes, checks old
 WAN HTTP closed, and creates three temporary shares: RO and RW on both networks,
 plus Tailscale-only. It exercises HTTPS/Tailscale reads, PROPFIND, ranges, download
@@ -1283,7 +1267,7 @@ temporary root and a complete record written through `master_applications`. Imag
 environment files at the generator's path, a snapshot put back exactly, anything not private, linked or
 invalid failing closed), stored answers that never hold a secret value or a keep, the request's source,
 images read as Docker reads them and pinned by digest, the loopback pool (kept for the same key across
-edits, free of other applications, Yayınla's rows, the base's ports and listeners; a raw port gets none),
+edits, free of other applications, the base's ports and listeners; a raw port gets none),
 the guard's input, the read model's states, the YAML emitter (every value back through the reader and the
 inspector, `$` never read as a variable), both drafts (an image's ports and volumes only; a container's
 differences, its secret-looking variables empty, refused settings written so the inspector says why) and
@@ -1313,4 +1297,36 @@ a reply or an audit line. `test_container_network.py` checks the guard's new inp
 
 ```bash
 cd tests && python3.13 -m unittest test_applications test_container_worker test_container_manager test_uygulamalar test_container_network
+```
+
+## Rebuild phase 4: access rows through the settings transaction (DD-271)
+
+`test_access_rows.py` uses real application records (`app_fixtures`), the real share publisher with every host
+command faked and a fake container side (`row_files`, `row_change`, `row_restore` as
+`master_container_worker.Manager` offers them). The `erisim` section: the request's shape, its application and
+port; the Tailscale name free of the fixed names, other applications, every `modul-*.conf` but the
+applications' own file and the operator's DNS records; internet names (DD-252's DNS check, unique against the
+fixed rows and every application, refused while WebDAV runs plaintext HTTP); every host-port conflict class
+(a `*_PORT` of state.env, the pool range, a WireGuard port, another row, an operator rule on the same scope,
+protocol and port, a live listener on the address or a wildcard, but not on loopback or the other protocol;
+`ss` unreadable refuses); A2's consent. Plan items and `onay_sn` for every change kind (decision 1: opening,
+widening and renaming 60 s, closing 0), effects and warnings, nothing written, the internet channel. Apply: a
+closing change commits at once, an opening waits and commits on confirmation, the snapshot and the deadline,
+an unconfirmed opening rolled back (files, `row_restore` with the restarted units, firewall, publish), a failed
+row change (every service restarted when it wrote, nothing when it wrote nothing), a failed certificate wait,
+an internet name without a WAN address, a failed rollback kept for the timer, the revision over every
+`erisim.json`. The projection: `uygulama-<app>.caddy` (Tailscale names and K5 addresses), `uygulama-<app>-wan.caddy`
+(TLS-ALPN, WAN bind, `X-Forwarded-For`), `modul-uygulama.conf`, stale files removed, dnsmasq checked and restarted
+only when names change, every file put back when a step fails, the 443 gate and plaintext WebDAV closed, status
+rows with certificates, an unreadable record keeping the last files, the local-domain rename. The firewall: K5
+in `tailnet_ports`, operator rules on an application's port refused, the firewall view's fixed rows with their
+`satir`; Yerel adlar locked names; a WireGuard network refusing an application's raw port; the audit detail; the
+closed `AyarIstegi` shapes; the backend's longer worker limit for an access change. `test_publications.py` and
+`test_https_settings.py` follow decision 1 for the fixed rows; `test_obhut.py` covers `obhut erisim liste` and
+`obhut erisim kapat <row id>|--hepsi`. Bats checks a K5 port as an IPv4 tailnet entry and the exact-count check
+following it; `firewall-linux.py` checks it with real packets (IPv4 tailnet only, closed when its row closes).
+`https-live.py`, `publications-live.py` and `panel-public-live.py` read Erişim and confirm their openings.
+
+```bash
+cd tests && python3.13 -m unittest test_access_rows test_publications test_https_settings test_erisim test_obhut
 ```

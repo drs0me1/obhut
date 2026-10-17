@@ -30,6 +30,13 @@
       "protocol": "tcp",
       "host_ip": "127.0.0.1",
       "host_port": 62100
+    },
+    {
+      "service": "sayac",
+      "port": 9001,
+      "protocol": "udp",
+      "host_ip": "100.64.0.7",
+      "host_port": 19001
     }
   ],
   "needs_podman5": []

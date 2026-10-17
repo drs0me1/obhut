@@ -21,7 +21,7 @@ class FakeKonsol:
     """Answers GETs from `reads` (a route → reply or an ObhutError) and records POSTs."""
 
     def __init__(self, reads, replies=None):
-        self.reads, self.replies, self.posts = reads, replies or {}, []
+        self.reads, self.replies, self.posts, self.timeouts = reads, replies or {}, [], []
 
     def get(self, route):
         value = self.reads[route]
@@ -29,8 +29,9 @@ class FakeKonsol:
             raise value
         return value
 
-    def post(self, route, data):
+    def post(self, route, data, timeout=None):
         self.posts.append((route, data))
+        self.timeouts.append(timeout)
         return self.replies.get(route, {"ok": True})
 
 
@@ -49,10 +50,30 @@ APPS = {"items": [
      "eylemler": ["durdur", "yeniden-baslat", "guncelle"], "revizyon": "a" * 32},
     {"ad": "notlar", "durum": "durduruldu", "servisler": [{"ad": "app", "durum": "durduruldu"}],
      "eylemler": ["baslat"], "revizyon": "b" * 32}]}
-PUBS = {"revizyon": "v1", "adaylar": [
-    {"id": "panel", "ad": "Konsol", "servis": "panel", "tailscale": True, "internet": True, "alan_adi": "konsol.example.org"},
-    {"id": "konteyner:belgeler", "ad": "belgeler", "servis": "elle-belgeler", "tailscale": True, "internet": False, "alan_adi": ""},
-    {"id": "konteyner:kutu", "ad": "kutu", "servis": None, "tailscale": False, "internet": False, "alan_adi": ""}]}
+# GET /api/konsol/erisim (rebuild phase 4): Konsol's and WebDAV's rows, an application's three ports and a row
+# that is no access row (SSH).
+ERISIM = {"revizyon": "v1", "hatalar": [], "hizmetler": [
+    {"id": "panel", "tur": "konsol", "uygulama": None, "anahtar": None, "satir": None,
+     "web": {"tail": True, "enabled": True, "domain": "konsol.example.org"},
+     "tailscale": {"durum": "acik", "adresler": ["panel.ev"]}, "internet": {"durum": "acik", "adresler": ["konsol.example.org"]}},
+    {"id": "paylasim", "tur": "paylasim", "uygulama": None, "anahtar": None, "satir": None,
+     "web": {"tail": True, "enabled": False, "domain": "dav.example.org"},
+     "tailscale": {"durum": "acik", "adresler": ["paylas.ev"]}, "internet": {"durum": "kapali", "adresler": []}},
+    {"id": "uygulama:notlar:web:8080/tcp", "tur": "uygulama", "uygulama": "notlar", "anahtar": "web:8080/tcp", "web": None,
+     "satir": {"tur": "adres", "ad": "notlar", "tailscale_portu": 8080, "internet": "notlar.example.org"},
+     "tailscale": {"durum": "acik", "adresler": ["notlar.ev"]}, "internet": {"durum": "acik", "adresler": ["notlar.example.org"]}},
+    {"id": "uygulama:notlar:web:6881/udp", "tur": "uygulama", "uygulama": "notlar", "anahtar": "web:6881/udp", "web": None,
+     "satir": {"tur": "ham", "kapsam": "internet", "port": 6881},
+     "tailscale": {"durum": "kapali", "adresler": []}, "internet": {"durum": "acik", "adresler": ["203.0.113.10:6881/udp"]}},
+    {"id": "uygulama:notlar:web:7000/tcp", "tur": "uygulama", "uygulama": "notlar", "anahtar": "web:7000/tcp", "web": None,
+     "satir": {"tur": "ham", "kapsam": "tailscale", "port": 7000},
+     "tailscale": {"durum": "acik", "adresler": ["100.64.0.2:7000/tcp"]}, "internet": {"durum": "kapali", "adresler": []}},
+    {"id": "sistem:ssh", "tur": "sistem", "internet": {"durum": "acik", "adresler": ["203.0.113.10:22/tcp"]}}]}
+
+
+def obhut_worker_seconds():
+    import master_settings
+    return master_settings.ERISIM_WORKER_SECONDS
 
 
 class CommandTests(unittest.TestCase):
@@ -109,24 +130,42 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(run(["uygulama", "durdur"], konsol)[0], 2)
         self.assertEqual(len(konsol.posts), 3)
 
-    def test_internet_names_close_and_the_tailnet_name_stays(self):
-        konsol = FakeKonsol({"/api/konsol/yayinlar": PUBS})
-        code, out, _ = run(["yayin", "liste"], konsol)
-        self.assertIn("panel", out)
+    def test_access_rows_list_and_their_internet_side_closes_at_once(self):
+        konsol = FakeKonsol({"/api/konsol/erisim": ERISIM})
+        code, out, _ = run(["erisim", "liste"], konsol)
+        self.assertEqual(code, 0)
+        self.assertIn("uygulama:notlar:web:6881/udp", out)
         self.assertIn("konsol.example.org", out)
-        self.assertNotIn("konteyner:kutu", out, "a container that is not published is no publication")
-        self.assertEqual(run(["yayin", "kapat", "panel"], konsol)[0], 0)
+        self.assertNotIn("sistem:ssh", out, "SSH is no access row")
+        code, out, _ = run(["erisim", "liste", "--json"], konsol)
+        self.assertEqual([r["id"] for r in json.loads(out)["satirlar"]][:2], ["panel", "paylasim"])
+        # Konsol's internet name switches off (the name is remembered), the Tailscale name stays.
+        self.assertEqual(run(["erisim", "kapat", "panel"], konsol)[0], 0)
         self.assertEqual(konsol.posts, [("/api/konsol/ayarlar/uygula", {"revision": "v1", "web": {
             "service": "panel", "tail": True, "enabled": False, "domain": "konsol.example.org"}})])
-        # Only the open ones; a tailnet-only publication is left alone.
+        # An application's internet name goes; its Tailscale name and port stay.
         konsol.posts.clear()
-        self.assertEqual(run(["yayin", "kapat", "--hepsi"], konsol)[0], 0)
-        self.assertEqual([p[1]["web"]["service"] for p in konsol.posts], ["panel"])
+        self.assertEqual(run(["erisim", "kapat", "uygulama:notlar:web:8080/tcp"], konsol)[0], 0)
+        self.assertEqual(konsol.posts, [("/api/konsol/ayarlar/uygula", {"revision": "v1", "erisim": {
+            "uygulama": "notlar", "anahtar": "web:8080/tcp",
+            "satir": {"tur": "adres", "ad": "notlar", "tailscale_portu": 8080, "internet": ""}}})])
+        # --hepsi: every row open to the internet, a raw port closed; a Tailscale-only row is left alone.
         konsol.posts.clear()
-        code, out, _ = run(["yayin", "kapat", "elle-belgeler"], konsol)
-        self.assertEqual((code, konsol.posts), (0, []))
-        self.assertIn("İnternete açık yayın yok", out)
-        self.assertEqual(run(["yayin", "kapat"], konsol)[0], 2)
+        self.assertEqual(run(["erisim", "kapat", "--hepsi"], konsol)[0], 0)
+        self.assertEqual([p[1].get("web", {}).get("service") or p[1]["erisim"]["anahtar"] for p in konsol.posts],
+                         ["panel", "web:8080/tcp", "web:6881/udp"])
+        self.assertEqual(konsol.posts[2][1]["erisim"]["satir"], {"tur": "ham", "kapsam": "kapali", "port": 6881})
+        # An application row's change may restart its container: it waits as long as the settings worker may run.
+        self.assertEqual(konsol.timeouts[-3:], [None, obhut_worker_seconds() + 10, obhut_worker_seconds() + 10])
+        konsol.posts.clear()
+        for row in ("paylasim", "uygulama:notlar:web:7000/tcp"):
+            code, out, _ = run(["erisim", "kapat", row], konsol)
+            self.assertEqual((code, konsol.posts), (0, []), row)
+            self.assertIn("İnternete açık erişim satırı yok", out)
+        self.assertEqual(run(["erisim", "kapat", "uygulama:yok:web:1/tcp"], konsol)[0], 1)
+        self.assertEqual(run(["erisim", "kapat"], konsol)[0], 2)
+        with self.assertRaises(SystemExit):
+            obhut.parser().parse_args(["yayin", "liste"])
 
     def test_a_pending_change_is_rolled_back(self):
         konsol = FakeKonsol({"/api/konsol/bekleyen": {"bekleyen": {"id": "abc"}}})

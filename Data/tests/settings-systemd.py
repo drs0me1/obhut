@@ -42,11 +42,17 @@ def main():
                                      "--property=RuntimeMaxSec=150", "--setenv=PYTHONDONTWRITEBYTECODE=1", "/usr/bin/python3", str(HELPER),
                                      "--state", str(state), "rollback"], input='{"id":"none"}', capture_output=True, text=True, timeout=20)
             assert worker.returncode == 0 and json.loads(worker.stdout) == {"ok": True}, worker.stderr
+            # DD-275: a stale page's exit status passes through systemd-run --wait; the backend answers 409.
+            stale = subprocess.run(["systemd-run", "--quiet", "--wait", "--pipe", "--collect", "--property=UMask=0077",
+                                    "--property=RuntimeMaxSec=150", "--setenv=PYTHONDONTWRITEBYTECODE=1", "/usr/bin/python3", str(HELPER),
+                                    "--state", str(state), "apply"], input='{"revision":"stale","firewall":[]}', capture_output=True,
+                                   text=True, timeout=20)
+            assert stale.returncode == s.STALE_EXIT and "error" in json.loads(stale.stdout), (stale.returncode, stale.stderr)
             text = (DATA / "systemd/master-settings-guard.service").read_text().replace("__SBIN_DIR__", str(HELPER.parent)).replace("__STATE_FILE__", str(state))
             rendered = root / "master-settings-guard.service"
             rendered.write_text(text)
             subprocess.run(["systemd-analyze", "verify", str(rendered)], check=True, capture_output=True)
-            print("PASS real systemd timer recovery, isolated worker stdin/JSON, rendered service validation")
+            print("PASS real systemd timer recovery, isolated worker stdin/JSON, stale exit status, rendered service validation")
         finally:
             subprocess.run(["systemctl", "stop", unit + ".timer", unit + ".service"], capture_output=True)
             subprocess.run(["systemctl", "reset-failed", unit + ".timer", unit + ".service"], capture_output=True)

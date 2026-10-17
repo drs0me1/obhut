@@ -51,10 +51,8 @@ function withConn(v, id, scope, patch) {
 
 const { uygulama, uygulamalar } = require("./yeni-harness.cjs").fixtures;
 const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
-const row = (id, ad, tur, cells, aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, calisiyor: true, yerel: cell("yok"), tailscale: cell("yok"),
-  wireguard: cell("kapali"), internet: cell("yok"), yayinlar: [], ayrinti: [], ...cells });
-const cand = (o) => ({ servis: null, yerel_ad: null, tailscale: false, internet: false, alan_adi: "", durum: "disabled", mesaj: "İnternet yayını kapalı.", bitis: null,
-  hedef: null, giris: "", onay_kelimesi: false, internet_engel: "", kullanilabilir: true, neden: "", konteyner: null, ...o });
+const row = (id, ad, tur, cells, aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, servis: null, anahtar: null, calisiyor: true, yerel: cell("yok"),
+  tailscale: cell("yok"), wireguard: cell("kapali"), internet: cell("yok"), satir: null, web: { tail: true, enabled: false, domain: "" }, ayrinti: [], ...cells });
 
 const ROWS = [
   row("panel", "Konsol", "konsol", { tailscale: cell("acik", ["panel.ev"]), internet: cell("kapali") }, "Yönetim paneli"),
@@ -72,15 +70,11 @@ const data = {
     denetlendi: NOW, hata: "", is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true },
   bekleyen: { bekleyen: null },
   etkinlik: { items: [] },
-  erisim: { read_at: NOW, alan: "ev", hatalar: [], uyarilar: [], hizmetler: ROWS,
+  erisim: { read_at: NOW, alan: "ev", revizyon: "rev-1", hatalar: [], uyarilar: [], hizmetler: ROWS,
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "", surum: "", adresler: [], cikis_dugumu: null },
       internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
   uygulamalar: uygulamalar(APPS),
-  yayinlar: { revizyon: "rev-1", alan: "ev", wan_ipv4: "203.0.113.10", hatalar: [], adaylar: [
-    cand({ id: "panel", tur: "konsol", ad: "Konsol", servis: "panel", yerel_ad: "panel.ev", tailscale: true, giris: "İnternetten Konsol hesabıyla giriş istenir.", onay_kelimesi: true }),
-    cand({ id: "paylasim", tur: "paylasim", ad: "WebDAV paylaşımları", servis: "paylasim", yerel_ad: "paylas.ev", tailscale: true, durum: "http", mesaj: "HTTPS alan adı tanımlanmadı.",
-      giris: "Klasör hesapları korur; her klasörün internet erişimi Paylaşımlar'dan açılır." })] },
-  adlar: { revizyon: "rev-1", alan: "ev", hatalar: [], adlar: [{ ad: "panel.ev", aile: 4, hedef: "tailscale", kaynak: "base", kapali: false, kilitli: true }],
+  adlar: { revizyon: "rev-1", alan: "ev", hatalar: [], adlar: [{ ad: "panel.ev", aile: 4, hedef: "tailscale", kaynak: "base", kapali: false, kilitli: true, satir: "panel" }],
     kayitlar: [], yonlendirme: false, sunucular: [] },
   ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048 },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
@@ -161,7 +155,7 @@ async function openShares(page, extra = "") {
     assert.match(await card(page, C).getByTestId("share-state").getAttribute("class"), /pill-danger/);
     assert.equal(await page.getByTestId("share-count").innerText(), "3/32 klasör");
     assert.deepEqual(await page.getByTestId("share-routes").locator("dd").allInnerTexts(), ["Şifreli tünel", "Şifresiz HTTP · 203.0.113.10:61010"]);
-    assert.equal(await page.getByTestId("share-publication").getAttribute("href"), "#/erisim?sekme=adresler&yayinla=paylasim", "the publication and the HTTPS name stay in Erişim");
+    assert.equal(await page.getByTestId("share-publication").getAttribute("href"), "#/erisim?sekme=adresler&satir=paylasim", "the address and the internet name stay in Erişim, on their row");
     // The boundary notice: the short form always, the detail in the address.
     const boundary = page.getByTestId("share-boundary");
     assert.match(await boundary.innerText(), /Paylaşmadan önce erişim sınırını kontrol edin/);
@@ -633,7 +627,7 @@ async function openShares(page, extra = "") {
     for (const scope of ["tailscale", "wan"]) {
       const c = connOf(page, A, scope);
       assert(await c.getByRole("switch").isDisabled(), scope + ": a closed transport cannot be turned on here");
-      assert.equal(await c.getByTestId("conn-publish").getAttribute("href"), "#/erisim?sekme=adresler&yayinla=paylasim");
+      assert.equal(await c.getByTestId("conn-publish").getAttribute("href"), "#/erisim?sekme=adresler&satir=paylasim");
       assert.equal(await c.getByTestId("conn-no-url").innerText(), "Bağlantı adresi kullanılamıyor.");
     }
     assert.equal(await connOf(page, A, "wan").getByTestId("conn-reason").innerText(), closedWan.reason);
@@ -656,10 +650,20 @@ async function openShares(page, extra = "") {
     await matrixLink.waitFor();
     assert.equal(await matrixLink.getAttribute("href"), "#/dosyalar?sekme=paylasimlar");
     await page.goto(url("#/erisim?sekme=adresler"));
-    const pubLink = page.locator('tr[data-yayin="paylasim"]').getByTestId("share-folders");
+    const pubLink = page.getByTestId("access-rows").locator('tr[data-satir="paylasim"]').getByTestId("share-folders");
     await pubLink.waitFor();
     assert.equal(await pubLink.innerText(), "Klasör izinleri ve süreler: Dosyalar → Paylaşımlar");
-    assert.equal(await page.locator('tr[data-yayin="panel"]').getByTestId("share-folders").count(), 0, "only WebDAV's row");
+    assert.equal(await page.getByTestId("access-rows").locator('tr[data-satir="panel"]').getByTestId("share-folders").count(), 0, "only WebDAV's row");
+    // Dosyalar' way to the address opens WebDAV's row sheet, which leads back to the folders.
+    await page.goto(url("#/dosyalar?sekme=paylasimlar"));
+    await page.getByTestId("share-publication").click();
+    await page.waitForURL((u) => u.hash === "#/erisim?sekme=adresler&satir=paylasim");
+    const rowSheet = page.getByRole("dialog", { name: "Paylaşımlar" });
+    await rowSheet.getByTestId("row-form").waitFor();
+    assert.equal(await rowSheet.getByRole("switch", { name: "Tailscale adı" }).getAttribute("aria-checked"), "true");
+    assert.equal(await rowSheet.getByTestId("row-shares").getAttribute("href"), "#/dosyalar?sekme=paylasimlar");
+    await rowSheet.getByRole("button", { name: "Vazgeç" }).click();
+    await rowSheet.waitFor({ state: "detached" });
     await pubLink.click();
     await page.waitForURL((u) => u.hash === SHARES_URL);
     await card(page, A).waitFor();

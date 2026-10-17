@@ -57,20 +57,20 @@ const ADVANCED = {
       { address: "panel.ev", routes: [{ path: "/api/*", kind: "proxy", to: "unix//run/master-panel/api.sock" }, { path: "", kind: "files", to: "" }], source: "base", access: "tailscale", scheme: "http" },
       { address: "100.64.0.2:61010", routes: [{ path: "", kind: "proxy", to: "127.0.0.1:61011" }], source: "base", access: "tailscale", scheme: "http" },
       { address: "paylas.ev", routes: [{ path: "", kind: "proxy", to: "127.0.0.1:61010" }], source: "paylasim", access: "tailscale", scheme: "http" },
-      { address: "notlar.ev", routes: [{ path: "", kind: "proxy", to: "127.0.0.1:62100" }], source: "elle-notlar", access: "tailscale", scheme: "http" },
-      { address: "notlar.example.org", routes: [{ path: "", kind: "proxy", to: "127.0.0.1:62100" }], source: "elle-notlar-wan", access: "wan", scheme: "https" },
+      { address: "notlar.ev", routes: [{ path: "", kind: "proxy", to: "127.0.0.1:62100" }], source: "uygulama-notlar", access: "tailscale", scheme: "http" },
+      { address: "notlar.example.org", routes: [{ path: "", kind: "proxy", to: "127.0.0.1:62100" }], source: "uygulama-notlar-wan", access: "wan", scheme: "https" },
       { address: "konsol.example.org", routes: [{ path: "/api/*", kind: "proxy", to: "unix//run/master-panel/api.sock" }, { path: "", kind: "files", to: "" }], source: "panel-wan", access: "wan", scheme: "https" },
       { address: "203.0.113.10:61010", routes: [{ path: "", kind: "respond", to: "yalnız WebDAV" }], source: "paylasim-wan", access: "wan", scheme: "http" },
     ],
-    raw: [{ file: "/etc/caddy/Caddyfile", text: CADDYFILE }, { file: "/etc/caddy/moduller/elle-notlar.caddy", text: "http://notlar.ev {\n\treverse_proxy 127.0.0.1:62100\n}\n" }],
+    raw: [{ file: "/etc/caddy/Caddyfile", text: CADDYFILE }, { file: "/etc/caddy/moduller/uygulama-notlar.caddy", text: "http://notlar.ev {\n\treverse_proxy 127.0.0.1:62100\n}\n" }],
   },
   dnsmasq: {
     listen: ["tailscale0", "lo"], domains: ["ev"], dhcp: false,
     names: [{ name: "panel.ev", iface: "tailscale0", family: 4, address: "100.64.0.2", source: "base" },
-      { name: "notlar.ev", iface: "tailscale0", family: null, address: "100.64.0.2, fd7a:115c:a1e0::2", source: "elle" },
+      { name: "notlar.ev", iface: "tailscale0", family: null, address: "100.64.0.2, fd7a:115c:a1e0::2", source: "uygulama" },
       { name: "yazici.ev", iface: "", family: 4, address: "192.0.2.40", source: "base" }],
     raw: [{ file: "/etc/dnsmasq.d/master-stack.conf", text: "interface=tailscale0\nlocal=/ev/\ninterface-name=panel.ev,tailscale0/4\n" },
-      { file: "/etc/dnsmasq.d/modul-elle.conf", text: "interface-name=notlar.ev,tailscale0\n" }],
+      { file: "/etc/dnsmasq.d/modul-uygulama.conf", text: "interface-name=notlar.ev,tailscale0\n" }],
   },
 };
 const ID = (c) => c.repeat(64);
@@ -629,10 +629,10 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     // Owners: the base's sites (the panel's public one too) are Temel, the shares' public site Paylaşımlar,
     // every other site its source as it is (no "-wan"), even when an application has a similar name.
     assert.deepEqual(await caddy.locator('tbody td[data-label="Kaynak"]').allInnerTexts(),
-      ["Temel", "Temel", "paylasim", "elle-notlar", "elle-notlar", "Temel", "Paylaşımlar"]);
+      ["Temel", "Temel", "paylasim", "uygulama-notlar", "uygulama-notlar", "Temel", "Paylaşımlar"]);
     assert.equal(await site("paylas.ev").locator(".cell-sub").innerText(), "paylasim");
-    assert.equal(await site("notlar.ev").locator(".cell-sub").innerText(), "elle-notlar");
-    assert.equal(await site("notlar.example.org").locator(".cell-sub").innerText(), "elle-notlar · kendi girişiyle");
+    assert.equal(await site("notlar.ev").locator(".cell-sub").innerText(), "uygulama-notlar");
+    assert.equal(await site("notlar.example.org").locator(".cell-sub").innerText(), "uygulama-notlar · kendi girişiyle");
     assert.equal(await site("notlar.example.org").locator('td[data-label="Erişim"]').innerText(), "İnternet");
     assert.equal(await site("notlar.example.org").locator('td[data-label="Şema"]').innerText(), "HTTPS");
     assert.equal(await site("konsol.example.org").locator(".cell-sub").innerText(), "Sunucu yönetim paneli · internet girişi");
@@ -646,7 +646,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.equal(await raw.locator(".raw-count").innerText(), "· Caddyfile ve üretilen siteler · 2 dosya");
     await raw.locator("summary").click();
     await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("ham") === "1");
-    assert.deepEqual(await raw.locator(".raw-path").allInnerTexts(), ["/etc/caddy/Caddyfile", "/etc/caddy/moduller/elle-notlar.caddy"]);
+    assert.deepEqual(await raw.locator(".raw-path").allInnerTexts(), ["/etc/caddy/Caddyfile", "/etc/caddy/moduller/uygulama-notlar.caddy"]);
     assert.equal(await raw.locator('[data-dosya="Caddyfile"] pre').innerText(), CADDYFILE.trim());
     await raw.getByRole("button", { name: "Caddyfile kopyala" }).click();
     await raw.getByRole("status").filter({ hasText: "Caddyfile kopyalandı." }).waitFor();
@@ -670,11 +670,11 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.equal(gets("gelismis").length, advancedReads, "one read for Caddy and DNS");
     assert.deepEqual(await page.getByTestId("dns-facts").locator("dd").allInnerTexts(), ["tailscale0, lo", "ev", "Kapalı"]);
     assert.deepEqual(await dns.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.ad)), ["panel.ev", "notlar.ev", "yazici.ev"]);
-    assert.deepEqual(await dns.locator('tbody td[data-label="Kaynak"]').allInnerTexts(), ["Temel", "elle", "Temel"], "base is Temel, any other source as it is");
-    assert.deepEqual(await dns.locator('tr[data-ad="notlar.ev"] td').allInnerTexts(), ["100.64.0.2, fd7a:115c:a1e0::2", "IPv4 + IPv6", "elle"]);
+    assert.deepEqual(await dns.locator('tbody td[data-label="Kaynak"]').allInnerTexts(), ["Temel", "uygulama", "Temel"], "base is Temel, any other source as it is");
+    assert.deepEqual(await dns.locator('tr[data-ad="notlar.ev"] td').allInnerTexts(), ["100.64.0.2, fd7a:115c:a1e0::2", "IPv4 + IPv6", "uygulama"]);
     assert.equal(await dns.getByRole("link", { name: "Yerel adları Erişim'de değiştir" }).getAttribute("href"), "#/erisim?sekme=adresler");
     assert.equal(await dns.getByTestId("raw").evaluate((d) => d.open), true, "?ham=1 stays in the address");
-    assert.deepEqual(await dns.locator(".raw-path").allInnerTexts(), ["/etc/dnsmasq.d/master-stack.conf", "/etc/dnsmasq.d/modul-elle.conf"]);
+    assert.deepEqual(await dns.locator(".raw-path").allInnerTexts(), ["/etc/dnsmasq.d/master-stack.conf", "/etc/dnsmasq.d/modul-uygulama.conf"]);
     // The firewall's technical rules are Erişim's: a way there, no copy.
     await page.getByRole("tab", { name: "Güvenlik duvarı" }).click();
     const fw = page.getByTestId("advanced-firewall");

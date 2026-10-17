@@ -411,7 +411,8 @@ class Inventory(Containers):
 
     def definition_plan(self, app, text, answers):
         """POST …/{app}/tanim with plan: the inspection, the answers' errors or what the edit changes. Nothing
-        is written, pulled or created; secret values are checked and dropped."""
+        is written, pulled or created; secret values are checked and dropped. A port that stays is answered from
+        its row (an answer given must match it); a new port's Tailscale name must be free."""
         import master_inspector
         record = self.record(app)
         try:
@@ -421,15 +422,21 @@ class Inventory(Containers):
         inspection = master_inspector.inspect(text)
         if inspection.get('refusals') or inspection.get('format') is None:
             return {'inceleme': inspection}
+        answers, row_errors = apps.port_answers(record, inspection, answers)
         definition, _values, errors = master_inspector.check(inspection, answers,
                                                              existing_secrets=frozenset(record['places']['secrets']))
+        errors = dict(errors or {}, **row_errors)
         if errors:
             return {'inceleme': inspection, 'hatalar': errors}
         if definition['name'] != app:
             return {'inceleme': inspection, 'hatalar': {'name': 'Uygulamanın adı değiştirilemez; başka bir adla yeni bir uygulama ekleyin.'}}
         try:
-            ports = apps.allocate(self.env, app, definition, record['places']['ports'], self.records())
-            fark = apps.edit_plan(self.env, record, inspection, definition, ports, self.version())
+            errors = apps.name_errors(self.env, app, definition, record['rows'], self.records())
+            if errors:
+                return {'inceleme': inspection, 'hatalar': errors}
+            rows = apps.next_rows(definition, record['rows'])
+            ports = apps.allocate(self.env, app, apps.address_keys(rows), record['places']['ports'], self.records())
+            fark = apps.edit_plan(self.env, record, inspection, definition, rows, ports, self.version())
         except config.ContainerConfigError as err:
             raise app_error(err) from err
         return {'inceleme': inspection, 'fark': fark}

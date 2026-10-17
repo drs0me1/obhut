@@ -131,7 +131,7 @@ class JsonTests(unittest.TestCase):
         self.assertLess(len(DEEP), panel.MAX_BODY)
         with patch.object(self.p, "settings_run", side_effect=AssertionError("must not run")), \
                 patch.object(self.p.wireguard, "run_tool", side_effect=AssertionError("must not run")):
-            for endpoint in ("/api/konsol/ayarlar/uygula", "/api/konsol/paylasim/kaydet", "/api/konsol/wireguard/nets"):
+            for endpoint in ("/api/konsol/ayarlar/uygula", "/api/konsol/paylasim/kaydet", "/api/konsol/wireguard/nets/wg0/peers"):
                 status, response_headers, body = resources.unix_get(sock, endpoint, headers, "POST", DEEP)
                 self.assertEqual(status, 400)
                 self.assertEqual(response_headers["Connection"], "close")
@@ -153,7 +153,8 @@ class JsonTests(unittest.TestCase):
                     self.assertEqual(status, 502)
                     self.assertNotIn("private-test-value", json.dumps(data))
                     self.assertEqual(run.call_args.kwargs["timeout"], 155)
-        for returncode, expected in ((0, 200), (1, 400)):
+        # DD-275: a page that showed another revision is 409 (the worker's STALE_EXIT).
+        for returncode, expected in ((0, 200), (1, 400), (panel.master_settings.STALE_EXIT, 409)):
             with patch.object(panel.subprocess, "run", return_value=subprocess.CompletedProcess([], returncode, '{"error":"test"}', "")):
                 self.assertEqual(self.p.settings_run("apply", {})[0], expected)
 

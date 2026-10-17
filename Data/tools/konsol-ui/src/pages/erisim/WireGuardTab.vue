@@ -1,16 +1,20 @@
 <!-- Erişim → WireGuard (DD-258's approved layout; a built-in of the base, DD-271): off after install (K6), so
      with no network the tab says "WireGuard kapalı" and "Aç" opens the first network's creation, which turns
-     it on. Running, it offers "Durdur" (typed "onayla"; every network goes down, DD-229); stopped, it says so
-     and offers "Başlat", which brings back the networks that were on. The networks as tabs (?ag=wg0) with
-     "Ağ ekle"; a network card with its on/off switch (turning it off asks first), its summary and its devices
-     (on/off, state, DNS and keepalive, addresses, last seen, traffic, QR, profile, edit, delete); one side
-     panel for adding a device, a device's DNS and keepalive, the network's name and default DNS, regenerating
-     its key, removing it and adding a network (typed "onayla" where it cannot be undone). When master-wg does
-     not answer (`kurulu` false) the tab points to Sistem → Sağlık. GET /state is read every 10 s while this
-     tab is shown and the browser tab visible. QR codes and profiles carry a private key: fetched only on a
-     click, never cached, their object URL revoked after use. -->
+     it on. Running, it offers "Durdur" (every network goes down, DD-229); stopped, it says so and offers
+     "Başlat", which brings back the networks that were on. The networks as tabs (?ag=wg0) with "Ağ ekle"; a
+     network card with its on/off switch, its summary and its devices (on/off, state, DNS and keepalive,
+     addresses, last seen, traffic, QR, profile, edit, delete); one side panel for adding a device, a device's
+     DNS and keepalive, the network's name and default DNS, regenerating its key, removing it and adding a
+     network. Starting, stopping, adding, opening, closing, removing and regenerating are settings changes
+     (DD-275): each goes through the settings plan with the state's `revizyon`; an opening (Başlat, a network
+     added or opened) waits for the 60 s confirmation in the pending banner, the rest commit at once, and
+     removing or regenerating needs the typed word ("onayla", sent as `onay`). Devices, their DNS and
+     keepalive, and the network's name and DNS change at once as before. When master-wg does not answer
+     (`kurulu` false) the tab points to Sistem → Sağlık. GET /state is read every 10 s while this tab is shown
+     and the browser tab visible. QR codes and profiles carry a private key: fetched only on a click, never
+     cached, their object URL revoked after use. -->
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import { Icon } from "../../components/icons";
 import ConfirmWord from "../../components/ui/ConfirmWord.vue";
@@ -22,16 +26,14 @@ import Switch from "../../components/ui/Switch.vue";
 import Tabs from "../../components/ui/Tabs.vue";
 import type { Tone } from "../../components/ui/types";
 import DnsChoice from "./DnsChoice.vue";
+import SettingsPlanSheet from "./SettingsPlanSheet.vue";
 import {
   DEVICE_STATE, DNS_PRESETS, NAME_RE, deviceState, keepaliveProblem, keepaliveText, labelOf, labelProblem, nextNetwork, onlineCount, portProblem,
   providerOf, suggestPort, type DeviceState,
 } from "./wg";
-import {
-  addDevice, addNetwork, fetchProfile, fetchQr, readWgState, regenerateNetwork, removeDevice, removeNetwork, saveNetworkSettings, setDevice,
-  setDeviceDns, setDeviceKeepalive, setNetwork, startWireGuard, stopWireGuard,
-} from "../../api/wireguard";
-import type { WireGuard as WgState, WireGuardAgi as WgNetwork, WireGuardCihazi as WgPeer } from "../../api/sema";
-import { refreshAccess } from "../../live";
+import { addDevice, fetchProfile, fetchQr, readWgState, removeDevice, saveNetworkSettings, setDevice, setDeviceDns, setDeviceKeepalive } from "../../api/wireguard";
+import type { AyarIstegi, AyarSonucu, WireGuard as WgState, WireGuardAgi as WgNetwork, WireGuardCihazi as WgPeer, WireGuardIstegi } from "../../api/sema";
+import { live, refreshAccess } from "../../live";
 import { updateQuery, useQueryParam } from "../../query";
 import { systemRoute } from "../../sections";
 import { UNKNOWN, bytes, since } from "../../format";
@@ -44,6 +46,8 @@ const state = ref<WgState | null>(null);
 const broken = computed(() => state.value?.kurulu === false);
 const stopped = computed(() => state.value?.durduruldu === true);
 const writable = computed(() => !stopped.value && !working.value);
+// A pending settings change holds every planned action until it is confirmed or rolled back.
+const planLocked = computed(() => Boolean(live.bekleyen));
 const loadError = ref("");
 const now = ref(Date.now() / 1000);
 let offset = 0;
@@ -83,6 +87,8 @@ onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", onVisibility);
   forgetQr();
 });
+// A pending change ended (confirmed or rolled back): the networks may differ.
+watch(() => live.ayarSurumu, () => void load());
 
 // ---- networks
 const networks = computed(() => state.value?.networks ?? []);
@@ -142,44 +148,65 @@ async function act(run: () => Promise<unknown>, done: () => string): Promise<boo
   }
 }
 
-// ---- WireGuard as a whole (DD-229): stopping cuts every network and asks for the typed word first.
-const askStop = ref(false);
-const stopConfirmed = ref(false);
-const online = computed(() => networks.value.reduce((sum, n) => sum + (n.active ? onlineCount(n, now.value) : 0), 0));
-function openStop(): void {
-  error.value = "";
-  stopConfirmed.value = false;
-  askStop.value = true;
-}
-function closeStop(): void {
-  if (!working.value) askStop.value = false;
-}
-async function confirmStop(): Promise<void> {
-  if (!stopConfirmed.value) return;
-  if (await act(() => stopWireGuard(), () => "WireGuard durduruldu: ağlar kapandı, cihazlar bağlanamaz.")) {
-    askStop.value = false;
-    void refreshAccess();
-  }
-}
-async function start(): Promise<void> {
-  if (await act(() => startWireGuard(), () => "WireGuard başlatıldı: önceden açık olan ağlar geri geldi.")) void refreshAccess();
+// ---- the planned actions (DD-275): one settings change each, through the plan sheet
+/** The settings request of a WireGuard action, with the state's settings revision. */
+function wgRequest(istek: WireGuardIstegi): AyarIstegi | null {
+  return state.value ? { revision: state.value.revizyon, wireguard: istek } : null;
 }
 
-// Turning a network on is safe; turning it off cuts every device and asks first.
-const askOff = ref<WgNetwork | null>(null);
+interface Action {
+  kind: "baslat" | "durdur" | "ag-ac" | "ag-kapat";
+  title: string;
+  description: string;
+  request: AyarIstegi | null;
+  applyLabel: string;
+  danger: boolean;
+  net: WgNetwork | null;
+  done: (pending: boolean) => string;
+}
+const action = ref<Action | null>(null);
+const online = computed(() => networks.value.reduce((sum, n) => sum + (n.active ? onlineCount(n, now.value) : 0), 0));
+const confirmLater = (pending: boolean) => (pending ? "; 60 saniye içinde yukarıdaki banttan onaylayın." : ".");
+
+function plan(a: Action): void {
+  error.value = "";
+  note.value = "";
+  qrOffer.value = null;
+  action.value = a;
+}
+function actionApplied(result: AyarSonucu): void {
+  const a = action.value;
+  action.value = null;
+  if (!a) return;
+  note.value = a.done(Boolean(result.pending));
+  void load();
+  void refreshAccess();
+}
+
+// WireGuard as a whole (DD-229): stopping cuts every network; starting brings back those that were on.
+function openStop(): void {
+  plan({ kind: "durdur", title: "WireGuard durdurulsun mu?", description: `${networks.value.length} ağ · ${online.value} cihaz bağlı`,
+    request: wgRequest({ eylem: "durdur" }), applyLabel: "Durdur", danger: true, net: null,
+    done: () => "WireGuard durduruldu: ağlar kapandı, cihazlar bağlanamaz." });
+}
+function start(): void {
+  plan({ kind: "baslat", title: "WireGuard başlatılsın mı?", description: `${networks.value.length} ağ`, request: wgRequest({ eylem: "baslat" }),
+    applyLabel: "Başlat", danger: false, net: null, done: (p) => "WireGuard başlatıldı: önceden açık olan ağlar geri geldi" + confirmLater(p) });
+}
+
+// A network on or off: opening waits for the confirmation; closing cuts every device at once.
 function toggleNetwork(n: WgNetwork, on: boolean): void {
-  if (!on) {
-    askOff.value = n;
+  if (on) {
+    plan({ kind: "ag-ac", title: `${n.iface} · ${labelOf(n)} açılsın mı?`, description: `UDP ${n.port} · ${n.subnet4} · Yalnız internet`,
+      request: wgRequest({ eylem: "ag-ac", iface: n.iface }), applyLabel: "Ağı aç", danger: false, net: n,
+      done: (p) => `${n.iface} açıldı: UDP ${n.port} dinleniyor, cihazlar birkaç saniye içinde bağlanır` + confirmLater(p) });
     return;
   }
-  void act(() => setNetwork(n.iface, true), () => `${n.iface} açıldı: UDP ${n.port} dinleniyor, cihazlar birkaç saniye içinde bağlanır.`);
+  plan({ kind: "ag-kapat", title: `${n.iface} · ${labelOf(n)} kapatılsın mı?`, description: `UDP ${n.port} · ${n.subnet4} · Yalnız internet`,
+    request: wgRequest({ eylem: "ag-kapat", iface: n.iface }), applyLabel: "Ağı kapat", danger: false, net: n,
+    done: () => `${n.iface} kapatıldı: ${n.peers.length} cihazın bağlantısı kesildi.` });
 }
-const offOnline = computed(() => (askOff.value ? onlineCount(askOff.value, now.value) : 0));
-async function confirmOff(): Promise<void> {
-  const n = askOff.value;
-  if (!n) return;
-  if (await act(() => setNetwork(n.iface, false), () => `${n.iface} kapatıldı: ${n.peers.length} cihazın bağlantısı kesildi.`)) askOff.value = null;
-}
+const offOnline = computed(() => (action.value?.net ? onlineCount(action.value.net, now.value) : 0));
 
 function toggleDevice(n: WgNetwork, p: WgPeer, on: boolean): void {
   void act(() => setDevice(n.iface, p.name, on), () =>
@@ -269,6 +296,8 @@ type Panel =
   | { kind: "kaldir"; iface: string }
   | { kind: "ag-ekle" };
 const panel = ref<Panel | null>(null);
+/** A planned kind's settings request once its form is submitted (the sheet then shows the plan). */
+const panelRequest = ref<AyarIstegi | null>(null);
 const panelError = ref("");
 const tried = ref(false);
 const confirmed = ref(false);
@@ -287,6 +316,7 @@ const KEEPALIVES = [["0", "Kapalı"], ["21", "21 sn · önerilen"], ["25", "25 s
 
 function open(p: Panel): void {
   panelError.value = "";
+  panelRequest.value = null;
   tried.value = false;
   confirmed.value = false;
   error.value = "";
@@ -321,6 +351,7 @@ function open(p: Panel): void {
 function closePanel(): void {
   if (working.value) return;
   panel.value = null;
+  panelRequest.value = null;
 }
 
 const nameError = computed(() => {
@@ -336,9 +367,8 @@ const portError = computed(() => (state.value ? portProblem(state.value, fPort.v
 
 const canSave = computed(() => {
   const p = panel.value;
-  // The first network turns WireGuard on, even one stopped before its last network went.
-  const first = p?.kind === "ag-ekle" && !networks.value.length && !working.value;
-  if (!p || !(writable.value || first)) return false;
+  if (!p || !writable.value) return false;
+  if ((p.kind === "yeniden-uret" || p.kind === "kaldir" || p.kind === "ag-ekle") && planLocked.value) return false;
   switch (p.kind) {
     case "cihaz-ekle":
       return Boolean(fName.value.trim()) && !nameError.value && Boolean(fDns.value) && !kaError.value;
@@ -396,30 +426,43 @@ async function submit(): Promise<void> {
       await load();
       note.value = `${p.iface} ayarları kaydedildi. Mevcut anahtarlar ve cihaz profilleri korundu.`;
     } else if (p.kind === "yeniden-uret") {
-      const r = await regenerateNetwork(p.iface);
-      panel.value = null;
-      await load();
-      note.value = `${p.iface} yeniden üretildi: ${r.peers} cihaz silindi, yeni sunucu anahtarı etkin.`;
+      panelRequest.value = wgRequest({ eylem: "yeniden-uret", iface: p.iface, onay: "onayla" });
     } else if (p.kind === "kaldir") {
-      const port = netOf(p.iface)?.port;
-      const r = await removeNetwork(p.iface);
-      panel.value = null;
-      if (selected.value === p.iface) updateQuery(router, { ag: null });
-      await load();
-      note.value = `${p.iface} kaldırıldı: ${r.peers} cihaz silindi${port ? `, UDP ${port} kapandı` : ""}.`;
+      panelRequest.value = wgRequest({ eylem: "ag-kaldir", iface: p.iface, onay: "onayla" });
     } else if (p.kind === "ag-ekle") {
-      const port = Number(fPort.value.trim());
-      const r = await addNetwork(port, fDns.value, fLabel.value);
-      panel.value = null;
-      await load();
-      updateQuery(router, { ag: r.iface === ids.value[0] ? null : r.iface });
-      note.value = `${r.iface} oluşturuldu: UDP ${r.port || port} açık. Şimdi Cihaz ekle ile cihaz ekleyin.`;
+      const label = fLabel.value.trim();
+      panelRequest.value = wgRequest({ eylem: "ag-ekle", ag: { port: Number(fPort.value.trim()), dns: fDns.value, ...(label ? { label } : {}) } });
     }
   } catch (err) {
     panelError.value = err instanceof Error ? err.message : String(err);
     void load();
   } finally {
     working.value = false;
+  }
+}
+
+/** A planned kind applied: say what happened and show the networks as they are now. */
+async function panelApplied(result: AyarSonucu): Promise<void> {
+  const p = panel.value;
+  const before = ids.value;
+  const n = p && "iface" in p ? netOf(p.iface) : null;
+  panel.value = null;
+  panelRequest.value = null;
+  void refreshAccess();
+  if (!p) return;
+  const later = confirmLater(Boolean(result.pending));
+  if (p.kind === "kaldir") {
+    if (selected.value === p.iface) updateQuery(router, { ag: null });
+    await load();
+    note.value = `${p.iface} kaldırıldı: ${n?.peers.length ?? 0} cihaz silindi${n ? `, UDP ${n.port} kapandı` : ""}.`;
+  } else if (p.kind === "yeniden-uret") {
+    await load();
+    note.value = `${p.iface} yeniden üretildi: ${n?.peers.length ?? 0} cihaz silindi, yeni sunucu anahtarı etkin.`;
+  } else if (p.kind === "ag-ekle") {
+    await load();
+    const added = ids.value.find((id) => !before.includes(id));
+    if (added) updateQuery(router, { ag: added === ids.value[0] ? null : added });
+    note.value = `${added ?? "Ağ"} oluşturuldu: UDP ${fPort.value.trim()} açık${later === "." ? ". Şimdi Cihaz ekle ile cihaz ekleyin." : later}`;
   }
 }
 
@@ -442,15 +485,17 @@ const panelText = computed(() => {
     case "ag-ayar":
       return { title: `${p.iface} · ağ ayarları`, description: where, go: "Ayarları kaydet" };
     case "yeniden-uret":
-      return { title: `${p.iface} · ${n ? labelOf(n) : ""} yeniden üretilsin mi?`, description: where + " · Yalnız internet", go: "Yeniden üret" };
+      return { title: `${p.iface} · ${n ? labelOf(n) : ""} yeniden üretilsin mi?`, description: where + " · Yalnız internet", go: "İncele" };
     case "kaldir":
-      return { title: `${p.iface} · ${n ? labelOf(n) : ""} kaldırılsın mı?`, description: where + " · Yalnız internet", go: "Ağı kaldır" };
+      return { title: `${p.iface} · ${n ? labelOf(n) : ""} kaldırılsın mı?`, description: where + " · Yalnız internet", go: "İncele" };
     case "ag-ekle":
-      return { title: networks.value.length ? "Ağ ekle" : "WireGuard'ı aç", description: networks.value.length ? "Sıradaki boş ağ seçildi" : "İlk ağ WireGuard'ı açar", go: "Ağı oluştur" };
+      return { title: networks.value.length ? "Ağ ekle" : "WireGuard'ı aç", description: networks.value.length ? "Sıradaki boş ağ seçildi" : "İlk ağ WireGuard'ı açar", go: "İncele" };
   }
   return { title: "", description: "", go: "" };
 });
 const danger = computed(() => panel.value?.kind === "yeniden-uret" || panel.value?.kind === "kaldir");
+const APPLY_LABEL: Partial<Record<Panel["kind"], string>> = { "yeniden-uret": "Yeniden üret", kaldir: "Ağı kaldır", "ag-ekle": "Ağı oluştur" };
+const applyLabel = computed(() => (panel.value ? APPLY_LABEL[panel.value.kind] ?? "Uygula" : "Uygula"));
 const peerNames = computed(() => (panelNet.value?.peers ?? []).map((p) => p.name));
 const lastNetwork = computed(() => networks.value.length === 1);
 const addWill = computed(() => [
@@ -480,14 +525,18 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
     </section>
 
     <template v-else>
-      <div v-if="stopped && networks.length" class="notice notice-warning" role="note" data-testid="wg-stopped">
+      <div v-if="stopped" class="notice notice-warning" role="note" data-testid="wg-stopped">
         <Icon name="stop" class="notice-icon" />
         <div class="wg-stopped-text">
           <p class="notice-title">WireGuard durduruldu</p>
           <p class="notice-list">Cihazlar bağlanamaz; ağlar ve cihazlar değiştirilemez. Anahtarlar, cihazlar ve profiller duruyor. Başlatınca önceden açık olan ağlar geri gelir.</p>
         </div>
-        <button type="button" class="btn btn-primary btn-sm" :disabled="working" data-testid="wg-start" @click="start"><Icon name="play" :size="16" />Başlat</button>
+        <button type="button" class="btn btn-primary btn-sm" :disabled="working || planLocked" data-testid="wg-start" @click="start"><Icon name="play" :size="16" />Başlat</button>
       </div>
+      <p v-if="planLocked" class="notice" role="note" data-testid="wg-locked">
+        <Icon name="clock" class="notice-icon" />
+        <span>Bekleyen bir ayar değişikliği var; onaylanana ya da geri alınana kadar WireGuard başlatılamaz, durdurulamaz, ağ eklenemez ya da değiştirilemez.</span>
+      </p>
       <p v-if="loadError" class="form-error" role="alert" data-testid="wg-load-error">{{ loadError }}</p>
       <p class="sr-only" role="status">{{ note }}</p>
       <div v-if="note" class="action-line" data-testid="wg-note">
@@ -504,7 +553,7 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
               <li><Icon name="lock" :size="18" /><span>Cihazlar yalnız internete çıkar; sunucu servislerine ve diğer ağlara erişemez.</span></li>
               <li><Icon name="plus" :size="18" /><span>Kurduktan sonra cihaz eklersiniz; QR hemen hazır olur.</span></li>
             </ul>
-            <button type="button" class="btn btn-primary" :disabled="working" data-testid="wg-setup" @click="open({ kind: 'ag-ekle' })"><Icon name="power" :size="18" />Aç</button>
+            <button type="button" class="btn btn-primary" :disabled="!writable || planLocked" data-testid="wg-setup" @click="open({ kind: 'ag-ekle' })"><Icon name="power" :size="18" />Aç</button>
           </EmptyState>
         </section>
 
@@ -513,7 +562,7 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
             <button
               type="button"
               class="btn btn-secondary btn-sm"
-              :disabled="next === null || !writable"
+              :disabled="next === null || !writable || planLocked"
               :aria-describedby="next === null ? 'wg-sinir' : undefined"
               data-testid="wg-add-net"
               @click="open({ kind: 'ag-ekle' })"
@@ -521,7 +570,7 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
               <Icon name="plus" :size="16" />Ağ ekle
             </button>
             <span v-if="next === null" id="wg-sinir" class="meter-note">En çok {{ state.max }} ağ</span>
-            <button v-if="!stopped" type="button" class="btn btn-secondary btn-sm" :disabled="working" data-testid="wg-stop" @click="openStop">
+            <button v-if="!stopped" type="button" class="btn btn-secondary btn-sm" :disabled="working || planLocked" data-testid="wg-stop" @click="openStop">
               <Icon name="stop" :size="16" />Durdur
             </button>
           </template>
@@ -536,7 +585,7 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
                   <Switch
                     :model-value="current.active"
                     :label="`${current.iface} ağı açık`"
-                    :disabled="!writable"
+                    :disabled="!writable || planLocked"
                     data-testid="wg-net-switch"
                     @update:model-value="toggleNetwork(current, $event)"
                   />
@@ -548,7 +597,7 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
               <div v-if="!current.active" class="notice" role="note" data-testid="wg-off">
                 <Icon name="power" class="notice-icon" />
                 <span><strong>{{ current.iface }} kapalı.</strong> Cihazlar bağlanamaz. Anahtarlar, cihazlar ve profiller duruyor; açınca kendiliğinden bağlanırlar.</span>
-                <button type="button" class="btn btn-primary btn-sm" :disabled="!writable" @click="toggleNetwork(current, true)">Ağı aç</button>
+                <button type="button" class="btn btn-primary btn-sm" :disabled="!writable || planLocked" data-testid="wg-net-open" @click="toggleNetwork(current, true)">Ağı aç</button>
               </div>
               <dl class="wg-summary" data-testid="wg-summary">
                 <div><dt>Bağlı</dt><dd>{{ summary(current).connected }}</dd></div>
@@ -613,126 +662,127 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
       </section>
     </template>
 
-    <!-- the one side panel -->
-    <Modal :open="panel !== null" variant="sheet" :title="panelText.title" :description="panelText.description" @close="closePanel">
-      <form id="wg-form" class="form-stack" novalidate @submit.prevent="submit">
-        <template v-if="panel?.kind === 'cihaz-ekle'">
-          <Field v-slot="{ id, describedby, invalid }" label="Cihaz adı" hint="Profil dosyasının adı da bu olur." :error="nameError">
-            <input :id="id" v-model="fName" class="input" type="text" maxlength="32" autocomplete="off" spellcheck="false" placeholder="ör. iphone, macbook, tv-salon"
-              :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-autofocus />
-          </Field>
-          <DnsChoice v-model="fDns" label="DNS sunucuları" :badge="addBadge" />
-        </template>
-        <template v-if="panel?.kind === 'cihaz'">
-          <DnsChoice v-model="fDns" label="DNS sunucuları" :badge="editBadge" />
-        </template>
-        <template v-if="panel?.kind === 'cihaz-ekle' || panel?.kind === 'cihaz'">
-          <Field v-slot="{ id, describedby, invalid }" label="PersistentKeepalive (saniye)" hint="Cihaz boştayken bağlantıyı açık tutmak için kaç saniyede bir paket yollasın. 0 = kapalı; mobil ağlarda 21 önerilir." :error="kaError">
-            <div class="ka-row">
-              <input :id="id" v-model="fKa" class="input ka-input" type="text" inputmode="numeric" maxlength="5" autocomplete="off"
+    <!-- the one side panel: a form; for a planned kind, the settings plan after it -->
+    <SettingsPlanSheet
+      :open="panel !== null"
+      :title="panelText.title"
+      :description="panelText.description"
+      :request="panelRequest"
+      :apply-label="applyLabel"
+      :danger="danger"
+      :review-label="working ? 'Gönderiliyor…' : panelText.go"
+      :can-review="canSave && !working"
+      form="wg-form"
+      @close="closePanel"
+      @back="panelRequest = null"
+      @applied="panelApplied"
+    >
+      <template #form>
+        <form id="wg-form" class="form-stack" novalidate @submit.prevent="submit">
+          <template v-if="panel?.kind === 'cihaz-ekle'">
+            <Field v-slot="{ id, describedby, invalid }" label="Cihaz adı" hint="Profil dosyasının adı da bu olur." :error="nameError">
+              <input :id="id" v-model="fName" class="input" type="text" maxlength="32" autocomplete="off" spellcheck="false" placeholder="ör. iphone, macbook, tv-salon"
+                :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-autofocus />
+            </Field>
+            <DnsChoice v-model="fDns" label="DNS sunucuları" :badge="addBadge" />
+          </template>
+          <template v-if="panel?.kind === 'cihaz'">
+            <DnsChoice v-model="fDns" label="DNS sunucuları" :badge="editBadge" />
+          </template>
+          <template v-if="panel?.kind === 'cihaz-ekle' || panel?.kind === 'cihaz'">
+            <Field v-slot="{ id, describedby, invalid }" label="PersistentKeepalive (saniye)" hint="Cihaz boştayken bağlantıyı açık tutmak için kaç saniyede bir paket yollasın. 0 = kapalı; mobil ağlarda 21 önerilir." :error="kaError">
+              <div class="ka-row">
+                <input :id="id" v-model="fKa" class="input ka-input" type="text" inputmode="numeric" maxlength="5" autocomplete="off"
+                  :aria-describedby="describedby" :aria-invalid="invalid || undefined" />
+                <span class="choice-chips" role="group" aria-label="Hazır değerler">
+                  <button v-for="[value, text] in KEEPALIVES" :key="value" type="button" class="filter-chip" :aria-pressed="fKa.trim() === value" @click="fKa = value">{{ text }}</button>
+                </span>
+              </div>
+            </Field>
+            <p v-if="panel?.kind === 'cihaz-ekle'" class="meter-note">MTU {{ state?.defaults.mtu || 1420 }} · anahtarlar sunucuda üretilir; QR eklenince açılır.</p>
+            <p v-else class="notice" role="note"><Icon name="info" class="notice-icon" /><span>Anahtar ve adres değişmez. Kaydedince cihazda yeni QR'ı okutun: eski tüneli silip yenisini ekleyin.</span></p>
+          </template>
+
+          <template v-if="panel?.kind === 'ag-ayar' && panelNet">
+            <Field v-slot="{ id, describedby, invalid }" label="Ağın adı" hint="Yalnız Konsol'da görünür; boş bırakılabilir." :error="labelError">
+              <input :id="id" v-model="fLabel" class="input" type="text" maxlength="64" autocomplete="off" :placeholder="panelNet.iface === 'wg0' ? 'Ana ağ' : 'ör. Misafir, İş'"
+                :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-autofocus />
+            </Field>
+            <DnsChoice v-model="fDns" label="Varsayılan DNS" :badge="netBadge" />
+            <p class="meter-note">Varsayılan DNS yalnız yeni eklenecek cihazlara önerilir; mevcut cihazların DNS'i ve QR/profili değişmez. Kaydetmek anahtarları, cihazları, portu ve adresleri değiştirmez; kapalı bir ağı başlatmaz.</p>
+            <div class="danger-zone">
+              <p class="meter-note">Yeniden üretmek bütün cihaz profillerini siler ve sunucu anahtarını değiştirir; kaldırmak ağı ve cihazlarını siler.</p>
+              <div class="row-actions">
+                <button type="button" class="btn btn-danger-quiet btn-sm" :disabled="!writable || planLocked" data-testid="wg-regen" @click="open({ kind: 'yeniden-uret', iface: panelNet.iface })"><Icon name="refresh" :size="16" />Anahtarı yeniden üret…</button>
+                <button type="button" class="btn btn-danger-quiet btn-sm" :disabled="!writable || planLocked" data-testid="wg-remove" @click="open({ kind: 'kaldir', iface: panelNet.iface })"><Icon name="trash" :size="16" />Ağı kaldır…</button>
+              </div>
+            </div>
+          </template>
+
+          <template v-if="panel?.kind === 'yeniden-uret' && panelNet">
+            <ul class="modal-list">
+              <li><Icon name="refresh" :size="18" /><span>Yeni sunucu anahtarı üretilir; port, adresler ve erişim aynı kalır.</span></li>
+              <li><Icon name="shield" :size="18" /><span>{{ peerNames.length ? `${peerNames.length} cihazın profili ve QR kodu silinir (${peerNames.join(", ")}); eski profillerle bağlanılamaz.` : "Bu ağda cihaz yok." }}</span></li>
+              <li><Icon name="plus" :size="18" /><span>Cihazları Cihaz ekle ile yeniden eklemek gerekir. Geri alınamaz.</span></li>
+            </ul>
+            <ConfirmWord v-model:confirmed="confirmed" />
+          </template>
+
+          <template v-if="panel?.kind === 'kaldir' && panelNet">
+            <ul class="modal-list">
+              <li><Icon name="shield" :size="18" /><span>{{ peerNames.length ? `${peerNames.length} cihazın bağlantısı kesilir; profilleri ve QR kodları silinir (${peerNames.join(", ")}).` : "Bu ağda cihaz yok." }}</span></li>
+              <li><Icon name="lock" :size="18" /><span>UDP {{ panelNet.port }} kapanır; bu ağın güvenlik duvarı kuralları kaldırılır.</span></li>
+              <li><Icon name="trash" :size="18" /><span>Sunucu anahtarı silinir. Geri alınamaz; aynı ağ yeniden eklenirse cihazlara yeni profil gerekir.</span></li>
+              <li v-if="lastNetwork" data-testid="wg-last"><Icon name="alert" :size="18" /><span>Bu son ağ: kaldırınca WireGuard kapalı duruma döner; yeniden Aç ile ilk ağı kurarsınız.</span></li>
+            </ul>
+            <ConfirmWord v-model:confirmed="confirmed" />
+          </template>
+
+          <template v-if="panel?.kind === 'ag-ekle' && fIndex !== null">
+            <p class="wg-ident" data-testid="wg-ident">
+              <strong>wg{{ fIndex }}</strong><span class="mono">10.8.{{ fIndex }}.0/24</span><span class="mono">sunucu 10.8.{{ fIndex }}.1</span><span>Yalnız internet</span>
+            </p>
+            <Field v-slot="{ id, describedby, invalid }" label="Ağın adı" optional hint="Yalnız Konsol'da görünür." :error="labelError">
+              <input :id="id" v-model="fLabel" class="input" type="text" maxlength="64" autocomplete="off" placeholder="ör. Misafir, İş"
+                :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-autofocus />
+            </Field>
+            <Field v-slot="{ id, describedby, invalid }" label="UDP portu" hint="1024–65535; kullanılmayan bir port." :error="portError">
+              <input :id="id" v-model="fPort" class="input" type="text" inputmode="numeric" maxlength="5" autocomplete="off"
                 :aria-describedby="describedby" :aria-invalid="invalid || undefined" />
-              <span class="choice-chips" role="group" aria-label="Hazır değerler">
-                <button v-for="[value, text] in KEEPALIVES" :key="value" type="button" class="filter-chip" :aria-pressed="fKa.trim() === value" @click="fKa = value">{{ text }}</button>
-              </span>
-            </div>
-          </Field>
-          <p v-if="panel?.kind === 'cihaz-ekle'" class="meter-note">MTU {{ state?.defaults.mtu || 1420 }} · anahtarlar sunucuda üretilir; QR eklenince açılır.</p>
-          <p v-else class="notice" role="note"><Icon name="info" class="notice-icon" /><span>Anahtar ve adres değişmez. Kaydedince cihazda yeni QR'ı okutun: eski tüneli silip yenisini ekleyin.</span></p>
-        </template>
-
-        <template v-if="panel?.kind === 'ag-ayar' && panelNet">
-          <Field v-slot="{ id, describedby, invalid }" label="Ağın adı" hint="Yalnız Konsol'da görünür; boş bırakılabilir." :error="labelError">
-            <input :id="id" v-model="fLabel" class="input" type="text" maxlength="64" autocomplete="off" :placeholder="panelNet.iface === 'wg0' ? 'Ana ağ' : 'ör. Misafir, İş'"
-              :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-autofocus />
-          </Field>
-          <DnsChoice v-model="fDns" label="Varsayılan DNS" :badge="netBadge" />
-          <p class="meter-note">Varsayılan DNS yalnız yeni eklenecek cihazlara önerilir; mevcut cihazların DNS'i ve QR/profili değişmez. Kaydetmek anahtarları, cihazları, portu ve adresleri değiştirmez; kapalı bir ağı başlatmaz.</p>
-          <div class="danger-zone">
-            <p class="meter-note">Yeniden üretmek bütün cihaz profillerini siler ve sunucu anahtarını değiştirir; kaldırmak ağı ve cihazlarını siler.</p>
-            <div class="row-actions">
-              <button type="button" class="btn btn-danger-quiet btn-sm" :disabled="!writable" data-testid="wg-regen" @click="open({ kind: 'yeniden-uret', iface: panelNet.iface })"><Icon name="refresh" :size="16" />Anahtarı yeniden üret…</button>
-              <button type="button" class="btn btn-danger-quiet btn-sm" :disabled="!writable" data-testid="wg-remove" @click="open({ kind: 'kaldir', iface: panelNet.iface })"><Icon name="trash" :size="16" />Ağı kaldır…</button>
-            </div>
-          </div>
-        </template>
-
-        <template v-if="panel?.kind === 'yeniden-uret' && panelNet">
-          <ul class="modal-list">
-            <li><Icon name="refresh" :size="18" /><span>Yeni sunucu anahtarı üretilir; port, adresler ve erişim aynı kalır.</span></li>
-            <li><Icon name="shield" :size="18" /><span>{{ peerNames.length ? `${peerNames.length} cihazın profili ve QR kodu silinir (${peerNames.join(", ")}); eski profillerle bağlanılamaz.` : "Bu ağda cihaz yok." }}</span></li>
-            <li><Icon name="plus" :size="18" /><span>Cihazları Cihaz ekle ile yeniden eklemek gerekir. Geri alınamaz.</span></li>
-          </ul>
-          <ConfirmWord v-model:confirmed="confirmed" />
-        </template>
-
-        <template v-if="panel?.kind === 'kaldir' && panelNet">
-          <ul class="modal-list">
-            <li><Icon name="shield" :size="18" /><span>{{ peerNames.length ? `${peerNames.length} cihazın bağlantısı kesilir; profilleri ve QR kodları silinir (${peerNames.join(", ")}).` : "Bu ağda cihaz yok." }}</span></li>
-            <li><Icon name="lock" :size="18" /><span>UDP {{ panelNet.port }} kapanır; bu ağın güvenlik duvarı kuralları kaldırılır.</span></li>
-            <li><Icon name="trash" :size="18" /><span>Sunucu anahtarı silinir. Geri alınamaz; aynı ağ yeniden eklenirse cihazlara yeni profil gerekir.</span></li>
-            <li v-if="lastNetwork" data-testid="wg-last"><Icon name="alert" :size="18" /><span>Bu son ağ: kaldırınca WireGuard kapalı duruma döner; yeniden Aç ile ilk ağı kurarsınız.</span></li>
-          </ul>
-          <ConfirmWord v-model:confirmed="confirmed" />
-        </template>
-
-        <template v-if="panel?.kind === 'ag-ekle' && fIndex !== null">
-          <p class="wg-ident" data-testid="wg-ident">
-            <strong>wg{{ fIndex }}</strong><span class="mono">10.8.{{ fIndex }}.0/24</span><span class="mono">sunucu 10.8.{{ fIndex }}.1</span><span>Yalnız internet</span>
-          </p>
-          <Field v-slot="{ id, describedby, invalid }" label="Ağın adı" optional hint="Yalnız Konsol'da görünür." :error="labelError">
-            <input :id="id" v-model="fLabel" class="input" type="text" maxlength="64" autocomplete="off" placeholder="ör. Misafir, İş"
-              :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-autofocus />
-          </Field>
-          <Field v-slot="{ id, describedby, invalid }" label="UDP portu" hint="1024–65535; kullanılmayan bir port." :error="portError">
-            <input :id="id" v-model="fPort" class="input" type="text" inputmode="numeric" maxlength="5" autocomplete="off"
-              :aria-describedby="describedby" :aria-invalid="invalid || undefined" />
-          </Field>
-          <DnsChoice v-model="fDns" label="Varsayılan DNS" :badge="newBadge" />
-          <ul class="modal-list">
-            <li v-for="(w, i) in addWill" :key="i"><Icon name="check" :size="18" /><span>{{ w }}</span></li>
-          </ul>
-          <p class="notice" role="note"><Icon name="info" class="notice-icon" /><span>Cihazlar yalnız internete çıkar; sunucu servisleri, özel ağlar ve diğer cihazlar erişime kapalıdır.</span></p>
-        </template>
-        <p v-if="panelError" class="form-error" role="alert" data-testid="panel-error">{{ panelError }}</p>
-      </form>
-      <template #actions>
-        <button type="button" class="btn btn-secondary" :disabled="working" @click="closePanel">Vazgeç</button>
-        <button type="submit" form="wg-form" class="btn" :class="danger ? 'btn-danger' : 'btn-primary'" :disabled="!canSave || working" data-testid="panel-go">
-          {{ working ? "Gönderiliyor…" : panelText.go }}
-        </button>
+            </Field>
+            <DnsChoice v-model="fDns" label="Varsayılan DNS" :badge="newBadge" />
+            <ul class="modal-list">
+              <li v-for="(w, i) in addWill" :key="i"><Icon name="check" :size="18" /><span>{{ w }}</span></li>
+            </ul>
+            <p class="notice" role="note"><Icon name="info" class="notice-icon" /><span>Cihazlar yalnız internete çıkar; sunucu servisleri, özel ağlar ve diğer cihazlar erişime kapalıdır.</span></p>
+          </template>
+          <p v-if="panelError" class="form-error" role="alert" data-testid="panel-error">{{ panelError }}</p>
+        </form>
       </template>
-    </Modal>
+    </SettingsPlanSheet>
 
-    <!-- stopping WireGuard as a whole -->
-    <Modal :open="askStop" title="WireGuard durdurulsun mu?" :description="`${networks.length} ağ · ${online} cihaz bağlı`" @close="closeStop">
-      <ul class="modal-list">
+    <!-- Başlat, Durdur, a network opened or closed: the settings plan -->
+    <SettingsPlanSheet
+      :open="action !== null"
+      :title="action?.title ?? ''"
+      :description="action?.description"
+      :request="action?.request ?? null"
+      :apply-label="action?.applyLabel"
+      :danger="action?.danger"
+      @close="action = null"
+      @applied="actionApplied"
+    >
+      <ul v-if="action?.kind === 'durdur'" class="modal-list" data-testid="wg-action-list">
         <li><Icon name="stop" :size="18" /><span>Bütün ağlar kapanır, UDP portları ve yönlendirme kalkar; cihazlar bağlanamaz.</span></li>
         <li><Icon name="refresh" :size="18" /><span>Başlatınca önceden açık olan ağlar geri gelir.</span></li>
         <li><Icon name="lock" :size="18" /><span>Anahtarlar, cihazlar ve profiller silinmez. Sunucu yeniden başlasa da durdurulmuş kalır.</span></li>
       </ul>
-      <ConfirmWord v-model:confirmed="stopConfirmed" />
-      <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-      <template #actions>
-        <button type="button" class="btn btn-secondary" :disabled="working" @click="closeStop">Vazgeç</button>
-        <button type="button" class="btn btn-danger" :disabled="!stopConfirmed || working" data-onay="durdur" @click="confirmStop">
-          {{ working ? "Gönderiliyor…" : "Durdur" }}
-        </button>
-      </template>
-    </Modal>
-
-    <!-- turning a network off -->
-    <Modal :open="askOff !== null" :title="askOff ? `${askOff.iface} · ${labelOf(askOff)} kapatılsın mı?` : ''" :description="askOff ? `UDP ${askOff.port} · ${askOff.subnet4} · Yalnız internet` : ''" @close="askOff = null">
-      <ul v-if="askOff" class="modal-list">
-        <li><Icon name="shield" :size="18" /><span>{{ offOnline ? `${offOnline} bağlı cihazın bağlantısı hemen kesilir; ${askOff.peers.length} cihazın hiçbiri bağlanamaz.` : `Bu ağdaki ${askOff.peers.length} cihaz bağlanamaz.` }}</span></li>
+      <ul v-else-if="action?.kind === 'ag-kapat' && action.net" class="modal-list" data-testid="wg-action-list">
+        <li><Icon name="shield" :size="18" /><span>{{ offOnline ? `${offOnline} bağlı cihazın bağlantısı hemen kesilir; ${action.net.peers.length} cihazın hiçbiri bağlanamaz.` : `Bu ağdaki ${action.net.peers.length} cihaz bağlanamaz.` }}</span></li>
         <li><Icon name="lock" :size="18" /><span>Ağ durdurulur; açınca aynı anahtar ve adreslerle geri gelir.</span></li>
         <li><Icon name="refresh" :size="18" /><span>Anahtar, cihazlar ve profiller silinmez. Sunucu yeniden başlasa da kapalı kalır.</span></li>
       </ul>
-      <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-      <template #actions>
-        <button type="button" class="btn btn-secondary" data-autofocus :disabled="working" @click="askOff = null">Vazgeç</button>
-        <button type="button" class="btn btn-primary" :disabled="working" data-onay="kapat" @click="confirmOff">Ağı kapat</button>
-      </template>
-    </Modal>
+    </SettingsPlanSheet>
 
     <!-- deleting a device -->
     <Modal :open="askDelete !== null" :title="askDelete ? `“${askDelete.p.name}” silinsin mi?` : ''" :description="askDelete ? `${askDelete.n.iface} · ${askDelete.p.ipv4} · ${askDelete.p.ipv6}` : ''" @close="askDelete = null">

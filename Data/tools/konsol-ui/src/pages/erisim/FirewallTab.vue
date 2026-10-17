@@ -1,11 +1,13 @@
 <!-- Erişim → Güvenlik duvarı: the check, the incoming networks as tabs (?kapsam=: İnternet, Tailscale,
      WireGuard, Sunucu içi) and the address family (?aile=6). Rows are the base's ports (`portlar`) merged
      with the operator's rules: port, protocol, name, whether something listens, the saved or draft state and
-     the allow/deny switch (locked for the server's own ports and container publications). "+ Port kuralı" adds a rule. Edits are a draft →
+     the allow/deny switch (locked for the server's own ports and for an application's raw and Tailscale ports, whose
+     row in Erişim → Adresler they link to: "Uygulama erişimi"). "+ Port kuralı" adds a rule. Edits are a draft →
      "İncele" → the plan → "Uygula" → the pending banner's 60 s confirmation. "Teknik kurallar" (?kurallar=1)
      shows the live iptables rows with their counters and owners, and the listeners. -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import { RouterLink } from "vue-router";
 import { Icon } from "../../components/icons";
 import EmptyState from "../../components/ui/EmptyState.vue";
 import Field from "../../components/ui/Field.vue";
@@ -16,6 +18,7 @@ import Tabs from "../../components/ui/Tabs.vue";
 import SettingsPlanSheet from "./SettingsPlanSheet.vue";
 import { readFirewall } from "../../api/erisim";
 import { live } from "../../live";
+import { accessRoute } from "../../sections";
 import { useLeaveGuard } from "../../leave";
 import { useQueryFlag, useQueryParam } from "../../query";
 import type { AyarIstegi, GuvenlikDuvari, KuralTaslagi } from "../../api/sema";
@@ -92,19 +95,21 @@ interface Row {
   port: number;
   rule: KuralTaslagi | null;
   fixed: boolean;
+  /** A fixed row's access row (an application's raw or Tailscale port). */
+  satir: string | null;
 }
 
 const allRows = computed<Row[]>(() => {
   const out: Row[] = (fw.value?.portlar ?? []).map((k, i) => ({
-    key: `k${i}`, name: k.ad, family: k.aile, scope: k.kapsam, proto: k.proto, port: k.port, rule: null, fixed: k.sabit,
+    key: `k${i}`, name: k.ad, family: k.aile, scope: k.kapsam, proto: k.proto, port: k.port, rule: null, fixed: k.sabit, satir: k.satir,
   }));
   for (const r of rules.value) {
-    const found = out.find((x) => x.family === r.family && x.scope === r.scope && x.proto === r.proto && x.port === r.port && !x.rule && x.key.startsWith("k"));
+    const found = out.find((x) => x.family === r.family && x.scope === r.scope && x.proto === r.proto && x.port === r.port && !x.rule && !x.fixed && x.key.startsWith("k"));
     if (found && !r.source) {
       found.rule = r;
       continue;
     }
-    out.push({ key: "r:" + r.id, name: r.name, family: r.family, scope: r.scope, proto: r.proto, port: r.port, rule: r, fixed: false });
+    out.push({ key: "r:" + r.id, name: r.name, family: r.family, scope: r.scope, proto: r.proto, port: r.port, rule: r, fixed: false, satir: null });
   }
   return out;
 });
@@ -342,7 +347,8 @@ function onTechnical(event: Event): void {
                           @update:model-value="setAllow(r, $event)"
                         />
                         <span v-if="r.scope === 'lo'" class="cell-note">Sunucu içi · korunur</span>
-                        <span v-else-if="r.fixed" class="cell-note">Konteyner yayını · uygulamayla açılır, kapanır</span>
+                        <RouterLink v-else-if="r.fixed && r.satir" :to="accessRoute('adresler', r.satir)" class="cell-note" data-testid="fw-row-link">Uygulama erişimi</RouterLink>
+                        <span v-else-if="r.fixed" class="cell-note">Sabit · değiştirilemez</span>
                       </td>
                       <td class="col-act">
                         <span v-if="r.rule" class="row-actions">

@@ -1,6 +1,8 @@
 """WireGuard as a built-in (DD-271): master_wireguard behind the route table's /api/konsol/wireguard/*
 routes. Gates, path parameters, request shapes, the master-wg argument lines, audit lines, the stopped
-marker and the read for the other views; no real WireGuard, systemd or network changes."""
+marker and the read for the other views; no real WireGuard, systemd or network changes. DD-275: the
+access-changing actions are settings actions (their transaction is tested in test_settings.py); here
+their old routes answer 404 and the settings routes name them in the audit line."""
 import hashlib
 import json
 from pathlib import Path
@@ -66,9 +68,7 @@ class RouteTests(Fixture):
     def test_the_table_has_every_route_with_typed_shapes(self):
         routes = {r.name: r for r in master_api.ROUTES if r.path.startswith(API + "/")}
         self.assertEqual({(r.method, r.path[len(API):]) for r in routes.values()}, {
-            ("GET", "/state"), ("POST", "/durdur"), ("POST", "/baslat"), ("POST", "/nets"),
-            ("POST", "/nets/{iface}/remove"), ("POST", "/nets/{iface}/reset"), ("POST", "/nets/{iface}/peers"),
-            ("POST", "/nets/{iface}/durum"), ("POST", "/nets/{iface}/ayarlar"),
+            ("GET", "/state"), ("POST", "/nets/{iface}/peers"), ("POST", "/nets/{iface}/ayarlar"),
             ("POST", "/nets/{iface}/peers/{name}/remove"), ("POST", "/nets/{iface}/peers/{name}/dns"),
             ("POST", "/nets/{iface}/peers/{name}/keepalive"), ("POST", "/nets/{iface}/peers/{name}/durum"),
             ("GET", "/nets/{iface}/peers/{name}/profile"), ("GET", "/nets/{iface}/peers/{name}/qr.png")})
@@ -102,6 +102,12 @@ class RouteTests(Fixture):
         self.assertEqual((net["iface"], net["label"], net["active"], net["count"]), ("wg0", "Ev ağı", True, 1))
         self.assertEqual(net["revision"], hashlib.sha256(NET.encode()).hexdigest())
         self.assertEqual((net["peers"][0]["name"], net["peers"][0]["provider"], net["peers"][0]["online"]), ("phone", "Cloudflare", False))
+        # DD-275: the settings revision a planned action sends; "" without the settings keys (refused as stale).
+        self.assertEqual(answer["revizyon"], "")
+        with patch.object(self.p, "run_tool", side_effect=run), patch.object(panel.master_settings, "Manager") as manager:
+            manager.return_value.revision.return_value = "a" * 64
+            self.assertEqual(json.loads(self.call(API + "/state")[2])["revizyon"], "a" * 64)
+        manager.assert_called_once_with(str(self.state))
 
     def test_kurulu_is_false_only_when_master_wg_does_not_work(self):
         with patch.object(self.p, "run_tool", return_value=(127, "", "master-wg çalıştırılamadı")):
@@ -125,50 +131,31 @@ class RouteTests(Fixture):
         with patch.object(self.p, "run_tool", side_effect=AssertionError("must not run")):
             for headers in ({"X-Konsol": ""}, {"Host": "evil.test"}, {"Sec-Fetch-Site": "cross-site"}):
                 with self.subTest(headers=headers):
-                    self.assertEqual(self.call(API + "/nets/wg0/durum", {"on": True}, headers)[0], 403)
-            for path in ("/nets/notwg/durum", "/nets/wg0/peers/../durum", "/nets/wg0/unknown"):
+                    self.assertEqual(self.call(API + "/nets/wg0/peers/phone/durum", {"on": True}, headers)[0], 403)
+            for path in ("/nets/notwg/peers/phone/durum", "/nets/wg0/peers/../durum", "/nets/wg0/unknown"):
                 with self.subTest(path=path):
                     self.assertIn(self.call(API + path, {"on": True})[0], (400, 404))
 
+    def test_the_planned_actions_have_no_route_of_their_own(self):
+        """DD-275: starting, stopping, adding, removing, opening, closing and regenerating are settings
+        actions; their old paths are outside the table and answer 404 without running anything."""
+        removed = ((API + "/durdur", {}), (API + "/baslat", {}), (API + "/nets", {"port": 61020, "dns": "1.1.1.1"}),
+                   (API + "/nets/wg0/remove", {"confirm": "onayla"}), (API + "/nets/wg0/reset", {"confirm": "onayla"}),
+                   (API + "/nets/wg0/durum", {"on": True}))
+        with patch.object(self.p, "run_tool", side_effect=AssertionError("must not run")), \
+                patch.object(self.p, "settings_run", side_effect=AssertionError("must not run")):
+            for path, data in removed:
+                with self.subTest(path=path):
+                    self.assertEqual(master_api.match("POST", path), (None, None))
+                    self.assertEqual(self.call(path, data)[0], 404)
+        for name in ("halt_all", "resume", "add_network", "remove_network", "switch_network", "reset_network"):
+            self.assertFalse(hasattr(master_wireguard.WireGuard, name), name)
+        for name in ("WireGuardCalismasi", "WireGuardAgEklendi", "WireGuardAgKaldirildi", "WireGuardAgDurumu",
+                     "WireGuardYenidenUretildi", "Onay"):
+            self.assertNotIn(name, master_api.SCHEMAS)
+
 
 class NetworkTests(Fixture):
-    def test_a_network_is_created_with_a_numeric_port_and_no_access_option(self):
-        self.p.settings_cache = (1, {"old": True})
-        with patch.object(self.p, "run_tool", return_value=(0, "wg1\t61020\n", "")) as run, patch("builtins.print") as out:
-            self.assertEqual(self.post("/nets", {"port": 61020, "dns": "1.1.1.1", "label": "Yeni"}), (201, {"iface": "wg1", "port": 61020}))
-        self.assertEqual(self.calls(run), [[self.tool, "net-add", "61020", "1.1.1.1", "Yeni"]])
-        self.assertEqual(self.p.settings_cache, (0, None), "the firewall and port views list the new network at once")
-        self.assertTrue(any(" wireguard-ag-ekle wg1 -> ok" in str(c.args[0]) for c in out.call_args_list))
-        with patch.object(self.p, "run_tool", side_effect=AssertionError("must not run")):
-            for bad in ({"port": "61020", "dns": "1.1.1.1"}, {"port": 61020, "dns": "1.1.1.1", "scope": "inet"},
-                        {"port": 61020}, {"port": 0, "dns": "1.1.1.1"}, {"port": 70000, "dns": "1.1.1.1"}, {"port": 61020, "dns": " "}):
-                with self.subTest(bad=bad):
-                    self.assertEqual(self.post("/nets", bad)[0], 400)
-
-    def test_remove_and_reset_need_the_typed_word(self):
-        with patch.object(self.p, "run_tool", return_value=(0, "wg0\t3\n", "")) as run:
-            self.assertEqual(self.post("/nets/wg0/remove", {"confirm": "onayla"}), (200, {"iface": "wg0", "peers": 3}))
-            self.assertEqual(self.calls(run), [[self.tool, "net-remove", "wg0", "--onay"]])
-            run.reset_mock()
-            run.return_value = (0, "2\t2\n", "")
-            self.assertEqual(self.post("/nets/wg0/reset", {"confirm": " ONAYLA "}), (200, {"peers": 2, "profiles": 2}))
-            self.assertEqual(self.calls(run), [[self.tool, "--if", "wg0", "reset", "--onay"]])
-            run.reset_mock()
-            for path in ("/nets/wg0/remove", "/nets/wg0/reset"):
-                status, answer = self.post(path, {"confirm": "evet"})
-                self.assertEqual(status, 400)
-                self.assertIn("onayla", answer["error"])
-                self.assertEqual(self.post(path, {})[0], 400)
-            run.assert_not_called()
-
-    def test_a_network_switches_on_and_off(self):
-        with patch.object(self.p, "run_tool", return_value=(0, "wg0\t0\n", "")) as run, patch("builtins.print") as out:
-            self.assertEqual(self.post("/nets/wg0/durum", {"on": False}), (200, {"iface": "wg0", "active": False}))
-        self.assertEqual(self.calls(run), [[self.tool, "--if", "wg0", "net", "kapat"]])
-        self.assertTrue(any(" wireguard-ag-durum wg0 kapatıldı -> ok" in str(c.args[0]) for c in out.call_args_list))
-        with patch.object(self.p, "run_tool", side_effect=AssertionError("must not run")):
-            self.assertEqual(self.post("/nets/wg0/durum", {"on": "evet"})[0], 400)
-
     def test_settings_go_to_the_tool_once_with_the_revision(self):
         data = {"dns": "9.9.9.9, 2620:fe::fe", "revision": "a" * 64}
         self.p.settings_cache = (1, {"old": True})
@@ -254,28 +241,45 @@ class DeviceTests(Fixture):
             self.assertEqual(self.call(API + "/nets/wg0/peers/phone/profile")[0], 404)
 
 
-class StopStartTests(Fixture):
-    def test_durdur_and_baslat_call_master_wg_and_read_the_marker(self):
-        def stop(argv, **_kwargs):
-            self.stopped.write_text("wg0\n")
-            return 0, "", ""
-        self.p.settings_cache = (1, {"old": True})
-        with patch.object(self.p, "run_tool", side_effect=stop) as run, patch("builtins.print") as out:
-            self.assertEqual(self.post("/durdur", {}), (200, {"durduruldu": True}))
-        self.assertEqual(self.calls(run), [[self.tool, "durdur"]])
-        self.assertEqual(self.p.settings_cache, (0, None))
-        self.assertTrue(any(" wireguard-durdur WireGuard -> ok" in str(c.args[0]) for c in out.call_args_list))
+class SettingsActionTests(Fixture):
+    """DD-275: the WireGuard section reaches the settings routes with its shape checked, and the audit line
+    names the action (the request's on apply, the pending change's on confirm, rollback and discard)."""
 
-        def start(argv, **_kwargs):
-            self.stopped.unlink()
-            return 0, "", ""
-        with patch.object(self.p, "run_tool", side_effect=start) as run:
-            self.assertEqual(self.post("/baslat", {}), (200, {"durduruldu": False}))
-        self.assertEqual(self.calls(run), [[self.tool, "baslat"]])
-        with patch.object(self.p, "run_tool", return_value=(1, "", "güvenlik duvarı uygulanamadı")):
-            self.assertEqual(self.post("/baslat", {}), (400, {"error": "güvenlik duvarı uygulanamadı"}))
-        with patch.object(self.p, "run_tool", side_effect=AssertionError("must not run")):
-            self.assertEqual(self.post("/durdur", {"x": 1})[0], 400)
+    def settings_post(self, path, data):
+        status, _head, raw = self.call("/api/konsol/ayarlar/" + path, data)
+        return status, json.loads(raw)
+
+    def test_the_audit_line_names_the_wireguard_action(self):
+        with patch.object(self.p, "settings_run", return_value=(200, {"pending": None, "committed": True})) as run, \
+                patch("builtins.print") as out:
+            body = {"revision": "r", "wireguard": {"eylem": "ag-kaldir", "iface": "wg0", "onay": "onayla"}}
+            self.assertEqual(self.settings_post("uygula", body)[0], 200)
+            self.assertEqual(run.call_args.args, ("apply", body))
+            self.settings_post("uygula", {"revision": "r", "wireguard": {"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1"}}})
+            self.settings_post("uygula", {"revision": "r", "firewall": []})
+        lines = [str(c.args[0]) for c in out.call_args_list if " ayar-apply " in str(c.args[0])]
+        self.assertEqual([line.split(" ayar-apply ", 1)[1] for line in lines],
+                         ["wireguard ag-kaldir wg0 -> ok", "wireguard ag-ekle UDP 61020 -> ok", "ayarlar -> ok"])
+        pending = {"bekleyen": {"id": "a" * 32, "phase": "awaiting", "seconds": 40, "wireguard": {"eylem": "ag-ekle", "iface": "wg1"}}}
+        with patch.object(self.p, "settings_run", return_value=(400, {"error": "x"})), patch.object(self.p, "pending", return_value=pending), \
+                patch("builtins.print") as out:
+            self.settings_post("geri-al", {"id": "a" * 32})
+        self.assertTrue(any(" ayar-rollback wireguard ag-ekle wg1 -> hata" in str(c.args[0]) for c in out.call_args_list),
+                        out.call_args_list)
+
+    def test_the_section_shape_is_checked_before_the_worker(self):
+        with patch.object(self.p, "settings_run", side_effect=AssertionError("must not run")):
+            for item in ({"eylem": "sil"}, {"eylem": "baslat", "x": 1}, {"eylem": "ag-ekle", "ag": {"port": "61020", "dns": "1.1.1.1"}},
+                         {"eylem": "ag-kaldir", "iface": 0}, {"eylem": "ag-kaldir", "iface": "wg0", "onay": True}, {}):
+                with self.subTest(item=item):
+                    self.assertEqual(self.settings_post("uygula", {"revision": "r", "wireguard": item})[0], 400)
+
+    def test_a_stale_page_is_409(self):
+        stale = panel.master_settings.SettingsStale("Ayarlar değişmiş. Yenileyip yeniden inceleyin.")
+        with patch.object(panel.master_settings.Manager, "__init__", return_value=None), \
+                patch.object(panel.master_settings.Manager, "plan", side_effect=stale):
+            self.assertEqual(self.settings_post("plan", {"revision": "old", "wireguard": {"eylem": "durdur"}}),
+                             (409, {"error": "Ayarlar değişmiş. Yenileyip yeniden inceleyin."}))
 
 
 class ReadTests(Fixture):

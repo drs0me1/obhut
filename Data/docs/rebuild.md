@@ -196,8 +196,9 @@ number), plus the fixed rows of Konsol and Paylaşımlar.
   IPv4). Upstream is the application's `127.0.0.1` pool port.
 - **Raw port:** closed, Tailscale or internet (A2); carried by the container guard; shown locked in
   the firewall view with a link to its row.
-- All changes go through the settings plan; anything touching the internet or the firewall needs the
-  60 s confirmation; Konsol on the internet needs the typed word and an existing account (DD-195).
+- All changes go through the settings plan; a change that opens or widens access waits for the 60 s
+  confirmation, a change that only closes commits at once (the operator's decision, DD-275); Konsol on the
+  internet needs the typed word and an existing account (DD-195).
 
 ### 4.4 WireGuard as a built-in
 
@@ -312,13 +313,19 @@ Podman 4.9 refuses them before any write. The base installs `catatonit` for pods
 
 ### Phase 4: access rows
 
-- [ ] Row model keyed by application, container and port; Konsol and Paylaşımlar rows
-- [ ] Caddy rows from the inspector's answers; renamable Tailscale names
-- [ ] Tailscale port (K5) with its tailnet allow entries (DD-172 amended)
-- [ ] Raw ports through the container guard; locked rows in the firewall view
-- [ ] "Adres aç" for a port without an address; plan → apply → timed confirmation
-- [ ] WireGuard on/off and network regeneration through the settings plan (4.4)
-- [ ] `elle-*` rows, package rows and the Yayınla flow removed; the settings writer for the old
+Done in v2-258 (DD-275), live-verified on the test host on 2026-10-17 (an internet name was not issued live:
+it needs a domain whose A record points at the host). The operator's decisions: openings wait for the 60 s
+confirmation and closings commit at once; "Adres aç" restarts the service (raw ports are never published on
+loopback); a raw port's host number defaults to the container port; WireGuard's openings (on, a network added
+or opened) are plans with the timer, its closings commit at once, key regeneration needs the typed word.
+
+- [x] Row model keyed by application, container and port; Konsol and Paylaşımlar rows
+- [x] Caddy rows from the inspector's answers; renamable Tailscale names
+- [x] Tailscale port (K5) with its tailnet allow entries (DD-172 amended)
+- [x] Raw ports through the container guard; locked rows in the firewall view
+- [x] "Adres aç" for a port without an address; plan → apply → timed confirmation
+- [x] WireGuard on/off and network regeneration through the settings plan (4.4)
+- [x] `elle-*` rows, package rows and the Yayınla flow removed; the settings writer for the old
       WebDAV-only `https` key goes with them (it passes the route check only because `AyarIstegi` is an
       open object)
 

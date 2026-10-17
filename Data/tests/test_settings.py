@@ -22,7 +22,7 @@ settings = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(settings)
 
 
-class SettingsTests(unittest.TestCase):
+class Fixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="settings-test-")
         self.addCleanup(self.tmp.cleanup)
@@ -71,6 +71,8 @@ class SettingsTests(unittest.TestCase):
     def confirm(self):
         return self.m.confirm({"id": self.m.pending()["id"], "client": "100.64.0.9", "kanal": "tailscale"})
 
+
+class SettingsTests(Fixture):
     def test_defaults_and_no_secrets_in_status(self):
         s = self.m.status()
         self.assertEqual(s["config"], settings.DEFAULT)
@@ -575,6 +577,350 @@ class SettingsTests(unittest.TestCase):
         settings.save_json(self.m.config_path, {"domain": "ev;id"})
         with self.assertRaises(settings.SettingsError):
             settings.saved_domain(self.m.config_path)
+
+
+
+NET0 = "wg0\t61001\tinet\t10.8.0.1\t10.8.0.0/24\tfdcc::1\tfdcc::/112\t1.1.1.1\tEv ağı"
+NET1 = "wg1\t61020\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc::1:1\tfdcc::1:0/112\t9.9.9.9\t"
+# A network's private key: it must never reach the pending file.
+KEY = "PRIVATE" + "k" * 36 + "="
+
+
+class WireGuardSectionTests(Fixture):
+    """DD-275: WireGuard's access-changing actions through the settings transaction. master-wg is a fake
+    that changes the networks file, the stopped marker and the units the way the real tool does; the
+    units answer systemctl from self.units ([enabled, active])."""
+
+    def setUp(self):
+        super().setUp()
+        self.wgdir = self.root / "wireguard"
+        self.wgdir.mkdir(mode=0o700)
+        self.networks, self.marker = self.wgdir / "networks", self.wgdir / ".durduruldu"
+        extra = {"WG_NETWORKS_FILE": str(self.networks), "WG_STOPPED_FILE": str(self.marker), "WG_NETWORKS_MAX": "9",
+                 "WG_CONF_DIR": str(self.wgdir), "WG_ADDR_BASE4": "10.8", "SSH_PUBLIC_PORT": "22", "TAILSCALE_UDP_PORT": "41641",
+                 "SHARE_PORT": "61010", "FILES_PANEL_PORT": "61009"}
+        with self.state.open("a") as fh:
+            fh.write("".join(k + "=" + v + "\n" for k, v in extra.items()))
+        self.m = settings.Manager(self.state)
+        self.networks.write_text(NET0 + "\n")
+        (self.wgdir / "wg0.conf").write_text("[Interface]\nPrivateKey = %s\n" % KEY)
+        self.units = {"wg0": [True, True]}
+        self.tool_calls, self.tool_fail = [], None
+        self.original_tool = settings.Manager.wireguard_tool
+        patch.object(settings.Manager, "wireguard_tool", autospec=True, side_effect=self.fake_tool).start()
+
+    def fake_run(self, argv, **kwargs):
+        if argv[:1] == ["systemctl"] and argv[-1].startswith("wg-quick@"):
+            self.calls.append(argv)
+            unit = self.units.setdefault(argv[-1][len("wg-quick@"):-len(".service")], [False, False])
+            if argv[1] == "disable":
+                unit[:] = [False, False]
+            rc = {"is-enabled": 0 if unit[0] else 1, "is-active": 0 if unit[1] else 3}.get(argv[1], 0)
+            return subprocess.CompletedProcess(argv, rc, "", "")
+        return super().fake_run(argv, **kwargs)
+
+    def lines(self):
+        return self.networks.read_text().splitlines() if self.networks.exists() else []
+
+    def fake_tool(self, _manager, pending_id, *argv):
+        p = json.loads(self.m.pending_path.read_text())
+        self.tool_calls.append((list(argv), p["phase"], pending_id == p["id"]))
+        if self.tool_fail and self.tool_fail == list(argv):
+            return 1, "", "UDP 61020 sunucuda başka bir program tarafından dinleniyor"
+        out = ""
+        if argv == ("baslat",):
+            listed = self.marker.read_text().split()
+            self.marker.unlink()
+            for iface in listed:
+                self.units[iface] = [True, True]
+        elif argv == ("durdur",):
+            self.marker.write_text("".join(i + "\n" for i, u in sorted(self.units.items()) if u[0]))
+            for unit in self.units.values():
+                unit[:] = [False, False]
+        elif argv[0] == "net-add":
+            names = {line.split("\t")[0] for line in self.lines()}
+            iface = next("wg%d" % i for i in range(10) if "wg%d" % i not in names)
+            row = [iface, argv[1], "inet", "10.8.9.1", "10.8.9.0/24", "fdcc::9:1", "fdcc::9:0/112", argv[2], argv[3]]
+            self.networks.write_text("".join(line + "\n" for line in self.lines() + ["\t".join(row)]))
+            self.units[iface] = [True, True]
+            out = "%s\t%s\n" % (iface, argv[1])
+        elif argv[0] == "net-remove":
+            self.networks.write_text("".join(line + "\n" for line in self.lines() if not line.startswith(argv[1] + "\t")))
+            self.units[argv[1]] = [False, False]
+        elif argv[0] == "--if" and argv[2] == "net":
+            self.units[argv[1]] = [argv[3] == "ac"] * 2
+        return 0, out, ""
+
+    def wg(self, **item):
+        return self.payload(wireguard=item)
+
+    def files(self):
+        return {p: p.read_bytes() for p in sorted(self.root.rglob("*")) if p.is_file()}
+
+    def test_plan_items_and_the_window_of_every_action(self):
+        """Decision 4: an opening waits 60 s, a closing action commits at once. The plan writes nothing and
+        runs no tool; it only reads the units."""
+        cases = [({"eylem": "durdur"}, 0, [("kapat", "WireGuard", "çalışıyor", "durduruldu")], None),
+                 ({"eylem": "ag-kapat", "iface": "wg0"}, 0, [("kapat", "WireGuard ağı wg0 · Ev ağı", "açık", "kapalı")], None),
+                 ({"eylem": "ag-kaldir", "iface": "wg0", "onay": "onayla"}, 0,
+                  [("kaldir", "WireGuard ağı wg0 · Ev ağı", "UDP 61001 · açık", None), ("kapat", "WireGuard", "açık", "kapalı")], None),
+                 ({"eylem": "yeniden-uret", "iface": "wg0", "onay": "onayla"}, 0,
+                  [("degistir", "WireGuard ağı wg0 · Ev ağı · sunucu anahtarı", "mevcut anahtar", "yeni anahtar"),
+                   ("kaldir", "WireGuard ağı wg0 · Ev ağı · cihazlar", "bütün cihazlar ve profilleri", None)], None),
+                 ({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1 ,9.9.9.9", "label": " Misafir "}}, 60,
+                  [("ekle", "WireGuard ağı wg1 · Misafir", None, "UDP 61020 · 10.8.1.0/24 · DNS 1.1.1.1, 9.9.9.9")], None),
+                 ({"eylem": "ag-ac", "iface": "wg0"}, 60, [("ac", "WireGuard ağı wg0 · Ev ağı", "kapalı", "açık")], "closed"),
+                 ({"eylem": "baslat"}, 60, [("ac", "WireGuard", "durduruldu", "çalışıyor")], "stopped")]
+        for item, seconds, items, state in cases:
+            with self.subTest(item=item):
+                self.units = {"wg0": [False, False] if state else [True, True]}
+                if state == "stopped":
+                    self.marker.write_text("wg0\n")
+                before, self.calls = self.files(), []
+                plan = self.m.plan(self.wg(**item), client="100.64.0.9", kanal="tailscale")
+                self.assertEqual(self.files(), before, "the plan writes nothing")
+                self.assertEqual(self.tool_calls, [], "the plan runs no tool")
+                self.assertTrue(all(c[1] in ("is-enabled", "is-active") for c in self.calls), self.calls)
+                self.assertEqual(plan["onay_sn"], seconds)
+                self.assertEqual([(i["islem"], i["nesne"], i["once"], i["sonra"]) for i in plan["degisiklikler"]], items)
+                self.assertTrue(all(i["alan"] == "wireguard" for i in plan["degisiklikler"]))
+                self.assertTrue(plan["uygulanabilir"])
+                self.assertTrue(plan["etkiler"])
+                timed = [w for w in plan["uyarilar"] if "60 saniye" in w["metin"]]
+                self.assertEqual(bool(timed), bool(seconds))
+                self.marker.unlink(missing_ok=True)
+        # The effects say what opens and closes.
+        plan = self.m.plan(self.wg(eylem="durdur"))
+        self.assertIn("Güvenlik duvarı yeniden kurulur: WireGuard'ın UDP portları kapanır (61001); yönlendirme ve NAT kalkar.",
+                      plan["etkiler"])
+        self.networks.unlink()
+        (self.wgdir / "wg0.conf").unlink()
+        plan = self.m.plan(self.wg(eylem="ag-ekle", ag={"port": 61001, "dns": "1.1.1.1"}))
+        self.assertEqual([(i["islem"], i["nesne"]) for i in plan["degisiklikler"]], [("ac", "WireGuard"), ("ekle", "WireGuard ağı wg0")])
+        self.assertIn("Güvenlik duvarı yeniden kurulur: UDP 61001 internete açılır; yönlendirme ve NAT gelir.", plan["etkiler"])
+        # An opening is confirmed only over Tailscale.
+        self.assertFalse(self.m.plan(self.wg(eylem="ag-ekle", ag={"port": 61001, "dns": "1.1.1.1"}), kanal="internet")["uygulanabilir"])
+
+    def test_the_section_is_checked_with_master_wg_rules(self):
+        cases = [({"eylem": "sil"}, "eylemi geçersiz"), ({"eylem": "baslat", "iface": "wg0"}, "uyuşmuyor"),
+                 ({"eylem": "ag-ac"}, "uyuşmuyor"), ({"eylem": "durdur", "onay": "onayla"}, "uyuşmuyor"),
+                 ({"eylem": "ag-kapat", "iface": "wg0", "onay": "onayla"}, "uyuşmuyor"),
+                 ({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1"}, "iface": "wg1"}, "uyuşmuyor"),
+                 ({"eylem": "ag-kaldir", "iface": "wg0", "onay": True}, "metin olmalı"),
+                 ({"eylem": "ag-ac", "iface": "wg10"}, "Geçersiz arayüz"), ({"eylem": "ag-ac", "iface": "wg0\n"}, "Geçersiz arayüz"),
+                 ({"eylem": "ag-kaldir", "iface": "wg3"}, "'wg3' diye bir WireGuard ağı yok"),
+                 ({"eylem": "baslat"}, "zaten çalışıyor"), ({"eylem": "ag-ac", "iface": "wg0"}, "wg0 zaten açık"),
+                 ({"eylem": "ag-ekle", "ag": {"port": "61020", "dns": "1.1.1.1"}}, "1024-65535"),
+                 ({"eylem": "ag-ekle", "ag": {"port": True, "dns": "1.1.1.1"}}, "1024-65535"),
+                 ({"eylem": "ag-ekle", "ag": {"port": 80, "dns": "1.1.1.1"}}, "1024-65535"),
+                 ({"eylem": "ag-ekle", "ag": {"port": 61001, "dns": "1.1.1.1"}}, r"UDP 61001 kullanılıyor \(wg0\)"),
+                 ({"eylem": "ag-ekle", "ag": {"port": 41641, "dns": "1.1.1.1"}}, r"kullanılıyor \(tailscale\)"),
+                 ({"eylem": "ag-ekle", "ag": {"port": 61010, "dns": "1.1.1.1"}}, r"kullanılıyor \(Paylaşım\)"),
+                 ({"eylem": "ag-ekle", "ag": {"port": 61020}}, "Port ve DNS gerekli"),
+                 ({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1", "scope": "lan"}}, "Port ve DNS gerekli"),
+                 ({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "dns.example"}}, "8 geçerli"),
+                 ({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1,,"}}, "8 geçerli"),
+                 ({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1\n9.9.9.9"}}, "Geçerli DNS"),
+                 ({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1", "label": "iki\tsütun"}}, "denetim karakteri"),
+                 ({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1", "label": "ş" * 33}}, "64 bayt")]
+        for item, message in cases:
+            with self.subTest(item=item), self.assertRaisesRegex(settings.SettingsError, message):
+                self.m.plan(self.wg(**item))
+        with self.assertRaisesRegex(settings.SettingsError, "ayrı kaydedin"):
+            self.m.plan(self.payload(wireguard={"eylem": "durdur"}, firewall=[]))
+        self.units["wg0"] = [False, False]
+        with self.assertRaisesRegex(settings.SettingsError, "wg0 zaten kapalı"):
+            self.m.plan(self.wg(eylem="ag-kapat", iface="wg0"))
+        self.marker.write_text("wg0\n")
+        for item, message in (({"eylem": "durdur"}, "zaten durdurulmuş"), ({"eylem": "ag-ac", "iface": "wg0"}, "WireGuard durduruldu"),
+                              ({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1"}}, "WireGuard durduruldu")):
+            with self.subTest(item=item), self.assertRaisesRegex(settings.SettingsError, message):
+                self.m.plan(self.wg(**item))
+        self.marker.unlink()
+        # Ten networks (and a leftover wgN.conf without a line) leave no interface.
+        self.networks.write_text("".join(NET0.replace("wg0", "wg%d" % i).replace("61001", str(61001 + i)) + "\n" for i in range(9)))
+        (self.wgdir / "wg9.conf").write_text("")
+        with self.assertRaisesRegex(settings.SettingsError, "en çok 10 ağ"):
+            self.m.plan(self.wg(eylem="ag-ekle", ag={"port": 61020, "dns": "1.1.1.1"}))
+        self.networks.write_text("wg0\t61001\n")
+        with self.assertRaisesRegex(settings.SettingsError, "ağ kaydı okunamadı"):
+            self.m.plan(self.wg(eylem="durdur"))
+        self.assertEqual(self.tool_calls, [])
+        self.assertIsNone(self.m.pending())
+
+    def test_removing_or_regenerating_needs_the_typed_word(self):
+        for item in ({"eylem": "ag-kaldir", "iface": "wg0"}, {"eylem": "yeniden-uret", "iface": "wg0", "onay": "evet"}):
+            with self.subTest(item=item):
+                plan = self.m.plan(self.wg(**item))
+                self.assertFalse(plan["uygulanabilir"])
+                self.assertIn({"seviye": "bad", "metin": "Bu işlem geri alınamaz; uygulamak için onayla yazın."}, plan["uyarilar"])
+                with self.assertRaisesRegex(settings.SettingsError, "onayla yazın"):
+                    self.m.apply(self.wg(**item))
+        self.assertEqual(self.tool_calls, [])
+        self.assertEqual([c for c in self.calls if c[1] not in ("is-enabled", "is-active")], [],
+                         "refused before the timer and the pending file")
+        self.assertIsNone(self.m.pending())
+        self.assertEqual(self.m.apply(self.wg(eylem="yeniden-uret", iface="wg0", onay=" ONAYLA ")), {"pending": None, "committed": True})
+        self.assertEqual(self.tool_calls, [(["--if", "wg0", "reset", "--onay"], "applying", True)])
+
+    def test_a_closing_action_commits_at_once_and_copies_no_key(self):
+        written = []
+        original = settings.save_json
+        with patch.object(settings, "save_json", side_effect=lambda path, value: (written.append(json.dumps(value)), original(path, value))):
+            result = self.m.apply(self.wg(eylem="ag-kaldir", iface="wg0", onay="onayla"))
+        self.assertEqual(result, {"pending": None, "committed": True})
+        self.assertEqual(self.tool_calls, [(["net-remove", "wg0", "--onay"], "applying", True)])
+        self.assertIsNone(self.m.pending())
+        self.assertIn("_transaction", self.m.config())
+        pending = json.loads(written[0])
+        self.assertEqual(sorted(pending["wireguard"]["files"]), sorted([str(self.marker), str(self.networks)]))
+        self.assertIsNone(pending["wireguard"]["files"][str(self.marker)])
+        self.assertEqual(pending["files"], {})
+        self.assertFalse(any(KEY in text or "PrivateKey" in text for text in written), "no key in the pending file")
+        self.assertEqual(pending["changes"]["wireguard"]["eylem"], "ag-kaldir")
+        self.assertNotIn("onayla", json.dumps(pending["changes"]["wireguard"]), "not even the typed word")
+
+    def test_an_opening_waits_and_commits_on_confirmation(self):
+        self.marker.write_text("wg0\n")
+        self.units["wg0"] = [False, False]
+        self.m.apply(self.wg(eylem="baslat"))
+        p = self.m.pending()
+        self.assertEqual((p["phase"], p["until"]), ("awaiting", self.now + 60))
+        self.assertEqual(self.m.pending_view()["wireguard"], {"eylem": "baslat", "iface": None})
+        self.assertFalse(self.marker.exists())
+        self.confirm()
+        self.assertIsNone(self.m.pending())
+        self.assertEqual(self.tool_calls, [(["baslat"], "applying", True)])
+        self.assertEqual(self.units["wg0"], [True, True])
+
+    def test_an_unconfirmed_start_is_stopped_again(self):
+        self.marker.write_text("wg0\n")
+        self.marker.chmod(0o600)
+        self.units["wg0"] = [False, False]
+        self.m.apply(self.wg(eylem="baslat"))
+        self.assertEqual(self.units["wg0"], [True, True])
+        self.calls.clear()
+        self.now += 61
+        self.m.guard()
+        self.assertIsNone(self.m.pending())
+        self.assertEqual(self.marker.read_text(), "wg0\n", "the list baslat read is back")
+        self.assertEqual(self.marker.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.units["wg0"], [False, False])
+        self.assertIn(["systemctl", "disable", "--now", "--quiet", "wg-quick@wg0.service"], self.calls)
+        firewall = [c for c in self.calls if c[0].endswith("/master-firewall")]
+        self.assertEqual(firewall, [[self.env["SBIN_DIR"] + "/master-firewall"], [self.env["SBIN_DIR"] + "/master-firewall", "--check"]])
+        self.assertLess(self.calls.index(["systemctl", "disable", "--now", "--quiet", "wg-quick@wg0.service"]),
+                        self.calls.index(firewall[0]))
+        self.assertEqual(self.tool_calls, [(["baslat"], "applying", True)], "the rollback needs no pending exception")
+
+    def test_an_unconfirmed_network_switch_is_closed_again(self):
+        self.units["wg0"] = [False, False]
+        self.m.apply(self.wg(eylem="ag-ac", iface="wg0"))
+        self.assertEqual(self.m.pending()["phase"], "awaiting")
+        self.now += 61
+        self.m.guard()
+        self.assertIsNone(self.m.pending())
+        self.assertEqual(self.tool_calls, [(["--if", "wg0", "net", "ac"], "applying", True),
+                                           (["--if", "wg0", "net", "kapat"], "rollback", True)])
+        self.assertEqual(self.units["wg0"], [False, False])
+
+    def test_an_unconfirmed_network_is_removed_with_its_keys(self):
+        self.networks.unlink()
+        (self.wgdir / "wg0.conf").unlink()
+        self.m.apply(self.wg(eylem="ag-ekle", ag={"port": 61001, "dns": "1.1.1.1"}))
+        self.assertEqual(self.m.pending_view()["wireguard"], {"eylem": "ag-ekle", "iface": "wg0"})
+        self.assertEqual(len(self.lines()), 1)
+        self.now += 61
+        self.m.guard()
+        self.assertIsNone(self.m.pending())
+        self.assertEqual(self.tool_calls, [(["net-add", "61001", "1.1.1.1", ""], "applying", True),
+                                           (["net-remove", "wg0", "--onay"], "rollback", True)])
+        self.assertFalse(self.networks.exists(), "the networks file is back to none")
+        self.assertIn([self.env["SBIN_DIR"] + "/master-firewall", "--check"], self.calls)
+        # Confirmed, the network stays.
+        self.tool_calls.clear()
+        self.m.apply(self.wg(eylem="ag-ekle", ag={"port": 61020, "dns": "1.1.1.1", "label": "Misafir"}))
+        self.confirm()
+        self.assertEqual([line.split("\t")[0] for line in self.lines()], ["wg0"])
+        self.assertEqual(self.tool_calls, [(["net-add", "61020", "1.1.1.1", "Misafir"], "applying", True)])
+
+    def test_a_failed_opening_is_undone_and_names_its_cause(self):
+        self.tool_fail = ["net-add", "61020", "1.1.1.1", ""]
+        with self.assertRaisesRegex(settings.SettingsError, "^UDP 61020 sunucuda başka bir program tarafından dinleniyor$"):
+            self.m.apply(self.wg(eylem="ag-ekle", ag={"port": 61020, "dns": "1.1.1.1"}))
+        self.assertIsNone(self.m.pending())
+        self.assertEqual(self.lines(), [NET0])
+        self.assertEqual([c[0] for c in self.tool_calls], [self.tool_fail], "nothing was created, nothing is removed")
+        self.assertIn([self.env["SBIN_DIR"] + "/master-firewall", "--check"], self.calls)
+
+    def test_a_failed_closing_action_names_the_state_it_left_and_is_not_reopened(self):
+        self.tool_fail = ["--if", "wg0", "net", "kapat"]
+        with self.assertRaisesRegex(settings.SettingsError, r"^UDP 61020 .* Şu anki durum: wg0 açık\.$"):
+            self.m.apply(self.wg(eylem="ag-kapat", iface="wg0"))
+        self.assertIsNone(self.m.pending())
+        self.assertEqual([c[0] for c in self.tool_calls], [self.tool_fail], "a closing action is never reopened")
+        self.assertIn([self.env["SBIN_DIR"] + "/master-firewall"], self.calls)
+        self.tool_fail = ["durdur"]
+        with self.assertRaisesRegex(settings.SettingsError, "Şu anki durum: wg0 açık"):
+            self.m.apply(self.wg(eylem="durdur"))
+        self.marker.write_text("")
+        self.assertEqual(self.m.wireguard_left(), "Şu anki durum: WireGuard durdurulmuş.")
+
+    def test_the_revision_covers_the_networks_file_and_the_stopped_marker(self):
+        stale = self.wg(eylem="durdur")
+        first = self.m.revision()
+        self.networks.write_text(NET0 + "\n" + NET1 + "\n")
+        second = self.m.revision()
+        self.assertNotEqual(first, second)
+        self.marker.write_text("")
+        self.assertNotEqual(self.m.revision(), second)
+        with self.assertRaises(settings.SettingsStale) as err:
+            self.m.plan(stale)
+        self.assertIsInstance(err.exception, settings.SettingsError)
+        self.assertEqual(str(err.exception), "Ayarlar değişmiş. Yenileyip yeniden inceleyin.")
+        # The worker says so with its own exit status; the backend answers 409.
+        out = io.StringIO()
+        with patch("sys.argv", ["master_settings.py", "--state", str(self.state), "apply"]), \
+                patch("sys.stdin", io.StringIO(json.dumps(stale))), contextlib.redirect_stdout(out), \
+                self.assertRaises(SystemExit) as code:
+            settings.main()
+        self.assertEqual(code.exception.code, settings.STALE_EXIT)
+        self.assertEqual(json.loads(out.getvalue()), {"error": "Ayarlar değişmiş. Yenileyip yeniden inceleyin."})
+        self.assertEqual(self.tool_calls, [])
+
+    def test_master_wg_inherits_the_held_lock_and_the_pending_id(self):
+        tool = Path(self.env["SBIN_DIR"]) / "master-wg"
+        tool.parent.mkdir(exist_ok=True)
+        tool.write_text("#!/usr/bin/env python3\n"
+                        "import json, os, sys\n"
+                        "held = os.fstat(int(os.environ['OBHUT_KILIT_FD']))\n"
+                        "print(json.dumps({'argv': sys.argv[1:], 'id': os.environ['OBHUT_AYAR_ISLEMI'], 'state': os.environ['STATE_FILE'],\n"
+                        "                  'file': [held.st_dev, held.st_ino]}))\n"
+                        "if sys.argv[1:] == ['fail']:\n"
+                        "    print('UYARI: wg9 kapatılamadı', file=sys.stderr)\n"
+                        "    print('HATA: ağ eklenemedi', file=sys.stderr)\n"
+                        "    print('Job for master-firewall.service failed.', file=sys.stderr)\n"
+                        "    sys.exit(1)\n")
+        tool.chmod(0o755)
+        with self.assertRaisesRegex(settings.SettingsError, "Kurulum kilidi tutulmuyor"):
+            self.original_tool(self.m, "a" * 32, "baslat")
+        with self.m.locked():
+            rc, out, message = self.original_tool(self.m, "a" * 32, "--if", "wg0", "net", "ac")
+            failed = self.original_tool(self.m, "a" * 32, "fail")
+        lock = (self.root / "run/install.lock").stat()
+        self.assertEqual((rc, message), (0, ""))
+        self.assertEqual(json.loads(out), {"argv": ["--if", "wg0", "net", "ac"], "id": "a" * 32, "state": str(self.state),
+                                           "file": [lock.st_dev, lock.st_ino]})
+        self.assertEqual((failed[0], failed[2]), (1, "ağ eklenemedi"))
+        self.assertIsNone(self.m.install_lock)
+
+    def test_the_audit_detail_names_only_checked_words(self):
+        self.assertEqual(settings.audit_detail({"eylem": "ag-kaldir", "iface": "wg0", "onay": "onayla"}), "wireguard ag-kaldir wg0")
+        self.assertEqual(settings.audit_detail({"eylem": "ag-ekle", "ag": {"port": 61020, "dns": "1.1.1.1"}}), "wireguard ag-ekle UDP 61020")
+        self.assertEqual(settings.audit_detail({"eylem": "baslat", "iface": None}), "wireguard baslat")
+        self.assertEqual(settings.audit_detail({"eylem": "ag-ac", "iface": "wg0\n-> ok"}), "wireguard ag-ac")
+        for item in (None, {}, {"eylem": "sil"}, {"eylem": ["baslat"]}, "baslat"):
+            self.assertEqual(settings.audit_detail(item), "ayarlar")
 
 
 if __name__ == "__main__":

@@ -122,6 +122,20 @@ recover_failed_wireguard() {
     done
 }
 
+refresh_application_addresses() {
+    # Rebuild phase 4: an application's open raw port is published on TAILSCALE_IPV4 or WAN_IPV4 in its
+    # unit. The container worker writes the units that carry an older address again and restarts those
+    # services (master_container_worker.py --adres-yenile; idempotent). It may wait up to 300 s per
+    # service, so it runs as its own transient unit and this unit's budget stays as it is; a job, the
+    # installer or a pending settings change makes it leave the work to the next run.
+    [[ -n "${UYGULAMA_STATE_DIR:-}" && -n "${SBIN_DIR:-}" && -f "${SBIN_DIR}/master_container_worker.py" ]] || return 0
+    systemd-run --quiet --no-block --collect --unit=master-container-adres-yenile \
+        --property=RuntimeMaxSec=1800 --property=UMask=0077 \
+        --setenv=PYTHONDONTWRITEBYTECODE=1 \
+        /usr/bin/python3 "$SBIN_DIR/master_container_worker.py" --state "$STATE_FILE" --adres-yenile ||
+        printf 'refresh-tailnet: uygulama adres işi başlatılamadı ya da sürüyor; sonraki çalışmada denenecek\n' >&2
+}
+
 wait_for_tailscale_ready() {
     command -v tailscale >/dev/null 2>&1 || return 0
     if ! tailscale wait --help >/dev/null 2>&1; then
@@ -180,6 +194,8 @@ old_v6="${TAILSCALE_IPV6:-}"
 if [[ "$new_v4" == "$old_v4" && "$new_v6" == "$old_v6" ]]; then
     printf 'refresh-tailnet: değişiklik yok (%s)\n' "$new_v4"
     recover_failed_bound_units
+    # The boot and nightly runs also catch a WAN address an installer run has written since.
+    refresh_application_addresses
     exit 0
 fi
 
@@ -210,5 +226,6 @@ trap - EXIT
 [[ -z "${RUNTIME_DIR:-}" ]] || exec 8>&-
 recover_firewall_if_broken
 restart_bound_units
+refresh_application_addresses
 
 printf 'refresh-tailnet: state.env güncellendi; Caddy yeniden başlatıldı\n'

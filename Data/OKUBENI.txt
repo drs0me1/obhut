@@ -23,7 +23,7 @@ Repo kökünde:
 Diğer her şey Data/ altındadır; elle çalıştırılmaz.
 
 Sunucuda (SSH ile, root): sudo obhut durum | denetle | onar | guncelle | hesap sifirla |
-  uygulama liste|baslat|durdur <id> | yayin liste|kapat <id> | geri-al  (v2-252, DD-268).
+  uygulama liste|baslat|durdur <id> | erisim liste|kapat <satır>|--hepsi | geri-al  (v2-252, DD-268).
   Konsol'un sayfası açılmıyorsa önce: sudo obhut durum, sonra sudo obhut onar.
 Konsol telefonda ya da bilgisayarda ana ekrana eklenebilir; kendi penceresinde, Ô simgesiyle açılır.
 

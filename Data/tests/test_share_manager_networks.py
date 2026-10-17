@@ -31,9 +31,9 @@ class NetworkManagerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="share-networks-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
-        for name in ("srv/alpha", "run", "sites"):
+        for name in ("srv/alpha", "run", "sites", "dns"):
             (self.root / name).mkdir(parents=True)
-        self.env = dict(SHARE_STATE_FILE=str(self.root/"registry"),
+        self.env = dict(SHARE_STATE_FILE=str(self.root/"registry"), DNSMASQ_CONF_DIR=str(self.root/"dns"),
                         RUNTIME_DIR=str(self.root/"run"), SERVER_ROOT=str(self.root/"srv"),
                         FILES_PANEL_TRASH=".cop",
                         SETTINGS_PENDING_FILE=str(self.root/"settings-pending"),

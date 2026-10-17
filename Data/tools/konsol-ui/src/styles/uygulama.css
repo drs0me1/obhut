@@ -179,3 +179,15 @@
 .facts.answer-facts dd + dt {
   margin-top: 10px;
 }
+
+/* ---- Portlar: each port's access row (rebuild phase 4) */
+.port-facts {
+  gap: 4px 12px;
+  font-size: 13.5px;
+}
+
+@container (max-width: 760px) {
+  .data-table .port-access {
+    grid-column: 1 / -1;
+  }
+}

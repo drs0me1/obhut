@@ -1212,7 +1212,7 @@
     "/api/konsol/ayarlar/uygula": {
       "post": {
         "operationId": "ayarlar_uygula",
-        "summary": "Ayar değişikliğini uygular; güvenlik duvarı 60 sn, alan adı 300 sn içinde onay bekler",
+        "summary": "Ayar değişikliğini uygular; güvenlik duvarı ve erişimi açan ya da genişleten değişiklik 60 sn, alan adı 300 sn içinde onay bekler, yalnız kapatan değişiklik hemen kalıcı olur; sayfa eskiyse 409",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -1537,108 +1537,6 @@
                 "schema": {
                   "$ref": "#/components/schemas/Hata"
                 }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/konsol/yayinlar": {
-      "get": {
-        "operationId": "yayinlar",
-        "summary": "Yayınla: neyin, nasıl yayımlanabileceği (DD-265)",
-        "parameters": [
-          {
-            "name": "X-Konsol",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Başarılı",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Yayinlar"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Host, köken ya da X-Konsol denetimi",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/konsol/yayinlar/plan": {
-      "post": {
-        "operationId": "yayin_plani",
-        "summary": "Bir yayının adımları ve planı; hiçbir şey değişmez",
-        "parameters": [
-          {
-            "name": "X-Konsol",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Başarılı",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/YayinPlani"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Host, köken ya da X-Konsol denetimi",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "İstek biçimi geçersiz",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/YayinIstegi"
               }
             }
           }
@@ -2561,329 +2459,6 @@
         }
       }
     },
-    "/api/konsol/wireguard/durdur": {
-      "post": {
-        "operationId": "wireguard_durdur",
-        "summary": "WireGuard'ı bütünüyle durdurur: ağlar kapanır, portları ve yönlendirmesi kalkar (DD-229)",
-        "parameters": [
-          {
-            "name": "X-Konsol",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Başarılı",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WireGuardCalismasi"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Host, köken ya da X-Konsol denetimi",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "İstek biçimi geçersiz",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Bos"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/konsol/wireguard/baslat": {
-      "post": {
-        "operationId": "wireguard_baslat",
-        "summary": "WireGuard'ı başlatır: durdurmadan önce açık olan ağlar geri gelir",
-        "parameters": [
-          {
-            "name": "X-Konsol",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Başarılı",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WireGuardCalismasi"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Host, köken ya da X-Konsol denetimi",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "İstek biçimi geçersiz",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Bos"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/konsol/wireguard/nets": {
-      "post": {
-        "operationId": "wireguard_ag_ekle",
-        "summary": "Yeni WireGuard ağı (wg0…wg9); ilk ağ WireGuard'ı açar",
-        "parameters": [
-          {
-            "name": "X-Konsol",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "Başarılı",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WireGuardAgEklendi"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Host, köken ya da X-Konsol denetimi",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "İstek biçimi geçersiz",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/WireGuardAgIstegi"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/konsol/wireguard/nets/{iface}/remove": {
-      "post": {
-        "operationId": "wireguard_ag_kaldir",
-        "summary": "Ağı, anahtarını ve bütün cihazlarını siler (onayla yazılarak)",
-        "parameters": [
-          {
-            "name": "X-Konsol",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          },
-          {
-            "name": "iface",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^wg[0-9]$"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Başarılı",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WireGuardAgKaldirildi"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Host, köken ya da X-Konsol denetimi",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "İstek biçimi geçersiz",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Onay"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/konsol/wireguard/nets/{iface}/reset": {
-      "post": {
-        "operationId": "wireguard_ag_yeniden_uret",
-        "summary": "Ağın sunucu anahtarını yeniden üretir; bütün cihazlar silinir (onayla yazılarak)",
-        "parameters": [
-          {
-            "name": "X-Konsol",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          },
-          {
-            "name": "iface",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^wg[0-9]$"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Başarılı",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WireGuardYenidenUretildi"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Host, köken ya da X-Konsol denetimi",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "İstek biçimi geçersiz",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Onay"
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/konsol/wireguard/nets/{iface}/peers": {
       "post": {
         "operationId": "wireguard_cihaz_ekle",
@@ -2948,76 +2523,6 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/WireGuardCihazIstegi"
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/konsol/wireguard/nets/{iface}/durum": {
-      "post": {
-        "operationId": "wireguard_ag_durum",
-        "summary": "Ağı açar ya da kapatır",
-        "parameters": [
-          {
-            "name": "X-Konsol",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          },
-          {
-            "name": "iface",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "pattern": "^wg[0-9]$"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Başarılı",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WireGuardAgDurumu"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Host, köken ya da X-Konsol denetimi",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "İstek biçimi geçersiz",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Acik"
               }
             }
           }
@@ -3847,6 +3352,32 @@
           },
           "web": {
             "type": "boolean"
+          },
+          "erisim": {
+            "type": "string"
+          },
+          "wireguard": {
+            "type": "object",
+            "properties": {
+              "eylem": {
+                "$ref": "#/components/schemas/WireGuardEylemi"
+              },
+              "iface": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "eylem",
+              "iface"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [
@@ -3941,8 +3472,8 @@
             "type": "string",
             "enum": [
               "konsol",
+              "uygulama",
               "konteyner",
-              "elle",
               "paylasim",
               "sistem",
               "vpn",
@@ -3953,6 +3484,26 @@
             "type": "string"
           },
           "uygulama": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "servis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "anahtar": {
             "anyOf": [
               {
                 "type": "string"
@@ -3984,11 +3535,42 @@
           "internet": {
             "$ref": "#/components/schemas/ErisimHucresi"
           },
-          "yayinlar": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+          "satir": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErisimSatiri"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "web": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "tail": {
+                    "type": "boolean"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "domain": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "tail",
+                  "enabled",
+                  "domain"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "ayrinti": {
             "type": "array",
@@ -4016,12 +3598,15 @@
           "tur",
           "aciklama",
           "uygulama",
+          "servis",
+          "anahtar",
           "calisiyor",
           "yerel",
           "tailscale",
           "wireguard",
           "internet",
-          "yayinlar",
+          "satir",
+          "web",
           "ayrinti"
         ],
         "additionalProperties": false
@@ -4050,7 +3635,7 @@
                   "bolum": {
                     "type": "string",
                     "enum": [
-                      "yayinlar",
+                      "adresler",
                       "uygulama",
                       "tailscale"
                     ]
@@ -4390,6 +3975,9 @@
           "alan": {
             "type": "string"
           },
+          "revizyon": {
+            "type": "string"
+          },
           "ozet": {
             "type": "object",
             "properties": {
@@ -4627,6 +4215,7 @@
         "required": [
           "read_at",
           "alan",
+          "revizyon",
           "ozet",
           "hizmetler",
           "uyarilar",
@@ -4735,11 +4324,15 @@
         ],
         "additionalProperties": false
       },
-      "YayinSatiri": {
+      "WebSatiri": {
         "type": "object",
         "properties": {
           "service": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "panel",
+              "paylasim"
+            ]
           },
           "tail": {
             "type": "boolean"
@@ -4752,35 +4345,40 @@
           },
           "confirm": {
             "type": "string"
-          },
-          "sil": {
-            "type": "boolean"
-          },
-          "elle": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "local": {
-                "type": "string"
-              },
-              "upstream": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "name",
-              "local",
-              "upstream"
-            ],
-            "additionalProperties": false
           }
         },
-        "required": [],
-        "additionalProperties": true
+        "required": [
+          "service",
+          "tail",
+          "enabled",
+          "domain"
+        ],
+        "additionalProperties": false
       },
-      "AyarIstegi": {
+      "ErisimIstegi": {
+        "type": "object",
+        "properties": {
+          "uygulama": {
+            "type": "string"
+          },
+          "anahtar": {
+            "type": "string"
+          },
+          "satir": {
+            "$ref": "#/components/schemas/ErisimSatiri"
+          },
+          "internet_onayi": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "uygulama",
+          "anahtar",
+          "satir"
+        ],
+        "additionalProperties": false
+      },
+      "AyarKurallari": {
         "type": "object",
         "properties": {
           "revision": {
@@ -4794,16 +4392,95 @@
           },
           "dns": {
             "$ref": "#/components/schemas/DnsTaslagi"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "additionalProperties": false
+      },
+      "AyarAlanAdi": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
           },
           "domain": {
             "type": "string"
-          },
-          "web": {
-            "$ref": "#/components/schemas/YayinSatiri"
           }
         },
-        "required": [],
-        "additionalProperties": true
+        "required": [
+          "revision",
+          "domain"
+        ],
+        "additionalProperties": false
+      },
+      "AyarWeb": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "web": {
+            "$ref": "#/components/schemas/WebSatiri"
+          }
+        },
+        "required": [
+          "revision",
+          "web"
+        ],
+        "additionalProperties": false
+      },
+      "AyarErisim": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "erisim": {
+            "$ref": "#/components/schemas/ErisimIstegi"
+          }
+        },
+        "required": [
+          "revision",
+          "erisim"
+        ],
+        "additionalProperties": false
+      },
+      "AyarWireGuard": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "wireguard": {
+            "$ref": "#/components/schemas/WireGuardIstegi"
+          }
+        },
+        "required": [
+          "revision",
+          "wireguard"
+        ],
+        "additionalProperties": false
+      },
+      "AyarIstegi": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/AyarKurallari"
+          },
+          {
+            "$ref": "#/components/schemas/AyarAlanAdi"
+          },
+          {
+            "$ref": "#/components/schemas/AyarWeb"
+          },
+          {
+            "$ref": "#/components/schemas/AyarErisim"
+          },
+          {
+            "$ref": "#/components/schemas/AyarWireGuard"
+          }
+        ]
       },
       "PlanDegisikligi": {
         "type": "object",
@@ -4814,7 +4491,8 @@
               "guvenlik-duvari",
               "dns",
               "alan-adi",
-              "yayin"
+              "erisim",
+              "wireguard"
             ]
           },
           "islem": {
@@ -5022,6 +4700,16 @@
                 },
                 "sabit": {
                   "type": "boolean"
+                },
+                "satir": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -5030,7 +4718,8 @@
                 "proto",
                 "port",
                 "kapsam",
-                "sabit"
+                "sabit",
+                "satir"
               ],
               "additionalProperties": false
             }
@@ -5196,6 +4885,16 @@
                 },
                 "kilitli": {
                   "type": "boolean"
+                },
+                "satir": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -5204,7 +4903,8 @@
                 "hedef",
                 "kaynak",
                 "kapali",
-                "kilitli"
+                "kilitli",
+                "satir"
               ],
               "additionalProperties": false
             }
@@ -5239,373 +4939,6 @@
           "yonlendirme",
           "sunucular",
           "hatalar"
-        ],
-        "additionalProperties": false
-      },
-      "YayinAdayi": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "tur": {
-            "type": "string",
-            "enum": [
-              "konsol",
-              "konteyner",
-              "elle",
-              "paylasim"
-            ]
-          },
-          "ad": {
-            "type": "string"
-          },
-          "servis": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "yerel_ad": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "tailscale": {
-            "type": "boolean"
-          },
-          "internet": {
-            "type": "boolean"
-          },
-          "alan_adi": {
-            "type": "string"
-          },
-          "durum": {
-            "type": "string"
-          },
-          "mesaj": {
-            "type": "string"
-          },
-          "bitis": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "hedef": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "giris": {
-            "type": "string"
-          },
-          "onay_kelimesi": {
-            "type": "boolean"
-          },
-          "internet_engel": {
-            "type": "string"
-          },
-          "kullanilabilir": {
-            "type": "boolean"
-          },
-          "neden": {
-            "type": "string"
-          },
-          "konteyner": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "ad": {
-                    "type": "string"
-                  },
-                  "kaynak": {
-                    "type": "string",
-                    "enum": [
-                      "uygulama",
-                      "dis"
-                    ]
-                  },
-                  "uygulama": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "calisiyor": {
-                    "type": "boolean"
-                  },
-                  "yerel_portlar": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "host_port": {
-                          "type": "integer"
-                        },
-                        "container_port": {
-                          "type": "integer"
-                        }
-                      },
-                      "required": [
-                        "host_port",
-                        "container_port"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "diger_portlar": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "kapsam": {
-                          "type": "string"
-                        },
-                        "host_port": {
-                          "type": "integer"
-                        },
-                        "container_port": {
-                          "type": "integer"
-                        }
-                      },
-                      "required": [
-                        "kapsam",
-                        "host_port",
-                        "container_port"
-                      ],
-                      "additionalProperties": false
-                    }
-                  }
-                },
-                "required": [
-                  "ad",
-                  "kaynak",
-                  "uygulama",
-                  "calisiyor",
-                  "yerel_portlar",
-                  "diger_portlar"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "id",
-          "tur",
-          "ad",
-          "servis",
-          "yerel_ad",
-          "tailscale",
-          "internet",
-          "alan_adi",
-          "durum",
-          "mesaj",
-          "bitis",
-          "hedef",
-          "giris",
-          "onay_kelimesi",
-          "internet_engel",
-          "kullanilabilir",
-          "neden",
-          "konteyner"
-        ],
-        "additionalProperties": false
-      },
-      "Yayinlar": {
-        "type": "object",
-        "properties": {
-          "revizyon": {
-            "type": "string"
-          },
-          "alan": {
-            "type": "string"
-          },
-          "wan_ipv4": {
-            "type": "string"
-          },
-          "adaylar": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/YayinAdayi"
-            }
-          },
-          "hatalar": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "revizyon",
-          "alan",
-          "wan_ipv4",
-          "adaylar",
-          "hatalar"
-        ],
-        "additionalProperties": false
-      },
-      "YayinIstegi": {
-        "type": "object",
-        "properties": {
-          "hedef": {
-            "type": "string"
-          },
-          "revizyon": {
-            "type": "string"
-          },
-          "tailscale": {
-            "type": "boolean"
-          },
-          "internet": {
-            "type": "boolean"
-          },
-          "alan_adi": {
-            "type": "string"
-          },
-          "ad": {
-            "type": "string"
-          },
-          "yerel": {
-            "type": "string"
-          },
-          "onay": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "hedef",
-          "revizyon",
-          "tailscale",
-          "internet",
-          "alan_adi"
-        ],
-        "additionalProperties": false
-      },
-      "YayinAdimi": {
-        "type": "object",
-        "properties": {
-          "tur": {
-            "type": "string",
-            "enum": [
-              "ayar"
-            ]
-          },
-          "baslik": {
-            "type": "string"
-          },
-          "aciklama": {
-            "type": "string"
-          },
-          "istek": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          }
-        },
-        "required": [
-          "tur",
-          "baslik",
-          "aciklama",
-          "istek"
-        ],
-        "additionalProperties": false
-      },
-      "YayinPlani": {
-        "type": "object",
-        "properties": {
-          "hedef": {
-            "$ref": "#/components/schemas/YayinAdayi"
-          },
-          "adimlar": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/YayinAdimi"
-            }
-          },
-          "plan": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AyarPlani"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "engel": {
-            "type": "string"
-          },
-          "dns": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "ad": {
-                    "type": "string"
-                  },
-                  "tur": {
-                    "type": "string"
-                  },
-                  "deger": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "ad",
-                  "tur",
-                  "deger"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "uyarilar": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PlanUyarisi"
-            }
-          }
-        },
-        "required": [
-          "hedef",
-          "adimlar",
-          "plan",
-          "engel",
-          "dns",
-          "uyarilar"
         ],
         "additionalProperties": false
       },
@@ -6925,6 +6258,9 @@
             "items": {
               "$ref": "#/components/schemas/WireGuardAgi"
             }
+          },
+          "revizyon": {
+            "type": "string"
           }
         },
         "required": [
@@ -6936,21 +6272,22 @@
           "defaults",
           "now",
           "active_window",
-          "networks"
+          "networks",
+          "revizyon"
         ],
         "additionalProperties": false
       },
-      "WireGuardCalismasi": {
-        "type": "object",
-        "properties": {
-          "durduruldu": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "durduruldu"
-        ],
-        "additionalProperties": false
+      "WireGuardEylemi": {
+        "type": "string",
+        "enum": [
+          "baslat",
+          "durdur",
+          "ag-ekle",
+          "ag-kaldir",
+          "ag-ac",
+          "ag-kapat",
+          "yeniden-uret"
+        ]
       },
       "WireGuardAgIstegi": {
         "type": "object",
@@ -6971,67 +6308,24 @@
         ],
         "additionalProperties": false
       },
-      "WireGuardAgEklendi": {
+      "WireGuardIstegi": {
         "type": "object",
         "properties": {
+          "eylem": {
+            "$ref": "#/components/schemas/WireGuardEylemi"
+          },
           "iface": {
             "type": "string"
           },
-          "port": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "iface",
-          "port"
-        ],
-        "additionalProperties": false
-      },
-      "WireGuardAgKaldirildi": {
-        "type": "object",
-        "properties": {
-          "iface": {
+          "ag": {
+            "$ref": "#/components/schemas/WireGuardAgIstegi"
+          },
+          "onay": {
             "type": "string"
-          },
-          "peers": {
-            "type": "integer"
           }
         },
         "required": [
-          "iface",
-          "peers"
-        ],
-        "additionalProperties": false
-      },
-      "WireGuardAgDurumu": {
-        "type": "object",
-        "properties": {
-          "iface": {
-            "type": "string"
-          },
-          "active": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "iface",
-          "active"
-        ],
-        "additionalProperties": false
-      },
-      "WireGuardYenidenUretildi": {
-        "type": "object",
-        "properties": {
-          "peers": {
-            "type": "integer"
-          },
-          "profiles": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "peers",
-          "profiles"
+          "eylem"
         ],
         "additionalProperties": false
       },
@@ -7134,18 +6428,6 @@
         },
         "required": [
           "keepalive"
-        ],
-        "additionalProperties": false
-      },
-      "Onay": {
-        "type": "object",
-        "properties": {
-          "confirm": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "confirm"
         ],
         "additionalProperties": false
       },
@@ -9132,6 +8414,78 @@
         ],
         "additionalProperties": false
       },
+      "ErisimAdresi": {
+        "type": "object",
+        "properties": {
+          "tur": {
+            "type": "string",
+            "enum": [
+              "adres"
+            ]
+          },
+          "ad": {
+            "type": "string"
+          },
+          "tailscale_portu": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "internet": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tur",
+          "ad",
+          "tailscale_portu",
+          "internet"
+        ],
+        "additionalProperties": false
+      },
+      "ErisimHamPortu": {
+        "type": "object",
+        "properties": {
+          "tur": {
+            "type": "string",
+            "enum": [
+              "ham"
+            ]
+          },
+          "kapsam": {
+            "type": "string",
+            "enum": [
+              "kapali",
+              "tailscale",
+              "internet"
+            ]
+          },
+          "port": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tur",
+          "kapsam",
+          "port"
+        ],
+        "additionalProperties": false
+      },
+      "ErisimSatiri": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/ErisimAdresi"
+          },
+          {
+            "$ref": "#/components/schemas/ErisimHamPortu"
+          }
+        ]
+      },
       "UygulamaPortu": {
         "type": "object",
         "properties": {
@@ -9144,6 +8498,12 @@
               "tcp",
               "udp"
             ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "erisim": {
+            "$ref": "#/components/schemas/ErisimSatiri"
           },
           "kullanim": {
             "type": "string",
@@ -9176,6 +8536,8 @@
         "required": [
           "port",
           "protokol",
+          "id",
+          "erisim",
           "kullanim",
           "tailscale_adi",
           "yerel_port"

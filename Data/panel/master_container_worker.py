@@ -7,8 +7,21 @@ the request on standard input only. This module owns every container write: Geli
 and a durable record (KONTEYNER_STATE_DIR/operations/<id>.json) that never holds the request; a failure
 undoes what the job did, in reverse, and names the failed step. Secret values reach Podman on standard
 input only: never an argument, a file of Obhut's, a record, a log line or a reply.
+
+Access rows (rebuild phase 4): install seeds an application's rows, an edit keeps, seeds and drops them,
+removal takes them; each of the three then runs the publication projection (master_shares publish). Two
+other callers change units for the rows:
+
+  Manager.row_change / row_files / row_restore   the settings worker's container side of one row change
+                                                 (their docstrings hold the lock contract)
+  master_container_worker.py --state S --adres-yenile
+                                                 the address refresh: refresh-tailnet-config starts it as its
+                                                 own transient unit after it changes TAILSCALE_IPV4 and at its
+                                                 boot and nightly runs (address_refresh)
 """
+import argparse
 import contextlib
+import copy
 import fcntl
 import hashlib
 import ipaddress
@@ -19,6 +32,7 @@ import re
 import secrets
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -60,11 +74,12 @@ class Undo:
         self.objects = False
         self.reload = False
         self.guard = False
+        self.published = False
 
 
 class Manager:
     def __init__(self, state, run=run, network=None, quadlet=None, generator=None, inspector=None,
-                 clock=time.monotonic, sleep=time.sleep, now=time.time):
+                 clock=time.monotonic, sleep=time.sleep, now=time.time, publisher=None):
         self.state = str(state)
         self.env = settings.env_read(state)
         self.env['STATE_FILE'] = self.state
@@ -73,6 +88,7 @@ class Manager:
         self.quadlet = quadlet
         self.generator = generator
         self.inspector = inspector
+        self.publisher = publisher
         self.clock, self.sleep, self.now = clock, sleep, now
         self.operation = None
         self.op_path = None
@@ -104,27 +120,60 @@ class Manager:
         except (ValueError, TypeError) as err:
             raise cfg.ContainerConfigError(502, 'Konteyner aracı geçerli yanıt vermedi.') from err
 
+    @staticmethod
+    def open_lock(path):
+        """A lock file opened without following a link: a regular file of this user's."""
+        with settings.parent_fd(path, create=True) as (directory, name):
+            fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory)
+        f = os.fdopen(fd, 'a')
+        info = os.fstat(f.fileno())
+        if not (stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()):
+            f.close()
+            raise cfg.ContainerConfigError(503, 'İşlem kilidi güvenli değil.')
+        return f
+
+    @contextlib.contextmanager
+    def lock_file(self, path):
+        """One lock, taken within LOCK_WAIT seconds or refused (409); released when the block ends."""
+        with self.open_lock(path) as f:
+            deadline = time.monotonic() + LOCK_WAIT
+            while True:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError as err:
+                    if time.monotonic() >= deadline:
+                        raise cfg.ContainerConfigError(409, 'Kurulum veya başka bir konteyner işlemi sürüyor; biraz sonra yeniden deneyin.') from err
+                    time.sleep(0.2)
+            yield
+
     @contextlib.contextmanager
     def locked(self):
-        paths = [Path(self.env['RUNTIME_DIR']) / 'install.lock', Path(self.env['KONTEYNER_LOCK'])]
+        """A job's locks: install.lock and KONTEYNER_LOCK; a pending settings change refuses the job."""
         with contextlib.ExitStack() as stack:
-            for path in paths:
-                with settings.parent_fd(path, create=True) as (directory, name):
-                    fd = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory)
-                f = stack.enter_context(os.fdopen(fd, 'a'))
-                info = os.fstat(f.fileno())
-                cfg.require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid(), 'İşlem kilidi güvenli değil.', 503)
-                deadline = time.monotonic() + LOCK_WAIT
-                while True:
-                    try:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except BlockingIOError as err:
-                        if time.monotonic() >= deadline:
-                            raise cfg.ContainerConfigError(409, 'Kurulum veya başka bir konteyner işlemi sürüyor; biraz sonra yeniden deneyin.') from err
-                        time.sleep(0.2)
+            stack.enter_context(self.lock_file(Path(self.env['RUNTIME_DIR']) / 'install.lock'))
+            stack.enter_context(self.lock_file(Path(self.env['KONTEYNER_LOCK'])))
             pending = self.env.get('SETTINGS_PENDING_FILE')
             cfg.require(not pending or not Path(pending).exists(), 'Onay bekleyen sistem ayarını önce tamamlayın.', 409)
+            yield
+
+    @contextlib.contextmanager
+    def settings_locked(self):
+        """The settings worker's locks for its container side (row_change, row_restore): the caller holds
+        install.lock in this process (with its settings and state locks) and owns the pending settings change, so
+        only KONTEYNER_LOCK is taken here and the pending change is no refusal. Without a held install.lock or a
+        pending change the call is refused (503): this path exists for the settings transaction only."""
+        with self.open_lock(Path(self.env['RUNTIME_DIR']) / 'install.lock') as probe:
+            try:
+                # A second open file description of the same file: flock refuses it while the caller holds its own.
+                fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held = False
+            except BlockingIOError:
+                held = True
+        cfg.require(held, 'Erişim satırı yalnız kurulum kilidini tutan ayar işleminden değişir.', 503)
+        pending = self.env.get('SETTINGS_PENDING_FILE')
+        cfg.require(bool(pending) and Path(pending).exists(), 'Erişim satırı yalnız bekleyen bir ayar işleminden değişir.', 503)
+        with self.lock_file(Path(self.env['KONTEYNER_LOCK'])):
             yield
 
     # -- the job record
@@ -344,16 +393,40 @@ class Manager:
         p = self.call(['podman', 'version', '--format', '{{.Client.Version}}'])
         return apps.podman_version(p.stdout)
 
-    def render(self, app, definition, places, version):
-        return apps.render(self.env, app, definition, places, version, self.generator_module())
+    def render(self, app, definition, places, version, rows):
+        return apps.render(self.env, app, definition, places, version, rows, self.generator_module())
+
+    def publish(self):
+        """The publication projection after a job changed access rows (master_shares.Manager.publish: the Caddy
+        sites, the local names, the 443 listener). Its contract wants the installer and the share locks: the job
+        holds install.lock, the share lock is taken here around the call."""
+        if self.publisher is not None:
+            return self.publisher()
+        import master_shares
+        with self.lock_file(Path(self.env['RUNTIME_DIR']) / 'paylasim.lock'):
+            try:
+                master_shares.Manager(self.state).publish()
+            except master_shares.ShareError as err:
+                raise cfg.ContainerConfigError(502, str(err)) from err
+            except (OSError, KeyError, ValueError) as err:
+                raise cfg.ContainerConfigError(502, 'Adresler yayımlanamadı; yayın kaydı okunamadı.') from err
+        return None
+
+    def names_free(self, app, definition, rows=None):
+        """The Tailscale names of the definition's new address ports are free (apps.name_errors), by question."""
+        errors = apps.name_errors(self.env, app, definition, rows, self.records)
+        if errors:
+            text = '; '.join('%s: %s' % (k, v) for k, v in sorted(errors.items())[:3])
+            raise cfg.ContainerConfigError(409, ('Yanıtlar geçersiz: ' + text)[:600])
 
     def podman5(self, plan, version):
         """A Kubernetes Pod with several containers and a service_healthy dependency need Podman 5."""
         refusal = self.generator_module().podman5_refusal(plan, version)
         cfg.require(refusal is None, refusal or '', 409)
 
-    def checked(self, text, answers, existing=frozenset()):
-        """The server's own inspection and check of the file and the answers (never a browser's definition)."""
+    def checked(self, text, answers, existing=frozenset(), record=None):
+        """The server's own inspection and check of the file and the answers (never a browser's definition). On an
+        edit (record) the questions of the ports that stay are answered from their rows (apps.port_answers)."""
         apps.checked_text(text)
         inspector = self.inspector_module()
         inspection = inspector.inspect(text)
@@ -361,7 +434,11 @@ class Manager:
         if refusals or inspection.get('format') is None:
             first = refusals[0] if refusals else {'line': 1, 'text': 'Dosya okunamadı.'}
             raise cfg.ContainerConfigError(409, 'Dosyada kurulumu durduran satırlar var (satır %d: %s).' % (first['line'], first['text']))
+        row_errors = {}
+        if record is not None:
+            answers, row_errors = apps.port_answers(record, inspection, answers)
         definition, values, errors = inspector.check(inspection, answers, existing_secrets=frozenset(existing))
+        errors = dict(errors or {}, **row_errors)
         if errors:
             text = '; '.join('%s: %s' % (k, v) for k, v in sorted(errors.items())[:3])
             raise cfg.ContainerConfigError(400, ('Yanıtlar geçersiz: ' + text)[:600])
@@ -623,20 +700,23 @@ class Manager:
         objects = self.objects(app, definition)
         self.step('Ad, klasörler ve portlar denetleniyor')
         self.name_free(app, objects)
+        self.names_free(app, definition)
         self.srv_paths(definition)
         old = self.takeover(source['konteyner'], app, inspection, answers) if source['tur'] == 'konteyner' else None
-        places = {'revision': uuid.uuid4().hex, 'stopped': False, 'ports': apps.allocate(self.env, app, definition, {}, self.records),
-                  'secrets': {}, 'images': {}}
+        # The rows are the home of how each port is reached; the stored definition keeps the ports' numbers only.
+        rows, stored = apps.next_rows(definition), apps.stored_definition(definition)
+        places = {'revision': uuid.uuid4().hex, 'stopped': False,
+                  'ports': apps.allocate(self.env, app, apps.address_keys(rows), {}, self.records), 'secrets': {}, 'images': {}}
         # Everything the generator cannot express, and what needs Podman 5, stops here, before any write.
-        draft = self.render(app, definition, dict(places, images=apps.placeholders(definition),
-                                                  secrets=apps.placeholder_secrets(app, definition)), version)
+        draft = self.render(app, stored, dict(places, images=apps.placeholders(definition),
+                                              secrets=apps.placeholder_secrets(app, definition)), version, rows)
         self.podman5(draft, version)
         undo, plan = Undo(), draft
         try:
             self.step('Kayıt yazılıyor')
             undo.record = True
             self.records.write(app, text=text, source=apps.source_record(source, text, self.now()),
-                               answers=apps.stored_answers(inspection, answers), definition=definition, places=places)
+                               answers=apps.stored_answers(inspection, answers), definition=stored, places=places, rows=rows)
             # The guard knows the new bridge before anything can start on it.
             self.step('Ağ koruması uygulanıyor')
             undo.guard = True
@@ -649,7 +729,7 @@ class Manager:
                 places['secrets'][item['name']] = podman = self.create_secret(app, values[item['name']])
                 undo.secrets.append(podman)
             self.records.write(app, places=places)
-            plan = self.render(app, definition, places, version)
+            plan = self.render(app, stored, places, version, rows)
             self.records.write_env(app, plan['environment'])
             self.dryrun(plan)
             if old:
@@ -662,6 +742,10 @@ class Manager:
             self.call(['systemctl', 'daemon-reload'])
             self.start_units(plan, undo.started)
             self.ready(app, definition, objects)
+            # The new rows' names and sites: a failed projection keeps what it applied (its own restore).
+            self.step('Adresler yayımlanıyor')
+            self.publish()
+            undo.published = True
             if old:
                 self.step('Eski konteyner kaldırılıyor')
                 # Never --volumes: the old named volumes stay until Gelişmiş's cleanup.
@@ -705,6 +789,8 @@ class Manager:
             attempt(lambda: self.records.remove(app))
         if undo.guard:
             attempt(lambda: self.net_call('apply'))
+        if undo.published:
+            attempt(self.publish)
         if old and old['running']:
             attempt(lambda: self.call(['podman', 'start', old['name']], timeout=120))
         return ok
@@ -717,7 +803,7 @@ class Manager:
         objects = self.objects(app, definition)
         self.srv_paths(definition)
         places = dict(record['places'], stopped=False, revision=uuid.uuid4().hex)
-        plan = self.render(app, definition, places, version)
+        plan = self.render(app, definition, places, version, record['rows'])
         self.podman5(plan, version)
         before = self.records.snapshot(app)
         units = self.unit_snapshot(plan['units'])
@@ -744,7 +830,7 @@ class Manager:
         definition = record['definition']
         version = self.podman()
         places = dict(record['places'], stopped=True, revision=uuid.uuid4().hex)
-        plan = self.render(app, definition, places, version)
+        plan = self.render(app, definition, places, version, record['rows'])
         running = [u for u in plan['start'] if self.unit_state(u) == 'active']
         before = self.records.snapshot(app)
         units = self.unit_snapshot(plan['units'])
@@ -770,7 +856,7 @@ class Manager:
         definition = record['definition']
         version = self.podman()
         objects = self.objects(app, definition)
-        plan = self.render(app, definition, record['places'], version)
+        plan = self.render(app, definition, record['places'], version, record['rows'])
         cfg.require(all(self.unit_state(objects['units'][s['name']]) == 'active' for s in definition['services']),
                     'Yalnız çalışan bir uygulama yeniden başlatılır; durmuş bir uygulama için Başlat seçeneğini kullanın.', 409)
         self.srv_paths(definition)
@@ -815,7 +901,7 @@ class Manager:
         if images == old['images']:
             return {'ok': True, 'ad': app, 'revizyon': old['revision'], 'changed': False}
         places = dict(old, images=images, revision=uuid.uuid4().hex)
-        plan = self.render(app, definition, places, version)
+        plan = self.render(app, definition, places, version, record['rows'])
         self.dryrun(plan)
         if not old['stopped']:
             self.srv_paths(definition)
@@ -852,8 +938,12 @@ class Manager:
         text = apps.checked_text(request.get('metin'))
         answers = request.get('yanitlar')
         self.step('Dosya denetleniyor')
-        inspection, definition, values = self.checked(text, answers, existing=set(old['secrets']))
+        # A port that stays keeps its row (its answer may be left out and, given, must match it); a new port gets
+        # a row from its answer, a port that went loses its row and its pool port.
+        inspection, definition, values = self.checked(text, answers, existing=set(old['secrets']), record=record)
         cfg.require(definition['name'] == app, 'Uygulamanın adı değiştirilemez; başka bir adla yeni bir uygulama ekleyin.', 409)
+        self.names_free(app, definition, record['rows'])
+        rows, stored = apps.next_rows(definition, record['rows']), apps.stored_definition(definition)
         version = self.podman()
         objects, old_objects = self.objects(app, definition), self.objects(app, old_definition)
         self.srv_paths(definition)
@@ -861,11 +951,12 @@ class Manager:
         cfg.require(kept <= set(old['secrets']), 'Saklanacak eski bir değer yok; bir değer girin.', 409)
         keep_images = apps.kept_images(old_definition, old, definition)
         places = {'revision': uuid.uuid4().hex, 'stopped': old['stopped'],
-                  'ports': apps.allocate(self.env, app, definition, old['ports'], self.records), 'secrets': {}, 'images': {}}
-        draft = self.render(app, definition, dict(places, images=apps.placeholders(definition, keep_images),
-                                                  secrets=apps.placeholder_secrets(app, definition, old['secrets'])), version)
+                  'ports': apps.allocate(self.env, app, apps.address_keys(rows), old['ports'], self.records), 'secrets': {},
+                  'images': {}}
+        draft = self.render(app, stored, dict(places, images=apps.placeholders(definition, keep_images),
+                                              secrets=apps.placeholder_secrets(app, definition, old['secrets'])), version, rows)
         self.podman5(draft, version)
-        old_plan = self.render(app, old_definition, old, version)
+        old_plan = self.render(app, old_definition, old, version, record['rows'])
         places['images'] = self.pull(definition, keep=keep_images)
         before = self.records.snapshot(app)
         units = self.unit_snapshot(set(old_plan['units']) | set(draft['units']))
@@ -879,7 +970,7 @@ class Manager:
                 else:
                     places['secrets'][item['name']] = podman = self.create_secret(app, values[item['name']])
                     created.append(podman)
-            plan = self.render(app, definition, places, version)
+            plan = self.render(app, stored, places, version, rows)
             self.dryrun(plan)
             self.step('Klasörler oluşturuluyor')
             made = self.make_folders(app, plan['folders'])
@@ -890,7 +981,7 @@ class Manager:
             if source['sha256'] != apps.source_record({'tur': 'dosya'}, text, 0)['sha256']:
                 source.update(alindi=int(self.now()), sha256=apps.source_record({'tur': 'dosya'}, text, 0)['sha256'])
             self.records.write(app, text=text, source=source, answers=apps.stored_answers(inspection, answers),
-                               definition=definition, places=places)
+                               definition=stored, places=places, rows=rows)
             self.records.write_env(app, plan['environment'])
             for name in sorted(set(old_plan['units']) - set(plan['units'])):
                 cfg.unlink(self.unit_dir() / name)
@@ -905,6 +996,9 @@ class Manager:
             if not places['stopped']:
                 self.start_units(plan, started)
                 self.ready(app, definition, objects)
+            # A new port's name and site, a gone port's removal: a failed projection keeps what it applied.
+            self.step('Adresler yayımlanıyor')
+            self.publish()
         except Exception as original:
             def recover():
                 self.stop_units(list(reversed(started)), check=False)
@@ -941,7 +1035,10 @@ class Manager:
         definition = record['definition']
         version = self.podman()
         objects = self.objects(app, definition)
-        plan = self.render(app, definition, record['places'], version)
+        # Only the units' names and their order matter here: a raw row is rendered closed, so a removal never
+        # needs the address an open one is published on.
+        closed = {k: dict(r, kapsam='kapali') if r['tur'] == 'ham' else r for k, r in record['rows'].items()}
+        plan = self.render(app, definition, record['places'], version, closed)
         running = [u for u in plan['start'] if self.unit_state(u) == 'active']
         units = self.unit_snapshot(set(plan['units']) | set(objects['files']))
         try:
@@ -967,9 +1064,20 @@ class Manager:
         self.step('Kayıt kaldırılıyor')
         self.records.remove(app)
         self.net_call('apply')
+        # The rows went with the record: their names and sites go too. A failed projection keeps what it applied
+        # (the share guard tries again every 30 s); the data is still deleted when asked, then the job says so.
+        self.step('Adresler yayından kaldırılıyor')
+        unpublished = None
+        try:
+            self.publish()
+        except cfg.ContainerConfigError as err:
+            unpublished = err
         if veri == 'sil':
             self.step('Veriler siliniyor')
             apps.remove_tree(apps.data_dir(self.env, app))
+        if unpublished is not None:
+            raise cfg.ContainerConfigError(502, 'Uygulama kaldırıldı ama adresleri yayından kaldırılamadı: %s' % unpublished) \
+                from unpublished
         return {'ok': True, 'ad': app, 'veri': veri}
 
     # -- uygulama-taslak (K2): an image turned into a Compose draft; nothing else is written
@@ -981,3 +1089,192 @@ class Manager:
         info = self.json_call(['podman', 'image', 'inspect', pulled])
         cfg.require(isinstance(info, list) and len(info) == 1 and isinstance(info[0], dict), 'İmaj okunamadı.', 502)
         return {'metin': apps.image_draft(reference, info[0]), 'kaynak': {'tur': 'imaj', 'imaj': reference}}
+
+    # -- units for access rows (row changes and the address refresh)
+    @staticmethod
+    def affected(plan, objects, definition, written):
+        """The service units to restart for the unit files written, in start order: a container's own unit and
+        every service that depends on it (systemd's Requires= takes them down with it); a pod's or the network's
+        file: every unit the plan starts."""
+        if any(not name.endswith('.container') for name in written):
+            return list(plan['start'])
+        services = {s for s, unit in objects['units'].items() if unit[:-len('.service')] + '.container' in written}
+        needs = {s['name']: {d['service'] for d in s.get('depends_on') or ()} for s in definition['services']}
+        while True:
+            more = {s for s, deps in needs.items() if deps & services} - services
+            if not more:
+                break
+            services |= more
+        units = {objects['units'][s] for s in services}
+        return [u for u in plan['start'] if u in units]
+
+    def restart_services(self, app, definition, objects, plan, units, write=None):
+        """Stops the given units (reverse order), writes the unit files (write: {name: text}) and reloads systemd,
+        then starts them in order and waits until those services are ready."""
+        self.stop_units([u for u in plan['stop'] if u in units])
+        if write:
+            self.step('Birimler yazılıyor')
+            folder = self.unit_dir()
+            for name, text in sorted(write.items()):
+                settings.atomic(folder / name, text, 0o600)
+        self.call(['systemctl', 'daemon-reload'])
+        self.start_units({'start': [u for u in plan['start'] if u in units]}, [])
+        if units:
+            self.ready(app, {'services': [s for s in definition['services'] if objects['units'][s['name']] in units]}, objects)
+
+    def replace_units(self, app, definition, places, plan, objects):
+        """Writes the plan's unit files that differ from the ones in place; when the application is not stopped,
+        restarts the services whose units changed (affected) and waits for them. (written files, restarted units)."""
+        current = self.unit_snapshot(plan['units'])
+        written = sorted(n for n, text in plan['units'].items() if current.get(n) != text.encode('utf-8'))
+        if not written:
+            return [], []
+        restart = [] if places['stopped'] else self.affected(plan, objects, definition, written)
+        self.restart_services(app, definition, objects, plan, restart, {n: plan['units'][n] for n in written})
+        return written, restart
+
+    def row_files(self, app):
+        """The files row_change may change for one application, for the settings worker's snapshot: its
+        erisim.json and yerler.json and every unit file of its definition in KONTEYNER_BIRIM_DIR. Read-only; the
+        caller holds install.lock (no job can change the record meanwhile)."""
+        app = apps.app_name(app)
+        record = self.records.load(app)
+        folder = self.unit_dir()
+        return ([str(self.records.dir(app) / apps.ROWS_FILE), str(self.records.dir(app) / 'yerler.json')]
+                + [str(folder / name) for name in self.objects(app, record['definition'])['files']])
+
+    def row_change(self, app, key, row):
+        """One access row of one application changes: the settings worker's container side (master_settings,
+        rebuild phase 4). Contract: the caller holds install.lock in this process and owns the pending settings
+        change (it wrote SETTINGS_PENDING_FILE, with the snapshot of row_files(app), before this call); only
+        KONTEYNER_LOCK is taken here and the pending change is no refusal (settings_locked). The caller has checked
+        the row against everything outside the records (state.env ports, VPN ports, listeners, the firewall, DNS,
+        the internet consent); here its shape and its clashes with every row of every application are checked.
+
+        An address that becomes a raw port releases its pool port, a raw port that becomes an address gets one.
+        Then erisim.json and yerler.json are written, the guard is applied (a unit's start check reads it), the
+        units rendered with the generator and the ones that changed written, systemd reloaded, and only the
+        services whose units changed (with the services that depend on them) restarted and waited for (up to
+        READY_SECONDS), unless the application is stopped. A name or the Tailscale port or internet name of an
+        address changes no unit and restarts nothing. A row equal to the stored one writes nothing. A failure
+        raises and leaves the rollback to the caller: it restores row_files(app) and calls row_restore.
+
+        Returns {"uygulama", "anahtar", "birimler": [unit files written], "yeniden_baslatilan": [units restarted]}."""
+        with self.settings_locked():
+            app = apps.app_name(app)
+            cfg.require(self.records.exists(app), 'Uygulama bulunamadı.', 404)
+            record = self.records.load(app)
+            cfg.require(isinstance(key, str) and key in record['rows'], 'Uygulamanın böyle bir portu yok.', 404)
+            row = apps.check_row(key, copy.deepcopy(row), 400)
+            result = {'uygulama': app, 'anahtar': key, 'birimler': [], 'yeniden_baslatilan': []}
+            if row == record['rows'][key]:
+                return result
+            rows = dict(record['rows'], **{key: row})
+            others = [(i['id'], i['anahtar'], i['satir']) for i in apps.access_rows(self.env, self.records) if i['uygulama'] != app]
+            clash = apps.row_conflict(others + [(apps.row_id(app, k), k, r) for k, r in sorted(rows.items())])
+            cfg.require(clash is None, clash or '', 409)
+            old = record['places']
+            places = dict(old, ports=apps.allocate(self.env, app, apps.address_keys(rows), old['ports'], self.records),
+                          revision=uuid.uuid4().hex)
+            version = self.podman()
+            plan = self.render(app, record['definition'], places, version, rows)
+            self.podman5(plan, version)
+            objects = self.objects(app, record['definition'])
+            self.step('Erişim satırı yazılıyor')
+            self.records.write(app, rows=rows, places=places)
+            self.step('Ağ koruması uygulanıyor')
+            self.net_call('apply')
+            result['birimler'], result['yeniden_baslatilan'] = self.replace_units(app, record['definition'], places, plan, objects)
+            return result
+
+    def row_restore(self, app, restarted=None):
+        """After a row change failed or was rolled back: the caller (the settings worker, under row_change's
+        contract and locks) has put row_files(app) back. The guard is applied again from the restored records,
+        systemd reloaded and the services restarted and waited for: the units row_change restarted (its
+        yeniden_baslatilan), every service of the application when that is not known (None), none while the
+        application is stopped. Returns the units restarted."""
+        with self.settings_locked():
+            app = apps.app_name(app)
+            record = self.records.load(app)
+            definition = record['definition']
+            version = self.podman()
+            plan = self.render(app, definition, record['places'], version, record['rows'])
+            objects = self.objects(app, definition)
+            self.step('Ağ koruması uygulanıyor')
+            self.net_call('apply')
+            units = [] if record['places']['stopped'] else [u for u in plan['start'] if restarted is None or u in restarted]
+            self.restart_services(app, definition, objects, plan, units)
+            return units
+
+    # -- --adres-yenile
+    @staticmethod
+    def published(text):
+        return sorted(line for line in (text or '').splitlines() if line.startswith('PublishPort='))
+
+    def address_refresh(self):
+        """--adres-yenile: every application with an open raw row whose unit files publish on another address than
+        state.env names now (TAILSCALE_IPV4, WAN_IPV4) gets its units written again (replace_units) and, unless it
+        is stopped, the services whose units changed restarted. Idempotent: units that already carry the current
+        addresses are left alone. Takes a job's locks (locked: install.lock and KONTEYNER_LOCK, refused while a
+        settings change is pending); busy is a 409 the caller reports for the next run. One application's failure
+        does not stop the others. Returns {"yenilenen": [app], "hatalar": [{"uygulama", "hata"}]}."""
+        result = {'yenilenen': [], 'hatalar': []}
+        with self.locked():
+            records, version, stale = self.records, None, []
+            for app in records.names():
+                if not os.path.lexists(records.dir(app) / 'yerler.json'):
+                    continue
+                try:
+                    record = records.load(app)
+                    if not any(r['tur'] == 'ham' and r['kapsam'] != 'kapali' for r in record['rows'].values()):
+                        continue
+                    version = version or self.podman()
+                    plan = self.render(app, record['definition'], record['places'], version, record['rows'])
+                    current = self.unit_snapshot(plan['units'])
+                    if any(self.published(text) != self.published((current.get(name) or b'').decode('utf-8', 'replace'))
+                           for name, text in plan['units'].items()):
+                        stale.append((app, record, plan))
+                except cfg.ContainerConfigError as err:
+                    result['hatalar'].append({'uygulama': app, 'hata': str(err)})
+            if stale:
+                self.net_call('apply')
+            for app, record, plan in stale:
+                try:
+                    self.replace_units(app, record['definition'], record['places'], plan, self.objects(app, record['definition']))
+                    result['yenilenen'].append(app)
+                except cfg.ContainerConfigError as err:
+                    result['hatalar'].append({'uygulama': app, 'hata': str(err)})
+        return result
+
+
+def main(argv=None):
+    """master_container_worker.py --state S --adres-yenile: the address refresh (Manager.address_refresh), started by
+    refresh-tailnet-config as its own transient unit. Busy (a job, the installer or a pending settings change): one
+    line and exit 0, the next run retries; a failure: exit 1. The worker has no other entry of its own (the jobs
+    come through master_container_manager)."""
+    parser = argparse.ArgumentParser(description='Uygulamaların ham portlarını sunucunun şimdiki adreslerine taşır.')
+    parser.add_argument('--state', required=True)
+    parser.add_argument('--adres-yenile', action='store_true', dest='refresh', required=True)
+    args = parser.parse_args(argv)
+    try:
+        result = Manager(args.state).address_refresh()
+    except cfg.ContainerConfigError as err:
+        if err.status == 409:
+            print('adres-yenile: %s Sonraki çalışmada yeniden denenecek.' % err)
+            return 0
+        print('adres-yenile: HATA %s' % err, file=sys.stderr)
+        return 1
+    except (OSError, KeyError, ValueError, settings.SettingsError) as err:
+        print('adres-yenile: HATA kayıtlar okunamadı (%s).' % type(err).__name__, file=sys.stderr)
+        return 1
+    for app in result['yenilenen']:
+        print('adres-yenile: %s birimleri şimdiki adresle yeniden yazıldı.' % app)
+    for item in result['hatalar']:
+        print('adres-yenile: HATA %s: %s' % (item['uygulama'], item['hata']), file=sys.stderr)
+    if not result['yenilenen'] and not result['hatalar']:
+        print('adres-yenile: değişiklik yok.')
+    return 1 if result['hatalar'] else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

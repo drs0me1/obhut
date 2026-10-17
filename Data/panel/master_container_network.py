@@ -9,14 +9,22 @@ container units only check it before they start, including at boot, and retry un
 place (DD-223).
 
 Its input is the application records (master_applications.guard_input): each application's bridge
-and its publications. Rebuild phase 3 publishes on 127.0.0.1 only, which the host reaches through
-OUTPUT DNAT and needs no forward rule; any other host address fails closed until phase 4 brings
-the access rows. IPv6 ingress to managed bridges is denied.
+and its publications. An address row's pool port is published on 127.0.0.1, which the host reaches
+through OUTPUT DNAT and needs no forward rule. An open raw row (rebuild phase 4) is published on the
+Tailscale or the WAN IPv4 address: it gets one ingress permit per publication (out to the application's
+bridge, in from tailscale0 or the WAN interface, IPv4, its protocol, a DNAT of exactly that original
+address and host port to the container port; DD-217's rule). The permit is written only while the
+address is the host's now (read from the interfaces, not from state.env): one the host no longer has
+gets none, so nothing reaches it (DD-217's lesson: refusing such a mismatch stopped the firewall), and
+the address refresh (master_container_worker --adres-yenile) moves the unit. Any other publication
+(another scope, an address that is not an IPv4 address, a pool port off loopback) fails the whole guard
+closed. IPv6 ingress to managed bridges is denied.
 
   apply(env, run=runner); check(env, run=runner)
 runner(argv, timeout=20) returns CompletedProcess or (rc, stdout, stderr).
 
-References: www.netfilter.org/projects/nftables/manpage.html (hook priorities and ct tuples);
+References: docs.podman.io/en/v5.4.2/markdown/podman-run.1.html (--publish);
+www.netfilter.org/projects/nftables/manpage.html (hook priorities and ct tuples);
 manpages.debian.org/trixie/libnftables1/libnftables-json.5.en.html.
 """
 import argparse
@@ -73,6 +81,66 @@ def _config(env):
     return table, prefix
 
 
+def _addresses(env, iface, run):
+    rows = _json(run, ["ip", "-j", "address", "show", "dev", _iface(iface)])
+    if not isinstance(rows, list):
+        raise NetworkError("Arayüz adresleri okunamadı.", 503)
+    addresses = []
+    for row in rows:
+        for address in row.get("addr_info", []):
+            if address.get("family") != "inet" or address.get("scope") != "global":
+                continue
+            if any(flag in address.get("flags", []) for flag in ("tentative", "dadfailed")):
+                continue
+            try:
+                parsed = ipaddress.IPv4Address(address["local"])
+            except (KeyError, ValueError) as err:
+                raise NetworkError("Arayüzde geçersiz IPv4 adresi.", 503) from err
+            if parsed.is_unspecified or parsed.is_loopback or parsed.is_multicast or parsed.is_link_local:
+                raise NetworkError("Arayüzde kullanılamayan IPv4 adresi.", 503)
+            addresses.append(str(parsed))
+    return sorted(set(addresses))
+
+
+def tailscale_address(env, run=None):
+    addresses = _addresses(env, env.get("TAILSCALE_IF", ""), run)
+    if len(addresses) != 1 or ipaddress.ip_address(addresses[0]) not in ipaddress.ip_network("100.64.0.0/10"):
+        raise NetworkError("Tailscale IPv4 adresi hazır değil; port açılmadı.", 409)
+    return addresses[0]
+
+
+def wan_addresses(env, run=None):
+    rows = _json(run, ["ip", "-j", "route", "show", "default"])
+    if not isinstance(rows, list):
+        raise NetworkError("İnternet arayüzü bulunamadı.", 503)
+    rows = sorted((r for r in rows if isinstance(r, dict) and r.get("dev")), key=lambda r: r.get("metric", 0))
+    if not rows or (len(rows) > 1 and rows[0].get("metric", 0) == rows[1].get("metric", 0) and rows[0]["dev"] != rows[1]["dev"]):
+        raise NetworkError("İnternet arayüzü belirsiz; port açılmadı.", 409)
+    iface = _iface(rows[0]["dev"])
+    _, prefix = _config(env)
+    if iface == env.get("TAILSCALE_IF") or iface.startswith((prefix, "wg")):
+        raise NetworkError("İnternet portu VPN veya konteyner arayüzüne açılamaz.", 409)
+    addresses = _addresses(env, iface, run)
+    if not addresses:
+        raise NetworkError("İnternet IPv4 adresi hazır değil; port açılmadı.", 409)
+    return iface, addresses
+
+
+def current_addresses(env, run=None):
+    """{scope: (ingress interface, [the host's IPv4 addresses of it now])}: the Tailscale address and the WAN
+    addresses as the interfaces have them. Not ready, ambiguous or unreadable is no address (no permit)."""
+    found = {}
+    try:
+        found["tailscale"] = (_iface(env.get("TAILSCALE_IF", "")), [tailscale_address(env, run)])
+    except NetworkError:
+        found["tailscale"] = (None, [])
+    try:
+        found["internet"] = wan_addresses(env, run)
+    except NetworkError:
+        found["internet"] = (None, [])
+    return found
+
+
 def _read(path):
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
@@ -94,6 +162,26 @@ def env_read(path):
     return out
 
 
+SCOPES = ("local", "tailscale", "internet")
+
+
+def _publication(pub):
+    """A publication the guard understands: a pool port on 127.0.0.1 (TCP) or a raw port on an IPv4 address."""
+    def port(value):
+        return type(value) is int and 0 < value < 65536
+    if not (isinstance(pub, dict) and set(pub) == {"service", "port", "protocol", "scope", "host_ip", "host_port"}
+            and pub["scope"] in SCOPES and pub["protocol"] in ("tcp", "udp") and port(pub["port"]) and port(pub["host_port"])):
+        return False
+    if pub["scope"] == "local":
+        return pub["host_ip"] == "127.0.0.1" and pub["protocol"] == "tcp"
+    try:
+        address = ipaddress.IPv4Address(pub["host_ip"])
+    except (ValueError, TypeError):
+        return False
+    return str(address) == pub["host_ip"] and not (address.is_loopback or address.is_unspecified or address.is_multicast
+                                                   or address.is_link_local)
+
+
 def applications(env):
     """Each application's bridge and publications, from its record (fail closed on anything unreadable)."""
     import master_applications
@@ -106,8 +194,9 @@ def applications(env):
         if not re.fullmatch(re.escape(prefix) + r"[0-9a-f]{10}", str(row.get("interface", ""))):
             raise NetworkError("Uygulama köprüsünün adı geçersiz.", 503)
         for pub in row.get("publications", []):
-            if pub.get("host_ip") != "127.0.0.1":
-                raise NetworkError("Bu sürüm yalnız 127.0.0.1 üzerinde yayın yapar.", 503)
+            if not _publication(pub):
+                raise NetworkError("Uygulama yayını yalnız 127.0.0.1 ya da sunucunun Tailscale veya internet IPv4 "
+                                   "adresi üzerinde olabilir; ağ kuralları korunuyor.", 503)
     return rows
 
 
@@ -129,8 +218,9 @@ def egress_blocks(env):
     return blocks
 
 
-def policy(env, apps):
-    """Return nft's JSON table/chain/rule objects, suitable for exact health comparison."""
+def policy(env, apps, run=None):
+    """Return nft's JSON table/chain/rule objects, suitable for exact health comparison. The host's
+    Tailscale and WAN addresses are read (run) only when a raw publication needs them."""
     table, prefix = _config(env)
     owner = {"family": "inet", "table": table}
     objects = [{"table": {"family": "inet", "name": table}},
@@ -177,6 +267,28 @@ def policy(env, apps):
     # blanket interbridge permit. Publications on 127.0.0.1 reach the bridge from the host's OUTPUT path.
     for bridge in sorted({row["interface"] for row in apps}):
         rule(_match(meta("iifname"), bridge), _match(meta("oifname"), bridge), {"return": None})
+
+    # DD-217: a raw publication is let in only as the DNAT Podman made for it: out to its own bridge, in from
+    # the scope's interface, to exactly the original address and host port, to the container port.
+    def publish(bridge, ingress, address, pub):
+        rule(_match(meta("oifname"), bridge), _match(meta("iifname"), ingress),
+             _match(meta("nfproto"), "ipv4"), _match(meta("l4proto"), pub["protocol"]),
+             _match(ct("direction"), "original"), _match(ct("status"), "dnat", "in"),
+             _match(ct("daddr", family="ip", dir="original"), address),
+             _match(ct("proto-dst", dir="original"), pub["host_port"]),
+             _match({"payload": {"protocol": pub["protocol"], "field": "dport"}}, pub["port"]),
+             {"return": None})
+    current = None
+    for row in sorted(apps, key=lambda r: r["app"]):
+        for pub in row.get("publications", []):
+            if pub["scope"] == "local":
+                continue
+            if current is None:
+                current = current_addresses(env, run)
+            ingress, addresses = current[pub["scope"]]
+            # An address the host does not have now cannot be reached: no permit (stricter, never wider).
+            if ingress and pub["host_ip"] in addresses:
+                publish(row["interface"], ingress, pub["host_ip"], pub)
     rule({"drop": None})
     # nft lists chains before rules, and rules chain by chain; the health check compares in that order.
     return objects + inputs
@@ -228,7 +340,7 @@ def same_policy(expected, actual):
 
 def check(env, run=None):
     table, _ = _config(env)
-    expected = policy(env, applications(env))
+    expected = policy(env, applications(env), run=run)
     rc, out, err = _result(run, ["nft", "-j", "list", "table", "inet", table])
     if rc and re.search(r"No such file|does not exist", err, re.I):
         raise NetworkError("Konteyner yönlendirme koruması eksik veya güncel değil.", 503)
@@ -245,7 +357,7 @@ def check(env, run=None):
 
 def apply(env, run=None):
     table, _ = _config(env)
-    objects = policy(env, applications(env))
+    objects = policy(env, applications(env), run=run)
     rc, _, err = _result(run, ["nft", "-j", "list", "table", "inet", table])
     if rc and not re.search(r"No such file|does not exist", err, re.I):
         raise NetworkError("Konteyner güvenlik duvarı okunamadı.", 503)

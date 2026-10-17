@@ -75,17 +75,23 @@ def public(path, data=None, cookie=None, api=True):
 
 
 def status():
-    """The settings revision and the publication rows in the shape this test checks, read from
-    Erişim's GET yayinlar (DD-265)."""
-    code, body = tail("/api/konsol/yayinlar")
+    """The settings revision and the fixed rows (Konsol, WebDAV) in the shape this test checks, read from
+    Erişim's read model (rebuild phase 4: each row carries its web fields; a verified certificate is ready)."""
+    code, body = tail("/api/konsol/erisim")
     assert code == 200, code
     view = json.loads(body)
-    return {"revision": view["revizyon"], "publications": [
-        {"service": c["servis"], "tail": c["tailscale"], "enabled": c["internet"], "domain": c["alan_adi"],
-         "status": c["durum"]} for c in view["adaylar"] if c.get("servis")]}
+    ready = {c["hizmet"] for c in view["ozet"]["sertifikalar"] if c["durum"] == "gecerli"}
+    rows = []
+    for row in view["hizmetler"]:
+        if row["id"] in ("panel", "paylasim") and row.get("web"):
+            web = row["web"]
+            rows.append(dict(web, service=row["id"], status="ready" if row["id"] in ready else
+                             "error" if web["enabled"] else "disabled"))
+    return {"revision": view["revizyon"], "publications": rows}
 
 
 def save(**item):
+    """Applies the row; an opening waits for its confirmation (decision 1), which this Tailscale client gives."""
     item = dict(service="panel", **item)
     for attempt in range(10):
         code, body = tail("/api/konsol/ayarlar/uygula", {"revision": status()["revision"], "web": item})
@@ -94,7 +100,12 @@ def save(**item):
             continue
         break
     assert code == 200, (code, body.decode()[:300])
-    assert json.loads(body) == {"committed": True, "pending": None}
+    result = json.loads(body)
+    if result.get("pending"):
+        code, body = tail("/api/konsol/ayarlar/onayla", {"id": result["pending"]["id"]})
+        assert code == 200, (code, body.decode()[:300])
+    else:
+        assert result == {"committed": True, "pending": None}, result
 
 
 def panel_row():
@@ -133,7 +144,7 @@ try:
 
     status_code, _, body = public("/", cookie=COOKIE, api=False)
     assert status_code == 200 and b'<div id="app">' in body and b'src="/app.js"' in body, status_code
-    for api in ("/api/konsol/kaynaklar", "/api/state", "/api/konsol/yayinlar"):
+    for api in ("/api/konsol/kaynaklar", "/api/state", "/api/konsol/erisim"):
         assert public(api, cookie=COOKIE)[0] == 200, api
     assert json.loads(public("/api/konsol/oturum", cookie=COOKIE)[2])["kanal"] == "internet"
     # A request without the session-gated API header is still refused (CSRF gate).

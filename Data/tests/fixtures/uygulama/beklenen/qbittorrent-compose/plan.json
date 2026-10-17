@@ -32,6 +32,20 @@
       "protocol": "tcp",
       "host_ip": "127.0.0.1",
       "host_port": 62100
+    },
+    {
+      "service": "qbittorrent",
+      "port": 6881,
+      "protocol": "tcp",
+      "host_ip": "203.0.113.10",
+      "host_port": 6881
+    },
+    {
+      "service": "qbittorrent",
+      "port": 6881,
+      "protocol": "udp",
+      "host_ip": "203.0.113.10",
+      "host_port": 6881
     }
   ],
   "needs_podman5": []

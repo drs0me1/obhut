@@ -58,17 +58,21 @@ def api(path, data=None):
 
 
 if args.configure:
-    view = api("/api/konsol/yayinlar")
-    dav = next(r for r in view["adaylar"] if r["id"] == "paylasim")
-    # WebDAV's publication row (Erişim → Adresler): its Tailscale name as it is, its internet name on.
-    web = {"service": "paylasim", "tail": dav["tailscale"], "enabled": True, "domain": args.domain}
+    view = api("/api/konsol/erisim")
+    dav = next(r for r in view["hizmetler"] if r["id"] == "paylasim")
+    # WebDAV's fixed row (Erişim → Adresler): its Tailscale name as it is, its internet name on. Decision 1: a new
+    # internet name waits for its confirmation, which this Tailscale client gives.
+    web = {"service": "paylasim", "tail": dav["web"]["tail"], "enabled": True, "domain": args.domain}
     result = api("/api/konsol/ayarlar/uygula", {"revision": view["revizyon"], "web": web})
-    assert result.get("committed") is True and result.get("pending") is None
+    if result.get("pending"):
+        api("/api/konsol/ayarlar/onayla", {"id": result["pending"]["id"]})
+    else:
+        assert result.get("committed") is True
     print("PASS: real Settings API saved and verified HTTPS", flush=True)
-# The shares' WAN mode and domain (Dosyalar → Paylaşımlar) and the certificate state (Erişim's WebDAV row).
+# The shares' WAN mode and domain (Dosyalar → Paylaşımlar) and the certificate state (Erişim's certificates).
 wan = api("/api/konsol/paylasim")["wan"]
-row = next(r for r in api("/api/konsol/yayinlar")["adaylar"] if r["id"] == "paylasim")
-assert wan["mode"] == "https" and wan["domain"] == args.domain and row["durum"] == "ready", (wan, row["durum"])
+certificates = {c["hizmet"]: c["durum"] for c in api("/api/konsol/erisim")["ozet"]["sertifikalar"]}
+assert wan["mode"] == "https" and wan["domain"] == args.domain and certificates.get("paylasim") == "gecerli", (wan, certificates)
 
 
 def request(method, path, item=None, password=None, headers=None, data=None, tail=False):

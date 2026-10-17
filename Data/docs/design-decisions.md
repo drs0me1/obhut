@@ -17,6 +17,83 @@ Konsol's old interface was removed in DD-267 (v2-250). Live entries written
 before it still name its places (Ayarlar → Caddy, Ayarlar → Sistem, App Store,
 the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 
+### DD-275: The rebuild's phase 4: access rows (v2-258)
+
+- **Scope (`rebuild.md` phase 4):** every exposed container port of an application has one access row, and
+  every change to access (application rows, Konsol and Paylaşımlar, WireGuard's openings) is a settings plan.
+  Konsol's screens follow minimally; phase 5 redesigns them.
+- **The operator's decisions (2026-10-17):**
+  1. Opening or widening access waits for the 60 s confirmation from Tailscale and rolls back unconfirmed;
+     closing or narrowing commits at once (an unconfirmed close never reopens). A rename is an opening.
+     This applies to Konsol's and Paylaşımlar' rows too; DD-195's typed word and account stay.
+  2. "Adres aç" restarts the service: only a port with an address is published on `127.0.0.1` (a pool port);
+     a raw port is never published on loopback.
+  3. A raw port's host number defaults to the container port and may be changed; conflicts are refused.
+  4. WireGuard: turning it on, adding a network and opening one (each opens a WAN UDP port) are plans with
+     the 60 s confirmation; turning it off, closing and removing a network commit at once; regenerating a
+     network's key commits at once after the typed word; peers, their DNS and keepalive, a network's DNS
+     and name stay immediate.
+- **The row model (one home):** `UYGULAMA_STATE_DIR/<app>/erisim.json`, keyed `<service>:<port>/<proto>`:
+  `adres` (TCP; Tailscale name, optional Tailscale port (K5), optional internet name) or `ham` (closed,
+  Tailscale or internet, host port). Row id `uygulama:<app>:<key>`. Install seeds the rows from the answers;
+  from then on the rows are the only home of how a port is reached: `yanitlar.json` keeps no port answers,
+  the stored definition keeps each port's number and protocol, and an edit fills a staying port's answer
+  from its row (a different one is refused: "Bu portun kullanımı Erişim'den değişir."). One name rule for
+  every Tailscale name (the inspector's), one `taken_names` (master_applications): other applications,
+  `panel`/`paylas`, the base and `modul-*.conf` names, the operator's DNS records.
+- **The settings transaction:** `AyarIstegi` is a closed `one_of` (rules, domain, `web` for Konsol and
+  Paylaşımlar, `erisim`, `wireguard`); the old WebDAV-only `https` section and its writer are gone. The
+  revision covers every `erisim.json` and WireGuard's files. An `erisim` change is validated on the server
+  (shape, names, internet name DNS per DD-252, host port conflicts with every `*_PORT`, the pool range,
+  WireGuard ports, operator rules, other rows and live listeners; A2's `internet_onayi` for a raw internet
+  port), planned (container restart, Caddy, dnsmasq, firewall, certificate; warnings for A2, for raw ports
+  that bypass the operator's rules and for renames), applied (snapshot of the app's rows, places and units
+  and the Caddy and DNS files → the container side in the same process (`Manager.row_change`, holding only
+  `KONTEYNER_LOCK` beside the settings locks) → firewall → `publish()` → certificate wait) and rolled back
+  in reverse (`row_restore`). Its worker may run 1800 s and its applying deadline is 900 s (a 300 s ready
+  wait fits); the guard timer's start limit is 1200 s. Other sections keep their limits.
+- **Rendering:** `uygulama-<app>.caddy` (tailnet `http://<ad>.<domain>` and K5 `http://{$TAILSCALE_IPV4}:<port>`
+  to the pool port) and `uygulama-<app>-wan.caddy` (internet names, DD-252's site shape);
+  `modul-uygulama.conf` with one `interface-name` per address, written by the projection, not switchable in
+  Yerel adlar (shown locked with a link to the row). The 443 gate and DD-190's plaintext-WebDAV rule include
+  application internet names. DD-172 amended: each K5 port is a configured tailnet entry
+  (`konsol-base:tail-tcp-<port>`). Raw ports: `PublishPort=<Tailscale or WAN IPv4>:<host>:<port>/<proto>`;
+  the guard's per-address ingress permit is back (only for an address the host has now; a malformed
+  publication fails the guard closed). `master_container_worker.py --adres-yenile` rewrites the units of
+  applications whose raw rows' address changed; `refresh-tailnet-config` starts it.
+- **WireGuard through the plan:** a `wireguard` section; `master-wg` has one documented caller mode for the
+  settings worker (`OBHUT_KILIT_FD`, an inherited descriptor that holds `install.lock`, verified by device,
+  inode and lock state; `OBHUT_AYAR_ISLEMI`, the pending change's id in phase `applying`). Only the networks
+  file and the stopped marker enter the pending file, never a key or a profile. The immediate routes for
+  the planned actions are gone.
+- **Read models:** Erişim has one row per application port (and keeps containers no application owns with
+  their public-port warning); the firewall view shows raw and K5 ports as fixed rows linked to their row,
+  and an operator rule on such a port is refused; the application page shows each port's row.
+- **Removed:** Yayınla (`master_yayin.py`, `/api/konsol/yayinlar[/plan]`, its shapes and flow), manual
+  `elle-*` addresses (DD-252), package publication rows (DD-199, already without code), the `https` key
+  writer (DD-193), `obhut yayin` (now `obhut erisim liste|kapat`, closing at once). The pool keys are now
+  `UYGULAMA_PORT_ILK`/`UYGULAMA_PORT_SON`.
+- **Known limits:** a busy settings worker still answers 400 with "biraz sonra yeniden deneyin" (as before
+  this phase); closing one WireGuard network leaves its UDP port open while the network is registered
+  (phase 1 behaviour); `paylas.<domain>` can still be switched both in Yerel adlar and by WebDAV's Tailscale
+  switch (phase 5); an `erisim` apply holds its request until the worker ends; an internet name was not
+  issued live (it needs a domain whose A record points at the test host).
+- **Tests:** the access rows 34 (every validation and conflict class, plan items and `onay_sn`, apply and
+  each rollback, rendering, K5, firewall view, locked names, closed request shapes), settings 50 (13 for
+  WireGuard), WireGuard 16, applications 25, generator 37, guard 15, worker 49; HTTPS tests on `web.paylasim`;
+  bats with the master-wg caller mode and the K5 exact-count check; Python 856 with only the eight known
+  macOS failures; `bats` 181/181; the seven browser suites and the sign-in suite with the layout audit.
+- **Live check (test host, Debian 13, 2026-10-17):** an application with a web port, a raw TCP and a raw
+  UDP port installed with its address active at once (`http://<name>.<domain>` over Tailscale); a rename
+  (60 s, confirmed; the old name no longer resolves); a Tailscale port (`<tailscale-ip>:8080`, its tailnet
+  entry in the firewall); the raw TCP port to Tailscale (echo over Tailscale, nothing from the WAN); the raw
+  UDP port to the internet refused without the consent and answering from the internet with it; an
+  unconfirmed widening (Tailscale → internet) rolled back after 60 s; closing at once; "Adres aç" (pool port,
+  Caddy site) and "Adresi kaldır" (pool port released); WireGuard: a network added (60 s, confirmed),
+  closed at once, an unconfirmed opening rolled back, stopped at once, started (confirmed), its key
+  regenerated only with the typed word, removed; after a reboot the address, the Tailscale port and the raw
+  port answered again with no failed unit. Konsol's Erişim screens read clean at 390 and 1440 px.
+
 ### DD-274: The rebuild's phase 3: generating and running applications (v2-257)
 
 - **Scope (`rebuild.md` phase 3):** an application is installed from its own Compose or Kubernetes file and
@@ -620,6 +697,7 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   deleting and adding it again (new keys and profiles for every device).
 - **Amended by DD-267 (v2-250):** the Podman page is gone; a container managed outside Konsol is adopted
   through Uygulamalar' add flow (DD-266) before Yayınla can choose it.
+- **Retired by DD-275 (v2-258, the rebuild):** Yayınla and `/api/konsol/yayinlar` are gone; every access change is a row's settings plan. The plan itself (DD-156's dry run) stays.
 
 ### DD-264: Gezgin's WebDAV shares on the Tailscale address (v2-251)
 
@@ -1067,6 +1145,7 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Trade-off (flagged, the operator's choice):** nothing checks the application's login the way
   qBittorrent's row is checked (DD-199): the public name exposes whatever answers on that port, and
   its own password is the only guard. The status line says when nothing answers on the port.
+- **Retired by DD-275 (v2-258, the rebuild):** manual `elle-*` addresses are gone; an application port's access row replaces them, with this entry's site and DNS shapes.
 
 ### DD-251: Container logs in full and unfiltered (v2-234)
 
@@ -2543,6 +2622,7 @@ Presentation amended by DD-213; installed-only tiles and cumulative traffic sema
 - **Still base:** the WebDAV row's HTTPS machinery (`master_https`, `master_shares`)
   and the Konsol row (DD-195). Phase 2 moves Konsol's App Store texts and pages into
   packages and renames the backend.
+- **Retired by DD-275 (v2-258, the rebuild):** no package rows remain (DD-272 removed the packages).
 
 ### DD-198: Firewall, health and port catalogue from package declarations, phase 1b (v2-172)
 
@@ -6459,6 +6539,7 @@ failure with an early, named one.
   so inserting a blanket RETURN/ACCEPT cannot silently bypass the new default.
   ICMP control traffic remains allowed. No package removal or listener restart is
   needed to close unnecessary *new inbound* qBittorrent peer connections.
+- **Amended by DD-275 (v2-258, the rebuild):** each application address row's Tailscale port (K5) is a configured tailnet entry, `konsol-base:tail-tcp-<port>`, read from the access rows.
 
 ### DD-171: Remove dead sharing lifecycle without deleting legacy data (2026-09-28)
 

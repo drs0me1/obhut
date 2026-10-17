@@ -1,7 +1,11 @@
-"""The root worker (rebuild DD-271, phase 3): an application's lifecycle and Gelişmiş's Podman resources.
-Podman, systemctl, Quadlet and the guard are fakes; every rollback path is driven to its end and checked
-for what it left behind. No secret value may reach an argument, a file other than Podman's standard
-input, an operation record, a log line or a reply."""
+"""The root worker (rebuild DD-271, phases 3 and 4): an application's lifecycle with its access rows, the
+settings worker's row change and its restore, the address refresh (--adres-yenile) and Gelişmiş's Podman
+resources. Podman, systemctl, Quadlet, the guard and the publication projection are fakes; every rollback path
+is driven to its end and checked for what it left behind. No secret value may reach an argument, a file other
+than Podman's standard input, an operation record, a log line or a reply."""
+import contextlib
+import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -212,17 +216,40 @@ class FakeHost:
 
 
 class FakeNetwork:
-    """The guard: it reads every record as the real one does, and remembers which applications it saw."""
+    """The guard: it reads every record as the real one does, and remembers which applications it saw (and,
+    with a host, notes its turn among the host's calls)."""
 
-    def __init__(self):
+    def __init__(self, host=None):
         self.applied = []
+        self.inputs = []
         self.fail = 0
+        self.host = host
 
     def apply(self, env, run):
         if self.fail:
             self.fail -= 1
             raise cfg.ContainerConfigError(503, 'Konteyner yönlendirme koruması uygulanamadı.')
-        self.applied.append([row['app'] for row in apps.guard_input(env)])
+        rows = apps.guard_input(env)
+        self.applied.append([row['app'] for row in rows])
+        self.inputs.append(rows)
+        if self.host is not None:
+            self.host.calls.append(['guard', 'apply'])
+
+
+class FakePublisher:
+    """The publication projection: the rows it saw each time, or a failure."""
+
+    def __init__(self, env, host):
+        self.env, self.host = env, host
+        self.seen = []
+        self.fail = 0
+
+    def __call__(self):
+        self.host.calls.append(['publish'])
+        if self.fail:
+            self.fail -= 1
+            raise cfg.ContainerConfigError(502, 'WAN dinleyicisi/güvenlik duvarı uygulanamadı (Caddy yapılandırması geçersiz).')
+        self.seen.append([r['id'] for r in apps.access_rows(self.env)])
 
 
 class WorkerCase(unittest.TestCase):
@@ -235,10 +262,10 @@ class WorkerCase(unittest.TestCase):
             Path(self.env[key]).mkdir(parents=True)
         self.state = app_fixtures.write_state(self.root, self.env)
         self.host = FakeHost(self.env)
-        self.guard = FakeNetwork()
+        self.guard = FakeNetwork(self.host)
+        self.publisher = FakePublisher(self.env, self.host)
         self.now = [1000.0]
-        self.manager = worker.Manager(str(self.state), run=self.host, network=self.guard, quadlet='/fixture/quadlet',
-                                      clock=lambda: self.now[0], sleep=self.tick)
+        self.manager = self.make_manager()
         self.checked = []
         # /srv itself is the host's; the DD-226 walk is checked in its own test.
         patcher = patch.object(worker.binds, 'walk', side_effect=lambda source: self.checked.append(source) or os.open(self.root, os.O_RDONLY))
@@ -247,9 +274,10 @@ class WorkerCase(unittest.TestCase):
         patcher = patch.object(apps, 'bindable', return_value=True)
         patcher.start()
         self.addCleanup(patcher.stop)
-        patcher = patch.object(apps, 'manual_ports', return_value=set())
-        patcher.start()
-        self.addCleanup(patcher.stop)
+
+    def make_manager(self):
+        return worker.Manager(str(self.state), run=self.host, network=self.guard, quadlet='/fixture/quadlet',
+                              clock=lambda: self.now[0], sleep=self.tick, publisher=self.publisher)
 
     def tick(self, seconds):
         self.now[0] += seconds
@@ -738,6 +766,374 @@ class DraftAndResourceTests(WorkerCase):
             manager.execute('uygulama-kur', {'name': 'notlar', 'metin': app_fixtures.TEXT, 'yanitlar': app_fixtures.answers(),
                                              'kaynak': {'tur': 'dosya'}}, uuid.uuid4().hex)
         self.assertIn('Onay bekleyen', str(err.exception))
+
+
+# Rebuild phase 4: a database with a raw port and a web service that depends on it, with an address and a UDP port.
+ROWS_TEXT = """name: satir
+services:
+  db:
+    image: registry.example/satir/db:1
+    ports:
+      - "5432"
+  web:
+    image: registry.example/satir/web:2
+    depends_on: [db]
+    ports:
+      - "8080"
+      - "5353/udp"
+"""
+ROWS_ANSWERS = {'name': 'satir', 'answers': {'port:db:5432/tcp': {'use': 'raw'},
+                                             'port:web:8080/tcp': {'use': 'caddy', 'tailscale_name': 'satir'},
+                                             'port:web:5353/udp': {'use': 'raw'},
+                                             'start:db': {'mode': 'root'}, 'start:web': {'mode': 'root'}}}
+DB, WEB = 'konsol-satir_db.service', 'konsol-satir_web.service'
+ADDRESS = {'tur': 'adres', 'ad': 'satir', 'tailscale_portu': None, 'internet': ''}
+
+
+class RowsCase(WorkerCase):
+    def setUp(self):
+        super().setUp()
+        self.install(ROWS_TEXT, ROWS_ANSWERS, 'satir')
+        self.host.calls.clear()
+
+    @contextlib.contextmanager
+    def settings_caller(self, pending=True, lock=True):
+        """What the settings worker holds around a row change: install.lock in this process and a pending change."""
+        path = self.root / 'ayarlar-bekleyen.json'
+        if pending:
+            path.write_text('{"phase": "applying"}')
+        self.env['SETTINGS_PENDING_FILE'] = str(path)
+        self.state = app_fixtures.write_state(self.root, self.env)
+        self.manager = self.make_manager()
+        with open(Path(self.env['RUNTIME_DIR']) / 'install.lock', 'a') as held:
+            if lock:
+                fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if path.exists():
+                    path.unlink()
+
+    def change(self, app, key, row):
+        with self.settings_caller():
+            return self.manager.row_change(app, key, row)
+
+    def unit(self, service, app='satir'):
+        return (Path(self.env['KONTEYNER_BIRIM_DIR']) / ('konsol-%s_%s.container' % (app, service))).read_text()
+
+    def published_lines(self, service, app='satir'):
+        return [line for line in self.unit(service, app).splitlines() if line.startswith('PublishPort=')]
+
+    def order(self):
+        return [' '.join(c[:2]) + ((' ' + c[-1]) if c[0] == 'systemctl' and c[1] in ('start', 'stop') else '')
+                for c in self.host.calls if c[0] in ('guard', 'publish') or c[:2] in (['systemctl', 'start'], ['systemctl', 'stop'],
+                                                                                     ['systemctl', 'daemon-reload'])]
+
+
+class RowChangeTests(RowsCase):
+    def test_the_rows_were_seeded_at_install_and_published(self):
+        record = self.record('satir')
+        self.assertEqual(record['rows'], {'db:5432/tcp': {'tur': 'ham', 'kapsam': 'kapali', 'port': 5432},
+                                          'web:8080/tcp': ADDRESS, 'web:5353/udp': {'tur': 'ham', 'kapsam': 'kapali', 'port': 5353}})
+        self.assertEqual(record['places']['ports'], {'web:8080/tcp': 62100})
+        self.assertEqual(self.published_lines('db'), [], 'a closed raw port publishes nothing')
+        self.assertEqual(self.publisher.seen[-1], ['uygulama:satir:db:5432/tcp', 'uygulama:satir:web:5353/udp',
+                                                   'uygulama:satir:web:8080/tcp'])
+
+    def test_only_the_settings_transaction_changes_a_row(self):
+        row = {'tur': 'ham', 'kapsam': 'tailscale', 'port': 15432}
+        for pending, lock, text in ((False, False, 'kurulum kilidini'), (True, False, 'kurulum kilidini'),
+                                    (False, True, 'bekleyen bir ayar')):
+            with self.subTest(pending=pending, lock=lock), self.settings_caller(pending, lock), \
+                    self.assertRaises(cfg.ContainerConfigError) as err:
+                self.manager.row_change('satir', 'db:5432/tcp', row)
+            self.assertEqual(err.exception.status, 503)
+            self.assertIn(text, str(err.exception))
+        self.assertEqual(self.host.calls, [])
+        self.assertEqual(self.record('satir')['rows']['db:5432/tcp']['kapsam'], 'kapali')
+
+    def test_opening_a_raw_port_publishes_it_and_restarts_its_service_with_the_ones_that_need_it(self):
+        revision = self.record('satir')['places']['revision']
+        result = self.change('satir', 'db:5432/tcp', {'tur': 'ham', 'kapsam': 'tailscale', 'port': 15432})
+        self.assertEqual(result, {'uygulama': 'satir', 'anahtar': 'db:5432/tcp', 'birimler': ['konsol-satir_db.container'],
+                                  'yeniden_baslatilan': [DB, WEB]})
+        self.assertEqual(self.published_lines('db'), ['PublishPort=100.64.0.2:15432:5432/tcp'])
+        record = self.record('satir')
+        self.assertEqual(record['rows']['db:5432/tcp'], {'tur': 'ham', 'kapsam': 'tailscale', 'port': 15432})
+        self.assertEqual(record['places']['ports'], {'web:8080/tcp': 62100})
+        self.assertNotEqual(record['places']['revision'], revision)
+        # The guard first (the units' start check reads it), then web and db down, the unit, db and web up.
+        self.assertEqual(self.order(), ['guard apply', 'systemctl stop ' + WEB, 'systemctl stop ' + DB, 'systemctl daemon-reload',
+                                        'systemctl start ' + DB, 'systemctl start ' + WEB])
+        raw = [p for p in self.guard.inputs[-1][0]['publications'] if p['scope'] != 'local']
+        self.assertEqual(raw, [{'service': 'db', 'port': 5432, 'protocol': 'tcp', 'scope': 'tailscale', 'host_ip': '100.64.0.2',
+                                'host_port': 15432}])
+        self.assertEqual((self.host.units[DB], self.host.units[WEB]), ('active', 'active'))
+        # Closing it again restarts the same two; the projection is the settings worker's own step.
+        result = self.change('satir', 'db:5432/tcp', {'tur': 'ham', 'kapsam': 'kapali', 'port': 15432})
+        self.assertEqual(result['yeniden_baslatilan'], [DB, WEB])
+        self.assertEqual(self.published_lines('db'), [])
+        self.assertNotIn(['publish'], self.host.calls)
+
+    def test_an_address_and_a_raw_port_trade_the_pool_port_and_restart_only_their_service(self):
+        result = self.change('satir', 'web:8080/tcp', {'tur': 'ham', 'kapsam': 'internet', 'port': 18080})
+        self.assertEqual((result['birimler'], result['yeniden_baslatilan']), (['konsol-satir_web.container'], [WEB]))
+        self.assertEqual(self.record('satir')['places']['ports'], {}, 'the pool port is released')
+        self.assertEqual(self.published_lines('web'), ['PublishPort=203.0.113.10:18080:8080/tcp'])
+        result = self.change('satir', 'web:8080/tcp', dict(ADDRESS, ad='geri'))
+        self.assertEqual(result['yeniden_baslatilan'], [WEB], 'web depends on db, not the other way round')
+        self.assertEqual(self.record('satir')['places']['ports'], {'web:8080/tcp': 62100})
+        self.assertEqual(self.published_lines('web'), ['PublishPort=127.0.0.1:62100:8080/tcp'])
+        # A UDP port is raw only; its own scope change works like any raw port.
+        result = self.change('satir', 'web:5353/udp', {'tur': 'ham', 'kapsam': 'internet', 'port': 5353})
+        self.assertEqual(self.published_lines('web'), ['PublishPort=127.0.0.1:62100:8080/tcp', 'PublishPort=203.0.113.10:5353:5353/udp'])
+
+    def test_a_name_a_tailscale_port_or_an_internet_name_restarts_nothing(self):
+        before = self.unit_files(), self.unit('web'), self.unit('db')
+        row = dict(ADDRESS, ad='yeni-ad', tailscale_portu=8443, internet='satir.example.org')
+        result = self.change('satir', 'web:8080/tcp', row)
+        self.assertEqual((result['birimler'], result['yeniden_baslatilan']), ([], []))
+        self.assertEqual((self.unit_files(), self.unit('web'), self.unit('db')), before)
+        self.assertEqual(self.record('satir')['rows']['web:8080/tcp'], row)
+        self.assertFalse([c for c in self.host.calls if c[0] == 'systemctl' and c[1] in ('start', 'stop', 'daemon-reload')])
+        # The same row again writes nothing at all.
+        self.host.calls.clear()
+        records = apps.Records(self.env)
+        snapshot = records.snapshot('satir')
+        self.assertEqual(self.change('satir', 'web:8080/tcp', row)['birimler'], [])
+        self.assertEqual((records.snapshot('satir'), self.host.calls), (snapshot, []))
+
+    def test_a_row_that_cannot_be_stored_or_clashes_changes_nothing(self):
+        self.install(app_fixtures.SIMPLE, app_fixtures.SIMPLE_ANSWERS, 'sayac')
+        self.change('sayac', 'app:9000/tcp', dict(ADDRESS, ad='sayac', tailscale_portu=19000))
+        records = apps.Records(self.env)
+        snapshot = records.snapshot('satir')
+        self.host.calls.clear()
+        cases = [('yok:1/tcp', ADDRESS, 404), ('web:5353/udp', dict(ADDRESS, ad='dns'), 400),
+                 ('web:8080/tcp', dict(ADDRESS, ad='Kotu'), 400), ('web:8080/tcp', dict(ADDRESS, ad='panel'), 400),
+                 ('db:5432/tcp', {'tur': 'ham', 'kapsam': 'lan', 'port': 5432}, 400),
+                 ('db:5432/tcp', {'tur': 'ham', 'kapsam': 'tailscale'}, 400),
+                 ('web:8080/tcp', dict(ADDRESS, ad='sayac'), 409),
+                 ('web:8080/tcp', dict(ADDRESS, tailscale_portu=19000), 409),
+                 ('db:5432/tcp', {'tur': 'ham', 'kapsam': 'tailscale', 'port': 19000}, 409)]
+        for key, row, status in cases:
+            with self.subTest(key=key, row=row), self.assertRaises(cfg.ContainerConfigError) as err:
+                self.change('satir', key, row)
+            self.assertEqual(err.exception.status, status)
+        self.assertEqual(records.snapshot('satir'), snapshot)
+        self.assertEqual(self.host.calls, [])
+        # The same number on the internet is another listener.
+        self.assertEqual(self.change('satir', 'db:5432/tcp', {'tur': 'ham', 'kapsam': 'internet', 'port': 19000})['anahtar'],
+                         'db:5432/tcp')
+
+    def test_a_stopped_application_gets_its_units_and_no_start(self):
+        self.execute('uygulama-durdur', {'name': 'satir', 'revizyon': self.record('satir')['places']['revision']})
+        self.host.calls.clear()
+        result = self.change('satir', 'db:5432/tcp', {'tur': 'ham', 'kapsam': 'internet', 'port': 15432})
+        self.assertEqual((result['birimler'], result['yeniden_baslatilan']), (['konsol-satir_db.container'], []))
+        self.assertEqual(self.published_lines('db'), ['PublishPort=203.0.113.10:15432:5432/tcp'])
+        self.assertNotIn('[Install]', self.unit('db'))
+        self.assertFalse([c for c in self.host.calls if c[:2] == ['systemctl', 'start']])
+
+    def test_a_pod_publishes_on_its_pod_and_restarts_whole(self):
+        self.install(POD, auto_answers(POD, 'ikili'), 'ikili')
+        self.host.calls.clear()
+        result = self.change('ikili', 'web:8080/tcp', {'tur': 'ham', 'kapsam': 'tailscale', 'port': 18080})
+        self.assertEqual(result['birimler'], ['konsol-ikili.pod'])
+        self.assertEqual(result['yeniden_baslatilan'], ['konsol-ikili-pod.service', 'konsol-ikili_web.service',
+                                                        'konsol-ikili_cache.service'])
+        pod = (Path(self.env['KONTEYNER_BIRIM_DIR']) / 'konsol-ikili.pod').read_text()
+        self.assertIn('PublishPort=100.64.0.2:18080:8080/tcp', pod)
+        self.assertNotIn('PublishPort', self.unit('web', 'ikili'))
+
+    def test_the_caller_puts_the_files_back_and_the_restore_runs_the_old_units_again(self):
+        files = self.manager.row_files('satir')
+        folder, units = apps.Records(self.env).dir('satir'), Path(self.env['KONTEYNER_BIRIM_DIR'])
+        self.assertEqual(files, [str(folder / 'erisim.json'), str(folder / 'yerler.json'), str(units / 'konsol-satir.network'),
+                                 str(units / 'konsol-satir_db.container'), str(units / 'konsol-satir_web.container')])
+        snapshot = {path: Path(path).read_bytes() for path in files}
+        self.host.fails('systemctl start ' + WEB)
+        with self.assertRaises(cfg.ContainerConfigError):
+            self.change('satir', 'web:8080/tcp', {'tur': 'ham', 'kapsam': 'internet', 'port': 18080})
+        self.assertEqual(self.record('satir')['places']['ports'], {}, 'the failed change is left for the caller to take back')
+        for path, data in snapshot.items():
+            Path(path).write_bytes(data)
+        self.host.calls.clear()
+        with self.settings_caller():
+            restarted = self.manager.row_restore('satir')
+        self.assertEqual(restarted, [DB, WEB], 'not known: every service')
+        self.assertEqual({path: Path(path).read_bytes() for path in files}, snapshot)
+        self.assertEqual(self.order(), ['guard apply', 'systemctl stop ' + WEB, 'systemctl stop ' + DB, 'systemctl daemon-reload',
+                                        'systemctl start ' + DB, 'systemctl start ' + WEB])
+        self.assertEqual([p['scope'] for p in self.guard.inputs[-1][0]['publications']], ['local'])
+        self.assertEqual(self.host.units[WEB], 'active')
+        # After a change that worked and was rolled back, only what it restarted.
+        result = self.change('satir', 'web:8080/tcp', {'tur': 'ham', 'kapsam': 'internet', 'port': 18080})
+        for path, data in snapshot.items():
+            Path(path).write_bytes(data)
+        self.host.calls.clear()
+        with self.settings_caller():
+            self.assertEqual(self.manager.row_restore('satir', result['yeniden_baslatilan']), [WEB])
+        self.assertEqual(self.published_lines('web'), ['PublishPort=127.0.0.1:62100:8080/tcp'])
+        with self.assertRaises(cfg.ContainerConfigError):
+            self.manager.row_restore('satir')
+
+
+class AddressRefreshTests(RowsCase):
+    def setUp(self):
+        super().setUp()
+        self.change('satir', 'db:5432/tcp', {'tur': 'ham', 'kapsam': 'tailscale', 'port': 15432})
+        self.env.pop('SETTINGS_PENDING_FILE')
+        self.host.calls.clear()
+
+    def moved(self, **values):
+        self.env.update(values)
+        self.state = app_fixtures.write_state(self.root, self.env)
+        self.manager = self.make_manager()
+
+    def test_a_new_tailscale_address_moves_the_unit_and_restarts_its_services_once(self):
+        self.moved(TAILSCALE_IPV4='100.64.0.3')
+        self.assertEqual(self.manager.address_refresh(), {'yenilenen': ['satir'], 'hatalar': []})
+        self.assertEqual(self.published_lines('db'), ['PublishPort=100.64.0.3:15432:5432/tcp'])
+        self.assertEqual(self.order(), ['guard apply', 'systemctl stop ' + WEB, 'systemctl stop ' + DB, 'systemctl daemon-reload',
+                                        'systemctl start ' + DB, 'systemctl start ' + WEB])
+        self.assertEqual(self.guard.inputs[-1][0]['publications'][-1]['host_ip'], '100.64.0.3')
+        self.host.calls.clear()
+        self.assertEqual(self.manager.address_refresh(), {'yenilenen': [], 'hatalar': []}, 'idempotent')
+        self.assertEqual(self.order(), [])
+
+    def test_only_open_raw_rows_on_another_address_are_moved(self):
+        self.install(app_fixtures.SIMPLE, app_fixtures.SIMPLE_ANSWERS, 'sayac')
+        self.host.calls.clear()
+        self.moved(WAN_IPV4='198.51.100.20')
+        self.assertEqual(self.manager.address_refresh(), {'yenilenen': [], 'hatalar': []}, 'a Tailscale row did not move')
+        self.assertEqual(self.order(), [])
+        with self.settings_caller():
+            self.manager.row_change('sayac', 'app:9000/tcp', {'tur': 'ham', 'kapsam': 'internet', 'port': 19000})
+        self.env.pop('SETTINGS_PENDING_FILE')
+        self.moved(WAN_IPV4='198.51.100.21')
+        self.host.fails('systemctl start ' + DB)
+        self.moved(TAILSCALE_IPV4='100.64.0.4')
+        result = self.manager.address_refresh()
+        self.assertEqual(result['yenilenen'], ['sayac'], 'one failure does not stop the others')
+        self.assertEqual([e['uygulama'] for e in result['hatalar']], ['satir'])
+        self.assertEqual(self.published_lines('app', 'sayac'), ['PublishPort=198.51.100.21:19000:9000/tcp'])
+
+    def test_busy_or_a_pending_change_is_left_for_the_next_run(self):
+        out = io.StringIO()
+        with open(Path(self.env['RUNTIME_DIR']) / 'install.lock', 'a') as held, patch.object(worker, 'LOCK_WAIT', 0.1), \
+                contextlib.redirect_stdout(out):
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+            self.assertEqual(worker.main(['--state', str(self.state), '--adres-yenile']), 0)
+        self.assertIn('Sonraki çalışmada yeniden denenecek', out.getvalue())
+        pending = self.root / 'ayarlar-bekleyen.json'
+        pending.write_text('{}')
+        self.moved(SETTINGS_PENDING_FILE=str(pending), TAILSCALE_IPV4='100.64.0.3')
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(worker.main(['--state', str(self.state), '--adres-yenile']), 0)
+        self.assertIn('Onay bekleyen', out.getvalue())
+        self.assertEqual(self.published_lines('db'), ['PublishPort=100.64.0.2:15432:5432/tcp'], 'nothing changed')
+
+    def test_the_entry_reports_what_it_did_and_takes_no_other_flag(self):
+        for result, code, text in (({'yenilenen': ['satir'], 'hatalar': []}, 0, 'satir birimleri şimdiki adresle'),
+                                   ({'yenilenen': [], 'hatalar': []}, 0, 'değişiklik yok'),
+                                   ({'yenilenen': [], 'hatalar': [{'uygulama': 'satir', 'hata': 'olmadı'}]}, 1, 'HATA satir: olmadı')):
+            out, err = io.StringIO(), io.StringIO()
+            with self.subTest(result=result), patch.object(worker.Manager, 'address_refresh', return_value=result), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(worker.main(['--state', str(self.state), '--adres-yenile']), code)
+                self.assertIn(text, out.getvalue() + err.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()):
+            for argv in (['--state', str(self.state)], ['--state', str(self.state), '--adres-yenile', 'fazla'], []):
+                with self.subTest(argv=argv), self.assertRaises(SystemExit) as stop:
+                    worker.main(argv)
+                self.assertEqual(stop.exception.code, 2)
+
+
+class RowLifecycleTests(WorkerCase):
+    def test_a_taken_tailscale_name_stops_an_install_before_any_write(self):
+        self.install()
+        self.host.calls.clear()
+        text = app_fixtures.TEXT.replace('name: notlar', 'name: ikinci')
+        given = {'name': 'ikinci', 'answers': dict(app_fixtures.answers()['answers'])}
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.install(text, given, 'ikinci')
+        self.assertEqual(err.exception.status, 409)
+        self.assertIn('notlar.ev adı zaten kullanılıyor', str(err.exception))
+        self.assertFalse(os.path.lexists(Path(self.env['UYGULAMA_STATE_DIR']) / 'ikinci'))
+        self.assertFalse([c for c in self.host.calls if c[:2] == ['podman', 'pull']])
+
+    def test_an_install_publishes_its_rows_after_it_runs_and_a_failed_projection_takes_everything_back(self):
+        self.install()
+        calls = [' '.join(c) for c in self.host.calls]
+        self.assertGreater(calls.index('publish'), max(i for i, c in enumerate(calls) if c.startswith('systemctl start')))
+        self.assertEqual(self.publisher.seen, [['uygulama:notlar:web:8080/tcp']])
+        self.setUp()
+        self.publisher.fail = 1
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.install()
+        self.assertIn('Adresler yayımlanıyor', str(err.exception))
+        self.assertIn('Yapılan her şey geri alındı', str(err.exception))
+        self.assert_nothing_left()
+
+    def test_an_edit_keeps_seeds_and_drops_rows_and_refuses_a_port_answer_that_is_not_its_row(self):
+        self.install(ROWS_TEXT, ROWS_ANSWERS, 'satir')
+        revision = lambda: self.record('satir')['places']['revision']  # noqa: E731
+        given = {'name': 'satir', 'answers': {'start:db': {'mode': 'root'}, 'start:web': {'mode': 'root'},
+                                              'port:web:8080/tcp': {'use': 'raw'}}}
+        snapshot = apps.Records(self.env).snapshot('satir')
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('uygulama-tanim', {'name': 'satir', 'metin': ROWS_TEXT, 'yanitlar': given, 'revizyon': revision()})
+        self.assertEqual(err.exception.status, 400)
+        self.assertIn("Bu portun kullanımı Erişim'den değişir", str(err.exception))
+        self.assertEqual(apps.Records(self.env).snapshot('satir'), snapshot)
+        # The ports that stay need no answer; 9090 is new (an address), 5353/udp went.
+        text = ROWS_TEXT.replace('      - "5353/udp"\n', '      - "9090"\n')
+        given['answers'] = {'start:db': {'mode': 'root'}, 'start:web': {'mode': 'root'},
+                            'port:web:9090/tcp': {'use': 'caddy', 'tailscale_name': 'satir-9090'}}
+        self.publisher.seen.clear()
+        self.execute('uygulama-tanim', {'name': 'satir', 'metin': text, 'yanitlar': given, 'revizyon': revision()})
+        record = self.record('satir')
+        self.assertEqual(record['rows'], {'db:5432/tcp': {'tur': 'ham', 'kapsam': 'kapali', 'port': 5432}, 'web:8080/tcp': ADDRESS,
+                                          'web:9090/tcp': dict(ADDRESS, ad='satir-9090')})
+        self.assertEqual(record['places']['ports'], {'web:8080/tcp': 62100, 'web:9090/tcp': 62101})
+        self.assertEqual(sorted(record['answers']['answers']), ['start:db', 'start:web'])
+        self.assertEqual(self.publisher.seen, [['uygulama:satir:db:5432/tcp', 'uygulama:satir:web:8080/tcp',
+                                                'uygulama:satir:web:9090/tcp']])
+        # A new port's name is checked like an install's.
+        self.install()
+        given['answers']['port:web:7070/tcp'] = {'use': 'caddy', 'tailscale_name': 'notlar'}
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('uygulama-tanim', {'name': 'satir', 'metin': text.replace('      - "9090"\n', '      - "9090"\n      - "7070"\n'),
+                                            'yanitlar': given, 'revizyon': revision()})
+        self.assertIn('notlar.ev adı zaten kullanılıyor', str(err.exception))
+
+    def test_a_failed_projection_takes_an_edit_back(self):
+        self.install()
+        before = apps.Records(self.env).snapshot('notlar')
+        self.publisher.fail = 1
+        text = app_fixtures.TEXT.replace('LOG_LEVEL: info', 'LOG_LEVEL: debug')
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('uygulama-tanim', {'name': 'notlar', 'metin': text, 'yanitlar': app_fixtures.answers(),
+                                            'revizyon': self.record()['places']['revision']})
+        self.assertIn('Önceki durum geri yüklendi', str(err.exception))
+        self.assertEqual(apps.Records(self.env).snapshot('notlar'), before)
+
+    def test_a_removal_takes_its_rows_and_says_when_the_projection_failed(self):
+        self.install()
+        self.install(app_fixtures.SIMPLE, app_fixtures.SIMPLE_ANSWERS, 'sayac')
+        self.publisher.seen.clear()
+        self.execute('uygulama-kaldir', {'name': 'notlar', 'revizyon': self.record()['places']['revision'], 'veri': 'sakla'})
+        self.assertEqual(self.publisher.seen, [['uygulama:sayac:app:9000/tcp']])
+        self.publisher.fail = 1
+        data = Path(self.env['UYGULAMA_VERI_DIR']) / 'sayac'
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('uygulama-kaldir', {'name': 'sayac', 'revizyon': self.record('sayac')['places']['revision'],
+                                             'veri': 'sil', 'onay': 'sayac'})
+        self.assertIn('Uygulama kaldırıldı ama adresleri yayından kaldırılamadı', str(err.exception))
+        self.assertFalse(data.exists(), 'the data went as asked')
+        self.assert_nothing_left('sayac')
 
 
 class SrvWalkTests(unittest.TestCase):

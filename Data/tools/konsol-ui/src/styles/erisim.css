@@ -1,5 +1,6 @@
-/* Phase 3 pages (DD-258): Erişim with its tabs, the Yayınla flow and the pending change's actions, after the
-   approved prototype (Erişim, WireGuard, Yayınla). Shared pieces are in ui.css; colours only from tokens.css. */
+/* Phase 3 pages (DD-258): Erişim with its tabs, an access row's sheet (rebuild phase 4) and the pending change's
+   actions, after the approved prototype (Erişim, WireGuard). Shared pieces are in ui.css; colours only from
+   tokens.css. */
 
 /* ---- the page */
 .access-page {
@@ -515,62 +516,7 @@
   margin-top: 2px;
 }
 
-/* ---- the Yayınla flow */
-.stepper {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  counter-reset: none;
-}
-
-.stepper li {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px 4px 4px;
-  border-radius: 999px;
-  background: var(--sunken);
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.stepper-n {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--surface);
-  color: var(--ink-2);
-  font-size: 12px;
-}
-
-.stepper li.done {
-  color: var(--ok-ink);
-}
-
-.stepper li[aria-current="step"] {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
-.stepper li[aria-current="step"] .stepper-n {
-  background: var(--accent);
-  color: var(--on-accent);
-}
-
-.flow-step {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
-}
-
+/* ---- an access row's sheet (Adresler) */
 .choice-list {
   display: flex;
   flex-direction: column;
@@ -608,14 +554,6 @@
   accent-color: var(--accent);
 }
 
-.choice-off {
-  cursor: not-allowed;
-}
-
-.choice-off .choice-head {
-  color: var(--muted);
-}
-
 .choice-text {
   display: flex;
   flex-direction: column;
@@ -641,69 +579,36 @@
   overflow-wrap: anywhere;
 }
 
-.flow-choice {
+.row-part {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: 6px;
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
 }
 
-.guard-line {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  color: var(--ink-2);
-  font-size: 13.5px;
+.row-part .field {
+  align-self: stretch;
 }
 
-.guard-line .icon {
-  margin-top: 2px;
-  color: var(--muted);
+.row-port {
+  width: 120px;
 }
 
-.dns-record {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px dashed var(--line-button);
-  border-radius: var(--r-md);
-  overflow-wrap: anywhere;
-}
-
-.flow-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.flow-run {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-}
-
-.flow-run-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px 10px;
-  font-size: 14px;
-}
-
-.engel .form-stack,
-.konsol-word .form-stack {
+.row-word .form-stack {
   gap: 10px;
+}
+
+.address-table .col-main {
+  min-width: 150px;
+}
+
+@container (min-width: 761px) {
+  .address-table td[data-hucre] {
+    min-width: 150px;
+  }
 }
 
 /* ---- the pending change's actions */
@@ -757,14 +662,4 @@
   .access-tab .tab-grid .card {
     padding: 16px;
   }
-}
-
-.flow-outcome {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.flow-outcome:empty {
-  display: none;
 }

@@ -115,8 +115,9 @@ class FirewallViewTests(unittest.TestCase):
             fw = self.p.guvenlik_duvari()
         self.assertEqual(set(fw), {"revizyon", "denetim", "kurallar", "portlar", "dinleyiciler", "teknik", "aglar", "hatalar"})
         self.assertEqual(fw["portlar"], [
-            {"ad": "WireGuard wg0 · Home", "aile": 4, "proto": "udp", "port": 51820, "kapsam": "wan", "sabit": False},
-            {"ad": "Konsol · dosya arka ucu", "aile": 6, "proto": "tcp", "port": 61009, "kapsam": "lo", "sabit": False}])
+            {"ad": "WireGuard wg0 · Home", "aile": 4, "proto": "udp", "port": 51820, "kapsam": "wan", "sabit": False, "satir": None},
+            {"ad": "Konsol · dosya arka ucu", "aile": 6, "proto": "tcp", "port": 61009, "kapsam": "lo", "sabit": False,
+             "satir": None}])
         self.assertEqual(fw["aglar"], [{"arayuz": "wg0", "ad": "Home", "etkin": True},
                                        {"arayuz": "wg1", "ad": "", "etkin": False}])
         self.assertIsNone(fw["dinleyiciler"])

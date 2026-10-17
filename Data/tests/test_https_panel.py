@@ -200,7 +200,11 @@ class HttpsPanelTests(unittest.TestCase):
         Handler.panel = self.p
         _server, sock = resources.start_unix(self, Handler)
         headers = {"X-Konsol": "1", "Content-Type": "application/json"}
-        payload = {"revision": "test-revision", "https": {"domain": self.https["domain"]}}
+        # Rebuild phase 4: WebDAV's internet name is its row (web.paylasim); the old "https" section is no shape
+        # of the route's request and never reaches the worker.
+        payload = {"revision": "test-revision",
+                   "web": {"service": "paylasim", "tail": True, "enabled": True, "domain": self.https["domain"]}}
+        old = {"revision": "test-revision", "https": {"domain": self.https["domain"]}}
         with patch.object(self.p, "settings_run", return_value=(200, {"committed": True})) as worker:
             for extra in ({"X-Konsol": ""}, {"Host": "evil.test"}, {"Sec-Fetch-Site": "cross-site"},
                           {"X-Forwarded-For": "192.0.2.50"}):
@@ -212,9 +216,12 @@ class HttpsPanelTests(unittest.TestCase):
                 code, _, _ = resources.unix_get(sock, path, headers, "POST", "{}")
                 self.assertEqual(code, 404)
             worker.assert_not_called()
+            code, _, _ = resources.unix_get(sock, "/api/konsol/ayarlar/uygula", headers, "POST", json.dumps(old))
+            self.assertEqual(code, 400)
+            worker.assert_not_called()
             code, _, _ = resources.unix_get(sock, "/api/konsol/ayarlar/uygula", headers, "POST", json.dumps(payload))
             self.assertEqual(code, 200)
-            worker.assert_called_once_with("apply", payload)
+            worker.assert_called_once_with("apply", payload, seconds=panel.master_settings.WORKER_SECONDS)
         # DD-267: the old shell's settings reads are gone; the gate still answers first.
         code, response_headers, _ = resources.unix_get(sock, "/api/konsol/ayarlar/durum", headers)
         self.assertEqual(code, 404)

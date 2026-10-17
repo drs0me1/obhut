@@ -9,14 +9,29 @@ a link, its owner, mode and size checked):
 
   kaynak.yaml    the file exactly as the operator gave it
   kaynak.json    {"tur": dosya|adres|imaj|konteyner, "adres"?, "imaj"?, "konteyner"?, "alindi": epoch, "sha256": hex}
-  yanitlar.json  the answers as given; every secret answer is {"set": true}
-  tanim.json     the checked definition (master_inspector.check)
+  yanitlar.json  the answers as given, without the port answers; every secret answer is {"set": true}
+  tanim.json     the checked definition (master_inspector.check), each port only {"port", "protocol"}
   yerler.json    {"revision", "stopped", "ports": {"<service>:<port>/<proto>": pool port},
                   "secrets": {logical name: Podman secret}, "images": {service: "repo@sha256:…"}}
+  erisim.json    the access rows (rebuild phase 4), one per port of the definition (see below)
   env/<service>.env   the non-secret environment the generator's plan holds
 
 The record is the single source: the units are generated again from it whenever the worker writes them.
 Nothing runs unasked (no reconcile). Data lives in UYGULAMA_VERI_DIR/<app>/<folder>/ (A5).
+
+Access rows (erisim.json, the home of how a port is reached; Erişim changes them through the settings
+transaction, the worker seeds and drops them with the definition):
+
+  {"satirlar": {"<service>:<port>/<proto>":
+      {"tur": "adres", "ad": label, "tailscale_portu": null | port, "internet": "" | host name}   (TCP only)
+    | {"tur": "ham", "kapsam": "kapali" | "tailscale" | "internet", "port": host port}}}
+
+An address row's pool port is yerler.json's ports entry of the same key (exactly the address rows have one); a
+raw row is published on the address state.env names now (TAILSCALE_IPV4, WAN_IPV4) and its host port, only
+while it is not kapali. Its row id everywhere is uygulama:<app>:<key> (row_id). Install seeds the rows from the
+answers (an address with the answered name, no Tailscale port, no internet name; a raw port closed on its own
+number); an edit keeps the row of a port that stays, seeds a new port's and drops a gone port's (and its pool
+port); removal takes them with the record. Anything unexpected in the file stops its reader (fail closed).
 
 Drafts (K2) turn an https address, an image or a standalone container into a Compose text for the
 inspector; nothing is written. Python standard library only.
@@ -39,18 +54,33 @@ import urllib.parse
 import master_container_config as cfg
 import master_containers
 import master_generator as generator
+import master_https as tls
+import master_inspector as inspector
 import master_settings as settings
 
 # The generator owns every name (its names table); these are the inspector's and the readers' own rules.
 APP_NAME_RE = generator.APP_NAME_RE
 SERVICE_RE = generator.SERVICE_RE
+# One rule for every Tailscale name (applications, Konsol, Paylaşımlar): the inspector's.
+TAILSCALE_NAME_RE = inspector.TAILSCALE_NAME_RE
+RESERVED_NAMES = inspector.RESERVED_NAMES
 # "<service>:<port>/<proto>": the service part is checked with SERVICE_RE.
 PORT_KEY_RE = re.compile(r"([^:]+):([1-9][0-9]{0,4})/(tcp|udp)\Z")
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
 URL_LIMIT = 2048
 TEXT_LIMIT = 262144  # master_yaml.LIMIT_BYTES (a test keeps the two equal)
 SOURCES = ("dosya", "adres", "imaj", "konteyner")
-FILES = ("kaynak.yaml", "kaynak.json", "yanitlar.json", "tanim.json", "yerler.json")
+ROWS_FILE = "erisim.json"
+FILES = ("kaynak.yaml", "kaynak.json", "yanitlar.json", "tanim.json", "yerler.json", ROWS_FILE)
+ROW_KINDS = ("adres", "ham")
+SCOPES = ("kapali", "tailscale", "internet")
+# state.env's key for the address an open raw row of each scope is published on.
+SCOPE_ADDRESS = {"tailscale": "TAILSCALE_IPV4", "internet": "WAN_IPV4"}
+ROW_PREFIX = "uygulama:"
+# The applications' own DNS file (DNSMASQ_CONF_DIR): one interface-name line per address row, written by the
+# publication projection. Name checks read the rows instead of it.
+DNS_FILE = "modul-uygulama.conf"
+ROW_CHANGED = "Bu portun kullanımı Erişim'den değişir."
 MANAGED = generator.MANAGED_VALUE
 APP_LABEL = generator.APP_LABEL
 TAILS = (100, 200, 500, 1000)
@@ -106,18 +136,20 @@ def interface(env, app):
     return _names(generator.interface_name, env, app)
 
 
-def context(env, app, places, version):
-    """The generator's context: what the engine allocated and the state.env keys it reads."""
+def context(env, app, places, version, rows):
+    """The generator's context: what the engine allocated (an address row's pool port), the open raw rows on
+    the address state.env names now, and the state.env keys it reads."""
     return {"app": app, "images": dict(places["images"]), "ports": dict(places["ports"]), "secrets": dict(places["secrets"]),
-            "stopped": places["stopped"], "podman": tuple(version), "env": {k: env.get(k, "") for k in generator.ENV_KEYS}}
+            "raw": raw_hosts(env, rows), "stopped": places["stopped"], "podman": tuple(version),
+            "env": {k: env.get(k, "") for k in generator.ENV_KEYS}}
 
 
-def render(env, app, definition, places, version, module=None):
-    """The generator's plan for a definition and its places; its units, start order and folders must be the
-    application's own."""
+def render(env, app, definition, places, version, rows, module=None):
+    """The generator's plan for a definition, its places and its access rows; its units, start order and
+    folders must be the application's own."""
     module = module or generator
     try:
-        plan = module.render(definition, context(env, app, places, version))
+        plan = module.render(definition, context(env, app, places, version, rows))
     except module.GeneratorError as err:
         raise AppError(409, str(err)) from err
     objects = names(app, definition)
@@ -212,22 +244,317 @@ def check_places(value, app):
     return value
 
 
+def _port_number(value):
+    return type(value) is int and 0 < value < 65536
+
+
 def check_definition(value, app):
+    """tanim.json: the checked definition, each port only its number and protocol (stored_definition)."""
     require(isinstance(value, dict) and value.get("name") == app and value.get("format") in ("compose", "kubernetes")
             and isinstance(value.get("services"), list) and value["services"] and isinstance(value.get("secrets"), list),
             "Uygulama tanımı kaydı geçersiz.", 503)
-    seen = set()
+    seen, keys = set(), set()
     for svc in value["services"]:
         require(isinstance(svc, dict) and isinstance(svc.get("name"), str) and SERVICE_RE.fullmatch(svc["name"]) is not None
-                and svc["name"] not in seen and isinstance(svc.get("image"), str), "Uygulama tanımı kaydı geçersiz.", 503)
+                and svc["name"] not in seen and isinstance(svc.get("image"), str) and isinstance(svc.get("ports"), list),
+                "Uygulama tanımı kaydı geçersiz.", 503)
         seen.add(svc["name"])
+        for port in svc["ports"]:
+            require(isinstance(port, dict) and set(port) == {"port", "protocol"} and _port_number(port["port"])
+                    and port["protocol"] in ("tcp", "udp") and port_key(svc["name"], port) not in keys,
+                    "Uygulama tanımının port kaydı geçersiz.", 503)
+            keys.add(port_key(svc["name"], port))
     return value
 
 
 def check_answers(value):
-    require(isinstance(value, dict) and set(value) == {"name", "answers"} and isinstance(value["answers"], dict),
+    """yanitlar.json: the answers without a port answer (the rows hold those)."""
+    require(isinstance(value, dict) and set(value) == {"name", "answers"} and isinstance(value["answers"], dict)
+            and not any(str(qid).startswith("port:") for qid in value["answers"]),
             "Uygulamanın yanıt kaydı geçersiz.", 503)
     return value
+
+
+# -- access rows (erisim.json; the module's docstring has the shape)
+def port_key(service, port):
+    """"<service>:<port>/<proto>" of one port of a definition: its row's key and its question's id after "port:"."""
+    return "%s:%d/%s" % (service, port["port"], port["protocol"])
+
+
+def port_keys(definition):
+    """The keys of every port of a definition, in its order."""
+    return [port_key(svc["name"], p) for svc in definition["services"] for p in svc.get("ports", [])]
+
+
+def row_id(app, key):
+    """A row's id everywhere (Erişim, the firewall view, plans, the audit): uygulama:<app>:<key>."""
+    return ROW_PREFIX + app_name(app) + ":" + key
+
+
+def stored_definition(definition):
+    """The definition as tanim.json holds it: each port only its number and protocol (its row is how it is reached)."""
+    out = copy.deepcopy(definition)
+    for svc in out["services"]:
+        svc["ports"] = [{"port": p["port"], "protocol": p["protocol"]} for p in svc.get("ports", [])]
+    return out
+
+
+def row_problem(key, row):
+    """Why a row cannot be stored, in Turkish, or None."""
+    match = PORT_KEY_RE.fullmatch(key) if isinstance(key, str) else None
+    if match is None or SERVICE_RE.fullmatch(match.group(1)) is None or int(match.group(2)) > 65535:
+        return "Erişim satırının anahtarı geçersiz."
+    if not isinstance(row, dict) or row.get("tur") not in ROW_KINDS:
+        return "Erişim satırı bir adres ya da ham port olmalı."
+    if row["tur"] == "ham":
+        if set(row) != {"tur", "kapsam", "port"} or row["kapsam"] not in SCOPES:
+            return "Ham port satırı kapsamını (kapalı, Tailscale ya da internet) ve portunu taşır."
+        if not _port_number(row["port"]):
+            return "Ham portun numarası 1–65535 arasında olmalı."
+        return None
+    if set(row) != {"tur", "ad", "tailscale_portu", "internet"}:
+        return "Adres satırı Tailscale adını, Tailscale portunu ve internet adını taşır."
+    if match.group(3) != "tcp":
+        return "UDP portu yalnız ham port olabilir."
+    if not isinstance(row["ad"], str) or TAILSCALE_NAME_RE.fullmatch(row["ad"]) is None:
+        return "Tailscale adı küçük harf, rakam ve '-' içermeli, '-' ile başlayıp bitmemeli (en çok 63)."
+    if row["ad"] in RESERVED_NAMES:
+        return "%s adı Obhut'undur." % row["ad"]
+    if row["tailscale_portu"] is not None and not _port_number(row["tailscale_portu"]):
+        return "Tailscale portu 1–65535 arasında olmalı ya da kapalı (null) olmalı."
+    if not isinstance(row["internet"], str):
+        return "İnternet adı bir metin olmalı."
+    if row["internet"]:
+        try:
+            if tls.domain(row["internet"]) != row["internet"]:
+                return "İnternet adı küçük harfle ve sonunda nokta olmadan yazılır."
+        except settings.SettingsError as err:
+            return str(err)
+    return None
+
+
+def check_row(key, row, status=503):
+    """One access row; status 503 for a stored row (the record), 400 for a request's."""
+    problem = row_problem(key, row)
+    if problem:
+        raise AppError(status, ("Uygulamanın erişim kaydı geçersiz (%s): %s" % (key, problem)) if status == 503 else problem)
+    return row
+
+
+def row_claims(key, row):
+    """What a row holds alone: its Tailscale name, its internet name, its Tailscale port (Caddy on the Tailscale
+    IPv4, TCP) and an open raw port (its scope's address and protocol); [(claim, Turkish text)]."""
+    protocol = key.rpartition("/")[2]
+    if row["tur"] == "ham":
+        if row["kapsam"] == "kapali":
+            return []
+        scope = "Tailscale" if row["kapsam"] == "tailscale" else "İnternet"
+        return [((row["kapsam"], protocol, row["port"]), "%s %s portu %d" % (scope, protocol.upper(), row["port"]))]
+    claims = [(("ad", row["ad"]), "Tailscale adı %s" % row["ad"])]
+    if row["internet"]:
+        claims.append((("internet-adi", row["internet"]), "İnternet adı %s" % row["internet"]))
+    if row["tailscale_portu"] is not None:
+        claims.append((("tailscale", "tcp", row["tailscale_portu"]), "Tailscale TCP portu %d" % row["tailscale_portu"]))
+    return claims
+
+
+def row_conflict(items):
+    """The first clash among rows [(row id, key, row)] of one or of every application, or None: a Tailscale name, an
+    internet name, a Tailscale port or an open raw port held twice on the same address and protocol."""
+    seen = {}
+    for ident, key, row in items:
+        for claim, text in row_claims(key, row):
+            other = seen.setdefault(claim, ident)
+            if other != ident:
+                return "%s iki satırda kullanılıyor: %s ve %s." % (text, other, ident)
+    return None
+
+
+def check_rows(value, places=None, definition=None):
+    """erisim.json: {"satirlar": {key: row}} → {key: row}. With places, exactly the address rows have a pool port;
+    with the definition, every port has exactly one row."""
+    require(isinstance(value, dict) and set(value) == {"satirlar"} and isinstance(value["satirlar"], dict)
+            and len(value["satirlar"]) <= inspector.MAX_PORTS, "Uygulamanın erişim kaydı geçersiz.", 503)
+    rows = value["satirlar"]
+    for key, row in rows.items():
+        check_row(key, row)
+    clash = row_conflict([(key, key, row) for key, row in sorted(rows.items())])
+    require(clash is None, "Uygulamanın erişim kaydı geçersiz: %s" % clash, 503)
+    if places is not None:
+        require(set(address_keys(rows)) == set(places["ports"]),
+                "Uygulamanın erişim kaydı yerel portlarıyla uyuşmuyor.", 503)
+    if definition is not None:
+        require(sorted(rows) == sorted(port_keys(definition)), "Uygulamanın erişim kaydı tanımın portlarıyla uyuşmuyor.", 503)
+    return rows
+
+
+def address_keys(rows):
+    """The keys of the address rows: the ports that have a 127.0.0.1 pool port."""
+    return sorted(k for k, r in rows.items() if r["tur"] == "adres")
+
+
+def seed_row(port):
+    """A new port's row from its answer (a port of master_inspector.check's definition): an address with the
+    answered Tailscale name, no Tailscale port and no internet name; a raw port closed on its own number (A2)."""
+    if port.get("use") == "caddy":
+        return {"tur": "adres", "ad": port["tailscale_name"], "tailscale_portu": None, "internet": ""}
+    return {"tur": "ham", "kapsam": "kapali", "port": port["port"]}
+
+
+def next_rows(definition, rows=None):
+    """The rows of a checked definition (install: rows None; an edit: the current rows): a port that stays keeps
+    its row, a new port gets one from its answer, a port that went has none."""
+    rows = rows or {}
+    out = {}
+    for svc in definition["services"]:
+        for port in svc.get("ports", []):
+            key = port_key(svc["name"], port)
+            out[key] = copy.deepcopy(rows[key]) if key in rows else seed_row(port)
+    return out
+
+
+def port_answer(row):
+    """The answer of a port question that a row stands for."""
+    if row["tur"] == "adres":
+        return {"use": "caddy", "tailscale_name": row["ad"]}
+    return {"use": "raw"}
+
+
+def filled_answers(record):
+    """The stored answers with every port answer filled from its row (yenile)."""
+    answers = dict(record["answers"]["answers"])
+    for key, row in record["rows"].items():
+        answers["port:" + key] = port_answer(row)
+    return {"name": record["answers"]["name"], "answers": dict(sorted(answers.items()))}
+
+
+def port_answers(record, inspection, answers):
+    """An edit's answers with the questions of the ports that stay answered from their rows: (answers, errors). An
+    answer given for such a port must be the one its row stands for (how a port is reached changes in Erişim);
+    a new port's question needs its own answer."""
+    if not isinstance(answers, dict) or not isinstance(answers.get("answers"), dict):
+        return answers, {}
+    given, errors = dict(answers["answers"]), {}
+    for q in inspection.get("questions", []):
+        key = q["id"][len("port:"):] if q.get("kind") == "port" else None
+        if key not in record["rows"]:
+            continue
+        expected = port_answer(record["rows"][key])
+        if q["id"] not in given:
+            given[q["id"]] = expected
+        elif given[q["id"]] != expected:
+            errors[q["id"]] = ROW_CHANGED
+    return dict(answers, answers=given), errors
+
+
+def local_domain(env):
+    value = env.get("LOCAL_DOMAIN", "")
+    require(isinstance(value, str) and re.fullmatch(settings.DOMAIN_RE, value) is not None,
+            "Yerel alan adı tanımlı değil; kurulumu yeniden çalıştırın.", 503)
+    return value
+
+
+def taken_names(env, skip_app=None, skip_rows=(), records=None):
+    """Every name of the local domain an application's Tailscale name may not take (full names): Konsol's and
+    Paylaşımlar's (panel., paylas.), every interface-name of the base's DNS file and of the modul-*.conf files other
+    than the applications' own (DNS_FILE, their projection), the operator's DNS records and the Tailscale name of
+    every application row. skip_app leaves one application's rows out (its edit: a name it keeps is its own),
+    skip_rows single row ids (a rename)."""
+    domain = local_domain(env)
+    names = {name + "." + domain for name in RESERVED_NAMES}
+    paths = [Path(env["DNSMASQ_CONF_FILE"])] if env.get("DNSMASQ_CONF_FILE") else []
+    if env.get("DNSMASQ_CONF_DIR"):
+        paths += [p for p in sorted(Path(env["DNSMASQ_CONF_DIR"]).glob("modul-*.conf")) if p.name != DNS_FILE]
+    for path in paths:
+        try:
+            text = settings.read_regular(path, 1 << 20)[0].decode("utf-8")
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeDecodeError, settings.SettingsError) as err:
+            raise AppError(503, "Yerel DNS adları okunamadı; Tailscale adı denetlenemedi.") from err
+        for line in text.splitlines():
+            line = line.removeprefix(settings.OFF)
+            if line.startswith("interface-name="):
+                names.add(line.partition("=")[2].partition(",")[0])
+    if env.get("SETTINGS_FILE"):
+        try:
+            saved = settings.read_json(env["SETTINGS_FILE"], {})
+        except settings.SettingsError as err:
+            raise AppError(503, "Ayar kaydı okunamadı; Tailscale adı denetlenemedi.") from err
+        dns = saved.get("dns") if isinstance(saved, dict) else None
+        for item in (dns.get("records") if isinstance(dns, dict) else None) or []:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                names.add(item["name"])
+    for item in access_rows(env, records):
+        if item["uygulama"] != skip_app and item["id"] not in skip_rows and item["satir"]["tur"] == "adres":
+            names.add(item["satir"]["ad"] + "." + domain)
+    return names
+
+
+def name_errors(env, app, definition, rows=None, records=None):
+    """State checks of a checked definition's new address ports (install: rows None; an edit: the current rows,
+    whose ports are not new): each Tailscale name must be free (taken_names). {question id: Turkish text}."""
+    rows = rows or {}
+    fresh = [(svc["name"], p) for svc in definition["services"] for p in svc.get("ports", [])
+             if p.get("use") == "caddy" and port_key(svc["name"], p) not in rows]
+    if not fresh:
+        return {}
+    domain = local_domain(env)
+    taken = taken_names(env, skip_app=app, records=records)
+    errors = {}
+    for service, port in fresh:
+        name = "%s.%s" % (port["tailscale_name"], domain)
+        if name in taken:
+            errors["port:" + port_key(service, port)] = "%s adı zaten kullanılıyor." % name
+    return errors
+
+
+def scope_address(env, scope):
+    """The IPv4 address state.env names now for a raw row's scope (TAILSCALE_IPV4, WAN_IPV4)."""
+    try:
+        ip = ipaddress.IPv4Address(env.get(SCOPE_ADDRESS[scope], ""))
+    except ValueError:
+        ip = None
+    require(ip is not None and not (ip.is_loopback or ip.is_unspecified or ip.is_multicast or ip.is_link_local),
+            "Sunucunun %s IPv4 adresi kayıtlı değil; bu kapsamdaki ham port yayımlanamaz."
+            % ("Tailscale" if scope == "tailscale" else "internet"), 503)
+    return str(ip)
+
+
+def raw_hosts(env, rows):
+    """The generator's context["raw"]: {key: {"host_ip", "host_port"}} of the open raw rows, on the address state.env
+    names now for each one's scope; a missing address stops the caller (fail closed)."""
+    return {key: {"host_ip": scope_address(env, row["kapsam"]), "host_port": row["port"]}
+            for key, row in sorted(rows.items()) if row["tur"] == "ham" and row["kapsam"] != "kapali"}
+
+
+def access_rows(env, records=None):
+    """Every access row of every application, in application and key order: what the publication projection,
+    the settings validation and the read models read.
+
+        [{"id": "uygulama:<app>:<service>:<port>/<proto>", "uygulama": app, "anahtar": "<service>:<port>/<proto>",
+          "servis": service, "port": container port, "protokol": "tcp" | "udp",
+          "yerel_port": the address row's 127.0.0.1 pool port | None for a raw row,
+          "satir": the row as erisim.json holds it ({"tur": "adres", "ad", "tailscale_portu", "internet"} or
+                   {"tur": "ham", "kapsam", "port"})}]
+
+    An application folder without yerler.json is an install that has not written its record yet and is left out.
+    Any other record that cannot be read whole and any clash between two rows (row_conflict: a Tailscale name, an
+    internet name, a Tailscale port or an open raw port held twice) raise AppError(503): a projection then keeps
+    what it applied last."""
+    records = records or Records(env)
+    out = []
+    for app in records.names():
+        if not os.path.lexists(records.dir(app) / "yerler.json"):
+            continue
+        record = records.load(app)
+        for key, row in sorted(record["rows"].items()):
+            service, number, protocol = PORT_KEY_RE.fullmatch(key).groups()
+            out.append({"id": row_id(app, key), "uygulama": app, "anahtar": key, "servis": service, "port": int(number),
+                        "protokol": protocol, "yerel_port": record["places"]["ports"].get(key), "satir": copy.deepcopy(row)})
+    clash = row_conflict([(item["id"], item["anahtar"], item["satir"]) for item in out])
+    require(clash is None, "Erişim satırları çakışıyor: %s" % (clash or ""), 503)
+    return out
 
 
 class Records:
@@ -269,26 +596,39 @@ class Records:
     def places(self, app):
         return check_places(self.need(app, "yerler.json"), app)
 
+    def rows(self, app, places=None):
+        """The application's access rows {key: row}, checked against its pool ports."""
+        return check_rows(self.need(app, ROWS_FILE), self.places(app) if places is None else places)
+
     def text(self, app):
         value = read_text(self.dir(app) / "kaynak.yaml")
         require(value is not None, "Uygulama kaydı eksik: %s/kaynak.yaml" % app, 503)
         return value
 
     def load(self, app):
-        """The whole record: name, text, source, answers, definition, places."""
+        """The whole record: name, text, source, answers, definition, places, rows."""
         app = app_name(app)
+        definition = check_definition(self.need(app, "tanim.json"), app)
+        places = self.places(app)
         return {"name": app, "text": self.text(app), "source": check_source(self.need(app, "kaynak.json")),
-                "answers": check_answers(self.need(app, "yanitlar.json")),
-                "definition": check_definition(self.need(app, "tanim.json"), app), "places": self.places(app)}
+                "answers": check_answers(self.need(app, "yanitlar.json")), "definition": definition, "places": places,
+                "rows": check_rows(self.need(app, ROWS_FILE), places, definition)}
 
-    def write(self, app, text=None, source=None, answers=None, definition=None, places=None):
-        """Writes the given parts; yerler.json first, so the guard sees a new application's bridge at once."""
+    def write(self, app, text=None, source=None, answers=None, definition=None, places=None, rows=None):
+        """Writes the given parts (rows: {key: row}); erisim.json and then yerler.json first, so the guard sees a new
+        application's bridge at once and never a pool port without its row."""
         cfg.private_dir(self.root)
         cfg.private_dir(self.dir(app))
+        if rows is not None:
+            check_rows({"satirlar": rows}, places)
         if places is not None:
             check_places(places, app)
-        for name, value in (("yerler.json", places), ("kaynak.json", source), ("yanitlar.json", answers),
-                            ("tanim.json", definition)):
+        if answers is not None:
+            check_answers(answers)
+        if definition is not None:
+            check_definition(definition, app)
+        for name, value in ((ROWS_FILE, None if rows is None else {"satirlar": rows}), ("yerler.json", places),
+                            ("kaynak.json", source), ("yanitlar.json", answers), ("tanim.json", definition)):
             if value is not None:
                 settings.atomic(self.dir(app) / name, json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n", 0o600)
         if text is not None:
@@ -371,11 +711,12 @@ def secret_questions(inspection):
 
 
 def stored_answers(inspection, answers):
-    """The answers as given, every secret answer (a value or a keep) replaced by {"set": true}."""
+    """The answers as given without the port answers (the rows hold how a port is reached), every secret answer
+    (a value or a keep) replaced by {"set": true}."""
     hidden = secret_questions(inspection)
     return {"name": answers.get("name"),
             "answers": {qid: ({"set": True} if qid in hidden else copy.deepcopy(value))
-                        for qid, value in sorted((answers.get("answers") or {}).items())}}
+                        for qid, value in sorted((answers.get("answers") or {}).items()) if not qid.startswith("port:")}}
 
 
 def check_url(value):
@@ -478,7 +819,7 @@ def podman_version(text):
 # -- the loopback pool
 def pool_range(env):
     try:
-        first, last = int(env.get("YAYIN_PORT_ILK", "")), int(env.get("YAYIN_PORT_SON", ""))
+        first, last = int(env.get("UYGULAMA_PORT_ILK", "")), int(env.get("UYGULAMA_PORT_SON", ""))
     except ValueError as err:
         raise AppError(503, "Yerel port aralığı tanımlı değil; kurulumu yeniden çalıştırın.") from err
     require(0 < first <= last < 65536, "Yerel port aralığı geçersiz; kurulumu yeniden çalıştırın.", 503)
@@ -496,7 +837,7 @@ def bindable(port):
 
 
 def free_port(env, used, bind=None):
-    """The first port of YAYIN_PORT_ILK–YAYIN_PORT_SON that nothing uses and nothing listens on."""
+    """The first port of UYGULAMA_PORT_ILK–UYGULAMA_PORT_SON that nothing uses and nothing listens on."""
     first, last = pool_range(env)
     for port in range(first, last + 1):
         if port not in used and (bind or bindable)(port):
@@ -509,33 +850,15 @@ def base_ports(env):
     return {int(v) for key, v in env.items() if key.endswith("_PORT") and str(v).isdigit() and 0 < int(v) < 65536}
 
 
-def manual_ports(env):
-    """Loopback ports of Yayınla's manual rows (DD-252), until phase 4 replaces them."""
-    if not env.get("SETTINGS_FILE"):
-        return set()
-    import master_publications
-    try:
-        rows = master_publications.manual(env)
-    except (settings.SettingsError, OSError, ValueError, KeyError) as err:
-        raise AppError(503, "Yayın kaydı okunamadı; port ayrılmadı.") from err
-    return {int(r["upstream"].rpartition(":")[2]) for r in rows.values()}
-
-
-def wanted_ports(definition):
-    """"<service>:<port>/<proto>" of every port answered with an address (a Caddy row, A1)."""
-    return [("%s:%d/%s" % (svc["name"], p["port"], p["protocol"])) for svc in definition["services"]
-            for p in svc.get("ports", []) if p.get("use") == "caddy"]
-
-
-def allocate(env, app, definition, previous, records=None, manual=None, bind=None):
-    """Pool ports for the definition's address ports: kept for the same key across edits, new ones free of
-    every other application's allocation, Yayınla's rows, the base's ports and live listeners."""
+def allocate(env, app, keys, previous, records=None, bind=None):
+    """Pool ports for the address rows' keys (address_keys): kept for the same key across edits and row changes,
+    new ones free of every other application's allocation, the base's ports and live listeners."""
     records = records or Records(env)
-    used = base_ports(env) | (manual_ports(env) if manual is None else set(manual))
+    used = base_ports(env)
     for other in records.names():
         if other != app:
             used |= set(records.places(other)["ports"].values())
-    wanted = wanted_ports(definition)
+    wanted = list(keys)
     result = {key: port for key, port in (previous or {}).items() if key in wanted}
     require(not used & set(result.values()), "Uygulamanın ayrılmış portu başka bir yerde kullanılıyor.", 409)
     used |= set(result.values())
@@ -547,8 +870,14 @@ def allocate(env, app, definition, previous, records=None, manual=None, bind=Non
 
 
 def guard_input(env):
-    """The container guard's input (master_container_network): each application's bridge and its
-    publications. Phase 3 publishes on 127.0.0.1 only; the Caddy rows come in phase 4."""
+    """The container guard's input (master_container_network): each application's bridge and its publications.
+
+        [{"app", "interface", "publications": [{"service", "port", "protocol", "scope": "local" | "tailscale" |
+          "internet", "host_ip", "host_port"}]}]
+
+    local: an address row's pool port on 127.0.0.1 (the host reaches it through OUTPUT DNAT, no permit);
+    tailscale and internet: an open raw row on the address state.env names now for its scope, the address the
+    generator writes into its unit (--adres-yenile rewrites a unit that still carries an older one)."""
     records = Records(env)
     out = []
     for app in records.names():
@@ -557,11 +886,16 @@ def guard_input(env):
         if not os.path.lexists(records.dir(app) / "yerler.json"):
             continue
         places = records.places(app)
+        rows = records.rows(app, places)
         publications = []
         for key, port in sorted(places["ports"].items()):
             service, number, protocol = PORT_KEY_RE.fullmatch(key).groups()
+            publications.append({"service": service, "port": int(number), "protocol": protocol, "scope": "local",
+                                 "host_ip": generator.LOOPBACK, "host_port": port})
+        for key, host in raw_hosts(env, rows).items():
+            service, number, protocol = PORT_KEY_RE.fullmatch(key).groups()
             publications.append({"service": service, "port": int(number), "protocol": protocol,
-                                 "host_ip": "127.0.0.1", "host_port": port})
+                                 "scope": rows[key]["kapsam"], "host_ip": host["host_ip"], "host_port": host["host_port"]})
         out.append({"app": app, "interface": interface(env, app), "publications": publications})
     return out
 
@@ -656,8 +990,8 @@ def mount_rows(env, app, svc):
 
 
 def detail(env, record, objects, live, busy, updates, inspected):
-    """GET /api/konsol/uygulamalar/{app}: the application with every service, its ports, folders, secrets by
-    name only, warnings, source, file, answers (no secret value) and units."""
+    """GET /api/konsol/uygulamalar/{app}: the application with every service, its ports with their access rows,
+    folders, secrets by name only, warnings, source, file, answers (no secret value, no port answer) and units."""
     item = summary(record, objects, live, busy, updates)
     definition, places = record["definition"], record["places"]
     services = []
@@ -670,9 +1004,12 @@ def detail(env, record, objects, live, busy, updates, inspected):
         started = master_containers.epoch(state.get("StartedAt")) if state.get("Running") else None
         ports = []
         for p in svc.get("ports", []):
-            key = "%s:%d/%s" % (name, p["port"], p["protocol"])
-            ports.append({"port": p["port"], "protokol": p["protocol"], "kullanim": p["use"],
-                          "tailscale_adi": p.get("tailscale_name"), "yerel_port": places["ports"].get(key)})
+            key = port_key(name, p)
+            access = record["rows"][key]
+            # kullanim and tailscale_adi are what the row is (an address and its name, or a raw port).
+            ports.append({"port": p["port"], "protokol": p["protocol"], "id": row_id(record["name"], key),
+                          "erisim": copy.deepcopy(access), "kullanim": "caddy" if access["tur"] == "adres" else "raw",
+                          "tailscale_adi": access.get("ad"), "yerel_port": places["ports"].get(key)})
         services.append({
             "ad": name, "durum": row["durum"], "baslangic": svc["start"], "kullanici": svc.get("user"),
             "imaj": svc["image"], "ozet": places["images"].get(name), "kanal": channel(svc["image"]),
@@ -717,10 +1054,10 @@ def kept_images(old_definition, places, definition):
             if before.get(s["name"]) == s["image"] and s["name"] in places["images"]}
 
 
-def difference(record, definition, old_plan, new_plan, ports, version=None):
-    """TanimFarki: per unit (added, removed, changed), the services whose environment file changes, port,
-    folder (a dropped one stays on disk), secret (new, renewed, kept, dropped), start mode and the new
-    definition's warnings."""
+def difference(record, definition, old_plan, new_plan, ports, rows, version=None):
+    """TanimFarki: per unit (added, removed, changed), the services whose environment file changes, port (each
+    row: kept, new or gone, with its pool port), folder (a dropped one stays on disk), secret (new, renewed, kept,
+    dropped), start mode and the new definition's warnings."""
     old_definition, places = record["definition"], record["places"]
     units = []
     for name in sorted(set(old_plan["units"]) | set(new_plan["units"])):
@@ -732,10 +1069,10 @@ def difference(record, definition, old_plan, new_plan, ports, version=None):
             units.append({"ad": name, "degisim": "degisir"})
     environment = sorted(svc for svc in set(old_plan["environment"]) | set(new_plan["environment"])
                          if old_plan["environment"].get(svc) != new_plan["environment"].get(svc))
-    port_rows = [{"anahtar": key, "degisim": "kalir" if key in places["ports"] else "eklenir", "yerel_port": port}
-                 for key, port in sorted(ports.items())]
-    port_rows += [{"anahtar": key, "degisim": "kaldirilir", "yerel_port": port}
-                  for key, port in sorted(places["ports"].items()) if key not in ports]
+    port_rows = [{"anahtar": key, "degisim": "kalir" if key in record["rows"] else "eklenir", "yerel_port": ports.get(key)}
+                 for key in sorted(rows)]
+    port_rows += [{"anahtar": key, "degisim": "kaldirilir", "yerel_port": places["ports"].get(key)}
+                  for key in sorted(record["rows"]) if key not in rows]
     old_folders, new_folders = set(old_plan["folders"]), set(new_plan["folders"])
     secrets = {"yeni": [], "yenilenen": [], "korunan": [], "kaldirilan": []}
     names = set()
@@ -760,20 +1097,22 @@ def difference(record, definition, old_plan, new_plan, ports, version=None):
             "uyarilar": warnings, "yeniden_baslar": bool(units or environment) and not places["stopped"]}
 
 
-def edit_plan(env, record, inspection, definition, ports, version, module=None):
-    """The differences an edit makes (TanimFarki), from two renders; no pull, no secret, nothing written."""
+def edit_plan(env, record, inspection, definition, rows, ports, version, module=None):
+    """The differences an edit makes (TanimFarki), from two renders; no pull, no secret, nothing written. rows and
+    ports: the edit's rows (next_rows) and their pool ports (allocate)."""
     app, places = record["name"], record["places"]
-    old_plan = render(env, app, record["definition"], places, version, module)
+    old_plan = render(env, app, record["definition"], places, version, record["rows"], module)
     secrets = placeholder_secrets(app, definition, {s["name"]: places["secrets"][s["name"]] for s in definition["secrets"]
                                                    if s.get("keep")})
     candidate = {"revision": places["revision"], "stopped": places["stopped"], "ports": ports, "secrets": secrets,
                  "images": placeholders(definition, kept_images(record["definition"], places, definition))}
-    new_plan = render(env, app, definition, candidate, version, module)
-    return difference(record, definition, old_plan, new_plan, ports, version)
+    new_plan = render(env, app, definition, candidate, version, rows, module)
+    return difference(record, definition, old_plan, new_plan, ports, rows, version)
 
 
 def new_questions(inspection, stored):
-    """The ids of an inspection's questions that the stored answers do not answer yet."""
+    """The ids of an inspection's questions that the stored answers (with the port answers filled from the rows,
+    filled_answers) do not answer yet."""
     known = set((stored or {}).get("answers") or {})
     return [q["id"] for q in inspection.get("questions", []) if q.get("kind") != "name" and q["id"] not in known]
 

@@ -11,6 +11,7 @@ import shutil
 import shlex
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -92,8 +93,12 @@ def main():
             e = m.env_read(DATA / "config/defaults.env")
             for key in ("SETTINGS_FILE", "SETTINGS_PENDING_FILE", "SETTINGS_DNS_FILE", "DNSMASQ_CONF_FILE",
                         "DNSMASQ_CONF_DIR", "WG_NETWORKS_FILE", "WG_STOPPED_FILE", "RUNTIME_DIR",
-                        "UNIT_DIR", "SBIN_DIR", "SHARE_STATE_FILE", "SERVER_ROOT"):
+                        "UNIT_DIR", "SBIN_DIR", "SHARE_STATE_FILE", "SERVER_ROOT", "UYGULAMA_STATE_DIR",
+                        "UYGULAMA_VERI_DIR", "KONTEYNER_BIRIM_DIR"):
                 e[key] = str(root / key.lower())
+            # The container guard has its own suite (containers-network-linux.py); this one tests the firewall's
+            # chains. The applications' records are this run's own (never the host's).
+            e["KONTEYNER_STATE_DIR"] = ""
             e.update(LOCAL_DOMAIN="test", WAN_INTERFACE="eth0", TAILSCALE_IPV4="100.64.0.1",
                      WAN_IPV4="93.184.216.34", DOWNLOADS_PATH=str(Path(e["SERVER_ROOT"]) / "downloads"))
             # DD-182: wan_active reads the registry only with an assigned global
@@ -109,11 +114,10 @@ def main():
             state = root / "state.env"
             e["STATE_FILE"] = str(state)
             state.write_text("".join(k + "=" + shlex.quote(v) + "\n" for k, v in e.items()))
-            shutil.copy(DATA / "panel/master_settings.py", Path(e["SBIN_DIR"]) / "master_settings.py")
-            # DD-179: firewall.sh asks master_shares.py whether a WAN share is active.
-            shutil.copy(DATA / "panel/master_shares.py", Path(e["SBIN_DIR"]) / "master_shares.py")
-            shutil.copy(DATA / "panel/master_https.py", Path(e["SBIN_DIR"]) / "master_https.py")
-            shutil.copy(DATA / "panel/master_publications.py", Path(e["SBIN_DIR"]) / "master_publications.py")
+            # The installer's helpers as stage 4 places them: firewall.sh asks master_settings.py (rules, tailnet
+            # ports with the applications' Tailscale ports) and master_shares.py (DD-179: a WAN share is active).
+            for module in sorted((DATA / "panel").glob("master_*.py")):
+                shutil.copy(module, Path(e["SBIN_DIR"]) / module.name)
             worker = ["bash", str(DATA / "scripts/firewall.sh")]
             env = dict(os.environ, STATE_FILE=str(state))
             def apply():
@@ -239,10 +243,55 @@ assert result==(sys.argv[4]=='1'),sys.argv[1:]
                 ping = subprocess.run(["nsenter","-t",str(peers[2].pid),"-n","ping","-"+str(family),"-c","1","-W","1",address], capture_output=True)
                 assert ping.returncode != 0, "WG host ping unexpectedly allowed"
             print("PASS real IPv4/IPv6 tailnet allowlist, unknown/peer/backend deny, second-NIC default deny, WAN and WG preservation", flush=True)
+            # Rebuild phase 4 (DD-172 amended, K5): an application's address row with a Tailscale port is a configured
+            # tailnet entry, IPv4 TCP only, konsol-base:tail-tcp-<port>; the exact-count check follows it.
+            sys.path.insert(0, str(DATA / "tests"))
+            import app_fixtures
+            import master_applications as apps
+            app_env = dict(app_fixtures.env(root), **{k: e[k] for k in ("UYGULAMA_STATE_DIR", "UYGULAMA_VERI_DIR",
+                                                                       "KONTEYNER_BIRIM_DIR", "LOCAL_DOMAIN")})
+            app_fixtures.record(app_env, text=app_fixtures.SIMPLE, given=app_fixtures.SIMPLE_ANSWERS, app="sayac")
+            k5 = 18080
+            records = apps.Records(app_env)
+
+            def tailscale_port(value):
+                record = records.load("sayac")
+                rows = dict(record["rows"], **{"app:9000/tcp": dict(record["rows"]["app:9000/tcp"], tailscale_portu=value)})
+                records.write("sayac", rows=rows)
+            for family in (socket.AF_INET, socket.AF_INET6):
+                sock = socket.socket(family, socket.SOCK_STREAM)
+                sockets.append(sock)
+                if family == socket.AF_INET6:
+                    sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                sock.bind(("0.0.0.0" if family == socket.AF_INET else "::", k5))
+                sock.listen()
+                threading.Thread(target=serve, args=(sock, "tcp"), daemon=True).start()
+            apply()
+            check(1, 4, "tcp", k5, False)
+            tailscale_port(k5)
+            apply()
+            repeat()
+            rules = cmd("iptables", "-S", e["CHAIN_SETTINGS"])
+            assert "konsol-base:tail-tcp-%d" % k5 in rules, rules
+            assert "konsol-base:tail-tcp-%d" % k5 not in cmd("ip6tables", "-S", e["CHAIN_SETTINGS"])
+            check(1, 4, "tcp", k5, True)
+            check(1, 6, "tcp", k5, False)
+            check(0, 4, "tcp", k5, False)
+            check(2, 4, "tcp", k5, False)
+            # A K5 entry the rows no longer hold is an unexpected rule for --check.
+            tailscale_port(None)
+            assert subprocess.run([*worker, "--check"], env=env, capture_output=True).returncode != 0
+            apply()
+            check(1, 4, "tcp", k5, False)
+            assert "tail-tcp-%d" % k5 not in cmd("iptables", "-S", e["CHAIN_SETTINGS"])
+            records.remove("sayac")
+            apply()
+            print("PASS an application's Tailscale port (K5): IPv4 tailnet only, exact count, closed when its row closes", flush=True)
             # The real helper keeps TLS-ALPN renewal reachable with no folders.
             # This is only a local TCP echo; no DNS, ACME or host services are used.
             https_port, share_port = int(e["SHARE_HTTPS_PORT"]), int(e["SHARE_PORT"])
-            https_settings = dict(m.DEFAULT, https={"domain": "dav.example.com"})
+            # WebDAV's internet name is its row (web.paylasim, rebuild phase 4).
+            https_settings = dict(m.DEFAULT, web={"paylasim": {"tail": True, "enabled": True, "domain": "dav.example.com"}})
             m.save_json(e["SETTINGS_FILE"], https_settings)
             apply()
             repeat()
@@ -317,7 +366,7 @@ finally:
             assert subprocess.run([*worker, "--check"], env=env, capture_output=True).returncode != 0
             apply()
             # Explicit HTTPS removal must not revive legacy WAN HTTP.
-            m.save_json(e["SETTINGS_FILE"], dict(m.DEFAULT, https={"domain": ""}))
+            m.save_json(e["SETTINGS_FILE"], dict(m.DEFAULT, web={"paylasim": {"tail": True, "enabled": False, "domain": ""}}))
             apply()
             repeat()
             check(0, 4, "tcp", https_port, False)

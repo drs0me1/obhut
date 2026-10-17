@@ -61,8 +61,12 @@ def main():
                  "SETTINGS_DNS_FILE": "dns/konsol.conf", "DNSMASQ_CONF_FILE": "dns/base.conf", "DNSMASQ_CONF_DIR": "dns",
                  "UNIT_DIR": "units", "KONTEYNER_BIRIM_DIR": "quadlet", "RUNTIME_DIR": "run", "SERVER_ROOT": "srv",
                  "DOWNLOADS_PATH": "srv/downloads", "SBIN_DIR": "bin", "SHARE_STATE_FILE": "etc/webdav.json",
-                 "WG_NETWORKS_FILE": "etc/networks", "WG_STOPPED_FILE": "etc/.durduruldu"}
+                 "WG_NETWORKS_FILE": "etc/networks", "WG_STOPPED_FILE": "etc/.durduruldu",
+                 "UYGULAMA_STATE_DIR": "etc/uygulamalar", "UYGULAMA_VERI_DIR": "veri"}
         e.update({k: str(root / v) for k, v in paths.items()})
+        # The container guard has its own suite (containers-network-linux.py); the applications' records are this
+        # run's own, never the host's.
+        e["KONTEYNER_STATE_DIR"] = ""
         e.update(LOCAL_DOMAIN="ayc", WAN_INTERFACE="eth0", WAN_IPV4="192.0.2.1", TAILSCALE_IPV4="100.64.0.2",
                  DOWNLOADS_UID="1000", DOWNLOADS_GID="1000")
         for name in ("etc", "bin", "dns", "units", "quadlet", "run", "srv/downloads", "srv/media"):
@@ -75,11 +79,10 @@ def main():
         (root / "etc/networks").write_text("")
         shutil.copy(DATA / "scripts/firewall.sh", root / "bin/master-firewall")
         (root / "bin/master-firewall").chmod(0o755)
-        shutil.copy(DATA / "panel/master_settings.py", root / "bin/master_settings.py")
-        # DD-179: firewall.sh asks master_shares.py whether a WAN share is active.
-        shutil.copy(DATA / "panel/master_shares.py", root / "bin/master_shares.py")
-        shutil.copy(DATA / "panel/master_https.py", root / "bin/master_https.py")
-        shutil.copy(DATA / "panel/master_publications.py", root / "bin/master_publications.py")
+        # The installer's helpers as stage 4 places them: firewall.sh asks master_settings.py (rules, tailnet ports
+        # with the applications' Tailscale ports) and master_shares.py (DD-179: a WAN share is active).
+        for module in sorted((DATA / "panel").glob("master_*.py")):
+            shutil.copy(module, root / "bin" / module.name)
         def render(source):
             text = (DATA / source).read_text()
             for key, value in e.items():

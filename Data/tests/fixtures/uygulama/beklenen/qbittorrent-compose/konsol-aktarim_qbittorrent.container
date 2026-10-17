@@ -16,6 +16,8 @@ LogDriver=journald
 DropCapability=NET_BIND_SERVICE SETFCAP SYS_CHROOT
 EnvironmentFile="/etc/master-stack/containers/uygulamalar/aktarim/env/qbittorrent.env"
 PublishPort=127.0.0.1:62100:8080/tcp
+PublishPort=203.0.113.10:6881:6881/tcp
+PublishPort=203.0.113.10:6881:6881/udp
 Volume=/var/lib/master-stack/uygulamalar/aktarim/appdata:/config:rw
 Volume=/run/master-stack/konteyner-baglama/aktarim_qbittorrent/594e1fa2d324f6d7:/downloads:rw
 PodmanArgs=--network-alias=qbittorrent

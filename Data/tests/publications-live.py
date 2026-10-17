@@ -55,16 +55,20 @@ def read(path):
 
 
 def status():
-    """The settings revision, the publication rows and the pending change in the shape this test checks,
-    read from Erişim's routes (GET yayinlar, GET bekleyen; DD-265)."""
-    view = read("/api/konsol/yayinlar")
-    rows = [{"service": c["servis"], "tail": c["tailscale"], "enabled": c["internet"], "domain": c["alan_adi"],
-             "status": c["durum"], "installed": True, "account": "Konsol hesabı" not in c["internet_engel"]}
-            for c in view["adaylar"] if c.get("servis")]
+    """The settings revision, the fixed rows (Konsol, WebDAV) and the pending change in the shape this test checks,
+    read from Erişim's read model (rebuild phase 4: each row carries its web fields; a verified certificate is
+    ready) and GET bekleyen; whether the Konsol account exists from GET oturum."""
+    view = read("/api/konsol/erisim")
+    ready = {c["hizmet"] for c in view["ozet"]["sertifikalar"] if c["durum"] == "gecerli"}
+    account = read("/api/konsol/oturum")["durum"] != "kurulum"
+    rows = [dict(r["web"], service=r["id"], installed=True, account=account,
+                 status="ready" if r["id"] in ready else "error" if r["web"]["enabled"] else "disabled")
+            for r in view["hizmetler"] if r["id"] in ("panel", "paylasim") and r.get("web")]
     return {"revision": view["revizyon"], "publications": rows, "pending": read("/api/konsol/bekleyen")["bekleyen"]}
 
 
 def save(row, **updates):
+    """Applies the row; an opening waits for its confirmation (decision 1), which this Tailscale client gives."""
     item = {k: row[k] for k in ("service", "tail", "enabled", "domain")}
     item.update(updates)
     for attempt in range(10):
@@ -75,7 +79,12 @@ def save(row, **updates):
             continue
         break
     assert code == 200, (code, body.decode()[:300])
-    assert json.loads(body) == {"committed": True, "pending": None}
+    result = json.loads(body)
+    if result.get("pending"):
+        code, body = request("/api/konsol/ayarlar/onayla", {"id": result["pending"]["id"]})
+        assert code == 200, (code, body.decode()[:300])
+    else:
+        assert result == {"committed": True, "pending": None}, result
 
 
 before = status()

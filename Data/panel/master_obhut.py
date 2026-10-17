@@ -11,7 +11,7 @@ backend does not answer, `durum` reads the units from systemd and says how to re
     sudo obhut guncelle [--evet]
     sudo obhut hesap durum | sifirla
     sudo obhut uygulama liste [--json] | baslat|durdur|yeniden-baslat <ad>
-    sudo obhut yayin liste [--json] | kapat <id>|--hepsi
+    sudo obhut erisim liste [--json] | kapat <satır>|--hepsi
     sudo obhut geri-al
 
 Python standard library only; operator text is Turkish.
@@ -70,8 +70,8 @@ class Konsol:
         self.host = "panel.%s" % env.get("LOCAL_DOMAIN", "")
         self.timeout = timeout
 
-    def call(self, method, route, data=None):
-        conn = Socket(self.path, self.timeout)
+    def call(self, method, route, data=None, timeout=None):
+        conn = Socket(self.path, timeout or self.timeout)
         headers = {"Host": self.host, "X-Konsol": "1", "Connection": "close"}
         body = None
         if data is not None:
@@ -97,8 +97,8 @@ class Konsol:
     def get(self, route):
         return self.call("GET", route)
 
-    def post(self, route, data):
-        return self.call("POST", route, data)
+    def post(self, route, data, timeout=None):
+        return self.call("POST", route, data, timeout)
 
 
 def run_tool(name, *args):
@@ -221,32 +221,72 @@ def cmd_uygulama(konsol, args):
     return 0
 
 
-def cmd_yayin(konsol, args):
-    view = konsol.get("/api/konsol/yayinlar")
-    rows = [r for r in view.get("adaylar") or [] if r.get("servis")]
+ACCESS_ROW_KINDS = ("konsol", "paylasim", "uygulama")
+
+
+def access_rows(view):
+    """Erişim's access rows: Konsol, WebDAV and every application port (rebuild phase 4)."""
+    return [r for r in view.get("hizmetler") or [] if r.get("tur") in ACCESS_ROW_KINDS]
+
+
+def cell_text(cell):
+    cell = cell or {}
+    if cell.get("durum") in ("acik", "kismen", "hata"):
+        text = ", ".join(cell.get("adresler") or []) or "açık"
+        return text + (" (hata)" if cell.get("durum") == "hata" else "")
+    return "kapalı"
+
+
+def closing(row):
+    """The settings request that closes a row's internet side (decision 1: it commits at once), or None when the row
+    is not open to the internet: Konsol's or WebDAV's internet name switched off (the name is remembered), an
+    application's internet name removed, a raw port open to the internet closed."""
+    web, access = row.get("web"), row.get("satir")
+    if row.get("tur") in ("konsol", "paylasim"):
+        if not web or not web.get("enabled"):
+            return None
+        return {"web": {"service": row["id"], "tail": bool(web.get("tail")), "enabled": False, "domain": web.get("domain") or ""}}
+    if not access or not row.get("uygulama") or not row.get("anahtar"):
+        return None
+    if access.get("tur") == "adres" and access.get("internet"):
+        new = dict(access, internet="")
+    elif access.get("tur") == "ham" and access.get("kapsam") == "internet":
+        new = dict(access, kapsam="kapali")
+    else:
+        return None
+    return {"erisim": {"uygulama": row["uygulama"], "anahtar": row["anahtar"], "satir": new}}
+
+
+def cmd_erisim(konsol, args):
+    view = konsol.get("/api/konsol/erisim")
+    rows = access_rows(view)
     if args.eylem == "liste":
-        lines = []
-        for r in rows:
-            internet = r.get("alan_adi") if r.get("internet") and r.get("alan_adi") else ("açık" if r.get("internet") else "kapalı")
-            lines.append("%-24s Tailscale %-6s internet %s" % (r.get("id"), "açık" if r.get("tailscale") else "kapalı", internet))
-        show(view, args.json, lines or ["Yayın yok."])
+        lines = ["%-44s Tailscale %s · internet %s" % (r.get("id"), cell_text(r.get("tailscale")), cell_text(r.get("internet")))
+                 for r in rows]
+        lines += ["! %s" % e for e in view.get("hatalar") or []]
+        show({"satirlar": rows, "hatalar": view.get("hatalar") or []}, args.json, lines or ["Erişim satırı yok."])
         return 0
-    targets = [r for r in rows if r.get("internet")] if args.hepsi else [r for r in rows if r.get("id") == args.id or r.get("servis") == args.id]
-    if not args.hepsi and not targets:
-        raise ObhutError("Yayın bulunamadı: %s (sudo obhut yayin liste)" % args.id)
-    targets = [r for r in targets if r.get("internet")]
+    if args.hepsi:
+        targets = rows
+    else:
+        targets = [r for r in rows if r.get("id") == args.id]
+        if not targets:
+            raise ObhutError("Erişim satırı bulunamadı: %s (sudo obhut erisim liste)" % args.id)
+    targets = [(r, closing(r)) for r in targets]
+    targets = [(r, request) for r, request in targets if request]
     if not targets:
-        print("İnternete açık yayın yok; değişen bir şey olmadı.")
+        print("İnternete açık erişim satırı yok; değişen bir şey olmadı.")
         return 0
-    revision = view.get("revizyon")
-    for index, r in enumerate(targets):
+    # An application row's change may restart its container and wait for it: the settings worker's limit.
+    from master_settings import ERISIM_WORKER_SECONDS
+    revision = view.get("revizyon") or ""
+    for index, (row, request) in enumerate(targets):
         # Each write changes the revision; the next one reads it again.
         if index:
-            revision = konsol.get("/api/konsol/yayinlar").get("revizyon")
-        # The internet name closes; the Tailscale name stays as it is (Konsol's own always stays on).
-        web = {"service": r["servis"], "tail": bool(r.get("tailscale")), "enabled": False, "domain": r.get("alan_adi") or ""}
-        konsol.post("/api/konsol/ayarlar/uygula", {"revision": revision, "web": web})
-        print("%s: internet adı kapatıldı." % r.get("ad"))
+            revision = konsol.get("/api/konsol/erisim").get("revizyon") or ""
+        konsol.post("/api/konsol/ayarlar/uygula", dict(request, revision=revision),
+                    timeout=ERISIM_WORKER_SECONDS + 10 if "erisim" in request else None)
+        print("%s: internet erişimi kapatıldı." % row.get("id"))
     return 0
 
 
@@ -280,12 +320,12 @@ def parser():
     s.add_argument("id", nargs="?", default="")
     s.add_argument("--json", action="store_true")
     s.set_defaults(run=cmd_uygulama)
-    s = sub.add_parser("yayin", help="yayınlar: liste; bir internet adını ya da hepsini kapat")
+    s = sub.add_parser("erisim", help="erişim satırları: liste; bir satırın ya da hepsinin internet erişimini kapat")
     s.add_argument("eylem", choices=("liste", "kapat"))
     s.add_argument("id", nargs="?", default="")
     s.add_argument("--hepsi", action="store_true")
     s.add_argument("--json", action="store_true")
-    s.set_defaults(run=cmd_yayin)
+    s.set_defaults(run=cmd_erisim)
     sub.add_parser("geri-al", help="onay bekleyen ayar değişikliğini geri alır").set_defaults(run=cmd_geri_al)
     return p
 
@@ -295,8 +335,8 @@ def main(argv=None):
     if getattr(args, "eylem", None) in ("baslat", "durdur", "yeniden-baslat") and not args.id:
         print("obhut: uygulamanın adını yazın (sudo obhut uygulama liste).", file=sys.stderr)
         return 2
-    if args.komut == "yayin" and args.eylem == "kapat" and not (args.id or args.hepsi):
-        print("obhut: yayının kimliğini ya da --hepsi yazın (sudo obhut yayin liste).", file=sys.stderr)
+    if args.komut == "erisim" and args.eylem == "kapat" and not (args.id or args.hepsi):
+        print("obhut: erişim satırının kimliğini ya da --hepsi yazın (sudo obhut erisim liste).", file=sys.stderr)
         return 2
     if os.geteuid() != 0:
         print("obhut: root olarak çalıştırın: sudo obhut %s" % " ".join(argv if argv is not None else sys.argv[1:]), file=sys.stderr)

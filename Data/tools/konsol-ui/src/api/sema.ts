@@ -74,6 +74,11 @@ export interface BekleyenDegisiklik {
     new: string;
   };
   web?: boolean;
+  erisim?: string;
+  wireguard?: {
+    eylem: WireGuardEylemi;
+    iface: string | null;
+  };
 }
 
 export interface Bekleyen {
@@ -96,15 +101,22 @@ export interface ErisimHucresi {
 export interface Hizmet {
   id: string;
   ad: string;
-  tur: "konsol" | "konteyner" | "elle" | "paylasim" | "sistem" | "vpn" | "kural";
+  tur: "konsol" | "uygulama" | "konteyner" | "paylasim" | "sistem" | "vpn" | "kural";
   aciklama: string;
   uygulama: string | null;
+  servis: string | null;
+  anahtar: string | null;
   calisiyor: boolean | null;
   yerel: ErisimHucresi;
   tailscale: ErisimHucresi;
   wireguard: ErisimHucresi;
   internet: ErisimHucresi;
-  yayinlar: string[];
+  satir: ErisimSatiri | null;
+  web: {
+    tail: boolean;
+    enabled: boolean;
+    domain: string;
+  } | null;
   ayrinti: {
     baslik: string;
     deger: string;
@@ -116,7 +128,7 @@ export interface Uyari {
   hizmet: string;
   metin: string;
   duzelt: {
-    bolum: "yayinlar" | "uygulama" | "tailscale";
+    bolum: "adresler" | "uygulama" | "tailscale";
     hedef: string;
   } | null;
 }
@@ -182,6 +194,7 @@ export interface Guncelleme {
 export interface Erisim {
   read_at: number;
   alan: string;
+  revizyon: string;
   ozet: {
     tailscale: {
       ipv4: string;
@@ -251,32 +264,51 @@ export interface DnsTaslagi {
   servers: string[];
 }
 
-export interface YayinSatiri {
-  service?: string;
-  tail?: boolean;
-  enabled?: boolean;
-  domain?: string;
+export interface WebSatiri {
+  service: "panel" | "paylasim";
+  tail: boolean;
+  enabled: boolean;
+  domain: string;
   confirm?: string;
-  sil?: boolean;
-  elle?: {
-    name: string;
-    local: string;
-    upstream: string;
-  };
-  [key: string]: unknown;
 }
 
-export interface AyarIstegi {
-  revision?: string;
+export interface ErisimIstegi {
+  uygulama: string;
+  anahtar: string;
+  satir: ErisimSatiri;
+  internet_onayi?: boolean;
+}
+
+export interface AyarKurallari {
+  revision: string;
   firewall?: KuralTaslagi[];
   dns?: DnsTaslagi;
-  domain?: string;
-  web?: YayinSatiri;
-  [key: string]: unknown;
 }
 
+export interface AyarAlanAdi {
+  revision: string;
+  domain: string;
+}
+
+export interface AyarWeb {
+  revision: string;
+  web: WebSatiri;
+}
+
+export interface AyarErisim {
+  revision: string;
+  erisim: ErisimIstegi;
+}
+
+export interface AyarWireGuard {
+  revision: string;
+  wireguard: WireGuardIstegi;
+}
+
+export type AyarIstegi = AyarKurallari | AyarAlanAdi | AyarWeb | AyarErisim | AyarWireGuard;
+
 export interface PlanDegisikligi {
-  alan: "guvenlik-duvari" | "dns" | "alan-adi" | "yayin";
+  alan: "guvenlik-duvari" | "dns" | "alan-adi" | "erisim" | "wireguard";
   islem: "ekle" | "kaldir" | "degistir" | "ac" | "kapat";
   nesne: string;
   once: string | null;
@@ -327,6 +359,7 @@ export interface GuvenlikDuvari {
     port: number;
     kapsam: "wan" | "tail" | "lo";
     sabit: boolean;
+    satir: string | null;
   })[];
   dinleyiciler: {
     proto: string;
@@ -363,87 +396,12 @@ export interface Adlar {
     kaynak: string;
     kapali: boolean;
     kilitli: boolean;
+    satir: string | null;
   })[];
   kayitlar: DnsKaydi[];
   yonlendirme: boolean;
   sunucular: string[];
   hatalar: string[];
-}
-
-export interface YayinAdayi {
-  id: string;
-  tur: "konsol" | "konteyner" | "elle" | "paylasim";
-  ad: string;
-  servis: string | null;
-  yerel_ad: string | null;
-  tailscale: boolean;
-  internet: boolean;
-  alan_adi: string;
-  durum: string;
-  mesaj: string;
-  bitis: number | null;
-  hedef: string | null;
-  giris: string;
-  onay_kelimesi: boolean;
-  internet_engel: string;
-  kullanilabilir: boolean;
-  neden: string;
-  konteyner: {
-    ad: string;
-    kaynak: "uygulama" | "dis";
-    uygulama: string | null;
-    calisiyor: boolean;
-    yerel_portlar: {
-      host_port: number;
-      container_port: number;
-    }[];
-    diger_portlar: {
-      kapsam: string;
-      host_port: number;
-      container_port: number;
-    }[];
-  } | null;
-}
-
-export interface Yayinlar {
-  revizyon: string;
-  alan: string;
-  wan_ipv4: string;
-  adaylar: YayinAdayi[];
-  hatalar: string[];
-}
-
-export interface YayinIstegi {
-  hedef: string;
-  revizyon: string;
-  tailscale: boolean;
-  internet: boolean;
-  alan_adi: string;
-  ad?: string;
-  yerel?: string;
-  onay?: string;
-}
-
-export interface YayinAdimi {
-  tur: "ayar";
-  baslik: string;
-  aciklama: string;
-  istek: {
-    [key: string]: unknown;
-  };
-}
-
-export interface YayinPlani {
-  hedef: YayinAdayi;
-  adimlar: YayinAdimi[];
-  plan: AyarPlani | null;
-  engel: string;
-  dns: {
-    ad: string;
-    tur: string;
-    deger: string;
-  } | null;
-  uyarilar: PlanUyarisi[];
 }
 
 export interface KonteynerIstegi {
@@ -788,11 +746,10 @@ export interface WireGuard {
   now: number;
   active_window: number;
   networks: WireGuardAgi[];
+  revizyon: string;
 }
 
-export interface WireGuardCalismasi {
-  durduruldu: boolean;
-}
+export type WireGuardEylemi = "baslat" | "durdur" | "ag-ekle" | "ag-kaldir" | "ag-ac" | "ag-kapat" | "yeniden-uret";
 
 export interface WireGuardAgIstegi {
   port: number;
@@ -800,24 +757,11 @@ export interface WireGuardAgIstegi {
   label?: string;
 }
 
-export interface WireGuardAgEklendi {
-  iface: string;
-  port: number;
-}
-
-export interface WireGuardAgKaldirildi {
-  iface: string;
-  peers: number;
-}
-
-export interface WireGuardAgDurumu {
-  iface: string;
-  active: boolean;
-}
-
-export interface WireGuardYenidenUretildi {
-  peers: number;
-  profiles: number;
+export interface WireGuardIstegi {
+  eylem: WireGuardEylemi;
+  iface?: string;
+  ag?: WireGuardAgIstegi;
+  onay?: string;
 }
 
 export interface WireGuardAgAyari {
@@ -850,10 +794,6 @@ export interface WireGuardDns {
 
 export interface WireGuardKeepalive {
   keepalive: number;
-}
-
-export interface Onay {
-  confirm: string;
 }
 
 export interface Acik {
@@ -1249,9 +1189,26 @@ export interface KayitliYanitlar {
   };
 }
 
+export interface ErisimAdresi {
+  tur: "adres";
+  ad: string;
+  tailscale_portu: number | null;
+  internet: string;
+}
+
+export interface ErisimHamPortu {
+  tur: "ham";
+  kapsam: "kapali" | "tailscale" | "internet";
+  port: number;
+}
+
+export type ErisimSatiri = ErisimAdresi | ErisimHamPortu;
+
 export interface UygulamaPortu {
   port: number;
   protokol: "tcp" | "udp";
+  id: string;
+  erisim: ErisimSatiri;
   kullanim: "caddy" | "raw";
   tailscale_adi: string | null;
   yerel_port: number | null;
@@ -1472,8 +1429,6 @@ export const YOLLAR = {
   ayarlar_birak: "/api/konsol/ayarlar/birak",
   guvenlik_duvari: "/api/konsol/guvenlik-duvari",
   adlar: "/api/konsol/adlar",
-  yayinlar: "/api/konsol/yayinlar",
-  yayin_plani: "/api/konsol/yayinlar/plan",
   konteyner_islemi: "/api/konsol/konteynerler/islem",
   konteyner_listesi: "/api/konsol/konteynerler/liste",
   konteyner_ayrintisi: "/api/konsol/konteynerler/ayrinti",
@@ -1493,13 +1448,7 @@ export const YOLLAR = {
   depolama: "/api/konsol/depolama",
   gelismis: "/api/konsol/gelismis",
   wireguard: "/api/konsol/wireguard/state",
-  wireguard_durdur: "/api/konsol/wireguard/durdur",
-  wireguard_baslat: "/api/konsol/wireguard/baslat",
-  wireguard_ag_ekle: "/api/konsol/wireguard/nets",
-  wireguard_ag_kaldir: "/api/konsol/wireguard/nets/{iface}/remove",
-  wireguard_ag_yeniden_uret: "/api/konsol/wireguard/nets/{iface}/reset",
   wireguard_cihaz_ekle: "/api/konsol/wireguard/nets/{iface}/peers",
-  wireguard_ag_durum: "/api/konsol/wireguard/nets/{iface}/durum",
   wireguard_ag_ayarlar: "/api/konsol/wireguard/nets/{iface}/ayarlar",
   wireguard_cihaz_kaldir: "/api/konsol/wireguard/nets/{iface}/peers/{name}/remove",
   wireguard_cihaz_dns: "/api/konsol/wireguard/nets/{iface}/peers/{name}/dns",

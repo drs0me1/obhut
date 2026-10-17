@@ -324,7 +324,8 @@ class ShareConnectionTests(unittest.TestCase):
         self.assert_rejected({"connections": {"wan": {"enabled": True}}})
 
     def test_https_wan_enable_needs_no_http_consent_but_unavailable_wan_is_rejected(self):
-        Path(self.env["SETTINGS_FILE"]).write_text(json.dumps({"https": {"domain": "dav.example.org"}}))
+        Path(self.env["SETTINGS_FILE"]).write_text(json.dumps({"web": {"paylasim": {"tail": True, "enabled": True,
+                                                                              "domain": "dav.example.org"}}}))
         self.save(connections={"wan": {"enabled": True}})
         self.assertTrue(self.disk()["items"][0]["connections"]["wan"]["enabled"])
         self.write(self.data)

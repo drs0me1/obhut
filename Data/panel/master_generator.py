@@ -6,6 +6,7 @@ randomness; the same definition and context always give the same plan.
     render(definition, context) -> plan          raises GeneratorError(text) on anything it cannot express
 
     context = {"app": str, "images": {service: "repo@sha256:…"}, "ports": {"<service>:<port>/<proto>": pool_port},
+               "raw": {"<service>:<port>/<proto>": {"host_ip": IPv4, "host_port": port}},
                "secrets": {logical: podman_name}, "stopped": bool, "podman": (major, minor),
                "env": {KONTEYNER_BRIDGE_PREFIX, UYGULAMA_STATE_DIR, UYGULAMA_VERI_DIR, SERVER_ROOT,
                        KONTEYNER_BAGLAMA_DIR, SBIN_DIR, STATE_FILE, DOWNLOADS_UID, DOWNLOADS_GID, …}}
@@ -14,10 +15,13 @@ randomness; the same definition and context always give the same plan.
             "network": {"name", "interface", "unit"}, "pod": None | {"name", "unit"},
             "publications": [{"service", "port", "protocol", "host_ip", "host_port"}], "needs_podman5": [reason]}
 
-The definition is master_inspector.check's; the context is what the engine allocated (pinned digests,
-loopback pool ports, Podman secret names). No secret value ever reaches the generator: units name Podman
-secrets, and environment holds only the plain variables. A `caddy` port is published on 127.0.0.1 and its
-pool port; a `raw` port publishes nothing (closed until phase 4).
+The definition is master_inspector.check's or the record's (the generator reads each port's number and
+protocol only); the context is what the engine allocated (pinned digests, loopback pool ports, Podman secret
+names) and its access rows (rebuild phase 4). No secret value ever reaches the generator: units name Podman
+secrets, and environment holds only the plain variables. A port with a pool port (an address row, TCP only) is
+published on 127.0.0.1 and that port; a port in context["raw"] (an open raw row) on its address (the Tailscale
+or WAN IPv4) and host port, with its protocol; any other port publishes nothing. A Kubernetes Pod publishes on
+its .pod. A key of either map that is not a port of the definition, or one in both, is refused.
 
 Names (one home; the engine imports them, nothing else spells them). Application names have no '_'
 (APP_NAME_RE), so '_' separates the application from the service and no two applications meet:
@@ -58,6 +62,7 @@ that Podman 5 trims from the ends, a trailing space or backslash) is refused. Tw
 carry are refused too: an empty argument and a lone ';' (Quadlet writes both bare into ExecStart).
 """
 import hashlib
+import ipaddress
 import json
 import math
 import posixpath
@@ -342,10 +347,11 @@ class _Render:
         require(_version(context.get("podman")) >= (4, 9), "Podman 4.9 ya da daha yenisi gerekir.")
         require(type(context.get("stopped")) is bool, "Uygulamanın durumu okunamadı.")
         self.stopped = context["stopped"]
-        for key in ("images", "ports", "secrets"):
+        for key in ("images", "ports", "raw", "secrets"):
             require(isinstance(context.get(key), dict), "Uygulamanın kaydı eksik: %s." % key)
         self.images = context["images"]
         self.ports = context["ports"]
+        self.raw = context["raw"]
         self.secrets = context["secrets"]
         self.pod = uses_pod(definition)
         self.by_name = dict(zip(names, services))
@@ -383,8 +389,11 @@ class _Render:
                     if path not in folders:
                         folders.append(path)
             publications.extend(self.publications(svc))
-        pools = [row["host_port"] for row in publications]
-        require(len(set(pools)) == len(pools), "Aynı yerel port iki porta ayrılmış.")
+        keys = {"%s:%d/%s" % (r["service"], r["port"], r["protocol"]) for r in publications}
+        for key in sorted((set(self.ports) | set(self.raw)) - keys):
+            require(False, "Kayıttaki %s portu tanımda yok." % str(key)[:120])
+        listeners = [(row["host_ip"], row["host_port"], row["protocol"]) for row in publications]
+        require(len(set(listeners)) == len(listeners), "Aynı adres ve port iki porta ayrılmış.")
         units[network_file(app)] = self.network_unit_text()
         if self.pod:
             units[pod_file(app)] = self.pod_unit_text(publications)
@@ -449,19 +458,32 @@ class _Render:
         return "%s/%s" % (app_folder(self.env, self.app), folder)
 
     def publications(self, svc):
+        """An address row's pool port on 127.0.0.1 (TCP); an open raw row on its address and host port."""
         rows = []
         for port in svc.get("ports") or ():
             require(isinstance(port, dict) and type(port.get("port")) is int and 0 < port["port"] < 65536
-                    and port.get("protocol") in ("tcp", "udp") and port.get("use") in ("caddy", "raw"),
-                    "%s: port okunamadı." % svc["name"])
-            if port["use"] != "caddy":
-                continue
-            require(port["protocol"] == "tcp", "%s: UDP portu yalnız ham port olabilir." % svc["name"])
+                    and port.get("protocol") in ("tcp", "udp"), "%s: port okunamadı." % svc["name"])
             key = "%s:%d/%s" % (svc["name"], port["port"], port["protocol"])
-            pool = self.ports.get(key)
-            require(type(pool) is int and 0 < pool < 65536, "%s için yerel port ayrılmamış." % key)
-            rows.append({"service": svc["name"], "port": port["port"], "protocol": "tcp", "host_ip": LOOPBACK,
-                         "host_port": pool})
+            require(not (key in self.ports and key in self.raw), "%s hem adres hem ham port olamaz." % key)
+            if key in self.ports:
+                require(port["protocol"] == "tcp", "%s: UDP portu yalnız ham port olabilir." % svc["name"])
+                pool = self.ports[key]
+                require(type(pool) is int and 0 < pool < 65536, "%s için yerel port ayrılmamış." % key)
+                rows.append({"service": svc["name"], "port": port["port"], "protocol": "tcp", "host_ip": LOOPBACK,
+                             "host_port": pool})
+            elif key in self.raw:
+                host = self.raw[key]
+                require(isinstance(host, dict) and set(host) == {"host_ip", "host_port"} and type(host["host_port"]) is int
+                        and 0 < host["host_port"] < 65536, "%s ham portunun adresi okunamadı." % key)
+                try:
+                    address = ipaddress.IPv4Address(host["host_ip"])
+                except (ValueError, TypeError) as err:
+                    raise GeneratorError("%s ham portu yalnız bir IPv4 adresinde yayımlanır." % key) from err
+                require(str(address) == host["host_ip"] and not (address.is_loopback or address.is_unspecified
+                                                                 or address.is_multicast or address.is_link_local),
+                        "%s ham portu yalnız sunucunun Tailscale ya da internet IPv4 adresinde yayımlanır." % key)
+                rows.append({"service": svc["name"], "port": port["port"], "protocol": port["protocol"],
+                             "host_ip": host["host_ip"], "host_port": host["host_port"]})
         return rows
 
     def env_text(self, svc):
@@ -680,8 +702,7 @@ class _Render:
             require(secret_app(podman) == app, "%s: %s için Podman secret'ı ayrılmamış." % (name, entry["name"]))
             lines.append("Secret=%s,type=env,target=%s" % (podman, entry["name"]))
         if not self.pod:
-            lines += ["PublishPort=%s:%d:%d/tcp" % (r["host_ip"], r["host_port"], r["port"])
-                      for r in publications if r["service"] == name]
+            lines += [publish_line(r) for r in publications if r["service"] == name]
         index = 0
         for mount in mounts:
             kind = self.mount_kind(svc, mount)
@@ -736,13 +757,19 @@ class _Render:
         app = self.app
         lines = self.unit_head("Pod")
         lines += ["", "[Pod]", "PodName=" + pod_name(app), "Network=" + network_file(app)]
-        lines += ["PublishPort=%s:%d:%d/tcp" % (r["host_ip"], r["host_port"], r["port"]) for r in publications]
+        # The pod holds the network namespace: every container's publication is the pod's.
+        lines += [publish_line(r) for r in publications]
         # Quadlet's [Pod] has no Label= key; its own infra name (<pod>-infra) could be another application's pod.
         lines.append("PodmanArgs=--infra-name=" + pod_infra_name(app))
         lines += ["PodmanArgs=--label=%s=%s" % item for item in labels(app).items()]
         lines += ["", "[Service]", "RestartSec=10s", self.guard_check()]
         lines += self.install()
         return "\n".join(lines) + "\n"
+
+
+def publish_line(row):
+    """A publication as Quadlet's PublishPort: <host_ip>:<host_port>:<port>/<protocol> (IPv4 only, DD-217)."""
+    return "PublishPort=%s:%d:%d/%s" % (row["host_ip"], row["host_port"], row["port"], row["protocol"])
 
 
 def render(definition, context):

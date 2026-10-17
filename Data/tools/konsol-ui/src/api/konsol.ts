@@ -49,7 +49,10 @@ const appPath = (path: string, app: string) => path.replace("{app}", encodeURICo
 function cleanService(s: UygulamaServisAyrintisi): UygulamaServisAyrintisi {
   return {
     ...s,
-    portlar: isList(s.portlar) ? s.portlar.filter((p) => isObject(p) && typeof p.port === "number" && isText(p.protokol) && isText(p.kullanim)) : [],
+    // Each port with its access row (rebuild phase 4: its id and the row, an address or a raw port).
+    portlar: isList(s.portlar)
+      ? s.portlar.filter((p) => isObject(p) && typeof p.port === "number" && isText(p.protokol) && isText(p.id) && isObject(p.erisim) && (p.erisim.tur === "adres" || p.erisim.tur === "ham"))
+      : [],
     baglamalar: isList(s.baglamalar) ? s.baglamalar.filter((m) => isObject(m) && isText(m.hedef) && isText(m.tur)) : [],
     gizliler: isList(s.gizliler) ? s.gizliler.filter(isText) : [],
   };

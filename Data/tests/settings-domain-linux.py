@@ -46,8 +46,11 @@ def main():
                  "SETTINGS_DNS_FILE": "dns/konsol.conf", "DNSMASQ_CONF_FILE": "dns/base.conf", "DNSMASQ_CONF_DIR": "dns",
                  "UNIT_DIR": "units", "RUNTIME_DIR": "run", "SERVER_ROOT": "srv", "DOWNLOADS_PATH": "srv/downloads",
                  "CADDYFILE": "Caddyfile", "CADDY_MODULES_DIR": "caddy-modules", "SHARE_CADDY_SOURCE": "share/paylasim.caddy",
-                 "KONSOL_AUTH_DIR": "etc/konsol", "WG_NETWORKS_FILE": "etc/networks", "WG_STOPPED_FILE": "etc/.durduruldu"}
+                 "KONSOL_AUTH_DIR": "etc/konsol", "WG_NETWORKS_FILE": "etc/networks", "WG_STOPPED_FILE": "etc/.durduruldu",
+                 "UYGULAMA_STATE_DIR": "etc/uygulamalar", "UYGULAMA_VERI_DIR": "veri"}
         e.update({k: str(root / v) for k, v in paths.items()})
+        # The applications' records are this run's own, never the host's; the container guard has its own suite.
+        e["KONTEYNER_STATE_DIR"] = ""
         # DD-180: both private sockets live in the disposable tree, never in the host's /run.
         e.update(PANEL_SOCKET=str(root / "run/api.sock"), CADDY_ADMIN_SOCKET=str(root / "run/caddy-admin.sock"))
         e.update(LOCAL_DOMAIN="ayc", WAN_IPV4="192.0.2.1", TAILSCALE_IPV4="100.64.0.2", CONSOLE_WEB_DIR=str(DATA / "console"),

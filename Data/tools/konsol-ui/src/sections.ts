@@ -38,7 +38,7 @@ export const SECTIONS: readonly Section[] = [
     short: "Erişim",
     description: "Kim, neye, nereden erişebilir.",
     icon: "globe",
-    keywords: "yayın yayınla adres alan adı tailscale wireguard internet https sertifika caddy dns güvenlik duvarı",
+    keywords: "adres ham port alan adı tailscale wireguard internet https sertifika caddy dns güvenlik duvarı",
   },
   {
     id: "dosyalar",
@@ -72,7 +72,7 @@ export const sectionById = (id: unknown): Section =>
 /** Erişim's tabs (phase 3), in the address as ?sekme=; the palette lists each one. */
 export const ACCESS_TABS = [
   { id: "genel", label: "Genel", keywords: "erişim matris kim nereden uyarı sertifika özet" },
-  { id: "adresler", label: "Adresler", keywords: "adres yayın alan adı caddy https sertifika dns dnsmasq yerel ad kayıt yönlendirme elle" },
+  { id: "adresler", label: "Adresler", keywords: "adres ham port tailscale adı tailscale portu internet adı caddy https sertifika dns dnsmasq yerel ad kayıt yönlendirme" },
   { id: "tailscale", label: "Tailscale", keywords: "tailnet cihaz anahtar çıkış düğümü exit node" },
   { id: "wireguard", label: "WireGuard", keywords: "vpn ağ cihaz peer qr profil" },
   { id: "guvenlik-duvari", label: "Güvenlik duvarı", keywords: "firewall port kural iptables dinleyici" },
@@ -80,12 +80,12 @@ export const ACCESS_TABS = [
 
 export type AccessTab = (typeof ACCESS_TABS)[number]["id"];
 
-/** The address of an Erişim tab; `yayinla` opens the Yayınla flow over it (a candidate's id, "sec" to choose
-    first, "yeni" for another port on this server). */
-export function accessRoute(tab: AccessTab = "genel", yayinla = ""): string {
+/** The address of an Erişim tab; on Adresler `satir` opens an access row's sheet (its id: panel, paylasim or
+    uygulama:<app>:<service>:<port>/<proto>, rebuild phase 4). */
+export function accessRoute(tab: AccessTab = "genel", satir = ""): string {
   const query = new URLSearchParams();
   if (tab !== "genel") query.set("sekme", tab);
-  if (yayinla) query.set("yayinla", yayinla);
+  if (satir) query.set("satir", satir);
   const text = query.toString();
   return "/erisim" + (text ? "?" + text : "");
 }

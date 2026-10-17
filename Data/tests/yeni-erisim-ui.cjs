@@ -1,8 +1,13 @@
-/* Konsol's new interface, phase 3 (DD-258): Erişim (Genel, Adresler, Tailscale, Güvenlik duvarı), the Yayınla
-   flow and the pending settings change in the committed build under Data/console/yeni, with the production
-   CSP and fixture replies for every endpoint they read or post to (yeni-harness.cjs). The WireGuard tab has
-   its own suite (yeni-wireguard-ui.cjs). Fails on any console error, CSP violation or page error. Never
-   contacts a server.
+/* Konsol's interface, Erişim (DD-258; access rows since rebuild phase 4): Genel, Adresler, Tailscale, Güvenlik duvarı
+   and the pending settings change in the committed build under Data/console/yeni, with the production CSP and fixture
+   replies for every endpoint they read or post to (yeni-harness.cjs). Adresler lists every access row (Konsol,
+   Paylaşımlar, each application port) and opens its sheet: an address row's Tailscale name, Tailscale port, internet
+   name and "Adresi kaldır"; a raw row's scope and host port with the internet consent; "Adres aç"; Konsol's internet
+   name with the typed word; Paylaşımlar' Tailscale name. Every change goes through the settings plan with its exact
+   body: an opening waits for the 60 s confirmation, a closing commits at once, a long apply stays busy and says so.
+   The sheet is in the address (?satir=<row id>): warnings' Düzelt, the firewall's fixed rows and locked local names
+   open it. Yayınla is gone. The WireGuard tab has its own suite (yeni-wireguard-ui.cjs). Fails on any console
+   error, CSP violation or page error. Never contacts a server.
    PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-erisim-ui.cjs */
 const assert = require("node:assert/strict");
 
@@ -12,32 +17,56 @@ const DAY = 86400;
 const VPN_NOTE = "WireGuard cihazları yalnız internete çıkar; bu sunucudaki hizmetlere ulaşamaz.";
 const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
 const { uygulama, uygulamalar, ayrinti } = require("./yeni-harness.cjs").fixtures;
-const row = (id, ad, tur, cells, ayrinti = [], aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, calisiyor: true, yerel: cell("yok"),
-  tailscale: cell("yok"), wireguard: cell("kapali", [], VPN_NOTE), internet: cell("yok"), yayinlar: [], ayrinti, ...cells });
+const row = (id, ad, tur, cells, ayrinti = [], aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, servis: null, anahtar: null, calisiyor: true,
+  yerel: cell("yok"), tailscale: cell("yok"), wireguard: cell("kapali", [], VPN_NOTE), internet: cell("yok"), satir: null, web: null, ayrinti, ...cells });
+// An application port's row: id uygulama:<app>:<service>:<port>/<proto>, its stored row (satir) and its key.
+function appRow(id, satir, cells, ayrintilar = []) {
+  const [, app, service, port] = id.split(":");
+  return row(id, `${app} · ${service}`, "uygulama", { uygulama: app, servis: service, anahtar: `${service}:${port}`, satir, ...cells }, ayrintilar,
+    `${port} · ${satir.tur === "adres" ? "Adres" : "Ham port"}`);
+}
+const NOTLAR = "uygulama:notlar:web:8080/tcp";
+const MEDYA = "uygulama:medya:web:8096/tcp";
+const MEDYA_UDP = "uygulama:medya:web:1900/udp";
+const KUTU = "uygulama:kutu:app:9000/tcp";
+/** A row id in an address, as URLSearchParams writes it. */
+const enc = (id) => new URLSearchParams({ satir: id }).toString().slice("satir=".length);
 
 const WARNINGS = [
   { seviye: "warn", hizmet: "paylasim", metin: "İnternetten gelen WebDAV bağlantıları şifresiz; kullanıcı adı ve parola ağda okunabilir.",
-    duzelt: { bolum: "yayinlar", hedef: "paylasim" } },
-  { seviye: "warn", hizmet: "konteyner:medya_web", metin: "medya_web: 203.0.113.10:8096/tcp doğrudan internete açık; şifreleme ve giriş uygulamanın kendisinde.",
-    duzelt: { bolum: "uygulama", hedef: "medya" } },
-  { seviye: "warn", hizmet: "konteyner:notlar", metin: "notlar.example.org sertifikası 10 gün sonra doluyor; Caddy kendiliğinden yeniler, yenilemezse internetten erişim kesilir.",
-    duzelt: { bolum: "yayinlar", hedef: "konteyner:notlar" } },
+    duzelt: { bolum: "adresler", hedef: "paylasim" } },
+  { seviye: "warn", hizmet: MEDYA, metin: "medya · web: 8096/tcp doğrudan internete açık; şifreleme ve giriş uygulamanın kendisinde.",
+    duzelt: { bolum: "adresler", hedef: MEDYA } },
+  { seviye: "warn", hizmet: MEDYA, metin: "medya uygulamasının bir servisi yeniden başlıyor.", duzelt: { bolum: "uygulama", hedef: "medya" } },
+  { seviye: "warn", hizmet: NOTLAR, metin: "notlar.example.org sertifikası 10 gün sonra doluyor; Caddy kendiliğinden yeniler, yenilemezse internetten erişim kesilir.",
+    duzelt: { bolum: "adresler", hedef: NOTLAR } },
 ];
-const ROWS = [
-  row("panel", "Konsol", "konsol", { tailscale: cell("acik", ["panel.ev"], "Giriş istemez; cihazı Tailscale doğrular."), internet: cell("kapali") }, [], "Yönetim paneli"),
-  row("konteyner:notlar", "notlar", "konteyner", { yerel: cell("acik", ["127.0.0.1:8090 → 80/tcp"]), tailscale: cell("acik", ["notlar.ev"]),
-    internet: cell("acik", ["notlar.example.org"]) }, [{ baslik: "Konteyner portu", deger: "127.0.0.1:8090 → 80/tcp" },
-    { baslik: "DNS", deger: "notlar.ev → 100.64.0.2" }, { baslik: "Caddy", deger: "notlar.example.org → 127.0.0.1:8090" }], "Konteyner"),
-  row("konteyner:medya_web", "medya_web", "konteyner", { uygulama: "medya", yerel: cell("kapali"), tailscale: cell("acik", ["100.64.0.2:8096/tcp"]),
-    internet: cell("acik", ["203.0.113.10:8096/tcp"], "", "Doğrudan WAN") }, [{ baslik: "Port", deger: "0.0.0.0:8096 → 8096/tcp" }], "Uygulama · medya"),
-  row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev", "100.64.0.2:61010"], "2 klasör"), internet: cell("acik", ["http://203.0.113.10:61010"], "1 klasör", "Şifresiz HTTP") },
+const NOTLAR_ROW = { tur: "adres", ad: "notlar", tailscale_portu: 8443, internet: "notlar.example.org" };
+function rows(o = {}) {
+  return [
+    row("panel", "Konsol", "konsol", { tailscale: cell("acik", ["panel.ev"], "Giriş istemez; cihazı Tailscale doğrular."), internet: cell("kapali"),
+      web: { tail: true, enabled: false, domain: "" } }, [], "Yönetim paneli"),
+    appRow(NOTLAR, o.notlar ?? NOTLAR_ROW, { yerel: cell("acik", ["127.0.0.1:62001"]), tailscale: cell("acik", [`${(o.notlar ?? NOTLAR_ROW).ad}.ev`, "100.64.0.2:8443"]),
+      internet: cell("acik", ["notlar.example.org"]) }, [{ baslik: "Konteyner portu", deger: "8080/tcp" }, { baslik: "DNS", deger: "notlar.ev → 100.64.0.2" },
+      { baslik: "Caddy", deger: "notlar.example.org → 127.0.0.1:62001" }]),
+    appRow(MEDYA, { tur: "ham", kapsam: "internet", port: 8096 }, { yerel: cell("kapali"), tailscale: cell("kapali"),
+      internet: cell("acik", ["203.0.113.10:8096/tcp"], "Ham port", "Şifreleme ve giriş uygulamanın kendisinde.") }),
+    appRow(MEDYA_UDP, { tur: "ham", kapsam: "kapali", port: 1900 }, { yerel: cell("kapali"), tailscale: cell("kapali"), internet: cell("kapali") }),
+    appRow(KUTU, { tur: "ham", kapsam: "kapali", port: 9000 }, { yerel: cell("kapali"), tailscale: cell("kapali"), internet: cell("kapali") }),
+    row("konteyner:dis", "dis", "konteyner", { yerel: cell("acik", ["127.0.0.1:5000/tcp"]), tailscale: cell("kapali"), internet: cell("kapali") }, [],
+      "Konteyner · Konsol dışında yönetiliyor"),
+    row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev", "100.64.0.2:61010"], "2 klasör"),
+      internet: cell("acik", ["http://203.0.113.10:61010"], "1 klasör", "Şifresiz HTTP"), web: { tail: true, enabled: false, domain: "" } },
     [{ baslik: "Klasör · Filmler", deger: "Tailscale açık · İnternet açık" }], "WebDAV · 2 klasör"),
-  row("sistem:ssh", "SSH", "sistem", { tailscale: cell("acik", ["22/tcp"]), internet: cell("acik", ["203.0.113.10:22/tcp"]) }, [], "Uzak kabuk"),
-  row("vpn:wg0", "WireGuard wg0", "vpn", { wireguard: cell("yok"), tailscale: cell("acik", ["61001/udp"]), internet: cell("acik", ["203.0.113.10:61001/udp"]) }, [], "Ana ağ"),
-];
+    row("sistem:ssh", "SSH", "sistem", { tailscale: cell("acik", ["22/tcp"]), internet: cell("acik", ["203.0.113.10:22/tcp"]) }, [], "Uzak kabuk"),
+    row("vpn:wg0", "WireGuard wg0", "vpn", { wireguard: cell("yok"), tailscale: cell("acik", ["61001/udp"]), internet: cell("acik", ["203.0.113.10:61001/udp"]) }, [], "Ana ağ"),
+  ];
+}
+const ROWS = rows();
+const ACCESS_IDS = ["panel", NOTLAR, MEDYA, MEDYA_UDP, KUTU, "paylasim"];
 function erisim(o = {}) {
   return {
-    read_at: NOW, alan: "ev", hatalar: [], uyarilar: WARNINGS, hizmetler: ROWS,
+    read_at: NOW, alan: "ev", revizyon: "rev-1", hatalar: [], uyarilar: WARNINGS, hizmetler: rows(),
     ozet: {
       tailscale: { ipv4: "100.64.0.2", ipv6: "fd7a:115c:a1e0::2", durum: "bagli", anahtar_bitis: NOW + 10 * DAY, ad: "sunucu.example-tailnet.ts.net", surum: "1.88.3",
         adresler: ["100.64.0.2", "fd7a:115c:a1e0::2"], cikis_dugumu: true },
@@ -46,46 +75,23 @@ function erisim(o = {}) {
         { ad: "WireGuard wg0", port: 61001, proto: "udp", aileler: [4], kaynak: "temel" },
         { ad: "Oyun", port: 27015, proto: "udp", aileler: [4], kaynak: "kural" }] },
       wireguard: { kurulu: true, durduruldu: false, not: VPN_NOTE, aglar: [{ arayuz: "wg0", ad: "Ana ağ", etkin: true, port: 61001 }] },
-      sertifikalar: [{ ad: "notlar.example.org", hizmet: "konteyner:notlar", durum: "gecerli", bitis: NOW + 10 * DAY }],
+      sertifikalar: [{ ad: "notlar.example.org", hizmet: NOTLAR, durum: "gecerli", bitis: NOW + 10 * DAY }],
     },
     ...o,
   };
 }
 
-const GUARD_APP = "Yalnız uygulamanın kendi girişi korur; Konsol bu adreste giriş denetlemez.";
-const cand = (o) => ({ servis: null, yerel_ad: null, tailscale: false, internet: false, alan_adi: "", durum: "disabled", mesaj: "İnternet yayını kapalı.", bitis: null,
-  hedef: null, giris: GUARD_APP, onay_kelimesi: false, internet_engel: "", kullanilabilir: true, neden: "", konteyner: null, ...o });
-const NO_LOOPBACK = "Bu konteynerin yalnız bu sunucuda (127.0.0.1) dinleyen bir portu yok; yayımlanamaz.";
-const box = (o) => ({ kaynak: "dis", uygulama: null, calisiyor: true, yerel_portlar: [], diger_portlar: [], ...o });
-function candidates() {
-  return [
-    cand({ id: "panel", tur: "konsol", ad: "Konsol", servis: "panel", yerel_ad: "panel.ev", tailscale: true, giris: "İnternetten Konsol hesabıyla giriş istenir.", onay_kelimesi: true }),
-    cand({ id: "konteyner:notlar", tur: "konteyner", ad: "notlar", servis: "elle-notlar", yerel_ad: "notlar.ev", tailscale: true, internet: true,
-      alan_adi: "notlar.example.org", durum: "ready", mesaj: "Sertifika doğrulandı.", bitis: NOW + 10 * DAY, hedef: "127.0.0.1:8090",
-      konteyner: box({ ad: "notlar", yerel_portlar: [{ host_port: 8090, container_port: 80 }] }) }),
-    // An application's container published straight on the internet (no loopback port): nothing to name.
-    cand({ id: "konteyner:medya_web", tur: "konteyner", ad: "medya_web", kullanilabilir: false, neden: NO_LOOPBACK,
-      konteyner: box({ ad: "medya_web", kaynak: "uygulama", uygulama: "medya", diger_portlar: [{ kapsam: "public", host_port: 8096, container_port: 8096 }] }) }),
-    // An application's address port: the container listens on its pool port at 127.0.0.1 (DD-271 phase 3).
-    cand({ id: "konteyner:kutu_web", tur: "konteyner", ad: "kutu_web",
-      konteyner: box({ ad: "kutu_web", kaynak: "uygulama", uygulama: "kutu", yerel_portlar: [{ host_port: 62001, container_port: 80 }] }) }),
-    cand({ id: "konteyner:dis", tur: "konteyner", ad: "dis", kullanilabilir: false, neden: NO_LOOPBACK, konteyner: box({ ad: "dis" }) }),
-    cand({ id: "elle:yazici", tur: "elle", ad: "Yazıcı", servis: "elle-yazici", yerel_ad: "yazici.ev", tailscale: true, hedef: "127.0.0.1:631", mesaj: "Hedef yanıt vermiyor." }),
-    cand({ id: "paylasim", tur: "paylasim", ad: "WebDAV paylaşımları", servis: "paylasim", yerel_ad: "paylas.ev", tailscale: true, durum: "http", mesaj: "HTTPS alan adı tanımlanmadı.",
-      giris: "Klasör hesapları korur; her klasörün internet erişimi Paylaşımlar'dan açılır." }),
-  ];
-}
-
 const PORTS = [
-  { ad: "SSH", aile: 4, proto: "tcp", port: 22, kapsam: "wan", sabit: false },
-  { ad: "SSH", aile: 6, proto: "tcp", port: 22, kapsam: "wan", sabit: false },
-  { ad: "WireGuard wg0", aile: 4, proto: "udp", port: 61001, kapsam: "wan", sabit: false },
-  { ad: "medya · konteyner portu", aile: 4, proto: "tcp", port: 8096, kapsam: "wan", sabit: true },
-  { ad: "Caddy", aile: 4, proto: "tcp", port: 80, kapsam: "tail", sabit: false },
-  { ad: "dnsmasq", aile: 4, proto: "udp", port: 53, kapsam: "tail", sabit: false },
-  { ad: "Konsol · dosya", aile: 4, proto: "tcp", port: 62001, kapsam: "lo", sabit: false },
+  { ad: "SSH", aile: 4, proto: "tcp", port: 22, kapsam: "wan", sabit: false, satir: null },
+  { ad: "SSH", aile: 6, proto: "tcp", port: 22, kapsam: "wan", sabit: false, satir: null },
+  { ad: "WireGuard wg0", aile: 4, proto: "udp", port: 61001, kapsam: "wan", sabit: false, satir: null },
+  { ad: "medya · web 8096/tcp · ham port", aile: 4, proto: "tcp", port: 8096, kapsam: "wan", sabit: true, satir: MEDYA },
+  { ad: "Caddy", aile: 4, proto: "tcp", port: 80, kapsam: "tail", sabit: false, satir: null },
+  { ad: "dnsmasq", aile: 4, proto: "udp", port: 53, kapsam: "tail", sabit: false, satir: null },
+  { ad: "notlar · web 8080/tcp · Tailscale portu", aile: 4, proto: "tcp", port: 8443, kapsam: "tail", sabit: true, satir: NOTLAR },
+  { ad: "Konsol · dosya", aile: 4, proto: "tcp", port: 62001, kapsam: "lo", sabit: false, satir: null },
 ];
-const RULES = [{ id: "u_medya", name: "Medya", family: 4, scope: "tail", proto: "tcp", port: 8096, source: "", allow: true }];
+const RULES = [{ id: "u_medya", name: "Medya", family: 4, scope: "tail", proto: "tcp", port: 8097, source: "", allow: true }];
 function firewall(o = {}) {
   return {
     revizyon: "rev-1", denetim: { ok: true, metin: "Güvenlik duvarı kuralları beklendiği gibi." }, kurallar: JSON.parse(JSON.stringify(RULES)), portlar: PORTS,
@@ -105,11 +111,11 @@ function names() {
   return {
     revizyon: "rev-1", alan: "ev", hatalar: [],
     adlar: [
-      { ad: "panel.ev", aile: 4, hedef: "tailscale", kaynak: "base", kapali: false, kilitli: true },
-      { ad: "panel.ev", aile: 6, hedef: "fd7a:115c:a1e0::2", kaynak: "base", kapali: false, kilitli: true },
-      { ad: "paylas.ev", aile: 4, hedef: "tailscale", kaynak: "base", kapali: false, kilitli: false },
-      { ad: "yedek.ev", aile: 4, hedef: "tailscale", kaynak: "yedek", kapali: true, kilitli: false },
-      { ad: "notlar.ev", aile: 4, hedef: "tailscale", kaynak: "elle", kapali: false, kilitli: false }],
+      { ad: "panel.ev", aile: 4, hedef: "tailscale", kaynak: "base", kapali: false, kilitli: true, satir: "panel" },
+      { ad: "panel.ev", aile: 6, hedef: "fd7a:115c:a1e0::2", kaynak: "base", kapali: false, kilitli: true, satir: "panel" },
+      { ad: "paylas.ev", aile: 4, hedef: "tailscale", kaynak: "base", kapali: false, kilitli: false, satir: null },
+      { ad: "yedek.ev", aile: 4, hedef: "tailscale", kaynak: "yedek", kapali: true, kilitli: false, satir: null },
+      { ad: "notlar.ev", aile: 4, hedef: "tailscale", kaynak: "uygulama", kapali: false, kilitli: true, satir: NOTLAR }],
     kayitlar: [{ name: "yazici.ev", target: "192.0.2.40", enabled: true }], yonlendirme: true, sunucular: ["1.1.1.1", "1.0.0.1"],
   };
 }
@@ -124,8 +130,7 @@ const data = {
   bekleyen: { bekleyen: null },
   etkinlik: { items: [] },
   erisim: erisim(),
-  uygulamalar: uygulamalar([uygulama("kutu"), uygulama("medya")]),
-  yayinlar: { revizyon: "rev-1", alan: "ev", wan_ipv4: "203.0.113.10", adaylar: candidates(), hatalar: [] },
+  uygulamalar: uygulamalar([uygulama("notlar"), uygulama("medya"), uygulama("kutu", { servisler: [{ ad: "app", durum: "calisiyor", imaj: "registry.example/app:1", guncelleme: "sabit" }] })]),
   adlar: names(),
   "guvenlik-duvari": firewall(),
   ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048 },
@@ -137,9 +142,29 @@ const h = require("./yeni-harness.cjs").create({ name: "konsol-yeni-erisim-ui", 
   expected: () => expectedFailures });
 const { base, push, waitFor, newPage, count, posts, noHorizontalScroll, styleAttributes, shot } = h;
 
-// ---- dynamic replies
+// ---- dynamic replies: the settings plan and apply as master_settings words them (decision 1: an opening waits
+// for the 60 s confirmation, a closing commits at once)
 const plan = (o = {}) => ({ revizyon: "rev-1", onay_sn: 0, degisiklikler: [], etkiler: [], uyarilar: [], uygulanabilir: true, ...o });
 const item = (alan, islem, nesne, once, sonra) => ({ alan, islem, nesne, once, sonra });
+const CONSENT_TEXT = "Ham port internete doğrudan açılır: arada Caddy, HTTPS ve Konsol girişi olmaz; şifreleme ve giriş uygulamanın kendisindedir.";
+const CONSENT_MISSING = "Ham portu internete açmak için bu uyarıyı onaylayın (internet onayı).";
+const TIMED = { seviye: "info", metin: "Uygulandıktan sonra 60 saniye içinde onaylamazsanız kendiliğinden geri alınır." };
+/** master_publications.opening: whether an application row's change opens or widens access. */
+function rowOpens(old, now) {
+  if (now.tur === "adres") {
+    if (old.tur !== "adres" || old.ad !== now.ad) return true;
+    if (now.tailscale_portu !== null && now.tailscale_portu !== old.tailscale_portu) return true;
+    return Boolean(now.internet) && now.internet !== old.internet;
+  }
+  if (now.kapsam === "kapali") return false;
+  if (old.tur !== "ham" || old.kapsam === "kapali" || old.port !== now.port) return true;
+  return now.kapsam === "internet" && old.kapsam !== "internet";
+}
+/** master_publications.web_opening for a fixed row. */
+const webOpens = (before, after) => (after.tail && !before.tail) || (after.enabled && !before.enabled) || (after.enabled && before.enabled && after.domain !== before.domain);
+const rowText = (r) => (r.tur === "ham" ? `Ham port · ${r.kapsam} ${r.port}` : `Adres · ${r.ad}.ev · ${r.tailscale_portu ?? "kapalı"} · internet: ${r.internet || "kapalı"}`);
+const appRows = () => data.erisim.hizmetler.filter((x) => x.tur === "uygulama");
+const rowOf = (req) => appRows().find((x) => x.uygulama === req.uygulama && x.anahtar === req.anahtar);
 function settingsPlan(body) {
   if (body.firewall) {
     return plan({ onay_sn: 60, degisiklikler: [item("guvenlik-duvari", "degistir", "SSH", "TCP 22 · İnternet · IPv4 · izin", "TCP 22 · İnternet · IPv4 · engel"),
@@ -156,50 +181,46 @@ function settingsPlan(body) {
       item("dns", "degistir", "Dış adlar", "Üst DNS: 1.1.1.1, 1.0.0.1", "Üst DNS: 9.9.9.9, 149.112.112.112")],
     etkiler: ["dnsmasq yeniden başlar; yerel adlar birkaç saniye yanıt vermeyebilir."] });
   }
-  if (body.web?.sil) return plan({ degisiklikler: [item("yayin", "kaldir", "Yazıcı", "yazici.ev açık · internet: kapalı · hedef 127.0.0.1:631", null)], etkiler: ["Caddy yapılandırması yeniden yüklenir."] });
-  if (body.web) return plan({ degisiklikler: [item("yayin", "ekle", body.web.elle?.name ?? body.web.service, null, `${body.web.elle?.local}.ev açık · internet: kapalı · hedef ${body.web.elle?.upstream}`)],
-    etkiler: ["Caddy yapılandırması yeniden yüklenir."] });
+  if (body.erisim) {
+    const r = rowOf(body.erisim), old = r.satir, now = body.erisim.satir;
+    const timed = rowOpens(old, now);
+    const internet = now.tur === "ham" && now.kapsam === "internet" && !(old.tur === "ham" && old.kapsam === "internet" && old.port === now.port);
+    const uyarilar = internet ? [{ seviye: "warn", metin: CONSENT_TEXT }] : [];
+    if (internet && !body.erisim.internet_onayi) uyarilar.push({ seviye: "bad", metin: CONSENT_MISSING });
+    if (timed) uyarilar.push(TIMED);
+    return plan({ onay_sn: timed ? 60 : 0, uygulanabilir: !(internet && !body.erisim.internet_onayi),
+      degisiklikler: [item("erisim", old.tur !== now.tur ? (now.tur === "adres" ? "ekle" : "kaldir") : timed ? "ac" : "kapat", `${r.ad} ${body.erisim.anahtar.split(":")[1]}`, rowText(old), rowText(now))],
+      etkiler: [`${r.servis} servisi (ve ona bağlı servisler) yeniden başlar; birkaç saniye yanıt vermez.`, "Güvenlik duvarı ve konteyner koruması yeniden kurulur."], uyarilar });
+  }
+  if (body.web) {
+    const before = data.erisim.hizmetler.find((x) => x.id === body.web.service).web;
+    const timed = webOpens(before, body.web);
+    return plan({ onay_sn: timed ? 60 : 0, degisiklikler: [item("erisim", timed ? "ac" : "kapat", `${body.web.service === "panel" ? "Konsol" : "WebDAV"} · internet adı`,
+      before.enabled ? before.domain : "kapalı", body.web.enabled ? body.web.domain : "kapalı")], etkiler: ["Caddy yapılandırması yeniden yüklenir."],
+    uyarilar: timed ? [TIMED] : [] });
+  }
   return null;
 }
 const planReplies = [];   // replies for the next ayarlar/plan POSTs, before settingsPlan()
 const applyReplies = [];  // replies for the next ayarlar/uygula POSTs
+const afterApply = [];    // what the server holds after the next apply (run once its reply is decided)
+function applyReply(body) {
+  if (body.firewall) return { body: { pending: { id: "p-fw", phase: "awaiting", seconds: 60 } } };
+  if (body.domain) return { body: { pending: { id: "p-alan", phase: "awaiting", seconds: 300, domain: { old: "ev", new: body.domain } } } };
+  if (body.erisim && settingsPlan(body).onay_sn) return { body: { pending: { id: "p-erisim", phase: "awaiting", seconds: 60, erisim: rowOf(body.erisim).id } } };
+  if (body.web && settingsPlan(body).onay_sn) return { body: { pending: { id: "p-web", phase: "awaiting", seconds: 60, web: true } } };
+  return { body: { pending: null, committed: true } };
+}
 h.handlers["/api/konsol/ayarlar/plan"] = ({ method, body }) => (method === "POST" ? planReplies.shift() ?? { body: settingsPlan(body) } : undefined);
 h.handlers["/api/konsol/ayarlar/uygula"] = ({ method, body }) => {
   if (method !== "POST") return undefined;
-  const forced = applyReplies.shift();
-  if (forced) return forced;
-  if (body.firewall) return { body: { pending: { id: "p-fw", phase: "awaiting", seconds: 60 } } };
-  if (body.domain) return { body: { pending: { id: "p-alan", phase: "awaiting", seconds: 300, domain: { old: "ev", new: body.domain } } } };
-  return { body: { pending: null, committed: true } };
+  const reply = applyReplies.shift() ?? applyReply(body);
+  for (const change of afterApply.splice(0)) change();
+  return reply;
 };
 for (const action of ["onayla", "geri-al", "birak"]) {
   h.handlers["/api/konsol/ayarlar/" + action] = ({ method }) => (method === "POST" ? { body: { ok: true } } : undefined);
 }
-const yayinReplies = [];
-function publicationPlan(req) {
-  const c = data.yayinlar.adaylar.find((x) => x.id === req.hedef);
-  const local = req.yerel ?? (c.yerel_ad ? c.yerel_ad.split(".")[0] : c.ad);
-  const steps = [];
-  let web = { service: c.servis, tail: req.tailscale, enabled: req.internet, domain: req.alan_adi };
-  if (c.tur === "konsol" && req.onay) web.confirm = req.onay;
-  if (!c.servis) {
-    web = { service: "elle-" + local, tail: req.tailscale, enabled: req.internet, domain: req.alan_adi,
-      elle: { name: req.ad ?? c.ad, local, upstream: "127.0.0.1:" + c.konteyner.yerel_portlar[0].host_port } };
-  }
-  const istek = { revision: req.revizyon, web };
-  steps.push({ tur: "ayar", baslik: "Ad ve erişim", aciklama: `Tailscale adı ${local}.ev ${req.tailscale ? "açık" : "kapalı"}; internet adı ${req.internet ? req.alan_adi : "kapalı"}.`, istek });
-  const engel = c.tur === "konsol" && req.internet && !req.onay ? "Panel'i internete açmak için onayla yazın." : "";
-  return { hedef: c, adimlar: steps, engel, dns: req.internet && req.alan_adi ? { ad: req.alan_adi, tur: "A", deger: "203.0.113.10" } : null,
-    plan: engel ? null : plan({ degisiklikler: [item("yayin", req.internet ? "ac" : "degistir", `${c.ad} · internet adı`, c.internet ? c.alan_adi : "kapalı", req.internet ? req.alan_adi : "kapalı")],
-      etkiler: ["Caddy yapılandırması yeniden yüklenir.", ...(req.internet ? ["İnternet adı için HTTPS sertifikası alınır (en çok 1 dakika)."] : [])] }),
-    uyarilar: [] };
-}
-h.handlers["/api/konsol/yayinlar/plan"] = ({ method, body }) => {
-  if (method !== "POST") return undefined;
-  const forced = yayinReplies.shift();
-  if (forced) return typeof forced === "function" ? forced(body) : forced;
-  return { body: publicationPlan(body) };
-};
 // An application's page (a warning's Düzelt leads there).
 h.dynamic.push([/^\/api\/konsol\/uygulamalar\/([a-z][a-z0-9-]*)$/, (req, m) => {
   const item = data.uygulamalar.items.find((a) => a.ad === m[1]);
@@ -210,6 +231,7 @@ h.dynamic.push([/^\/api\/konsol\/uygulamalar\/([a-z][a-z0-9-]*)$/, (req, m) => {
 const url = (hash) => new URL("/" + hash, base).href;
 const hashOf = (page) => page.evaluate(() => location.hash);
 const lastPost = (key) => posts(key).at(-1);
+const satirOf = (page) => page.evaluate(() => new URLSearchParams(location.hash.split("?")[1] ?? "").get("satir"));
 /** Whether closing or reloading the tab now would ask first (the leave guard, DD-266). */
 const guarded = (page) => page.evaluate(() => {
   const event = new Event("beforeunload", { cancelable: true });
@@ -219,10 +241,26 @@ const guarded = (page) => page.evaluate(() => {
 async function noStyles(page, where) {
   assert.deepEqual(await styleAttributes(page), [], "no style attributes: " + where);
 }
-const flowSheet = (page) => page.getByRole("dialog").filter({ has: page.locator(".stepper") });
-const clone = (v) => JSON.parse(JSON.stringify(v));
 const dateText = (seconds) => new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long", year: "numeric" }).format(new Date(seconds * 1000));
 const KEY_DATE = dateText(NOW + 10 * DAY);
+/** The open access row sheet (one dialog at a time). */
+const rowSheet = (page) => page.getByRole("dialog");
+/** Opens a row's sheet from Adresler's list ("Düzenle" or "Adres aç") and waits for its form. */
+async function openRow(page, id, eylem = "duzenle") {
+  await page.getByTestId("access-rows").locator(`tr[data-satir="${id}"] [data-eylem="${eylem}"]`).click();
+  await page.waitForFunction((want) => new URLSearchParams(location.hash.split("?")[1] ?? "").get("satir") === want, id);
+  const sheet = rowSheet(page);
+  await sheet.getByTestId("row-form").waitFor();
+  return sheet;
+}
+/** Asks for the plan from the sheet's form and returns the planned body. */
+async function review(sheet) {
+  const before = posts("ayarlar/plan").length;
+  await sheet.getByTestId("review").click();
+  await sheet.getByTestId("plan").waitFor();
+  await waitFor(() => posts("ayarlar/plan").length > before, "the plan was asked for");
+  return lastPost("ayarlar/plan");
+}
 
 (async () => {
   h.checkBuild();
@@ -235,11 +273,17 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     const tabs = page.getByRole("tablist", { name: "Erişim bölümleri" }).getByRole("tab");
     assert.deepEqual(await tabs.allInnerTexts(), ["Genel", "Adresler", "Tailscale", "WireGuard", "Güvenlik duvarı"]);
     await page.getByTestId("access-warnings").waitFor();
+    // Yayınla is gone: no button, no query parameter, no request to the old routes.
+    assert.equal(await page.getByTestId("publish").count(), 0, "no Yayınla button");
+    assert.equal(await page.getByRole("button", { name: "Yayınla" }).count(), 0);
     const fixes = page.getByTestId("access-warnings").locator(".problem");
     assert.deepEqual(await fixes.locator("strong").allInnerTexts(), WARNINGS.map((w) => w.metin));
     assert.deepEqual(await fixes.getByRole("link", { name: "Düzelt" }).evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
-      ["#/erisim?sekme=adresler&yayinla=paylasim", "#/uygulamalar/medya", "#/erisim?sekme=adresler&yayinla=konteyner%3Anotlar"]);
-    await page.getByTestId("page-desc").filter({ hasText: "6 hizmet Tailscale'de · 5 hizmet internette · 3 uyarı" }).waitFor();
+      ["#/erisim?sekme=adresler&satir=paylasim", `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`, "#/uygulamalar/medya", `#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`],
+      "an access row's warning opens its sheet in Adresler");
+    const tailnetCount = ROWS.filter((r) => r.tailscale.durum === "acik").length;
+    const internetCount = ROWS.filter((r) => r.internet.durum === "acik" || r.internet.durum === "kismen").length;
+    await page.getByTestId("page-desc").filter({ hasText: `${tailnetCount} hizmet Tailscale'de · ${internetCount} hizmet internette · 4 uyarı` }).waitFor();
     // Summaries.
     const ts = page.getByTestId("sum-tailscale");
     assert.equal(await ts.locator(".pill").innerText(), "Bağlı");
@@ -249,12 +293,17 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
       ["SSH · 22/tcp", "WireGuard wg0 · 61001/udp · yalnız IPv4", "Oyun · 27015/udp · yalnız IPv4 · sizin kuralınız"]);
     assert.deepEqual(await page.getByTestId("sum-wireguard").locator(".fact-list li").allInnerTexts(), ["wg0 · Ana ağ · UDP 61001 · açık"]);
     assert.equal(await page.getByTestId("sum-certs").locator(".fact-list li").innerText(), `notlar.example.org · ${KEY_DATE} tarihine kadar`);
-    // The matrix in plain words.
+    // The matrix in plain words; an access row links to its sheet.
     const matrix = page.getByTestId("matrix");
     assert.deepEqual(await matrix.locator("thead th").allInnerTexts(), ["Hizmet", "Bu sunucu", "Tailscale", "WireGuard", "İnternet"]);
     assert.deepEqual(await matrix.locator("tbody tr[data-hizmet]").evaluateAll((trs) => trs.map((t) => t.dataset.hizmet)), ROWS.map((r) => r.id));
-    const notlar = matrix.locator('tr[data-hizmet="konteyner:notlar"]');
+    const notlar = matrix.locator(`tr[data-hizmet="${NOTLAR}"]`);
     assert.deepEqual(await notlar.locator(".matrix-cell .pill").allInnerTexts(), ["Açık", "Açık", "Kapalı", "Açık"]);
+    assert.equal(await notlar.locator(".cell-sub").innerText(), "8080/tcp · Adres");
+    assert.equal(await matrix.locator(`tr[data-hizmet="${MEDYA}"] .cell-sub`).innerText(), "8096/tcp · Ham port");
+    assert.deepEqual(await matrix.getByTestId("row-link").evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
+      ["#/erisim?sekme=adresler&satir=panel", ...[NOTLAR, MEDYA, MEDYA_UDP, KUTU].map((id) => `#/erisim?sekme=adresler&satir=${enc(id)}`), "#/erisim?sekme=adresler&satir=paylasim"],
+      "Konsol, every application port and Paylaşımlar link to their row; a container of no application has none");
     assert.equal(await notlar.locator('[data-hucre="wireguard"] .cell-note').count(), 0, "the VPN note is said once, under the table");
     assert.equal(await notlar.locator(".cell-addr").count(), 0, "addresses only with Teknik ayrıntı");
     const shares = matrix.locator('tr[data-hizmet="paylasim"] [data-hucre="internet"]');
@@ -268,32 +317,36 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await page.waitForURL((u) => u.hash === "#/erisim?teknik=1");
     assert.equal(await notlar.locator('[data-hucre="internet"] .cell-addr').innerText(), "notlar.example.org");
     assert.equal(await matrix.locator('tr[data-hizmet="paylasim"] [data-hucre="tailscale"] .cell-addr').innerText(), "paylas.ev · 100.64.0.2:61010");
-    assert.deepEqual(await matrix.locator('[data-ayrinti="konteyner:notlar"] dd').allInnerTexts(),
-      ["127.0.0.1:8090 → 80/tcp", "notlar.ev → 100.64.0.2", "notlar.example.org → 127.0.0.1:8090"]);
+    assert.deepEqual(await matrix.locator(`[data-ayrinti="${NOTLAR}"] dd`).allInnerTexts(),
+      ["8080/tcp", "notlar.ev → 100.64.0.2", "notlar.example.org → 127.0.0.1:62001"]);
     await page.reload();
     await matrix.locator('[data-ayrinti="paylasim"]').waitFor();
     assert.equal(await matrix.getByRole("switch", { name: "Teknik ayrıntı" }).getAttribute("aria-checked"), "true", "from the address");
     await shot(page, "1440-light-erisim-teknik.png", true);
     assert.equal(await page.getByTestId("vpn-note").innerText(), "WireGuard: " + VPN_NOTE, "the VPN note once, not in every row");
 
-    // Düzelt: a publication opens the Yayınla flow on Adresler, preset to the row (Kim).
-    await page.getByTestId("access-warnings").getByRole("link", { name: "Düzelt" }).first().click();
-    await page.waitForURL((u) => u.hash === "#/erisim?sekme=adresler&yayinla=paylasim");
-    let flow = flowSheet(page);
-    await flow.waitFor();
-    assert.equal(await flow.locator("h2").innerText(), "WebDAV paylaşımları · Yayınla");
-    const currentStep = (f) => f.locator('.stepper [aria-current="step"]').evaluate((e) => e.textContent.trim());
-    assert.equal(await currentStep(flow), "2Kim");
-    assert.equal(await flow.getByTestId("flow-guard").innerText(), "Klasör hesapları korur; her klasörün internet erişimi Paylaşımlar'dan açılır.");
-    assert.equal(await page.evaluate(() => document.querySelector(".app").inert), true, "the page behind the flow is inert");
-    await page.keyboard.press("Escape");
-    await flow.waitFor({ state: "detached" });
-    assert.equal(await hashOf(page), "#/erisim?sekme=adresler", "closing removes the flow from the address");
-    await page.goto(url("#/erisim"));
+    // Düzelt: an access row's sheet opens on Adresler; closing it removes the row from the address.
     await page.getByTestId("access-warnings").getByRole("link", { name: "Düzelt" }).nth(1).click();
+    await page.waitForURL((u) => u.hash === `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`);
+    let sheet = rowSheet(page);
+    await sheet.getByTestId("row-form").waitFor();
+    assert.equal(await sheet.locator("h2").innerText(), "medya · web");
+    assert.equal(await sheet.locator(".modal-desc").innerText(), "8096/tcp · Ham port");
+    assert.equal(await sheet.locator('[data-kapsam="internet"] input').isChecked(), true, "the row as the server holds it");
+    assert.equal(await page.evaluate(() => document.querySelector(".app").inert), true, "the page behind the sheet is inert");
+    await page.keyboard.press("Escape");
+    await sheet.waitFor({ state: "detached" });
+    assert.equal(await hashOf(page), "#/erisim?sekme=adresler", "closing removes the row from the address");
+    await page.goto(url("#/erisim"));
+    await page.getByTestId("access-warnings").getByRole("link", { name: "Düzelt" }).nth(2).click();
     await page.waitForURL((u) => u.hash === "#/uygulamalar/medya");
     await page.locator("main h1").filter({ hasText: "medya" }).waitFor();
     await page.getByTestId("service").first().waitFor();
+    // Yayınla's old address opens nothing.
+    await page.goto(url("#/erisim?yayinla=sec"));
+    await page.getByTestId("matrix").waitFor();
+    await page.waitForTimeout(150);
+    assert.equal(await page.getByRole("dialog").count(), 0, "?yayinla= opens nothing");
     await page.context().close();
 
     // ================= Tailscale: the device, its key, the exit node and the admin console
@@ -331,6 +384,15 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     assert.equal(await page.getByTestId("sum-wireguard-none").innerText(), "WireGuard durduruldu; ağlar kapalı.");
     await page.context().close();
     data.erisim = erisim();
+    // Genel Bakış: an access row's warning leads to its sheet.
+    page = await newPage();
+    await page.goto(url("#/genel"));
+    const rowFix = page.locator('.problem[data-kind="erisim"]').getByRole("link", { name: "Düzelt" });
+    await rowFix.first().waitFor();
+    assert.deepEqual(await rowFix.evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
+      ["#/erisim?sekme=adresler&satir=paylasim", `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`, "#/uygulamalar/medya", `#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`]);
+    assert.match(await page.locator('.problem[data-kind="erisim"]').nth(1).innerText(), /Erişim · medya/, "a warning is named after its application");
+    await page.context().close();
     // Erişim that cannot be read (any failure, a 404 too) says so and waits for the server.
     h.status["/api/konsol/erisim"] = 404;
     expectedFailures = ["/api/konsol/erisim"];
@@ -343,34 +405,48 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     delete h.status["/api/konsol/erisim"];
     expectedFailures = [];
 
-    // ================= Adresler: publications, local names (draft → plan → apply), the local domain
+    // ================= Adresler: the access rows, local names (draft → plan → apply), the local domain
     page = await newPage();
     await page.goto(url("#/erisim?sekme=adresler"));
-    const pubs = page.getByTestId("publications");
-    await pubs.locator('tr[data-yayin="konteyner:notlar"]').waitFor();
-    assert.deepEqual(await pubs.locator("tbody tr").evaluateAll((trs) => trs.map((t) => t.dataset.yayin)), candidates().map((c) => c.id));
-    const notlarRow = pubs.locator('tr[data-yayin="konteyner:notlar"]');
-    assert.equal(await notlarRow.locator('[data-hucre="tailscale"]').innerText(), "notlar.ev\naçık");
-    assert.equal(await notlarRow.locator('[data-hucre="internet"]').innerText(), "notlar.example.org\n" + GUARD_APP);
-    assert.match(await notlarRow.locator('[data-hucre="durum"]').innerText(), new RegExp(`Sertifika hazır[\\s\\S]*Sertifika: ${KEY_DATE}`));
-    assert.equal(await pubs.locator('tr[data-yayin="konteyner:kutu_web"] [data-eylem="duzenle"]').innerText(), "Yayınla", "not published yet");
-    assert(await pubs.locator('tr[data-yayin="konteyner:dis"] [data-eylem="duzenle"]').isDisabled(), "unavailable");
-    assert(await pubs.locator('tr[data-yayin="konteyner:medya_web"] [data-eylem="duzenle"]').isDisabled(), "no loopback port: nothing to name");
-    assert.match(await pubs.locator('tr[data-yayin="konteyner:dis"]').innerText(), /dinleyen bir portu yok/);
-    assert.equal(await pubs.locator('[data-eylem="kaldir"]').count(), 2, "manual addresses (one joined to its container) can be removed");
+    const list = page.getByTestId("access-rows");
+    await list.locator(`tr[data-satir="${NOTLAR}"]`).waitFor();
+    assert.deepEqual(await list.locator("tbody tr").evaluateAll((trs) => trs.map((t) => t.dataset.satir)), ACCESS_IDS,
+      "Konsol, each application port and Paylaşımlar; a container of no application is not an access row");
+    assert.deepEqual(await list.locator("thead th").allInnerTexts(), ["Adres", "Yalnız bu sunucu", "Tailscale", "İnternet", "Eylemler"]);
+    const notlarRow = list.locator(`tr[data-satir="${NOTLAR}"]`);
+    assert.equal(await notlarRow.locator(".col-main").innerText(), "notlar · web\n8080/tcp · Adres");
+    assert.equal(await notlarRow.locator('[data-hucre="yerel"]').innerText(), "Açık\n127.0.0.1:62001");
+    assert.equal(await notlarRow.locator('[data-hucre="tailscale"]').innerText(), "Açık\nnotlar.ev\n100.64.0.2:8443");
+    assert.equal(await notlarRow.locator('[data-hucre="internet"]').innerText(), "Açık\nnotlar.example.org");
+    assert.equal(await list.locator(`tr[data-satir="${MEDYA}"] [data-hucre="internet"]`).innerText(),
+      "Açık\n203.0.113.10:8096/tcp\nŞifreleme ve giriş uygulamanın kendisinde.\nHam port");
+    assert.equal(await list.locator('tr[data-satir="panel"] .cell-sub').innerText(), "Konsol · Adres");
+    assert.deepEqual(await list.locator('[data-eylem="adres-ac"]').evaluateAll((bs) => bs.map((b) => b.closest("tr").dataset.satir)), [MEDYA, KUTU],
+      "Adres aç only for a raw TCP port");
+    assert.equal(await list.locator('tr[data-satir="paylasim"]').getByTestId("share-folders").getAttribute("href"), "#/dosyalar?sekme=paylasimlar");
     assert.equal(await page.getByTestId("dns-hint").locator(".mono").innerText(), "203.0.113.10");
-    // Local names: one row per name, the locked one disabled, the operator's record, forwarding.
+    // Local names: one row per name, the locked ones disabled, an application's linking to its row.
     const namesCard = page.getByTestId("names");
     assert.deepEqual(await namesCard.locator("tbody tr").evaluateAll((trs) => trs.map((t) => t.dataset.ad || "k:" + t.dataset.kayit)),
       ["panel.ev", "paylas.ev", "yedek.ev", "notlar.ev", "k:yazici.ev"]);
     assert.equal(await namesCard.locator('tr[data-ad="panel.ev"] td').first().innerText(), "Tailscale adresi · 100.64.0.2 · fd7a:115c:a1e0::2");
     assert(await namesCard.getByRole("switch", { name: "panel.ev açık" }).isDisabled(), "Konsol's own name is locked");
+    assert.match(await namesCard.locator('tr[data-ad="panel.ev"]').innerText(), /Konsol'un adı · kapatılamaz/);
+    assert(await namesCard.getByRole("switch", { name: "notlar.ev açık" }).isDisabled(), "an application's name is switched in its row");
+    assert.equal(await namesCard.locator('tr[data-ad="notlar.ev"]').getByTestId("name-row").getAttribute("href"), `#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`);
     assert.equal(await namesCard.getByRole("switch", { name: "yedek.ev açık" }).getAttribute("aria-checked"), "false");
     assert.equal(await namesCard.locator('tr[data-ad="paylas.ev"] td').nth(1).innerText(), "Temel");
     assert.equal(await namesCard.locator('tr[data-ad="yedek.ev"] td').nth(1).innerText(), "yedek", "any other source as it is");
-    assert.equal(await namesCard.locator('tr[data-ad="notlar.ev"] td').nth(1).innerText(), "Elle adres");
+    assert.equal(await namesCard.locator('tr[data-ad="notlar.ev"] td').nth(1).innerText(), "Uygulama");
     await noStyles(page, "erisim adresler");
     await shot(page, "1440-light-erisim-adresler.png", true);
+    // A locked name's link opens its row's sheet.
+    await namesCard.locator('tr[data-ad="notlar.ev"]').getByTestId("name-row").click();
+    sheet = rowSheet(page);
+    await sheet.getByTestId("row-form").waitFor();
+    assert.equal(await sheet.locator("h2").innerText(), "notlar · web");
+    await sheet.getByRole("button", { name: "Vazgeç" }).click();
+    await sheet.waitFor({ state: "detached" });
     // The draft: a name off, a record added, forwarding to Quad9.
     assert.equal(await page.getByTestId("dns-draft").count(), 0);
     assert.equal(await guarded(page), false, "no draft, no question");
@@ -378,7 +454,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await page.getByTestId("dns-draft").filter({ hasText: "1 değişiklik taslakta" }).waitFor();
     assert.equal(await guarded(page), true, "a DNS draft asks before the tab closes");
     await page.getByTestId("add-record").click();
-    let sheet = page.getByRole("dialog", { name: "Yerel ad ekle" });
+    sheet = page.getByRole("dialog", { name: "Yerel ad ekle" });
     await sheet.waitFor();
     await sheet.getByRole("button", { name: "Taslağa ekle" }).click();
     await sheet.getByText("Adı yazın (ör. yazici).").waitFor();
@@ -420,7 +496,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     assert.equal(await namesCard.getByRole("switch", { name: "paylas.ev açık" }).getAttribute("aria-checked"), "false");
     data.adlar = names();
     // A refused plan shows the backend's words and can be asked again.
-    await namesCard.getByRole("switch", { name: "notlar.ev açık" }).click();
+    await namesCard.getByRole("switch", { name: "yedek.ev açık" }).click();
     expectedFailures = ["/api/konsol/ayarlar/plan"];
     planReplies.push({ status: 400, body: { error: "Ayarlar değişmiş. Yenileyip yeniden inceleyin." } });
     await page.getByTestId("review-dns").click();
@@ -472,254 +548,290 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     assert.deepEqual(lastPost("ayarlar/geri-al"), { id: "p-alan" });
     await page.getByTestId("pending-result").filter({ hasText: "Önceki ayarlar geri yüklendi." }).waitFor();
     await page.getByTestId("domain-pending").waitFor({ state: "detached" });
-
-    // Removing a manual address: plan → apply with {web: {service, sil: true}}.
-    await pubs.locator('tr[data-yayin="elle:yazici"] [data-eylem="kaldir"]').click();
-    sheet = page.getByRole("dialog", { name: "Yazıcı kaldırılsın mı?" });
-    await sheet.getByTestId("plan").waitFor();
-    assert.equal(await sheet.locator(".modal-desc").innerText(), "yazici.ev kapanır. 127.0.0.1:631 üzerindeki uygulama çalışmaya devam eder.");
-    assert.deepEqual(lastPost("ayarlar/plan"), { revision: "rev-1", web: { service: "elle-yazici", sil: true } });
-    assert.deepEqual(await sheet.locator(".plan-item .pill").allInnerTexts(), ["Kaldırılır"]);
-    await sheet.getByRole("button", { name: "Kaldır" }).click();
-    await sheet.waitFor({ state: "detached" });
-    assert.deepEqual(lastPost("ayarlar/uygula"), { revision: "rev-1", web: { service: "elle-yazici", sil: true } });
-    await page.getByTestId("addresses-note").filter({ hasText: "Adres kaldırıldı." }).waitFor();
     await page.context().close();
 
-    // ================= Yayınla: a published container's internet name (Kim → Ad with the DNS record → Plan → Uygula)
+    // ================= an address row: a new Tailscale name (an opening: 60 s), a long apply that stays busy
     page = await newPage();
     await page.goto(url("#/erisim?sekme=adresler"));
-    await page.getByTestId("publications").locator('tr[data-yayin="konteyner:notlar"] [data-eylem="duzenle"]').click();
-    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("yayinla") === "konteyner:notlar");
-    flow = flowSheet(page);
-    await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
-    assert.equal(await currentStep(flow), "2Kim");
-    assert.equal(await flow.getByRole("switch", { name: "Tailscale adı" }).getAttribute("aria-checked"), "true");
-    assert.equal(await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).getAttribute("aria-checked"), "true");
-    assert.equal(await flow.getByTestId("flow-guard").innerText(), GUARD_APP);
-    const go = flow.getByTestId("flow-go");
-    await go.click();
-    assert.equal(await currentStep(flow), "3Ad");
-    assert.equal(await flow.getByTestId("flow-domain").inputValue(), "notlar.example.org");
-    assert.equal(await flow.getByTestId("flow-local").count(), 0, "a published container keeps its tailnet name");
-    await flow.getByTestId("flow-domain").fill("indir.example.org/");
-    await go.click();
-    await flow.getByText("Tam alan adını girin; URL, IP, port veya yol eklemeyin.").waitFor();
-    assert.equal(await currentStep(flow), "3Ad", "an invalid name keeps the step");
-    await flow.getByTestId("flow-domain").fill("Indir.Example.org.");
-    assert.equal((await flow.getByTestId("flow-dns").locator("dd").allInnerTexts()).join(" | "), "indir.example.org | A | 203.0.113.10");
-    await go.click();
-    assert.equal(await currentStep(flow), "4Plan");
-    await flow.getByTestId("plan").waitFor();
-    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "konteyner:notlar", revizyon: "rev-1", tailscale: true, internet: true, alan_adi: "indir.example.org" });
-    assert.deepEqual(await flow.getByTestId("flow-steps").locator(".flow-run strong").allInnerTexts(), ["1. Ad ve erişim"]);
-    assert.equal(await flow.getByTestId("plan-dns").locator(".mono").innerText(), "indir.example.org · A · 203.0.113.10");
-    assert.deepEqual(await flow.locator(".plan-item .plan-object").allInnerTexts(), ["notlar · internet adı"]);
-    await shot(page, "1440-light-yayinla-plan.png");
-    // Applying waits for the certificate (held back here) and says so.
+    sheet = await openRow(page, NOTLAR);
+    assert.equal(await satirOf(page), NOTLAR, "the sheet is in the address");
+    assert.equal(await sheet.locator("h2").innerText(), "notlar · web");
+    assert.equal(await sheet.locator(".modal-desc").innerText(), "8080/tcp · Adres");
+    assert.equal(await sheet.getByTestId("row-name").inputValue(), "notlar");
+    assert.equal(await sheet.getByRole("switch", { name: "Tailscale portu" }).getAttribute("aria-checked"), "true");
+    assert.equal(await sheet.getByTestId("row-ts-port").inputValue(), "8443");
+    assert.equal(await sheet.getByRole("switch", { name: "İnternet adı" }).getAttribute("aria-checked"), "true");
+    assert.equal(await sheet.getByTestId("row-host").inputValue(), "notlar.example.org");
+    assert.equal(await sheet.getByTestId("row-dns").innerText(),
+      "Alan adı sağlayıcınızda bir A kaydı gerekir: notlar.example.org → 203.0.113.10, proxy kapalı (DNS only), AAAA kaydı yok.");
+    assert(await sheet.getByTestId("review").isDisabled(), "nothing changed yet");
+    await shot(page, "1440-light-erisim-satir-adres.png");
+    // Names are checked before the server is asked: Obhut's own, the rules, another row's.
+    const plansBefore = posts("ayarlar/plan").length;
+    await sheet.getByTestId("row-name").fill("panel");
+    await sheet.getByTestId("review").click();
+    await sheet.getByText("panel adı Obhut'undur; başka bir ad seçin.").waitFor();
+    assert(await sheet.getByTestId("review").isDisabled(), "an invalid form cannot be reviewed");
+    await sheet.getByTestId("row-name").fill("Yazi_1");
+    await sheet.getByText("Küçük harf, rakam ve tire; tireyle başlamaz ya da bitmez (en çok 63).").waitFor();
+    await sheet.getByTestId("row-name").fill("paylas");
+    await sheet.getByText("paylas adı Obhut'undur; başka bir ad seçin.").waitFor();
+    await sheet.getByTestId("row-name").fill("yazici");
+    await sheet.getByText("yazici adı başka bir satırda kullanılıyor.").waitFor();
+    assert.equal(posts("ayarlar/plan").length, plansBefore, "no plan for a form that does not pass");
+    await sheet.getByTestId("row-name").fill("Yazilar");
+    let body = await review(sheet);
+    assert.deepEqual(body, { revision: "rev-1", erisim: { uygulama: "notlar", anahtar: "web:8080/tcp",
+      satir: { tur: "adres", ad: "yazilar", tailscale_portu: 8443, internet: "notlar.example.org" } } });
+    assert.match(await sheet.getByTestId("plan-window").innerText(), /Süreli onay: uygulandıktan sonra 1:00 içinde onaylamazsanız/, "a rename opens: it waits");
+    assert.deepEqual(await sheet.locator(".plan-group[data-alan] .plan-title").allInnerTexts(), ["Adresler"]);
+    assert.equal(await sheet.getByTestId("plan-back").innerText(), "Geri");
+    await shot(page, "1440-light-erisim-satir-plan.png");
+    // Geri returns to the form as it was; İncele asks again.
+    await sheet.getByTestId("plan-back").click();
+    assert.equal(await sheet.getByTestId("row-name").inputValue(), "Yazilar");
+    body = await review(sheet);
+    // The apply restarts the service and waits until it is ready: it stays busy, counting, and cannot be closed.
     let release;
-    const held = new Promise((resolve) => (release = resolve));
+    let held = new Promise((resolve) => (release = resolve));
     await page.route("**/api/konsol/ayarlar/uygula", async (route) => {
       await held;
       return h.answer(route);
     });
-    await go.click();
-    await flow.getByTestId("run-state").filter({ hasText: "Sürüyor…" }).waitFor();
-    assert.match(await flow.locator(".flow-run .cell-note").innerText(), /sertifika bekleniyor \(en çok 1 dakika\)/);
-    assert(await go.isDisabled(), "no second apply while it runs");
-    assert(await flow.getByTestId("flow-back").isDisabled());
+    const erisimReads = count("erisim");
+    await sheet.getByTestId("apply").click();
+    await sheet.getByTestId("apply-progress").filter({ hasText: /^Uygulanıyor; servis gerekirse yeniden başlar ve hazır olması beklenir \(birkaç dakika sürebilir\)… \d+ sn$/ }).waitFor();
+    await sheet.getByTestId("apply-progress").filter({ hasText: /… [2-9] sn$/ }).waitFor({ timeout: 6000 });
+    assert.equal(await sheet.getByTestId("apply").innerText(), "Uygulanıyor…");
+    assert(await sheet.getByTestId("apply").isDisabled(), "no second apply while it runs");
+    assert(await sheet.getByTestId("plan-back").isDisabled());
+    await page.keyboard.press("Escape");
+    assert.equal(await sheet.count(), 1, "the sheet stays while the change is applied");
+    await shot(page, "1440-light-erisim-satir-uygulaniyor.png");
+    const renamed = body.erisim.satir;
+    afterApply.push(() => (data.erisim = erisim({ hizmetler: rows({ notlar: renamed }) })));
     release();
-    await flow.getByTestId("flow-done").waitFor();
+    await sheet.waitFor({ state: "detached" });
     await page.unroute("**/api/konsol/ayarlar/uygula");
-    assert.deepEqual(lastPost("ayarlar/uygula"), { revision: "rev-1", web: { service: "elle-notlar", tail: true, enabled: true, domain: "indir.example.org" } },
-      "the plan's settings step, unchanged");
-    assert.equal(await flow.getByTestId("run-state").innerText(), "Tamam");
-    assert.deepEqual(await flow.getByTestId("flow-done").getByRole("link").evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
-      ["http://notlar.ev/", "https://indir.example.org/"]);
-    assert.equal(await go.innerText(), "Kapat");
-    await shot(page, "1440-light-yayinla-tamam.png");
-    await go.click();
-    await flow.waitFor({ state: "detached" });
-    assert.equal(await hashOf(page), "#/erisim?sekme=adresler");
-    await page.context().close();
+    assert.deepEqual(lastPost("ayarlar/uygula"), body, "apply sends the planned body unchanged");
+    await page.getByTestId("addresses-note").filter({ hasText: "Değişiklik uygulandı; 60 saniye içinde yukarıdaki banttan onaylayın." }).waitFor();
+    const rowPending = page.locator(".pending");
+    await rowPending.waitFor();
+    await page.getByTestId("countdown").filter({ hasText: /^(1:00|0:59)$/ }).waitFor();
+    assert(await rowPending.getByTestId("pending-confirm").isEnabled(), "confirmed from Tailscale");
+    await waitFor(() => count("erisim") > erisimReads, "Erişim read again after the apply");
+    await page.getByTestId("access-rows").locator(`tr[data-satir="${NOTLAR}"] [data-hucre="tailscale"]`).filter({ hasText: "yazilar.ev" }).waitFor();
+    assert(await page.getByTestId("access-rows").locator(`tr[data-satir="${NOTLAR}"] [data-eylem="duzenle"]`).isDisabled(), "no new change while one is pending");
+    await page.getByTestId("addresses-locked").waitFor();
+    await shot(page, "1440-light-erisim-satir-bekliyor.png");
+    await rowPending.getByTestId("pending-confirm").click();
+    await rowPending.waitFor({ state: "detached" });
+    assert.deepEqual(lastPost("ayarlar/onayla"), { id: "p-erisim" });
+    await page.getByTestId("pending-result").filter({ hasText: "Ayarlar kalıcı olarak kaydedildi." }).waitFor();
 
-    // ================= the Konsol row: its internet name needs the typed word, sent as `onay`
-    page = await newPage();
-    await page.goto(url("#/erisim"));
-    await page.getByTestId("publish").click();
-    await page.waitForURL((u) => u.hash === "#/erisim?yayinla=sec");
-    flow = flowSheet(page);
-    await flow.waitFor();
-    assert.equal(await currentStep(flow), "1Ne");
-    const options = flow.locator(".choice-item");
-    await options.first().waitFor();
-    assert.deepEqual(await options.evaluateAll((ls) => ls.map((l) => l.dataset.aday)), [...candidates().map((c) => c.id), "yeni"]);
-    assert(await flow.locator('[data-aday="konteyner:dis"] input').isDisabled(), "an unavailable candidate cannot be chosen");
-    assert.match(await flow.locator('[data-aday="konteyner:dis"]').innerText(), /dinleyen bir portu yok/);
-    await flow.getByTestId("flow-go").click();
-    await flow.getByText("Yayımlanacak olanı seçin.").waitFor();
-    await flow.locator('[data-aday="panel"]').click();
-    await flow.getByTestId("flow-go").click();
-    assert(await flow.getByRole("switch", { name: "Tailscale adı" }).isDisabled(), "Konsol's tailnet name stays on");
-    await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).click();
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("flow-domain").fill("konsol.example.org");
-    const plansBefore = posts("yayinlar/plan").length;
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("konsol-word").waitFor();
-    assert.match(await flow.getByTestId("konsol-word").innerText(), /https:\/\/konsol\.example\.org adresinde Konsol'un giriş sayfası internete açılır/);
-    await page.waitForTimeout(150);
-    assert.equal(posts("yayinlar/plan").length, plansBefore, "no plan before the typed word");
-    assert(await flow.getByTestId("flow-go").isDisabled());
-    await shot(page, "1440-light-yayinla-konsol.png");
-    await flow.getByLabel("Onaylamak için onayla yazın").fill("onay");
-    await page.waitForTimeout(100);
-    assert.equal(posts("yayinlar/plan").length, plansBefore);
-    await flow.getByLabel("Onaylamak için onayla yazın").fill("ONAYLA");
-    await flow.getByTestId("plan").waitFor();
-    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "panel", revizyon: "rev-1", tailscale: true, internet: true, alan_adi: "konsol.example.org", onay: "onayla" });
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("flow-done").waitFor();
-    assert.deepEqual(lastPost("ayarlar/uygula"), { revision: "rev-1", web: { service: "panel", tail: true, enabled: true, domain: "konsol.example.org", confirm: "onayla" } });
-    await flow.getByTestId("flow-go").click();
-    await flow.waitFor({ state: "detached" });
-    await page.context().close();
-
-    // ================= an application's address port (127.0.0.1, DD-271 phase 3): its names, then the settings step
-    page = await newPage();
-    await page.goto(url("#/erisim?sekme=adresler&yayinla=konteyner:kutu_web"));
-    flow = flowSheet(page);
-    await flow.waitFor();
-    await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
-    assert.equal(await currentStep(flow), "2Kim");
-    assert.equal(await flow.getByRole("switch", { name: "Tailscale adı" }).getAttribute("aria-checked"), "true", "a new publication starts on the tailnet");
-    assert.equal(await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).getAttribute("aria-checked"), "false");
-    await flow.getByTestId("flow-go").click();
-    assert.equal(await flow.getByTestId("flow-name").inputValue(), "kutu_web");
-    assert.equal(await flow.getByTestId("flow-local").inputValue(), "kutu-web", "the server's own choice of name");
-    await flow.getByTestId("flow-local").fill("film_1");
-    await flow.getByTestId("flow-go").click();
-    await flow.getByText("Küçük harfle başlamalı; yalnız küçük harf, rakam ve tire (en çok 31).").waitFor();
-    await flow.getByTestId("flow-local").fill("notlar");
-    await flow.getByText("notlar.ev adı zaten kullanılıyor.").waitFor();
-    await flow.getByTestId("flow-local").fill("kutu");
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("plan").waitFor();
-    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "konteyner:kutu_web", revizyon: "rev-1", tailscale: true, internet: false, alan_adi: "", yerel: "kutu" });
-    assert.deepEqual(await flow.getByTestId("flow-steps").locator(".flow-run").evaluateAll((ls) => ls.map((l) => l.dataset.tur)), ["ayar"]);
-    const kutuPlan = publicationPlan(lastPost("yayinlar/plan"));
-    assert.equal(kutuPlan.adimlar[0].istek.web.elle.upstream, "127.0.0.1:62001", "the application's own pool port");
-    await shot(page, "1440-light-yayinla-konteyner.png");
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("flow-done").waitFor();
-    assert.deepEqual(lastPost("ayarlar/uygula"), kutuPlan.adimlar[0].istek, "the settings request, unchanged");
-    assert.deepEqual(await flow.getByTestId("run-state").allInnerTexts(), ["Tamam"]);
-    assert.equal(posts("konteynerler/islem").length, 0, "no container job");
-    await flow.getByTestId("flow-go").click();
-    await flow.waitFor({ state: "detached" });
-
-    // The settings step fails: the name did not open, and the plan can be checked again.
-    await page.goto(url("#/erisim?yayinla=konteyner:kutu_web"));
-    flow = flowSheet(page);
-    await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("plan").waitFor();
-    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "konteyner:kutu_web", revizyon: "rev-1", tailscale: true, internet: false, alan_adi: "" });
+    // Closing: the Tailscale port and the internet name off commit at once (no banner).
+    sheet = await openRow(page, NOTLAR);
+    assert.equal(await sheet.getByTestId("row-name").inputValue(), "yazilar", "the sheet starts from the row the server now holds");
+    await sheet.getByRole("switch", { name: "Tailscale portu" }).click();
+    await sheet.getByRole("switch", { name: "İnternet adı" }).click();
+    assert.equal(await sheet.getByTestId("row-host").count(), 0);
+    body = await review(sheet);
+    assert.deepEqual(body, { revision: "rev-1", erisim: { uygulama: "notlar", anahtar: "web:8080/tcp",
+      satir: { tur: "adres", ad: "yazilar", tailscale_portu: null, internet: "" } } });
+    assert.equal(await sheet.getByTestId("plan-window").innerText(), "Hemen kaydedilir; onay beklenmez.", "a closing commits at once");
+    const closed = body.erisim.satir;
+    afterApply.push(() => (data.erisim = erisim({ hizmetler: rows({ notlar: closed }) })));
+    await sheet.getByTestId("apply").click();
+    await sheet.waitFor({ state: "detached" });
+    assert.deepEqual(lastPost("ayarlar/uygula"), body);
+    await page.getByTestId("addresses-note").filter({ hasText: "Değişiklik kaydedildi." }).waitFor();
+    assert.equal(await page.locator(".pending").count(), 0, "nothing waits");
+    // A new Tailscale port and an internet name: an opening again (a port of its own, a host name checked first).
+    sheet = await openRow(page, NOTLAR);
+    await sheet.getByRole("switch", { name: "Tailscale portu" }).click();
+    assert.equal(await sheet.getByTestId("row-ts-port").inputValue(), "8080", "the container port to start with");
+    await sheet.getByTestId("row-ts-port").fill("70000");
+    await sheet.getByRole("switch", { name: "İnternet adı" }).click();
+    await sheet.getByTestId("row-host").fill("https://yazilar.example.org/");
+    await sheet.getByTestId("review").click();
+    await sheet.getByText("1 ile 65535 arasında bir port yazın.").waitFor();
+    await sheet.getByText("Tam alan adını girin; URL, IP, port veya yol eklemeyin.").waitFor();
+    await sheet.getByTestId("row-ts-port").fill("9443");
+    await sheet.getByTestId("row-host").fill("Yazilar.Example.org.");
+    assert.equal(await sheet.getByTestId("row-dns").innerText(),
+      "Alan adı sağlayıcınızda bir A kaydı gerekir: yazilar.example.org → 203.0.113.10, proxy kapalı (DNS only), AAAA kaydı yok.");
+    body = await review(sheet);
+    assert.deepEqual(body.erisim.satir, { tur: "adres", ad: "yazilar", tailscale_portu: 9443, internet: "yazilar.example.org" });
+    assert.match(await sheet.getByTestId("plan-window").innerText(), /1:00 içinde/);
+    // The server refuses the apply (it rolled the change back): the sheet says why and stays on the plan.
     expectedFailures = ["/api/konsol/ayarlar/uygula"];
-    applyReplies.push({ status: 400, body: { error: "Caddy yapılandırması doğrulanamadı." } });
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("flow-error").waitFor();
-    assert.equal(await flow.getByTestId("flow-error").innerText(), "Caddy yapılandırması doğrulanamadı.");
-    assert.deepEqual(await flow.getByTestId("run-state").allInnerTexts(), ["Başarısız"]);
-    assert.equal(await flow.getByTestId("flow-go").innerText(), "Yeniden denetle");
-    await shot(page, "1440-light-yayinla-hata.png");
+    applyReplies.push({ status: 400, body: { error: "notlar · web hazır olmadı; değişiklik geri alındı." } });
+    await sheet.getByTestId("apply").click();
+    await sheet.getByTestId("apply-error").filter({ hasText: "notlar · web hazır olmadı; değişiklik geri alındı." }).waitFor();
+    assert(await sheet.getByTestId("apply").isEnabled(), "another try stays possible");
+    assert.equal(await page.locator(".pending").count(), 0);
+    await shot(page, "1440-light-erisim-satir-hata.png");
     expectedFailures = [];
-    await flow.getByTestId("flow-back").click();
-    await flow.getByTestId("flow-back").click();
-    await flow.getByTestId("flow-back").click();
-    assert.equal(await currentStep(flow), "1Ne");
-    await flow.getByTestId("flow-back").click();
-    await flow.waitFor({ state: "detached" });
+    await sheet.getByTestId("plan-back").click();
+    await sheet.getByRole("button", { name: "Vazgeç" }).click();
+    await sheet.waitFor({ state: "detached" });
+    assert.equal(await satirOf(page), null);
+
+    // "Adresi kaldır": the port becomes a closed raw port on its container port; it commits at once.
+    sheet = await openRow(page, NOTLAR);
+    await sheet.getByTestId("row-remove").click();
+    await sheet.getByTestId("plan").waitFor();
+    body = lastPost("ayarlar/plan");
+    assert.deepEqual(body, { revision: "rev-1", erisim: { uygulama: "notlar", anahtar: "web:8080/tcp", satir: { tur: "ham", kapsam: "kapali", port: 8080 } } });
+    assert.equal(await sheet.getByTestId("apply").innerText(), "Adresi kaldır");
+    assert.match(await sheet.getByTestId("apply").getAttribute("class"), /btn-danger/);
+    assert.equal(await sheet.getByTestId("plan-window").innerText(), "Hemen kaydedilir; onay beklenmez.");
+    assert.deepEqual(await sheet.locator(".plan-item .pill").allInnerTexts(), ["Kaldırılır"]);
+    await sheet.getByTestId("plan-back").click();
+    await sheet.getByTestId("row-name").waitFor();
+    await sheet.getByTestId("row-remove").click();
+    await sheet.getByTestId("plan").waitFor();
+    await sheet.getByTestId("apply").click();
+    await sheet.waitFor({ state: "detached" });
+    assert.deepEqual(lastPost("ayarlar/uygula"), body);
+    await page.getByTestId("addresses-note").filter({ hasText: "Adres kaldırıldı." }).waitFor();
+    assert.equal(await page.locator(".pending").count(), 0);
+    data.erisim = erisim();
     await page.context().close();
 
-    // ================= another port on this server: a new manual address, planned through ayarlar/plan
+    // ================= raw rows: Tailscale on another port (opening), the internet with the consent, internet → Tailscale
     page = await newPage();
     await page.goto(url("#/erisim?sekme=adresler"));
-    await page.getByTestId("add-manual").click();
-    await page.waitForURL((u) => u.hash === "#/erisim?sekme=adresler&yayinla=yeni");
-    flow = flowSheet(page);
-    await flow.getByTestId("manual-port").waitFor();
-    await flow.getByTestId("flow-go").click();
-    await flow.getByText("Bu sunucuda dinleyen portu yazın (1–65535).").waitFor();
-    await flow.getByTestId("manual-port").fill("8123");
-    await flow.getByTestId("flow-go").click();
-    await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).click();
-    assert.equal(await flow.getByTestId("flow-guard").innerText(), GUARD_APP);
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("flow-name").fill("Yazdırma");
-    await flow.getByTestId("flow-local").fill("baski");
-    await flow.getByTestId("flow-domain").fill("baski.example.org");
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("plan").waitFor();
-    const MANUAL = { revision: "rev-1", web: { service: "elle-baski", tail: true, enabled: true, domain: "baski.example.org",
-      elle: { name: "Yazdırma", local: "baski", upstream: "127.0.0.1:8123" } } };
-    assert.deepEqual(lastPost("ayarlar/plan"), MANUAL);
-    assert.equal(await flow.getByTestId("plan-dns").locator(".mono").innerText(), "baski.example.org · A · 203.0.113.10");
-    assert.equal(await flow.locator('.plan-warning[data-seviye="warn"]').innerText(), GUARD_APP);
-    assert.match(await flow.getByTestId("flow-steps").innerText(), /baski\.ev → 127\.0\.0\.1:8123/);
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("flow-done").waitFor();
-    assert.deepEqual(lastPost("ayarlar/uygula"), MANUAL);
-    await flow.getByTestId("flow-go").click();
-    await flow.waitFor({ state: "detached" });
+    sheet = await openRow(page, KUTU);
+    assert.equal(await sheet.locator(".modal-desc").innerText(), "9000/tcp · Ham port");
+    assert.equal(await sheet.locator('[data-kapsam="kapali"] input').isChecked(), true);
+    assert.equal(await sheet.getByTestId("row-port").inputValue(), "9000", "the container port by default");
+    assert.equal(await sheet.getByTestId("row-scope-hint").innerText(), "Hiçbir ağdan ulaşılmaz; port numarası açılınca kullanılır.");
+    await sheet.locator('[data-kapsam="tailscale"]').click();
+    await sheet.getByTestId("row-port").fill("9001");
+    assert.equal(await sheet.getByTestId("row-scope-hint").innerText(), "Tailscale cihazlarınız 100.64.0.2:9001 ile ulaşır.");
+    assert.equal(await sheet.getByTestId("row-consent").count(), 0, "no consent for Tailscale");
+    await shot(page, "1440-light-erisim-satir-ham.png");
+    body = await review(sheet);
+    assert.deepEqual(body, { revision: "rev-1", erisim: { uygulama: "kutu", anahtar: "app:9000/tcp", satir: { tur: "ham", kapsam: "tailscale", port: 9001 } } });
+    assert.match(await sheet.getByTestId("plan-window").innerText(), /1:00 içinde/, "a raw port opened waits");
+    await sheet.getByTestId("apply").click();
+    await sheet.waitFor({ state: "detached" });
+    await page.locator(".pending").waitFor();
+    await page.locator(".pending").getByTestId("pending-rollback").click();
+    await page.locator(".pending").waitFor({ state: "detached" });
+    assert.deepEqual(lastPost("ayarlar/geri-al"), { id: "p-erisim" });
+    // A UDP port to the internet: no address for it; the consent is asked before the plan and sent as internet_onayi.
+    sheet = await openRow(page, MEDYA_UDP);
+    assert.equal(await sheet.getByTestId("row-open-address").count(), 0, "a UDP port cannot get an address");
+    await sheet.getByText("UDP portu yalnız ham port olabilir; adres açılamaz.").waitFor();
+    await sheet.locator('[data-kapsam="internet"]').click();
+    assert.equal(await sheet.getByTestId("row-scope-hint").innerText(), "İnternetteki herkes 203.0.113.10:1900 ile ulaşır; arada Caddy ve HTTPS yok.");
+    await sheet.getByTestId("row-consent").waitFor();
+    assert.match(await sheet.getByTestId("row-consent").innerText(), /arada Caddy, HTTPS ve Konsol girişi olmaz/);
+    const consentPlans = posts("ayarlar/plan").length;
+    await sheet.getByTestId("review").click();
+    await sheet.getByText("Ham portu internete açmak için onay kutusunu işaretleyin.").waitFor();
+    assert.equal(posts("ayarlar/plan").length, consentPlans, "no plan without the consent");
+    await shot(page, "1440-light-erisim-satir-onay.png");
+    await sheet.getByTestId("row-consent-box").check();
+    body = await review(sheet);
+    assert.deepEqual(body, { revision: "rev-1", erisim: { uygulama: "medya", anahtar: "web:1900/udp", satir: { tur: "ham", kapsam: "internet", port: 1900 },
+      internet_onayi: true } });
+    assert.equal((await sheet.locator('.plan-warning[data-seviye="warn"]').innerText()).replace(/^Uyarı:\s*/, ""), CONSENT_TEXT);
+    assert.equal(await sheet.getByTestId("plan-blocked").count(), 0);
+    await sheet.getByTestId("apply").click();
+    await sheet.waitFor({ state: "detached" });
+    assert.deepEqual(lastPost("ayarlar/uygula"), body);
+    await page.locator(".pending").getByTestId("pending-confirm").click();
+    await page.locator(".pending").waitFor({ state: "detached" });
+    // Internet → Tailscale on the same port narrows access: no consent, no wait.
+    sheet = await openRow(page, MEDYA);
+    assert.equal(await sheet.locator('[data-kapsam="internet"] input').isChecked(), true);
+    assert.equal(await sheet.getByTestId("row-consent").count(), 0, "already on the internet on this port");
+    await sheet.getByTestId("row-port").fill("8097");
+    await sheet.getByTestId("row-consent").waitFor();
+    await sheet.getByTestId("row-port").fill("8096");
+    await sheet.locator('[data-kapsam="tailscale"]').click();
+    body = await review(sheet);
+    assert.deepEqual(body, { revision: "rev-1", erisim: { uygulama: "medya", anahtar: "web:8096/tcp", satir: { tur: "ham", kapsam: "tailscale", port: 8096 } } });
+    assert.equal(await sheet.getByTestId("plan-window").innerText(), "Hemen kaydedilir; onay beklenmez.");
+    await sheet.getByTestId("apply").click();
+    await sheet.waitFor({ state: "detached" });
+    await page.getByTestId("addresses-note").filter({ hasText: "Değişiklik kaydedildi." }).waitFor();
 
-    // What blocks a plan ("engel") is shown, and "Yeniden denetle" asks again.
-    yayinReplies.push((body) => ({ body: { ...publicationPlan(body), engel: "indir.example.org adı 203.0.113.10 adresine çözülmüyor; DNS kaydını denetleyin." } }));
-    await page.goto(url("#/erisim?sekme=adresler&yayinla=konteyner:notlar"));
-    flow = flowSheet(page);
-    await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("flow-domain").fill("indir.example.org");
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("flow-engel").filter({ hasText: "çözülmüyor" }).waitFor();
-    assert(await flow.getByTestId("flow-go").isDisabled(), "a blocked plan cannot be applied");
-    await shot(page, "1440-light-yayinla-engel.png");
-    const asked = posts("yayinlar/plan").length;
-    await flow.getByTestId("recheck").click();
-    await flow.getByTestId("flow-engel").waitFor({ state: "detached" });
-    await page.waitForFunction(() => !document.querySelector('[data-testid="flow-go"]').disabled);
-    assert.equal(posts("yayinlar/plan").length, asked + 1);
-    // Both names off unpublishes.
-    await flow.getByTestId("flow-back").click();
-    await flow.getByTestId("flow-back").click();
-    await flow.getByRole("switch", { name: "Tailscale adı" }).click();
-    await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).click();
-    await flow.getByTestId("unpublish").waitFor();
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("plan").waitFor();
-    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "konteyner:notlar", revizyon: "rev-1", tailscale: false, internet: false, alan_adi: "notlar.example.org" },
-      "the remembered internet name is kept while off");
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("flow-done").filter({ hasText: "Yayın kaldırıldı." }).waitFor();
+    // "Adres aç": a raw TCP port gets a Tailscale name (an opening), from the list or from its sheet.
+    sheet = await openRow(page, KUTU, "adres-ac");
+    assert.equal(await sheet.locator("h2").innerText(), "kutu · app · Adres aç");
+    assert.equal(await sheet.getByTestId("row-name").inputValue(), "kutu", "the application's name when it is free");
+    await sheet.getByTestId("row-name").fill("notlar");
+    await sheet.getByTestId("review").click();
+    await sheet.getByText("notlar adı başka bir satırda kullanılıyor.").waitFor();
+    await sheet.getByTestId("row-name").fill("kutu");
+    await shot(page, "1440-light-erisim-adres-ac.png");
+    body = await review(sheet);
+    assert.deepEqual(body, { revision: "rev-1", erisim: { uygulama: "kutu", anahtar: "app:9000/tcp", satir: { tur: "adres", ad: "kutu", tailscale_portu: null, internet: "" } } });
+    assert.match(await sheet.getByTestId("plan-window").innerText(), /1:00 içinde/);
+    assert.deepEqual(await sheet.locator(".plan-item .pill").allInnerTexts(), ["Eklenir"]);
+    await sheet.getByTestId("apply").click();
+    await sheet.waitFor({ state: "detached" });
+    await page.getByTestId("addresses-note").filter({ hasText: "Adres açıldı; 60 saniye içinde yukarıdaki banttan onaylayın." }).waitFor();
+    await page.locator(".pending").getByTestId("pending-confirm").click();
+    await page.locator(".pending").waitFor({ state: "detached" });
+    sheet = await openRow(page, KUTU);
+    await sheet.getByTestId("row-open-address").click();
+    await sheet.locator("h2").filter({ hasText: "kutu · app · Adres aç" }).waitFor();
+    assert.equal(await sheet.getByTestId("row-name").inputValue(), "kutu");
+    await sheet.getByRole("button", { name: "Vazgeç" }).click();
+    await sheet.waitFor({ state: "detached" });
     await page.context().close();
 
-    // Konsol without an account cannot open its internet name; the reason is shown.
-    const NO_ACCOUNT = "Önce Konsol hesabı oluşturun (Tailscale adresinden, Sistem → Hesap).";
-    data.yayinlar = { ...data.yayinlar, adaylar: candidates().map((c) => (c.id === "panel" ? { ...c, internet_engel: NO_ACCOUNT } : c)) };
+    // ================= the fixed rows: Konsol's internet name with the typed word, Paylaşımlar' Tailscale name
     page = await newPage();
-    await page.goto(url("#/erisim?yayinla=panel"));
-    flow = flowSheet(page);
-    await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).waitFor();
-    assert(await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).isDisabled());
-    assert.equal(await flow.getByTestId("internet-block").innerText(), NO_ACCOUNT);
-    assert.equal(await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).getAttribute("aria-describedby"), "yayin-engel");
-    data.yayinlar = { ...data.yayinlar, adaylar: candidates() };
-    // An unknown target falls back to the choice.
-    await page.goto(url("#/erisim?yayinla=konteyner:yok"));
-    await flowSheet(page).getByTestId("flow-notice").filter({ hasText: "yayımlanabilecekler arasında yok" }).waitFor();
-    assert.equal(await currentStep(flowSheet(page)), "1Ne");
+    await page.goto(url("#/erisim?sekme=adresler&satir=panel"));
+    sheet = rowSheet(page);
+    await sheet.getByTestId("row-form").waitFor();
+    assert.equal(await sheet.locator("h2").innerText(), "Konsol");
+    assert(await sheet.getByRole("switch", { name: "Tailscale adı" }).isDisabled(), "Konsol's Tailscale name stays on");
+    assert.match(await sheet.locator(".row-part").first().innerText(), /panel\.ev · Konsol'un Tailscale adı hep açıktır\./);
+    await sheet.getByRole("switch", { name: "İnternet adı" }).click();
+    await sheet.getByTestId("row-host").fill("konsol.example.org");
+    await sheet.getByTestId("konsol-word").waitFor();
+    assert.match(await sheet.getByTestId("konsol-word").innerText(), /https:\/\/konsol\.example\.org adresinde Konsol'un giriş sayfası internete açılır/);
+    const konsolPlans = posts("ayarlar/plan").length;
+    assert(await sheet.getByTestId("review").isDisabled(), "no plan before the typed word");
+    await sheet.getByLabel("Onaylamak için onayla yazın").fill("onay");
+    assert(await sheet.getByTestId("review").isDisabled());
+    await shot(page, "1440-light-erisim-konsol.png");
+    await sheet.getByLabel("Onaylamak için onayla yazın").fill("ONAYLA");
+    body = await review(sheet);
+    assert.equal(posts("ayarlar/plan").length, konsolPlans + 1);
+    assert.deepEqual(body, { revision: "rev-1", web: { service: "panel", tail: true, enabled: true, domain: "konsol.example.org", confirm: "onayla" } });
+    assert.match(await sheet.getByTestId("plan-window").innerText(), /1:00 içinde/);
+    await sheet.getByTestId("apply").click();
+    await sheet.waitFor({ state: "detached" });
+    assert.deepEqual(lastPost("ayarlar/uygula"), body);
+    await page.locator(".pending").getByTestId("pending-confirm").click();
+    await page.locator(".pending").waitFor({ state: "detached" });
+    // Paylaşımlar: its Tailscale name off commits at once; its folders are Dosyalar' (a link).
+    sheet = await openRow(page, "paylasim");
+    assert.equal(await sheet.locator("h2").innerText(), "Paylaşımlar");
+    assert.equal(await sheet.getByTestId("row-shares").getAttribute("href"), "#/dosyalar?sekme=paylasimlar");
+    await sheet.getByRole("switch", { name: "Tailscale adı" }).click();
+    body = await review(sheet);
+    assert.deepEqual(body, { revision: "rev-1", web: { service: "paylasim", tail: false, enabled: false, domain: "" } });
+    assert.equal(await sheet.getByTestId("plan-window").innerText(), "Hemen kaydedilir; onay beklenmez.");
+    await sheet.getByTestId("apply").click();
+    await sheet.waitFor({ state: "detached" });
+    await page.getByTestId("addresses-note").filter({ hasText: "Değişiklik kaydedildi." }).waitFor();
+    // A row that is not there says so.
+    await page.goto(url("#/erisim?sekme=adresler&satir=uygulama:yok:web:80/tcp"));
+    await page.getByTestId("row-missing").filter({ hasText: "uygulama:yok:web:80/tcp" }).waitFor();
+    assert.equal(await page.getByRole("dialog").count(), 0);
+    // A deep link with the row id encoded opens the same sheet.
+    await page.goto(url(`#/erisim?sekme=adresler&satir=${enc(KUTU)}`));
+    await rowSheet(page).getByTestId("row-form").waitFor();
+    assert.equal(await rowSheet(page).locator("h2").innerText(), "kutu · app");
     await page.context().close();
 
     // ================= Güvenlik duvarı: the base's ports with the rules, a draft → plan → apply → 60 s → Onayla
@@ -736,8 +848,10 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     assert.equal(await ssh.getByTestId("rule-state").innerText(), "Temel");
     assert.equal(await ssh.getByRole("switch").getAttribute("aria-checked"), "true");
     const fixed = fwView.locator('tr[data-port="tcp/8096"]');
-    assert(await fixed.getByRole("switch").isDisabled(), "a container publication is locked");
-    assert.match(await fixed.innerText(), /Konteyner yayını · uygulamayla açılır, kapanır/);
+    assert(await fixed.getByRole("switch").isDisabled(), "an application's raw port is locked");
+    assert.equal(await fixed.getByTestId("fw-row-link").innerText(), "Uygulama erişimi");
+    assert.equal(await fixed.getByTestId("fw-row-link").getAttribute("href"), `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`, "it links to its access row");
+    assert.equal(await fixed.getByTestId("rule-state").innerText(), "Temel");
     assert.equal(await fwView.locator('tr[data-port="udp/61001"] td[data-label="Dinleme"]').innerText(), "Dinleyici yok");
     await noStyles(page, "erisim guvenlik-duvari");
     await shot(page, "1440-light-erisim-guvenlik.png", true);
@@ -786,7 +900,10 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await fwView.locator('[data-aile="4"]').click();
     await nets.filter({ hasText: "Tailscale" }).click();
     await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("kapsam") === "tailscale");
-    assert.deepEqual(await fwRows().evaluateAll((trs) => trs.map((t) => t.dataset.port)), ["tcp/80", "udp/53", "tcp/8096"]);
+    assert.deepEqual(await fwRows().evaluateAll((trs) => trs.map((t) => t.dataset.port)), ["tcp/80", "udp/53", "tcp/8443", "tcp/8097"]);
+    const tsPort = fwView.locator('tr[data-port="tcp/8443"]');
+    assert(await tsPort.getByRole("switch").isDisabled(), "a Tailscale port (K5) is locked");
+    assert.equal(await tsPort.getByTestId("fw-row-link").getAttribute("href"), `#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`);
     assert.equal(await fwView.locator('tr[data-kural="u_medya"]').getByTestId("rule-state").innerText(), "Kural");
     await nets.filter({ hasText: "WireGuard" }).click();
     const wgPanel = fwView.locator('.fw-panel[data-kapsam="wireguard"]');
@@ -876,6 +993,14 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await shot(page, "1440-light-erisim-guvenlik-wg-yok.png");
     await page.context().close();
     data["guvenlik-duvari"] = firewall();
+    // A fixed row's link opens its access row's sheet in Adresler.
+    page = await newPage();
+    await page.goto(url("#/erisim?sekme=guvenlik-duvari"));
+    await page.getByTestId("firewall").locator('tr[data-port="tcp/8096"]').getByTestId("fw-row-link").click();
+    await page.waitForURL((u) => u.hash === `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`);
+    await rowSheet(page).getByTestId("row-form").waitFor();
+    assert.equal(await rowSheet(page).locator("h2").innerText(), "medya · web");
+    await page.context().close();
 
     // ================= a rollback that failed five times: retry, or discard with the typed word
     page = await newPage();
@@ -926,7 +1051,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     data.bekleyen = { bekleyen: null };
     expectedFailures = [];
 
-    // ================= the palette: Erişim's tabs and the Yayınla action
+    // ================= the palette: Erişim's tabs; no Yayınla action
     page = await newPage();
     await page.goto(url("#/erisim"));
     await page.getByTestId("matrix").waitFor();
@@ -934,14 +1059,12 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     const palette = page.getByRole("dialog", { name: "Komut paleti" });
     const input = palette.getByRole("combobox");
     await input.fill("yayınla");
-    assert.equal(await palette.locator('[data-key="yayinla"] .palette-hint').innerText(), "Erişim", "an action of Erişim");
-    await palette.locator('[data-key="yayinla"]').click();
-    await page.waitForURL((u) => u.hash === "#/erisim?yayinla=sec");
-    await flowSheet(page).locator(".choice-item").first().waitFor();
-    await page.keyboard.press("Escape");
-    await page.keyboard.press("Control+K");
+    assert.equal(await palette.locator('[data-key="yayinla"]').count(), 0, "no Yayınla action");
     await input.fill("dnsmasq");
     assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Erişim → Adresler", "Gelişmiş → DNS"], "names are changed in Erişim, read in Gelişmiş");
+    await input.fill("ham port");
+    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Erişim", "Erişim → Adresler"]);
+    await input.fill("dnsmasq");
     await page.keyboard.press("Enter");
     await page.waitForURL((u) => u.hash === "#/erisim?sekme=adresler");
     await page.context().close();
@@ -958,9 +1081,9 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
         assert(await noHorizontalScroll(page), `1440 ${colorScheme} ${name}`);
         await shot(page, `1440-${colorScheme}-${name}.png`, true);
       }
-      await page.goto(url("#/erisim?sekme=adresler&yayinla=konteyner:kutu_web"));
-      await flowSheet(page).getByRole("switch", { name: "Tailscale adı" }).waitFor();
-      await shot(page, `1440-${colorScheme}-yayinla.png`);
+      await page.goto(url(`#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`));
+      await rowSheet(page).getByTestId("row-form").waitFor();
+      await shot(page, `1440-${colorScheme}-satir.png`);
       await page.context().close();
 
       page = await newPage({ colorScheme, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
@@ -972,19 +1095,36 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
         await shot(page, `390-${colorScheme}-${name}.png`, true);
       }
       assert.equal(await page.locator(".fw-table tbody tr").first().evaluate((el) => getComputedStyle(el).display), "grid", "cards on a phone");
-      await page.goto(url("#/erisim?sekme=adresler&yayinla=konteyner:notlar"));
-      flow = flowSheet(page);
-      await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
-      const sheetBox = await flow.boundingBox();
-      assert(Math.abs(sheetBox.y + sheetBox.height - 844) <= 1 && sheetBox.width === 390, "a bottom sheet on a phone");
-      await flow.getByTestId("flow-go").tap();
-      await flow.getByTestId("flow-go").tap();
-      await flow.getByTestId("plan").waitFor();
-      await noStyles(page, `390 ${colorScheme} yayinla`);
-      await shot(page, `390-${colorScheme}-yayinla-plan.png`);
+      await page.goto(url("#/erisim?sekme=adresler"));
+      await page.getByTestId("access-rows").locator(`tr[data-satir="${NOTLAR}"]`).waitFor();
+      assert.equal(await page.getByTestId("access-rows").locator("tbody tr").first().evaluate((el) => getComputedStyle(el).display), "grid", "access rows as cards");
+      for (const [id, shotName, setup] of [[NOTLAR, "satir-adres", null], [MEDYA_UDP, "satir-ham", "internet"], ["panel", "satir-konsol", "konsol"]]) {
+        await page.goto(url(`#/erisim?sekme=adresler&satir=${enc(id)}`));
+        sheet = rowSheet(page);
+        await sheet.getByTestId("row-form").waitFor();
+        if (setup === "internet") await sheet.locator('[data-kapsam="internet"]').tap();
+        if (setup === "konsol") {
+          await sheet.getByRole("switch", { name: "İnternet adı" }).tap();
+          await sheet.getByTestId("row-host").fill("konsol.example.org");
+        }
+        if (id === NOTLAR) {
+          const sheetBox = await sheet.boundingBox();
+          assert(Math.abs(sheetBox.y + sheetBox.height - 844) <= 1 && sheetBox.width === 390, "a bottom sheet on a phone");
+        }
+        await noStyles(page, `390 ${colorScheme} ${shotName}`);
+        await shot(page, `390-${colorScheme}-${shotName}.png`);
+      }
+      await page.goto(url(`#/erisim?sekme=adresler&satir=${enc(KUTU)}`));
+      sheet = rowSheet(page);
+      await sheet.getByTestId("row-form").waitFor();
+      await sheet.locator('[data-kapsam="tailscale"]').tap();
+      await sheet.getByTestId("review").tap();
+      await sheet.getByTestId("plan").waitFor();
+      await noStyles(page, `390 ${colorScheme} satir-plan`);
+      await shot(page, `390-${colorScheme}-satir-plan.png`);
       await page.setViewportSize({ width: 320, height: 640 });
       await page.waitForFunction(() => innerWidth === 320);
-      await shot(page, `320-${colorScheme}-yayinla-plan.png`);
+      await shot(page, `320-${colorScheme}-satir-plan.png`);
       for (const [name, hash, ready] of VIEWS) {
         await page.goto(url(hash));
         await page.locator(ready).first().waitFor();
@@ -993,21 +1133,28 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
         assert(await noHorizontalScroll(page), `320 ${colorScheme} ${name}`);
         await shot(page, `320-${colorScheme}-${name}.png`, true);
       }
+      await page.goto(url(`#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`));
+      await rowSheet(page).getByTestId("row-form").waitFor();
+      await shot(page, `320-${colorScheme}-satir-adres.png`);
       await page.context().close();
     }
 
+    assert.equal(count("yayinlar") + count("yayinlar/plan"), 0, "nothing asks for the removed Yayınla routes");
     assert.deepEqual(h.errors, []);
-    console.log("PASS: Konsol phase 3 Erişim under the production CSP — Genel (warnings first with Düzelt by duzelt: Yayınla, the application, " +
-      "Tailscale; summaries, a stopped WireGuard; the matrix in plain words with Teknik ayrıntı in the address; an unreadable Erişim), Tailscale (device, addresses, version, key expiry " +
-      "warning, exit node, admin console link, disconnected), Adresler (publications with state, certificate and guard; local names with the " +
-      "locked one and raw sources; DNS draft → plan → apply with exact bodies; a refused plan and re-check; the local domain: plan, 300 s, " +
-      "confirmation only from the new address, rollback; removing a manual address), the Yayınla flow (a published container's internet name with the DNS record and the " +
-      "certificate wait, the Konsol row with the typed word as onay, an application's address port named through the exact settings request, " +
-      "a failing settings step and Yeniden denetle, no container step, another port as a manual address, engel and " +
-      "Yeniden denetle, both names off, Konsol without an account, an unknown target), Güvenlik duvarı (the base's ports with rules, listeners, locked rows, " +
-      "draft with a baseline switch and a new rule, checks, IPv6, tabs, technical rules with counters, plan → apply → 60 s → Onayla and Geri al, " +
-      "a plan that cannot be applied, the WireGuard tab without networks), the leave guard on the DNS, domain and firewall drafts, the stuck rollback (retry, typed discard), a refused confirmation, the internet channel's confirmation " +
-      "message, a warning's Düzelt to an application's page, the palette, 1440/390/320 in light and dark. Screenshots: " + h.shots);
+    console.log("PASS: Konsol Erişim under the production CSP — Genel (warnings first with Düzelt by duzelt: an access row's sheet, the application, " +
+      "Tailscale; summaries, a stopped WireGuard; the matrix in plain words with Teknik ayrıntı in the address and each access row's link; an unreadable " +
+      "Erişim), Tailscale (device, addresses, version, key expiry warning, exit node, admin console link, disconnected), Adresler (every access row with " +
+      "its cells and Adres aç only for raw TCP ports; local names with Konsol's locked name and an application's linking to its row; DNS draft → plan → " +
+      "apply with exact bodies; a refused plan and re-check; the local domain: plan, 300 s, confirmation only from the new address, rollback), the access " +
+      "row sheet (an address row's name checks, a rename and a Tailscale port as an opening with the 60 s banner and Onayla, a long apply that stays busy " +
+      "and counts, closing the Tailscale port and the internet name at once, a refused apply, Adresi kaldır; raw rows to Tailscale on another port and " +
+      "rolled back, a UDP port to the internet with the consent as internet_onayi, internet → Tailscale at once; Adres aç from the list and from the raw " +
+      "sheet; Konsol's internet name with the typed word as confirm; Paylaşımlar' Tailscale name; deep links and a missing row), Güvenlik duvarı (the " +
+      "base's ports with rules, listeners, an application's raw and Tailscale ports locked as Uygulama erişimi with a link to their row, draft with a " +
+      "baseline switch and a new rule, checks, IPv6, tabs, technical rules with counters, plan → apply → 60 s → Onayla and Geri al, a plan that cannot " +
+      "be applied, the WireGuard tab without networks), the leave guard on the DNS, domain and firewall drafts, the stuck rollback (retry, typed discard), " +
+      "a refused confirmation, the internet channel's confirmation message, Yayınla gone (no button, no ?yayinla=, no palette action, no request), " +
+      "1440/390/320 in light and dark. Screenshots: " + h.shots);
   } finally {
     await h.stop();
   }

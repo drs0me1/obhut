@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-17 — Each application port has its own access row (v2-258, branch `yeni-yapi`)
+
+- Erişim → Adresler lists Konsol, Paylaşımlar and every port of every application (DD-275). A port is
+  either an address (a Tailscale name, optionally a Tailscale port on the server's Tailscale address and an
+  internet name with HTTPS) or a raw port that is closed, open on Tailscale or open on the internet. An
+  application's address answers on Tailscale as soon as it is installed; raw ports start closed.
+- Every change is shown as a plan first. Opening or widening access waits 60 seconds for a confirmation from
+  Tailscale and is undone if it does not come; closing applies at once and never reopens by itself.
+- "Adres aç" gives a raw TCP port a name, "Adresi kaldır" takes it away; both restart that service for a
+  few seconds. Opening a raw port to the internet asks for an explicit consent, and the port number on the
+  server can differ from the container's.
+- The firewall view shows application ports as fixed rows that link to their access row; a firewall rule
+  cannot be put on such a port.
+- WireGuard: turning it on, adding a network and opening one are plans with the 60 second confirmation;
+  stopping, closing and removing apply at once; renewing a network's key needs the typed word. Devices and
+  their settings change at once as before.
+- Removed: Yayınla and manually added addresses (an application port's row replaces them), and the old
+  WebDAV-only HTTPS setting. `sudo obhut yayin` is now `sudo obhut erisim liste|kapat`.
+
 ### 2026-10-17 — Applications run from their own Compose or Kubernetes files (v2-257, branch `yeni-yapi`)
 
 - An application is installed from its own Compose or Kubernetes file and the operator's answers

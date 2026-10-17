@@ -224,6 +224,12 @@ def atomic(path, data):
             os.unlink(temp)
 
 
+def dns_check(env):
+    """dnsmasq's configuration check (the distribution's helper when it has one, as master_settings.dns_test)."""
+    helper = "/usr/share/dnsmasq/systemd-helper"
+    return [helper, "checkconfig"] if os.path.exists(helper) else ["dnsmasq", "--test", "--conf-dir=" + env["DNSMASQ_CONF_DIR"]]
+
+
 class Manager:
     def __init__(self, state):
         self.state = str(state)
@@ -325,8 +331,8 @@ class Manager:
         if cfg["mode"] == "off":
             available, reason = False, "İnternet paylaşımı kapalı. Erişim → Adresler bölümünde HTTPS alan adı kaydedin."
         elif available and cfg["mode"] == "http":
-            # One WAN port for Caddy publications (contract §3.1): while Konsol or a manual address is
-            # published over HTTPS (TCP 443), plaintext WebDAV on SHARE_PORT stays closed.
+            # One WAN port for Caddy publications (contract §3.1): while Konsol or an application's internet
+            # name is published over HTTPS (TCP 443), plaintext WebDAV on SHARE_PORT stays closed.
             from master_publications import https_apps_enabled
             try:
                 conflict = https_apps_enabled(self.env)
@@ -334,8 +340,8 @@ class Manager:
                 raise ShareError("HTTPS yapılandırması okunamadı; WAN erişimi uygulanmadı.") from err
             if conflict:
                 available = False
-                reason = ("Bir adresin veya Panel'in internet yayını açıkken WebDAV internet erişimi için HTTPS alan adı gerekir; "
-                          "Erişim → Adresler bölümünde kaydedin.")
+                reason = ("Konsol'un ya da bir uygulamanın internet adı açıkken WebDAV internet erişimi için HTTPS alan adı "
+                          "gerekir; Erişim → Adresler bölümünde kaydedin.")
         return {"available": available, "address": address if available else "",
                 **cfg, "reason": reason}
 
@@ -490,8 +496,11 @@ class Manager:
             return self.public()
 
     def publish(self):
-        """DAV, Konsol and manual address projections (DD-191, DD-195, DD-252). Caller owns the
-        installer and share locks."""
+        """The access projection (DD-191, DD-195; rebuild phase 4): WebDAV's internet site, the fixed rows' and the
+        applications' Caddy sites (master_publications.extra_sites) and the applications' local names
+        (master_publications.dns_text, DNSMASQ_CONF_DIR/modul-uygulama.conf), then caddy validate, the firewall,
+        dnsmasq's restart when the names changed and Caddy's reload. Any failure puts every previous file back
+        and names its step (DD-254). The caller owns the installer and share locks."""
         e = self.env
         active = self.wan_active()
         target = os.path.join(e["CADDY_MODULES_DIR"], "paylasim-wan.caddy")
@@ -500,31 +509,38 @@ class Manager:
         if active:
             from master_https import site
             text = site(e, self.wan_info())
-        from master_publications import extra_sites, https_apps_active
+        from master_publications import dns_path, dns_text, extra_sites, https_apps_active
         from master_settings import SettingsError, atomic as atomic_text, read_regular
         try:
             extras = extra_sites(e)
             apps_wan = https_apps_active(e)
+            names_path, names = dns_path(e), dns_text(e)
             previous_extras = {}
             for name in extras:
                 try:
                     previous_extras[name] = read_regular(os.path.join(e["CADDY_MODULES_DIR"], name))[0].decode()
                 except FileNotFoundError:
                     previous_extras[name] = ""
+            try:
+                previous_names = read_regular(names_path)[0].decode()
+            except FileNotFoundError:
+                previous_names = ""
         except (SettingsError, OSError, ValueError, KeyError) as err:
-            raise ShareError("Caddy yayın kaydı uygulanamadı.") from err
+            raise ShareError("Caddy yayın kaydı uygulanamadı%s." % (": " + str(err) if isinstance(err, SettingsError) else "")) from err
         try:
             with open(target, encoding="utf-8") as stream:
                 previous = stream.read()
         except FileNotFoundError:
             previous = ""
-        signature = {"config": text, "wan": active, "extra": extras, "apps_wan": apps_wan}
+        # A removed file is an empty entry only until it is gone; the signature holds the files that exist.
+        signature = {"config": text, "wan": active, "extra": {k: v for k, v in extras.items() if v}, "apps_wan": apps_wan,
+                     "names": names}
         try:
             with open(marker, encoding="utf-8") as stream:
                 applied = json.load(stream)
         except (OSError, ValueError):
             applied = None
-        if previous == text and previous_extras == extras and applied == signature:
+        if previous == text and previous_extras == extras and previous_names == names and applied == signature:
             return
         # Always remove the success marker first: interrupted reloads retry, even
         # when the disk projection already matches. Credential rollback is separate.
@@ -555,11 +571,25 @@ class Manager:
                 else:
                     with contextlib.suppress(FileNotFoundError):
                         os.unlink(path)
+        def write_names(content):
+            if content:
+                atomic_text(names_path, content, 0o644)
+            else:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(names_path)
+        # dnsmasq reads its names at start: restart it when the file changes, and when the last applied projection
+        # had other names (a settings rollback puts the previous file back before it publishes again).
+        names_changed = previous_names != names or (isinstance(applied, dict) and applied.get("names", names) != names)
+        names_restarted = False
         # DD-254: the operator sees which step failed and the reason its tool printed.
         step = "Caddy dosyaları yazılamadı"
         try:
             write_config(text)
             write_extras(extras)
+            write_names(names)
+            if names_changed:
+                step = "yerel ad yapılandırması geçersiz"
+                subprocess.run(dns_check(e), check=True, timeout=15, capture_output=True)
             step = "Caddy yapılandırması geçersiz"
             subprocess.run(["caddy", "validate", "--config", e["CADDYFILE"], "--adapter", "caddyfile"],
                            check=True, timeout=15, capture_output=True, env=env)
@@ -567,6 +597,10 @@ class Manager:
             # stay ahead of the base permission. Caddy reload never opens panel ports.
             step = "güvenlik duvarı uygulanamadı"
             subprocess.run([os.path.join(e["SBIN_DIR"], "master-firewall")], check=True, timeout=30, capture_output=True, env=env)
+            if names_changed:
+                step = "yerel adlar (dnsmasq) yeniden başlatılamadı"
+                names_restarted = True
+                subprocess.run(["systemctl", "restart", "dnsmasq"], check=True, timeout=20, capture_output=True)
             step = "Caddy yeniden yüklenemedi"
             reload_started = int(time.time())
             try:
@@ -589,6 +623,11 @@ class Manager:
         except (OSError, SettingsError, subprocess.SubprocessError) as err:
             write_config(previous)
             write_extras(previous_extras)
+            write_names(previous_names)
+            if names_restarted:
+                # dnsmasq answers the previous names again (best effort; the error below names the step).
+                with contextlib.suppress(OSError, subprocess.SubprocessError):
+                    subprocess.run(["systemctl", "restart", "dnsmasq"], timeout=20, capture_output=True)
             reason = failure_reason(err)
             raise ShareError("WAN dinleyicisi/güvenlik duvarı uygulanamadı (%s%s); önceki yayın geri yüklendi."
                              % (step, ": " + reason if reason else "")) from err
@@ -654,7 +693,8 @@ def main():
     try:
         manager = Manager(args.state)
         if args.action == "wan-firewall":
-            # Konsol and the manual addresses (DD-195/252) share the HTTPS port with WebDAV and its budgets.
+            # Konsol and the applications' internet names (DD-195, rebuild phase 4) share the HTTPS port with
+            # WebDAV and its budgets.
             from master_publications import https_apps_active
             https_apps = bool(https_apps_active(manager.env))
             print(int(manager.wan_active() or https_apps), WAN_SOCKET_PER_IP, WAN_SOCKET_TOTAL,

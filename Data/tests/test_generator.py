@@ -1,8 +1,9 @@
-"""DD-271 (phase 3): the generator (master_generator). Golden units for every acceptance fixture the inspector
-accepts, with the answers fixed here, and focused tests: the names, the two start modes, folders and anchors,
-aliases, the pod, the start order and Notify=healthy, what needs Podman 5, no secret value in the plan, the env
-file and the quoting Quadlet and systemd undo (each checked against a model of the real parser), a stopped
-application, and the values the generator cannot express.
+"""DD-271 (phases 3 and 4): the generator (master_generator). Golden units for every acceptance fixture the
+inspector accepts, with the answers and the open raw rows fixed here, and focused tests: the names, the two start
+modes, folders and anchors, aliases, the pod, the publications of address and raw rows, the start order and
+Notify=healthy, what needs Podman 5, no secret value in the plan, the env file and the quoting Quadlet and systemd
+undo (each checked against a model of the real parser), a stopped application, and the values the generator
+cannot express.
 
     python3.13 -I tests/test_generator.py --yaz      rewrites tests/fixtures/uygulama/beklenen/
 """
@@ -74,6 +75,14 @@ ANSWERS = {
         "port:sayac:9000/tcp": caddy("sayac"), "port:sayac:9001/udp": RAW, "mount:sayac:/data": APP,
         "secret:sayac/token": {"value": SECRET_VALUES[1]}, "start:sayac": ROOT}},
 }
+# Rebuild phase 4: the raw rows a golden opens (context["raw"]); every other raw port stays closed. TCP and UDP on
+# the WAN address on their own numbers, a UDP port on the Tailscale address on another host port.
+TAILSCALE_IP, WAN_IP = "100.64.0.7", "203.0.113.10"
+RAW_OPEN = {
+    "qbittorrent-compose.yaml": {"qbittorrent:6881/tcp": {"host_ip": WAN_IP, "host_port": 6881},
+                                 "qbittorrent:6881/udp": {"host_ip": WAN_IP, "host_port": 6881}},
+    "sayac-deployment.yaml": {"sayac:9001/udp": {"host_ip": TAILSCALE_IP, "host_port": 19001}},
+}
 # Quadlet's supported keys (pkg/systemd/quadlet/quadlet.go): [Container] and [Network] of v4.9.3, [Pod] of v5.0.0.
 QUADLET_49_CONTAINER = frozenset(
     "AddCapability AddDevice Annotation AutoUpdate ContainerName ContainersConfModule DNS DNSOption DNSSearch DropCapability "
@@ -116,12 +125,12 @@ def context(definition, **changes):
     ports, pool = {}, 62100
     for svc in definition["services"]:
         for port in svc["ports"]:
-            if port["use"] == CADDY:
+            if port.get("use") == CADDY:
                 ports["%s:%d/%s" % (svc["name"], port["port"], port["protocol"])] = pool
                 pool += 1
     secrets = {s["name"]: master_generator.secret_name(app, hashlib.sha256(s["name"].encode()).hexdigest()[:8])
                for s in definition["secrets"]}
-    value = {"app": app, "images": images, "ports": ports, "secrets": secrets, "stopped": False, "podman": (5, 4),
+    value = {"app": app, "images": images, "ports": ports, "raw": {}, "secrets": secrets, "stopped": False, "podman": (5, 4),
              "env": dict(ENV)}
     value.update(changes)
     return value
@@ -141,7 +150,7 @@ def write_golden():
     for fixture in sorted(ANSWERS):
         folder = GOLDEN / Path(fixture).stem
         folder.mkdir(parents=True, exist_ok=True)
-        files = golden(render(definition_of(fixture)[0]))
+        files = golden(render(definition_of(fixture)[0], raw=RAW_OPEN.get(fixture, {})))
         for stale in folder.iterdir():
             if stale.name not in files:
                 stale.unlink()
@@ -246,7 +255,7 @@ class GoldenTests(unittest.TestCase):
         for fixture in sorted(ANSWERS):
             with self.subTest(fixture=fixture):
                 folder = GOLDEN / Path(fixture).stem
-                files = golden(render(definition_of(fixture)[0]))
+                files = golden(render(definition_of(fixture)[0], raw=RAW_OPEN.get(fixture, {})))
                 found = sorted(p.name for p in folder.iterdir()) if folder.is_dir() else []
                 hint = "run `python3.13 -I tests/test_generator.py --yaz` and review the difference"
                 self.assertEqual(found, sorted(files), hint)
@@ -257,7 +266,7 @@ class GoldenTests(unittest.TestCase):
         for fixture in sorted(ANSWERS):
             with self.subTest(fixture=fixture):
                 definition, secrets = definition_of(fixture)
-                plan = render(definition)
+                plan = render(definition, raw=RAW_OPEN.get(fixture, {}))
                 text = json.dumps(plan, ensure_ascii=False)
                 for value in list(secrets.values()) + list(SECRET_VALUES):
                     self.assertNotIn(value, text)
@@ -541,22 +550,78 @@ class NetworkTests(unittest.TestCase):
                          (["konsol-sayac.network"], ["127.0.0.1:62100:9000/tcp"]))
         self.assertIn("--network-alias=sayac", values(unit, "Container", "PodmanArgs"))
 
-    def test_only_addresses_are_published_and_only_on_loopback(self):
+    def test_publications_follow_the_rows_and_never_the_answers(self):
         definition = definition_of("qbittorrent-compose.yaml")[0]
         plan = render(definition)
         self.assertEqual(plan["publications"], [{"service": "qbittorrent", "port": 8080, "protocol": "tcp", "host_ip": "127.0.0.1",
                                                  "host_port": 62100}])
         unit = plan["units"]["konsol-aktarim_qbittorrent.container"]
-        self.assertEqual(values(unit, "Container", "PublishPort"), ["127.0.0.1:62100:8080/tcp"], "raw ports stay closed")
-        with self.assertRaisesRegex(GeneratorError, "qbittorrent:8080/tcp"):
-            render(definition, ports={})
-        two = definition_of("ornek-compose.yaml")[0]
-        two["services"][0]["ports"][1]["use"] = CADDY
-        with self.assertRaises(GeneratorError):
-            render(two, ports={"ornek:8080/tcp": 62100, "ornek:8092/tcp": 62100})
-        # A pool port left over from an earlier edit is the engine's business; nothing publishes it.
-        extra = render(definition, ports={"qbittorrent:8080/tcp": 62100, "qbittorrent:6881/tcp": 62101})
-        self.assertEqual(len(extra["publications"]), 1)
+        self.assertEqual(values(unit, "Container", "PublishPort"), ["127.0.0.1:62100:8080/tcp"], "closed raw rows publish nothing")
+        # The record's definition keeps each port's number and protocol only: it renders the same.
+        stored = copy.deepcopy(definition)
+        for svc in stored["services"]:
+            svc["ports"] = [{"port": p["port"], "protocol": p["protocol"]} for p in svc["ports"]]
+        self.assertEqual(render(stored, ports=context(definition)["ports"]), plan)
+        # An open raw row: on its address and host port with its own protocol, and no pool port (UDP included).
+        raw = {"qbittorrent:6881/tcp": {"host_ip": WAN_IP, "host_port": 16881},
+               "qbittorrent:6881/udp": {"host_ip": TAILSCALE_IP, "host_port": 16881}}
+        opened = render(stored, ports=context(definition)["ports"], raw=raw)
+        self.assertEqual(values(opened["units"]["konsol-aktarim_qbittorrent.container"], "Container", "PublishPort"),
+                         ["127.0.0.1:62100:8080/tcp", WAN_IP + ":16881:6881/tcp", TAILSCALE_IP + ":16881:6881/udp"])
+        self.assertEqual([(r["host_ip"], r["protocol"]) for r in opened["publications"]],
+                         [("127.0.0.1", "tcp"), (WAN_IP, "tcp"), (TAILSCALE_IP, "udp")])
+        # A port whose address has no pool port publishes nothing; the engine keeps the two together.
+        self.assertEqual(render(stored, ports={})["publications"], [])
+
+    def test_publications_that_cannot_be_written_are_refused(self):
+        definition = definition_of("qbittorrent-compose.yaml")[0]
+        wan = lambda port: {"host_ip": WAN_IP, "host_port": port}  # noqa: E731
+        cases = {
+            "an address on UDP": ({"qbittorrent:8080/tcp": 62100, "qbittorrent:6881/udp": 62101}, {}),
+            "a pool port and a raw row": ({"qbittorrent:8080/tcp": 62100}, {"qbittorrent:8080/tcp": wan(8080)}),
+            "a pool port off the definition": ({"qbittorrent:8080/tcp": 62100, "yok:1/tcp": 62101}, {}),
+            "a raw row off the definition": ({}, {"yok:1/udp": wan(1)}),
+            "one pool port twice": ({"qbittorrent:8080/tcp": 62100, "qbittorrent:6881/tcp": 62100}, {}),
+            "one listener twice": ({}, {"qbittorrent:8080/tcp": wan(7000), "qbittorrent:6881/tcp": wan(7000)}),
+        }
+        for address in ("127.0.0.1", "0.0.0.0", "224.0.0.1", "169.254.1.1", "::1", "2001:db8::1", " " + WAN_IP, "", 7):
+            cases["address %r" % (address,)] = ({}, {"qbittorrent:6881/udp": {"host_ip": address, "host_port": 6881}})
+        for port in (0, 65536, "6881", True, None):
+            cases["host port %r" % (port,)] = ({}, {"qbittorrent:6881/udp": {"host_ip": WAN_IP, "host_port": port}})
+        cases["a row without its port"] = ({}, {"qbittorrent:6881/udp": {"host_ip": WAN_IP}})
+        for what, (ports, raw) in cases.items():
+            with self.subTest(what=what), self.assertRaises(GeneratorError):
+                render(definition, ports=ports, raw=raw)
+        # The same host port on two addresses or two protocols is two listeners.
+        both = render(definition, ports={}, raw={"qbittorrent:6881/tcp": wan(6881), "qbittorrent:6881/udp": wan(6881),
+                                                 "qbittorrent:8080/tcp": {"host_ip": TAILSCALE_IP, "host_port": 6881}})
+        self.assertEqual(len(both["publications"]), 3)
+
+    def test_a_pod_publishes_its_raw_rows_on_the_pod(self):
+        definition = compose("""\
+            apiVersion: v1
+            kind: Pod
+            metadata:
+              name: ikili
+            spec:
+              containers:
+              - name: web
+                image: registry.example/ikili/web:1
+                ports:
+                - containerPort: 8080
+              - name: ses
+                image: registry.example/ikili/ses:2
+                ports:
+                - containerPort: 5000
+                  protocol: UDP
+            """, {"name": "ikili", "answers": {"port:web:8080/tcp": caddy("ikili"), "port:ses:5000/udp": RAW,
+                                              "start:web": ROOT, "start:ses": ROOT}})
+        plan = render(definition, raw={"ses:5000/udp": {"host_ip": TAILSCALE_IP, "host_port": 15000}})
+        self.assertEqual(values(plan["units"]["konsol-ikili.pod"], "Pod", "PublishPort"),
+                         ["127.0.0.1:62100:8080/tcp", TAILSCALE_IP + ":15000:5000/udp"])
+        for service in ("web", "ses"):
+            self.assertEqual(values(plan["units"]["konsol-ikili_%s.container" % service], "Container", "PublishPort"), [])
+        self.assertEqual(plan["needs_podman5"], ["Kubernetes dosyası birden çok konteynerli bir Pod (Quadlet .pod)"])
 
 
 class OrderTests(unittest.TestCase):
@@ -771,7 +836,8 @@ class RefusedInputTests(unittest.TestCase):
         ctx = context(definition)
         changes = [{"app": "baska"}, {"stopped": "no"}, {"images": {}},
                    {"images": dict(ctx["images"], web="ghcr.io/example/baska@sha256:" + "a" * 64)},
-                   {"images": dict(ctx["images"], web="ghcr.io/example/notlar:1.5")}, {"ports": None}]
+                   {"images": dict(ctx["images"], web="ghcr.io/example/notlar:1.5")}, {"ports": None}, {"raw": None},
+                   {"raw": []}]
         for key in ("SERVER_ROOT", "STATE_FILE", "DOWNLOADS_UID", "KONTEYNER_BRIDGE_PREFIX"):
             changes.append({"env": {k: v for k, v in ENV.items() if k != key}})
         changes += [{"env": dict(ENV, DOWNLOADS_UID="0")}, {"env": dict(ENV, SBIN_DIR="/usr/local/../sbin")},

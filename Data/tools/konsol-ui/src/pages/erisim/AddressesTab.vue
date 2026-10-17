@@ -1,12 +1,14 @@
-<!-- Erişim → Adresler: the publications (GET /api/konsol/yayinlar) with their Tailscale and internet names,
-     state, certificate and who guards them, each opening the Yayınla flow; manual addresses are removed
-     through a plan. The local DNS names (GET /api/konsol/adlar): switches, the operator's records and the
-     forwarding of other names, collected as a draft and saved through the plan review (they commit at
-     once). The local domain change: plan, apply, then a 300 s confirmation from the new address. WebDAV's row
-     leads to Dosyalar → Paylaşımlar for what each folder allows (the publication and its HTTPS name stay here). -->
+<!-- Erişim → Adresler: every access row (rebuild phase 4) from Erişim's read model: Konsol, Paylaşımlar and each
+     application port, with its cells (Yalnız bu sunucu, Tailscale, İnternet). "Düzenle" opens the row's sheet
+     (AccessRowSheet: the form, then the settings plan); "Adres aç" gives a raw TCP port a Tailscale name. The
+     sheet is in the address (?satir=<row id>), so a warning's Düzelt, the firewall's fixed rows, an application's
+     Portlar tab and a locked local name open it from anywhere. The local DNS names (GET /api/konsol/adlar):
+     switches, the operator's records and the forwarding of other names, collected as a draft and saved through
+     the plan review (they commit at once); an application's name is locked and links to its row. The local
+     domain change: plan, apply, then a 300 s confirmation from the new address. -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { RouterLink, useRouter } from "vue-router";
+import { RouterLink } from "vue-router";
 import { Icon } from "../../components/icons";
 import Card from "../../components/ui/Card.vue";
 import EmptyState from "../../components/ui/EmptyState.vue";
@@ -14,34 +16,22 @@ import Field from "../../components/ui/Field.vue";
 import Modal from "../../components/ui/Modal.vue";
 import StatusPill from "../../components/ui/StatusPill.vue";
 import Switch from "../../components/ui/Switch.vue";
-import type { Tone } from "../../components/ui/types";
 import SettingsPlanSheet from "./SettingsPlanSheet.vue";
-import { readNames, readPublications } from "../../api/erisim";
-import { CANDIDATE_KIND, DOMAIN_RE, publicationState } from "../../access";
-import { filesRoute } from "../../sections";
+import AccessRowSheet, { type RowMode, type RowOutcome } from "./AccessRowSheet.vue";
+import { readNames } from "../../api/erisim";
+import { DOMAIN_RE, portKey } from "../../access";
+import { CELL_TEXT, CELL_TONE } from "../../apps";
+import { accessRoute, filesRoute } from "../../sections";
 import { live } from "../../live";
 import { useLeaveGuard } from "../../leave";
-import { updateQuery } from "../../query";
+import { useQueryParam } from "../../query";
 import { tailnetKonsol, tailscaleAdmin } from "../../links";
-import { UNKNOWN, date } from "../../format";
-import type { Adlar, AyarIstegi, DnsKaydi, DnsTaslagi, YayinAdayi, Yayinlar } from "../../api/sema";
+import { UNKNOWN } from "../../format";
+import type { Adlar, AyarIstegi, AyarSonucu, DnsKaydi, DnsTaslagi, ErisimHucresi, Hizmet } from "../../api/sema";
 
-const router = useRouter();
-
-// ---- reads
-const pubs = ref<Yayinlar | null>(null);
-const pubsError = ref("");
+// ---- reads: the access rows come with Erişim's read model (live.erisim, read again after every change)
 const names = ref<Adlar | null>(null);
 const namesError = ref("");
-
-async function loadPubs(): Promise<void> {
-  try {
-    pubs.value = await readPublications();
-    pubsError.value = "";
-  } catch (err) {
-    pubsError.value = err instanceof Error ? err.message : String(err);
-  }
-}
 
 async function loadNames(): Promise<void> {
   try {
@@ -52,36 +42,64 @@ async function loadNames(): Promise<void> {
   }
 }
 
-const load = () => Promise.all([loadPubs(), loadNames()]);
-onMounted(() => void load());
-watch(() => live.ayarSurumu, () => void load());
+onMounted(() => void loadNames());
+watch(() => live.ayarSurumu, () => void loadNames());
 
 const locked = computed(() => Boolean(live.bekleyen));
+const e = computed(() => live.erisim);
 
-// ---- publications
-const STATE_TONE: Record<string, Tone> = { ready: "ok", pending: "accent", error: "danger", http: "warning", disabled: "neutral" };
-const rows = computed(() =>
-  (pubs.value?.adaylar ?? []).map((c) => ({
-    c,
-    kind: CANDIDATE_KIND[c.tur] ?? c.tur,
-    state: publicationState(c),
-    tone: (c.servis ? STATE_TONE[c.durum] : "neutral") ?? "neutral",
-    manual: Boolean(c.servis?.startsWith("elle-")),
-    internet: c.internet && c.alan_adi ? c.alan_adi : "Kapalı",
-  })),
+// ---- the access rows
+/** A row whose home is here: Konsol and Paylaşımlar (their `web`), each application port (its `satir`). */
+const accessRows = computed<Hizmet[]>(() =>
+  (e.value?.hizmetler ?? []).filter((h) => h.tur === "konsol" || h.tur === "paylasim" || (h.tur === "uygulama" && h.satir !== null && Boolean(h.uygulama) && Boolean(h.anahtar))),
 );
+const editable = (h: Hizmet) => (h.tur === "uygulama" ? Boolean(h.satir && h.anahtar && portKey(h.anahtar)) : Boolean(h.web));
+const canOpenAddress = (h: Hizmet) => h.tur === "uygulama" && h.satir?.tur === "ham" && portKey(h.anahtar ?? "")?.protokol === "tcp";
+function kindOf(h: Hizmet): string {
+  if (h.tur === "konsol") return "Konsol · Adres";
+  if (h.tur === "paylasim") return "WebDAV · Adres";
+  return h.aciklama;
+}
+const COLUMNS = [
+  { key: "yerel", title: "Yalnız bu sunucu" },
+  { key: "tailscale", title: "Tailscale" },
+  { key: "internet", title: "İnternet" },
+] as const;
+const cellTone = (c: ErisimHucresi) => (c.uyari ? "warning" : CELL_TONE[c.durum] ?? "neutral");
+const cellText = (c: ErisimHucresi) => CELL_TEXT[c.durum] ?? UNKNOWN;
 
-function edit(c: YayinAdayi): void {
-  updateQuery(router, { yayinla: c.id });
+// The open sheet: ?satir=<row id> (a deep link opens it too); "Adres aç" is its other mode.
+const satir = useQueryParam<string>("satir", null, "");
+const mode = ref<RowMode>("duzenle");
+const sheetRow = computed(() => (satir.value ? accessRows.value.find((h) => h.id === satir.value && editable(h)) ?? null : null));
+const missingRow = computed(() => Boolean(satir.value && e.value && !sheetRow.value));
+watch(satir, (id) => {
+  if (!id) mode.value = "duzenle";
+});
+
+function edit(h: Hizmet, m: RowMode = "duzenle"): void {
+  note.value = "";
+  mode.value = m;
+  satir.value = h.id;
 }
 
-function addManual(): void {
-  updateQuery(router, { yayinla: "yeni" });
+function closeRow(): void {
+  satir.value = "";
 }
 
-// ---- the plan sheet (DNS draft, the local domain, a manual address's removal)
+const OUTCOME: Record<RowOutcome, [string, string]> = {
+  kaydedildi: ["Değişiklik kaydedildi.", "Değişiklik uygulandı; 60 saniye içinde yukarıdaki banttan onaylayın."],
+  kaldirildi: ["Adres kaldırıldı.", "Adres kaldırıldı; 60 saniye içinde yukarıdaki banttan onaylayın."],
+  acildi: ["Adres açıldı.", "Adres açıldı; 60 saniye içinde yukarıdaki banttan onaylayın."],
+};
+function rowApplied(result: AyarSonucu, outcome: RowOutcome): void {
+  note.value = OUTCOME[outcome][result.pending ? 1 : 0];
+  satir.value = "";
+}
+
+// ---- the plan sheet (DNS draft, the local domain)
 interface Sheet {
-  kind: "dns" | "alan" | "sil";
+  kind: "dns" | "alan";
   title: string;
   description: string;
   request: AyarIstegi;
@@ -91,27 +109,13 @@ interface Sheet {
 const sheet = ref<Sheet | null>(null);
 const note = ref("");
 
-function removeManual(c: YayinAdayi): void {
-  if (!pubs.value || !c.servis) return;
-  const names = [c.yerel_ad, c.internet && c.alan_adi ? "https://" + c.alan_adi : ""].filter(Boolean).join(" ve ");
-  sheet.value = {
-    kind: "sil",
-    title: `${c.ad} kaldırılsın mı?`,
-    description: `${names || "Adı"} kapanır. ${c.hedef ?? "Hedef"} üzerindeki uygulama çalışmaya devam eder.`,
-    request: { revision: pubs.value.revizyon, web: { service: c.servis, sil: true } },
-    applyLabel: "Kaldır",
-    danger: true,
-  };
-}
-
 function applied(): void {
   const kind = sheet.value?.kind;
   sheet.value = null;
   if (kind === "dns") {
     draft.value = null;
     note.value = "Yerel adlar kaydedildi.";
-  } else if (kind === "sil") note.value = "Adres kaldırıldı.";
-  else if (kind === "alan") {
+  } else if (kind === "alan") {
     domainInput.value = "";
     domainTried.value = false;
     note.value = "Alan adı değişikliği uygulandı; yeni adresten 5 dakika içinde onaylayın.";
@@ -119,25 +123,29 @@ function applied(): void {
 }
 
 // ---- local DNS names
-const SOURCE: Record<string, string> = { base: "Temel", elle: "Elle adres" };
+const SOURCE: Record<string, string> = { base: "Temel", uygulama: "Uygulama" };
 const sourceText = (source: string): string => SOURCE[source] ?? source;
 const tailscaleV4 = computed(() => live.erisim?.ozet.tailscale.ipv4 || live.kaynaklar?.net?.tailscale || "");
+const wanV4 = computed(() => live.erisim?.ozet.internet.ipv4 || live.kaynaklar?.net?.wan || "");
 
 const nameRows = computed(() => {
-  const out: { ad: string; aileler: number[]; hedef: string; kaynak: string; kilitli: boolean }[] = [];
+  const out: { ad: string; aileler: number[]; hedef: string; kaynak: string; kilitli: boolean; satir: string | null }[] = [];
   for (const a of names.value?.adlar ?? []) {
     let row = out.find((r) => r.ad === a.ad);
     if (!row) {
-      row = { ad: a.ad, aileler: [], hedef: "", kaynak: sourceText(a.kaynak), kilitli: a.kilitli };
+      row = { ad: a.ad, aileler: [], hedef: "", kaynak: sourceText(a.kaynak), kilitli: a.kilitli, satir: a.satir };
       out.push(row);
     }
     if (a.aile) row.aileler.push(a.aile);
     const target = a.hedef === "tailscale" ? `Tailscale adresi${tailscaleV4.value ? " · " + tailscaleV4.value : ""}` : a.hedef;
     if (target && !row.hedef.includes(target)) row.hedef = row.hedef ? `${row.hedef} · ${target}` : target;
     row.kilitli ||= a.kilitli;
+    row.satir ??= a.satir;
   }
   return out;
 });
+/** A locked name's own row in Adresler (an application's), or "" for Konsol's (it is never switched off). */
+const nameRow = (r: { satir: string | null }) => (r.satir && r.satir !== "panel" ? r.satir : "");
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 const savedDns = computed<DnsTaslagi | null>(() => {
@@ -225,7 +233,7 @@ const recordLabel = ref("");
 const recordTarget = ref<"tailscale" | "ip">("tailscale");
 const recordIp = ref("");
 const recordTried = ref(false);
-const domain = computed(() => names.value?.alan || pubs.value?.alan || live.kaynaklar?.domain || "");
+const domain = computed(() => names.value?.alan || e.value?.alan || live.kaynaklar?.domain || "");
 const LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
 const recordName = computed(() => {
   const text = recordLabel.value.trim().toLowerCase().replace(/\.$/, "");
@@ -357,50 +365,40 @@ const panelAddress = (d: string) => tailnetKonsol(d);
       <span>Bekleyen bir ayar değişikliği var; onaylanana ya da geri alınana kadar yeni değişiklik uygulanamaz.</span>
     </p>
 
-    <!-- publications -->
-    <section class="card table-card" aria-labelledby="yayin-baslik" data-testid="publications">
+    <!-- the access rows -->
+    <section class="card table-card" aria-labelledby="adres-baslik" data-testid="access-rows">
       <div class="card-head">
-        <h2 id="yayin-baslik" class="card-title">Adresler ve erişim</h2>
-        <button type="button" class="btn btn-secondary btn-sm" :disabled="locked" data-testid="add-manual" @click="addManual">
-          <Icon name="plus" :size="16" />Başka bir port
-        </button>
+        <h2 id="adres-baslik" class="card-title">Adresler ve ham portlar</h2>
       </div>
-      <p v-if="pubsError" class="form-error" role="alert">{{ pubsError }}</p>
-      <ul v-if="pubs?.hatalar.length" class="notice-list">
-        <li v-for="(x, i) in pubs.hatalar" :key="i" class="warn-text">{{ x }}</li>
+      <p class="meter-note">Bir konteyner portuna dışarıdan yalnız buradan ulaşılır: bir adres (Tailscale adı, isteğe bağlı Tailscale portu ve internet adı) ya da bir ham port (kapalı, Tailscale ya da internet).</p>
+      <p v-if="missingRow" class="notice notice-warning" role="note" data-testid="row-missing">
+        <Icon name="alert" class="notice-icon" /><span>Bu erişim satırı bulunamadı ya da düzenlenemiyor: <span class="mono">{{ satir }}</span></span>
+      </p>
+      <ul v-if="e?.hatalar.length" class="notice-list">
+        <li v-for="(x, i) in e.hatalar" :key="i" class="warn-text">{{ x }}</li>
       </ul>
-      <div v-if="rows.length" class="table-wrap">
-        <table class="data-table pub-table">
+      <div v-if="accessRows.length" class="table-wrap">
+        <table class="data-table address-table">
           <thead>
             <tr>
-              <th scope="col">Uygulama</th>
-              <th scope="col">Tailscale</th>
-              <th scope="col">İnternet</th>
-              <th scope="col">Durum</th>
+              <th scope="col">Adres</th>
+              <th v-for="c in COLUMNS" :key="c.key" scope="col">{{ c.title }}</th>
               <th scope="col"><span class="sr-only">Eylemler</span></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="r in rows" :key="r.c.id" :data-yayin="r.c.id">
+            <tr v-for="h in accessRows" :key="h.id" :data-satir="h.id">
               <th scope="row" class="col-main">
-                <strong>{{ r.c.ad }}</strong>
-                <span class="cell-sub">{{ r.kind }}<template v-if="r.c.hedef"> · <span class="mono">{{ r.c.hedef }}</span></template></span>
-                <RouterLink v-if="r.c.tur === 'paylasim'" :to="filesRoute('paylasimlar')" class="cell-note" data-testid="share-folders">Klasör izinleri ve süreler: Dosyalar → Paylaşımlar</RouterLink>
+                <strong>{{ h.ad }}</strong>
+                <span class="cell-sub">{{ kindOf(h) }}</span>
+                <RouterLink v-if="h.tur === 'paylasim'" :to="filesRoute('paylasimlar')" class="cell-note" data-testid="share-folders">Klasör izinleri ve süreler: Dosyalar → Paylaşımlar</RouterLink>
               </th>
-              <td data-label="Tailscale" data-hucre="tailscale">
-                <span v-if="r.c.servis && r.c.yerel_ad" class="mono">{{ r.c.yerel_ad }}</span>
-                <span class="cell-note">{{ r.c.servis ? (r.c.tailscale ? "açık" : "kapalı") : "Yok" }}</span>
-              </td>
-              <td data-label="İnternet" data-hucre="internet">
-                <span :class="{ mono: r.c.internet && r.c.alan_adi }">{{ r.internet }}</span>
-                <span v-if="r.c.internet" class="cell-note" data-testid="guard">{{ r.c.giris }}</span>
-              </td>
-              <td data-label="Durum" data-hucre="durum">
+              <td v-for="c in COLUMNS" :key="c.key" :data-label="c.title" :data-hucre="c.key">
                 <span class="cell-stack">
-                  <StatusPill :tone="r.tone">{{ r.state }}</StatusPill>
-                  <span v-if="r.c.mesaj && r.c.servis" class="cell-note">{{ r.c.mesaj }}</span>
-                  <span v-if="r.c.bitis" class="cell-note" data-testid="cert">Sertifika: {{ date(r.c.bitis) }}</span>
-                  <span v-if="!r.c.kullanilabilir && r.c.neden" class="cell-note warn-text">{{ r.c.neden }}</span>
+                  <StatusPill :tone="cellTone(h[c.key])">{{ cellText(h[c.key]) }}</StatusPill>
+                  <span v-for="a in h[c.key].adresler" :key="a" class="mono cell-addr">{{ a }}</span>
+                  <span v-if="h[c.key].uyari" class="cell-note warn-text">{{ h[c.key].uyari }}</span>
+                  <span v-if="h[c.key].not" class="cell-note">{{ h[c.key].not }}</span>
                 </span>
               </td>
               <td class="col-act">
@@ -408,23 +406,23 @@ const panelAddress = (d: string) => tailnetKonsol(d);
                   <button
                     type="button"
                     class="btn btn-secondary btn-sm"
-                    :disabled="locked || !r.c.kullanilabilir"
-                    :aria-label="`${r.c.ad}: ${r.c.servis ? 'erişimi düzenle' : 'yayınla'}`"
+                    :disabled="locked || !editable(h)"
+                    :aria-label="`${h.ad}: düzenle`"
                     data-eylem="duzenle"
-                    @click="edit(r.c)"
+                    @click="edit(h)"
                   >
-                    {{ r.c.servis ? "Düzenle" : "Yayınla" }}
+                    Düzenle
                   </button>
                   <button
-                    v-if="r.manual"
+                    v-if="canOpenAddress(h)"
                     type="button"
-                    class="btn btn-danger-quiet btn-sm"
+                    class="btn btn-secondary btn-sm"
                     :disabled="locked"
-                    :aria-label="`${r.c.ad} adresini kaldır`"
-                    data-eylem="kaldir"
-                    @click="removeManual(r.c)"
+                    :aria-label="`${h.ad}: adres aç`"
+                    data-eylem="adres-ac"
+                    @click="edit(h, 'adres-ac')"
                   >
-                    Kaldır
+                    Adres aç
                   </button>
                 </span>
               </td>
@@ -432,10 +430,10 @@ const panelAddress = (d: string) => tailnetKonsol(d);
           </tbody>
         </table>
       </div>
-      <EmptyState v-else-if="pubs" title="Yayımlanabilecek bir uygulama yok" icon="globe" />
-      <p v-else-if="!pubsError" class="meter-note">Okunuyor…</p>
+      <EmptyState v-else-if="e" title="Erişim satırı yok" icon="globe" />
+      <p v-else class="meter-note">Okunuyor…</p>
       <p class="meter-note" data-testid="dns-hint">
-        İnternet adları için alan adı sağlayıcınızda bir A kaydı gerekir: ad → <span class="mono">{{ pubs?.wan_ipv4 || "sunucunun internet IPv4 adresi" }}</span>, proxy kapalı (DNS only), AAAA kaydı yok.
+        İnternet adları için alan adı sağlayıcınızda bir A kaydı gerekir: ad → <span class="mono">{{ wanV4 || "sunucunun internet IPv4 adresi" }}</span>, proxy kapalı (DNS only), AAAA kaydı yok.
       </p>
     </section>
 
@@ -447,7 +445,7 @@ const panelAddress = (d: string) => tailnetKonsol(d);
           <Icon name="plus" :size="16" />Kayıt ekle
         </button>
       </div>
-      <p class="meter-note">.{{ domain || UNKNOWN }} altındaki adları sunucunun DNS'i yanıtlar. Bir adı kapatmak hizmeti durdurmaz; Konsol'un kendi adı kapatılamaz.</p>
+      <p class="meter-note">.{{ domain || UNKNOWN }} altındaki adları sunucunun DNS'i yanıtlar. Bir adı kapatmak hizmeti durdurmaz; Konsol'un kendi adı kapatılamaz, bir uygulamanın adı kendi satırında değişir.</p>
       <p v-if="namesError" class="form-error" role="alert">{{ namesError }}</p>
       <ul v-if="names?.hatalar.length" class="notice-list">
         <li v-for="(x, i) in names.hatalar" :key="i" class="warn-text">{{ x }}</li>
@@ -476,7 +474,8 @@ const panelAddress = (d: string) => tailnetKonsol(d);
                   :disabled="locked || r.kilitli"
                   @update:model-value="setName(r.ad, $event)"
                 />
-                <span v-if="r.kilitli" class="cell-note">Konsol'un adı · kapatılamaz</span>
+                <RouterLink v-if="r.kilitli && nameRow(r)" :to="accessRoute('adresler', nameRow(r))" class="cell-note" data-testid="name-row">Uygulamanın adı · Adresler'de değişir</RouterLink>
+                <span v-else-if="r.kilitli" class="cell-note">Konsol'un adı · kapatılamaz</span>
               </td>
               <td class="col-act"></td>
             </tr>
@@ -594,6 +593,21 @@ const panelAddress = (d: string) => tailnetKonsol(d);
         <p class="mono plan-address">{{ panelAddress(sheetDomain) }}</p>
       </template>
     </SettingsPlanSheet>
+
+    <AccessRowSheet
+      :row="sheetRow"
+      :mode="mode"
+      :rows="accessRows"
+      :names="names"
+      :revision="e?.revizyon ?? ''"
+      :domain="domain"
+      :wan="wanV4"
+      :tailscale-ip="tailscaleV4"
+      :locked="locked"
+      @close="closeRow"
+      @mode="mode = $event"
+      @applied="rowApplied"
+    />
 
     <Modal :open="recordOpen" variant="sheet" :title="recordEditing ? 'Kaydı düzenle' : 'Yerel ad ekle'" :description="`.${domain} altında bir ad; sunucunun DNS'i yanıtlar.`" @close="recordOpen = false">
       <form id="kayit-formu" class="form-stack" novalidate @submit.prevent="saveRecord">

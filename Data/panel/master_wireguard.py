@@ -6,6 +6,12 @@ in master_api's table. Nothing here opens a port or touches the host directly: e
 through the base's tool master-wg (same validation, same lock, same live apply), run with the
 backend's environment. WireGuard's keys (WG_*) come from state.env like every other base key.
 
+DD-275: the actions that change who reaches what (start or stop WireGuard, add, remove, open or close a
+network, regenerate its key) are the settings transaction's "wireguard" section (master_settings): this
+module checks the request (section) and words its plan (plan_items, plan_notes); the settings worker runs
+master-wg in its caller mode. Devices, their DNS and keepalive, a network's DNS and name stay immediate
+routes here.
+
 WireGuard is installed with the base and off (K6): with no network it is not set up, and the first
 network created in Konsol turns it on. "Stopped" is WG_STOPPED_FILE (master-wg durdur / baslat,
 DD-229): the networks are down and the firewall drops their ports, forwarding and NAT.
@@ -31,6 +37,24 @@ HANDSHAKE_FRESH = 180
 CONFIRM_WORD = "onayla"
 KEYS = ("SBIN_DIR", "WG_NETWORKS_FILE", "WG_STOPPED_FILE", "WG_NETWORKS_MAX", "WG_CLIENT_DNS_DEFAULT",
         "WG_CLIENT_KEEPALIVE_DEFAULT", "WG_MTU", "WG_PORT_DEFAULT")
+# The networks file's columns (DD-136, DD-177): interface, UDP port, the fixed scope "inet", server and
+# subnet IPv4, server and subnet IPv6, the default DNS and the name.
+FIELDS = ("iface", "port", "scope", "server4", "subnet4", "server6", "subnet6", "dns", "label")
+
+# DD-275: the settings transaction's WireGuard section. Decision 4: turning WireGuard on, adding a network
+# and opening one wait for the timed confirmation and are rolled back without it; stopping, closing,
+# removing and regenerating commit at once. Removing and regenerating cannot be undone: the typed word.
+ACTIONS = ("baslat", "durdur", "ag-ekle", "ag-kaldir", "ag-ac", "ag-kapat", "yeniden-uret")
+OPENING = ("baslat", "ag-ekle", "ag-ac")
+TYPED = ("ag-kaldir", "yeniden-uret")
+NETWORK_ACTIONS = ("ag-kaldir", "ag-ac", "ag-kapat", "yeniden-uret")
+SECTION_KEYS = ("SBIN_DIR", "WG_NETWORKS_FILE", "WG_STOPPED_FILE", "WG_NETWORKS_MAX", "WG_CONF_DIR", "WG_ADDR_BASE4")
+TYPED_TEXT = "Bu işlem geri alınamaz; uygulamak için %s yazın." % CONFIRM_WORD
+STOPPED_TEXT = "WireGuard durduruldu; önce Konsol → Erişim → WireGuard'dan başlatın"
+# master-wg's message when it gives none.
+FAILED = {"baslat": "WireGuard başlatılamadı.", "durdur": "WireGuard durdurulamadı.", "ag-ekle": "Ağ eklenemedi.",
+          "ag-kaldir": "Ağ kaldırılamadı.", "ag-ac": "Ağ açılamadı.", "ag-kapat": "Ağ kapatılamadı.",
+          "yeniden-uret": "Ağ yeniden üretilemedi."}
 
 
 class WireGuardError(Exception):
@@ -60,37 +84,257 @@ def dns_provider(dns):
     return "Özel"
 
 
-def keys(env):
+def keys(env, names=KEYS):
     """WireGuard's base keys; a missing one means the installer did not finish."""
-    missing = [k for k in KEYS if not env.get(k)]
+    missing = [k for k in names if not env.get(k)]
     if missing:
         raise WireGuardError(503, "WireGuard ayarı eksik (%s); kurulumu yeniden çalıştırın." % ", ".join(missing))
     return env
 
 
-def registered(env):
-    """Interfaces in the networks file (WG_NETWORKS_FILE), in file order; [] when it does not exist.
-    A line that is not a network's raises ValueError: health and repair report it, they never guess."""
-    path = env["WG_NETWORKS_FILE"]
-    try:
-        with open(path, encoding="utf-8") as fh:
-            text = fh.read(65536)
-    except FileNotFoundError:
-        return []
-    names = []
+def parse(text):
+    """The networks file's lines as FIELDS dicts (port an integer), in file order. A line that is not a
+    network's raises ValueError: health, repair and the settings plan report it, they never guess."""
+    rows = []
     for line in text.splitlines():
         if not line:
             continue
         fields = line.split("\t")
-        if len(fields) != 9 or not IFACE_RE.fullmatch(fields[0]) or fields[2] != "inet" or fields[0] in names:
+        if (len(fields) != 9 or not IFACE_RE.fullmatch(fields[0]) or not re.fullmatch(r"[0-9]{1,5}", fields[1])
+                or fields[2] != "inet" or fields[0] in {r["iface"] for r in rows}):
             raise ValueError("WireGuard ağ kaydı")
-        names.append(fields[0])
-    return names
+        rows.append(dict(zip(FIELDS, fields), port=int(fields[1])))
+    return rows
+
+
+def records(env):
+    """The networks in the networks file (WG_NETWORKS_FILE); [] when it does not exist."""
+    try:
+        with open(env["WG_NETWORKS_FILE"], encoding="utf-8") as fh:
+            return parse(fh.read(65536))
+    except FileNotFoundError:
+        return []
+
+
+def registered(env):
+    """Interfaces in the networks file, in file order; [] when it does not exist."""
+    return [r["iface"] for r in records(env)]
 
 
 def stopped(env):
     """DD-229: WireGuard as a whole is stopped (master-wg durdur)."""
     return os.path.lexists(env["WG_STOPPED_FILE"])
+
+
+def stopped_list(env):
+    """The networks master-wg durdur wrote down as open (baslat opens these); [] without the marker."""
+    try:
+        with open(env["WG_STOPPED_FILE"], encoding="utf-8") as fh:
+            return [line for line in fh.read(4096).splitlines() if IFACE_RE.fullmatch(line)]
+    except FileNotFoundError:
+        return []
+
+
+def dns_addresses(dns):
+    """A network's default DNS: 1–8 IPv4/IPv6 addresses separated by commas, as "a, b"."""
+    if not isinstance(dns, str) or not dns.strip() or len(dns) > 512 or any(ord(c) < 32 for c in dns):
+        raise WireGuardError(400, "Geçerli DNS gerekli.")
+    try:
+        addresses = [s.strip() for s in dns.split(",")]
+        if not 1 <= len(addresses) <= 8 or any("%" in s for s in addresses):
+            raise ValueError("DNS")
+        for address in addresses:
+            ipaddress.ip_address(address)
+    except ValueError:
+        raise WireGuardError(400, "DNS için en fazla 8 geçerli IPv4/IPv6 adresi yazın")
+    return ", ".join(addresses)
+
+
+def check_label(label):
+    """A network's name: at most 64 bytes, no control character, no leading or trailing space."""
+    if (not isinstance(label, str) or len(label.encode("utf-8")) > 64 or label != label.strip()
+            or any(ord(c) < 32 or ord(c) == 127 for c in label)):
+        raise WireGuardError(400, "Ağ adı en çok 64 bayt olabilir; baş/son boşluk ve denetim karakteri içeremez")
+    return label
+
+
+def section(env, item, unit):
+    """DD-275: the settings transaction's "wireguard" section checked with master-wg's rules against the
+    files and units now. item: {"eylem", "iface"?, "ag"?: {"port", "dns", "label"?}, "onay"?}; unit(iface)
+    → (enabled, active) of its wg-quick unit. Returns the change the plan words and apply runs (no key,
+    never the typed word itself): eylem, iface (for ag-ekle the interface master-wg will take), ag,
+    onay (the typed word was given), durduruldu, aglar (the networks before), acilacak (baslat) and
+    birim (a network's unit before). Raises WireGuardError(400, …)."""
+    keys(env, SECTION_KEYS)
+    if not isinstance(item, dict) or not isinstance(item.get("eylem"), str) or item["eylem"] not in ACTIONS:
+        raise WireGuardError(400, "WireGuard eylemi geçersiz.")
+    action = item["eylem"]
+    need = {"eylem"} | ({"iface"} if action in NETWORK_ACTIONS else set()) | ({"ag"} if action == "ag-ekle" else set())
+    if not need <= set(item) <= need | ({"onay"} if action in TYPED else set()):
+        raise WireGuardError(400, "WireGuard isteğinin alanları bu eylemle uyuşmuyor.")
+    if not isinstance(item.get("onay", ""), str):
+        raise WireGuardError(400, "Onay sözcüğü metin olmalı.")
+    try:
+        nets = records(env)
+        listed = stopped_list(env)
+    except (OSError, ValueError):
+        raise WireGuardError(400, "WireGuard ağ kaydı okunamadı; kurulumu yeniden çalıştırın.")
+    is_stopped = stopped(env)
+    names = [n["iface"] for n in nets]
+    change = {"eylem": action, "iface": None, "ag": None, "durduruldu": is_stopped,
+              "onay": str(item.get("onay", "")).strip().lower() == CONFIRM_WORD,
+              "aglar": [{k: n[k] for k in ("iface", "port", "label", "subnet4")} for n in nets]}
+    if action == "baslat":
+        if not is_stopped:
+            raise WireGuardError(400, "WireGuard zaten çalışıyor.")
+        change["acilacak"] = [name for name in listed if name in names]
+    elif action == "durdur":
+        if is_stopped:
+            raise WireGuardError(400, "WireGuard zaten durdurulmuş.")
+    elif action == "ag-ekle":
+        if is_stopped:
+            raise WireGuardError(400, STOPPED_TEXT)
+        change["iface"], change["ag"] = new_network(env, item["ag"], nets)
+    else:
+        iface = item["iface"]
+        if not isinstance(iface, str) or not IFACE_RE.fullmatch(iface):
+            raise WireGuardError(400, "Geçersiz arayüz (wg0-wg9).")
+        if iface not in names:
+            raise WireGuardError(400, "'%s' diye bir WireGuard ağı yok" % iface)
+        enabled, active = unit(iface)
+        change["iface"], change["birim"] = iface, {"etkin": enabled, "calisiyor": active}
+        if action in ("ag-ac", "ag-kapat") and is_stopped:
+            raise WireGuardError(400, STOPPED_TEXT)
+        if action == "ag-ac" and active:
+            raise WireGuardError(400, "%s zaten açık." % iface)
+        if action == "ag-kapat" and not (enabled or active):
+            raise WireGuardError(400, "%s zaten kapalı." % iface)
+    return change
+
+
+def new_network(env, ag, nets):
+    """ag-ekle's fields with master-wg net-add's rules: (the interface it will take, {port, dns, label, subnet4})."""
+    if not isinstance(ag, dict) or not {"port", "dns"} <= set(ag) <= {"port", "dns", "label"}:
+        raise WireGuardError(400, "Port ve DNS gerekli.")
+    port = ag["port"]
+    if type(port) is not int or not 1024 <= port <= 65535:
+        raise WireGuardError(400, "UDP portu 1024-65535 arasında olmalı")
+    dns = dns_addresses(ag["dns"])
+    if not isinstance(ag.get("label", ""), str):
+        raise WireGuardError(400, "Ağ adı metin olmalı.")
+    label = check_label(ag.get("label", "").strip())
+    # The base's ports (whatever their protocol) and the registered networks' ports, as master-wg reserves them.
+    taken = [("ssh", env.get("SSH_PUBLIC_PORT")), ("tailscale", env.get("TAILSCALE_UDP_PORT")),
+             ("dns", env.get("DNS_PORT") or "53"), ("http", env.get("CADDY_HTTP_PORT") or "80"),
+             ("Dosyalar", env.get("FILES_PANEL_PORT")), ("Paylaşım", env.get("SHARE_PORT"))]
+    for name, value in taken + [(n["iface"], str(n["port"])) for n in nets]:
+        if value and str(value).strip() == str(port):
+            raise WireGuardError(400, "UDP %d kullanılıyor (%s); başka bir port seçin" % (port, name))
+    # Rebuild phase 4: an application's open raw port (TCP or UDP, on Tailscale or the WAN) holds its number.
+    owner = app_ports(env).get(port)
+    if owner:
+        raise WireGuardError(400, "UDP %d bir uygulamanın erişim satırında kullanılıyor (%s); başka bir port seçin" % (port, owner))
+    limit = num_or(env["WG_NETWORKS_MAX"], 9) + 1
+    names = {n["iface"] for n in nets}
+    free = [i for i in range(min(limit, 10)) if "wg%d" % i not in names
+            and not os.path.exists(os.path.join(env["WG_CONF_DIR"], "wg%d.conf" % i))]
+    if not free:
+        raise WireGuardError(400, "en çok %d ağ oluşturulabilir" % limit)
+    return "wg%d" % free[0], {"port": port, "dns": dns, "label": label,
+                              "subnet4": "%s.%d.0/24" % (env["WG_ADDR_BASE4"], free[0])}
+
+
+def app_ports(env):
+    """{port: row id} of the applications' open raw ports (either protocol, either scope): a WireGuard network may
+    not take one of their numbers. A record that cannot be read refuses (fail closed)."""
+    if not env.get("UYGULAMA_STATE_DIR"):
+        return {}
+    import master_publications
+    import master_settings
+    try:
+        rows = master_publications.app_rows(env)
+    except master_settings.SettingsError as err:
+        raise WireGuardError(400, str(err)) from err
+    return {r["satir"]["port"]: r["id"] for r in rows if r["satir"]["tur"] == "ham" and r["satir"]["kapsam"] != "kapali"}
+
+
+def network_name(change, iface):
+    label = next((n["label"] for n in change["aglar"] if n["iface"] == iface), "")
+    return "WireGuard ağı %s%s" % (iface, " · " + label if label else "")
+
+
+def network_port(change, iface):
+    return next((n["port"] for n in change["aglar"] if n["iface"] == iface), 0)
+
+
+def plan_items(change):
+    """DD-275: what the change does, as the settings plan lists it (alan "wireguard")."""
+    action, iface = change["eylem"], change["iface"]
+
+    def item(islem, nesne, once, sonra):
+        return {"alan": "wireguard", "islem": islem, "nesne": nesne, "once": once, "sonra": sonra}
+    if action == "baslat":
+        return [item("ac", "WireGuard", "durduruldu", "çalışıyor")]
+    if action == "durdur":
+        return [item("kapat", "WireGuard", "çalışıyor", "durduruldu")]
+    if action == "ag-ekle":
+        ag = change["ag"]
+        added = item("ekle", "WireGuard ağı %s%s" % (iface, " · " + ag["label"] if ag["label"] else ""), None,
+                     "UDP %d · %s · DNS %s" % (ag["port"], ag["subnet4"], ag["dns"]))
+        return ([item("ac", "WireGuard", "kapalı", "açık")] if not change["aglar"] else []) + [added]
+    up = "açık" if change["birim"]["calisiyor"] else "kapalı"
+    if action == "ag-ac":
+        return [item("ac", network_name(change, iface), "kapalı", "açık")]
+    if action == "ag-kapat":
+        return [item("kapat", network_name(change, iface), "açık" if change["birim"]["calisiyor"] else "açık (çalışmıyor)",
+                     "kapalı")]
+    if action == "ag-kaldir":
+        out = [item("kaldir", network_name(change, iface), "UDP %d · %s" % (network_port(change, iface), up), None)]
+        if len(change["aglar"]) == 1 and not change["durduruldu"]:
+            out.append(item("kapat", "WireGuard", "açık", "kapalı"))
+        return out
+    return [item("degistir", network_name(change, iface) + " · sunucu anahtarı", "mevcut anahtar", "yeni anahtar"),
+            item("kaldir", network_name(change, iface) + " · cihazlar", "bütün cihazlar ve profilleri", None)]
+
+
+def plan_notes(change):
+    """DD-275: the plan's effects (what restarts, opens, closes or is replaced) and warnings."""
+    action, iface = change["eylem"], change["iface"]
+    effects, warnings = [], []
+    closing = {"seviye": "warn", "metin": "Onay beklemeden hemen kalıcı olur; bağlı cihazların bağlantısı kopar."}
+    if action == "baslat":
+        ports = ", ".join(str(n["port"]) for n in change["aglar"])
+        effects.append("Güvenlik duvarı yeniden kurulur: WireGuard'ın UDP portları internete açılır%s; yönlendirme ve NAT gelir."
+                       % (" (%s)" % ports if ports else ""))
+        effects.append("Durdurmadan önce açık olan ağlar açılır: %s." % ", ".join(change["acilacak"]) if change["acilacak"]
+                       else "Açılacak ağ yok; ağlar Konsol'dan tek tek açılır.")
+    elif action == "durdur":
+        ports = ", ".join(str(n["port"]) for n in change["aglar"])
+        effects.append("Bütün ağlar kapanır; bağlı cihazların bağlantısı kopar.")
+        effects.append("Güvenlik duvarı yeniden kurulur: WireGuard'ın UDP portları kapanır%s; yönlendirme ve NAT kalkar."
+                       % (" (%s)" % ports if ports else ""))
+        warnings.append(closing)
+    elif action == "ag-ekle":
+        effects.append("Ağın sunucu anahtarı üretilir ve %s arayüzü açılır." % iface)
+        effects.append("Güvenlik duvarı yeniden kurulur: UDP %d internete açılır%s." % (
+            change["ag"]["port"], "; yönlendirme ve NAT gelir" if not change["aglar"] else ""))
+    elif action == "ag-ac":
+        effects.append("%s arayüzü açılır; cihazları yeniden bağlanabilir." % iface)
+        effects.append("UDP %d güvenlik duvarında zaten açık; güvenlik duvarı değişmez." % network_port(change, iface))
+    elif action == "ag-kapat":
+        effects.append("%s arayüzü kapanır; bağlı cihazların bağlantısı kopar." % iface)
+        effects.append("UDP %d güvenlik duvarında açık kalır; dinleyen olmaz." % network_port(change, iface))
+        warnings.append(closing)
+    elif action == "ag-kaldir":
+        effects.append("%s kapanır; ağın anahtarı, bütün cihazları ve profilleri silinir." % iface)
+        effects.append("Güvenlik duvarı yeniden kurulur%s." % (
+            ": UDP %d kapanır" % network_port(change, iface) if not change["durduruldu"] else ""))
+        warnings += [closing, {"seviye": "warn", "metin": "Geri alınamaz: ağın anahtarı ve cihaz profilleri silinir."}]
+    else:
+        effects.append("%s ağının sunucu anahtarı yeniden üretilir; bütün cihazları ve profilleri silinir." % iface)
+        effects.append("Cihazlar yeni profille yeniden eklenmeli.")
+        warnings += [closing, {"seviye": "warn", "metin": "Geri alınamaz: eski sunucu anahtarı ve bütün cihaz profilleri silinir."}]
+    return effects, warnings
 
 
 class WireGuard:
@@ -229,6 +473,10 @@ class WireGuard:
         reserved = {p["port"] for p in self.ports(env) if p.get("port")}
         reserved |= {num_or(env.get("DNS_PORT"), 53), num_or(env.get("CADDY_HTTP_PORT"), 80)}
         reserved |= {n["port"] for n in networks if n["port"]}
+        try:
+            reserved |= set(app_ports(env))
+        except WireGuardError:
+            pass  # the section refuses with the reason when a network is added
         return {
             "kurulu": installed,
             "durduruldu": stopped(env),
@@ -247,92 +495,22 @@ class WireGuard:
             "networks": networks,
         }
 
-    # -- WireGuard as a whole (DD-229)
-    def halt_all(self, audit):
-        rc, _, message = self.run("durdur")
-        self.changed()
-        audit("durdur", "WireGuard", rc == 0)
-        if rc != 0:
-            raise WireGuardError(400, message or "WireGuard durdurulamadı")
-        return {"durduruldu": stopped(keys(self.env()))}
-
-    def resume(self, audit):
-        rc, _, message = self.run("baslat")
-        self.changed()
-        audit("baslat", "WireGuard", rc == 0)
-        if rc != 0:
-            raise WireGuardError(400, message or "WireGuard başlatılamadı")
-        return {"durduruldu": stopped(keys(self.env()))}
-
-    # -- networks
-    @staticmethod
-    def confirmed(data):
-        if str(data.get("confirm", "")).strip().lower() != CONFIRM_WORD:
-            raise WireGuardError(400, "onay için %s yazın" % CONFIRM_WORD)
-
-    def add_network(self, data, audit):
-        port, dns, label = data["port"], data["dns"].strip(), data.get("label", "").strip()
-        if not 0 < port < 65536 or not dns:
-            raise WireGuardError(400, "Port ve DNS gerekli.")
-        rc, out, message = self.run("net-add", str(port), dns, label)
-        parts = out.strip().split("\t")
-        self.changed()  # the firewall and port views list the new network at once
-        audit("ag-ekle", parts[0] if rc == 0 else str(port), rc == 0)
-        if rc != 0:
-            raise WireGuardError(400, message or "ağ eklenemedi")
-        return {"iface": parts[0], "port": num_or(parts[-1], 0)}
-
-    def remove_network(self, net, data, audit):
-        self.confirmed(data)
-        rc, out, message = self.run("net-remove", net, "--onay")
-        audit("ag-kaldir", net, rc == 0)
-        if rc != 0:
-            raise WireGuardError(400, message or "ağ kaldırılamadı")
-        self.changed()
-        return {"iface": net, "peers": num_or(out.strip().split("\t")[-1], 0)}
-
-    def switch_network(self, net, data, audit):
-        want = "ac" if data["on"] else "kapat"
-        rc, out, message = self.run("net", want, net=net)
-        # Günlük satırı Konsol'da şablonla okunur: ayrıntı doğrudan cümleye girer.
-        audit("ag-durum", "%s %s" % (net, "açıldı" if want == "ac" else "kapatıldı"), rc == 0)
-        if rc != 0:
-            raise WireGuardError(400, message or "ağ durumu değiştirilemedi")
-        self.changed()
-        return {"iface": net, "active": out.strip().split("\t")[-1] == "1"}
-
-    def reset_network(self, net, data, audit):
-        self.confirmed(data)
-        rc, out, message = self.run("reset", "--onay", net=net)
-        audit("yeniden-uret", net, rc == 0)
-        if rc != 0:
-            raise WireGuardError(400, message or "%s yeniden üretilemedi" % net)
-        parts = out.strip().split("\t")
-        return {"peers": num_or(parts[0], 0), "profiles": num_or(parts[-1], 0)}
-
+    # -- networks: a network's default DNS and name stay immediate (DD-265)
     def network_settings(self, net, data, audit):
         """Default DNS and, when "label" is sent (DD-265), the network's name; the revision guards both."""
         dns, revision, label = data["dns"], data["revision"], data.get("label")
-        if "label" in data and (len(label.encode("utf-8")) > 64 or label != label.strip()
-                                or any(ord(c) < 32 or ord(c) == 127 for c in label)):
-            raise WireGuardError(400, "Ağ adı en çok 64 bayt olabilir; baş/son boşluk ve denetim karakteri içeremez")
+        if "label" in data:
+            check_label(label)
         if not dns.strip() or len(dns) > 512 or any(ord(c) < 32 for c in dns) or not re.fullmatch(r"[a-f0-9]{64}", revision):
             raise WireGuardError(400, "Geçerli DNS ve ağ revizyonu gerekli.")
-        try:
-            addresses = [s.strip() for s in dns.split(",")]
-            if not 1 <= len(addresses) <= 8 or any("%" in s for s in addresses):
-                raise ValueError("DNS")
-            for address in addresses:
-                ipaddress.ip_address(address)
-        except ValueError:
-            raise WireGuardError(400, "DNS için en fazla 8 geçerli IPv4/IPv6 adresi yazın")
+        addresses = dns_addresses(dns)
         args = ("net-settings", dns, revision) + ((label,) if "label" in data else ())
         rc, _, message = self.run(*args, net=net)
         self.changed()
         audit("ag-ayarlar", net, rc == 0)
         if rc != 0:
             raise WireGuardError(409, message or "Ağ ayarları kaydedilemedi")
-        return {"iface": net, "dns": ", ".join(addresses), **({"label": label} if "label" in data else {})}
+        return {"iface": net, "dns": addresses, **({"label": label} if "label" in data else {})}
 
     # -- devices
     def add_peer(self, net, data, audit):

@@ -31,6 +31,20 @@
 # WireGuard bütünüyle (DD-229, DD-271): Konsol'un Durdur/Başlat'ı bu iki komutu çalıştırır.
 #   master-wg durdur                      açık ağları WG_STOPPED_FILE'a yazar, hepsini kapatır, duvarı yeniden uygular
 #   master-wg baslat                      önce duvar, sonra durdurmadan önce açık olan ağlar (liste yoksa kayıttakilerin hepsi)
+#
+# The settings worker's caller mode (DD-275). Konsol's settings transaction runs this tool for the
+# planned WireGuard actions (baslat, durdur, net-add, net-remove, net ac|kapat, reset) while it holds the
+# installer's lock and owns the pending change. Two environment variables, set together or not at all:
+#   OBHUT_KILIT_FD=<fd>      an inherited descriptor of RUNTIME_DIR/install.lock that the caller has
+#                            locked. The tool checks that it is that file (device and inode), that the
+#                            lock is taken (a fresh open of the file cannot lock it) and that `flock -n`
+#                            on the descriptor succeeds (only the holder's descriptor can), and then takes
+#                            no lock of its own: a second open of install.lock would wait for the caller.
+#   OBHUT_AYAR_ISLEMI=<id>   the pending change's id (32 hex). The refusal while a Konsol setting is
+#                            pending is skipped only when SETTINGS_PENDING_FILE holds this id in phase
+#                            "applying"; any other id or phase is refused as without the mode.
+# One variable without the other, or a value of another form, is refused. Without them every command
+# works as before.
 set -Eeuo pipefail
 umask 077
 
@@ -80,8 +94,47 @@ warn() { printf 'UYARI: %s\n' "$*" >&2; }
 # Kurulumla aynı kilit: ikisi aynı anda wg0.conf yazamaz.
 take_lock() {
     mkdir -p -- "$RUNTIME_DIR"
+    if caller_mode; then
+        held_lock
+        return 0
+    fi
     exec 9>"$RUNTIME_DIR/install.lock"
     flock -w 10 9 || die "kurulum ya da başka bir peer işlemi sürüyor; biraz sonra yeniden deneyin"
+}
+
+# DD-275: the settings worker's caller mode (see the header); false without it.
+caller_mode() {
+    [[ -n "${OBHUT_KILIT_FD:-}${OBHUT_AYAR_ISLEMI:-}" ]] || return 1
+    [[ "${OBHUT_KILIT_FD:-}" =~ ^[1-9][0-9]{0,3}$ && "$OBHUT_KILIT_FD" -ge 3 &&
+        "${OBHUT_AYAR_ISLEMI:-}" =~ ^[a-f0-9]{32}$ ]] ||
+        die "OBHUT_KILIT_FD ve OBHUT_AYAR_ISLEMI birlikte ve geçerli biçimde verilmeli"
+}
+
+# The caller's install.lock: that file, locked, and held by this very descriptor. Python compares the
+# device and inode and tries a fresh open of the file, which must find the lock taken; flock(1) on the
+# descriptor then succeeds only for the holder's open file description.
+held_lock() {
+    local fd="$OBHUT_KILIT_FD" lock="$RUNTIME_DIR/install.lock" rc=0
+    python3 -c 'import fcntl, os, stat, sys
+fd, path = int(sys.argv[1]), sys.argv[2]
+try:
+    held, lock = os.fstat(fd), os.lstat(path)
+except OSError:
+    sys.exit(1)
+if not stat.S_ISREG(lock.st_mode) or (held.st_dev, held.st_ino) != (lock.st_dev, lock.st_ino):
+    sys.exit(1)
+with open(path, "rb") as other:
+    try:
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit(0)
+sys.exit(2)' "$fd" "$lock" || rc=$?
+    case "$rc" in
+        0) ;;
+        2) die "OBHUT_KILIT_FD=$fd kilitli değil; çağıran kurulum kilidini tutmalı" ;;
+        *) die "OBHUT_KILIT_FD=$fd kurulum kilidinin ($lock) tanıtıcısı değil" ;;
+    esac
+    flock -n "$fd" || die "OBHUT_KILIT_FD=$fd kurulum kilidini tutan tanıtıcı değil"
 }
 
 server_private() {
@@ -283,8 +336,7 @@ assert 1 <= len(ips) <= 8
 for ip in ips: ipaddress.ip_address(ip)' "$dns" 2>/dev/null || die "DNS için en fazla 8 geçerli IPv4/IPv6 adresi yazın"
     [[ "$relabel" -lt 3 ]] || check_label "$label"
     take_lock
-    [[ -z "${SETTINGS_PENDING_FILE:-}" || ! -e "$SETTINGS_PENDING_FILE" ]] ||
-        die "Önce Konsol'daki bekleyen ayar işlemini onaylayın veya geri alın"
+    no_pending_settings
     select_net "$WG_INTERFACE"
     [[ -f "$WG_CONF_FILE" ]] || die "WireGuard yapılandırması bulunamadı"
     line="$(net_line "$WG_INTERFACE")"
@@ -555,10 +607,21 @@ cmd_net() {
     printf '%s\t%s\n' "$WG_INTERFACE" "$(unit_active "$unit")"
 }
 
-# Onay bekleyen bir Konsol ayarı varken WireGuard bütünüyle durdurulmaz ve başlatılmaz.
+# Onay bekleyen bir Konsol ayarı varken WireGuard bütünüyle durdurulmaz ve başlatılmaz. DD-275: the
+# settings worker's own pending change (its id, phase "applying") is the one exception.
 no_pending_settings() {
-    [[ -z "${SETTINGS_PENDING_FILE:-}" || ! -e "$SETTINGS_PENDING_FILE" ]] ||
-        die "Önce Konsol'daki bekleyen ayar işlemini onaylayın veya geri alın"
+    [[ -n "${SETTINGS_PENDING_FILE:-}" && -e "$SETTINGS_PENDING_FILE" ]] || return 0
+    if caller_mode && python3 -c 'import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        p = json.load(fh)
+except (OSError, ValueError):
+    sys.exit(1)
+sys.exit(0 if isinstance(p, dict) and p.get("id") == sys.argv[2] and p.get("phase") == "applying" else 1)' \
+        "$SETTINGS_PENDING_FILE" "$OBHUT_AYAR_ISLEMI"; then
+        return 0
+    fi
+    die "Önce Konsol'daki bekleyen ayar işlemini onaylayın veya geri alın"
 }
 
 # Kayıttaki ağların ve sistemde kalmış wg-quick@wgN birimlerinin hepsi kapatılır (devre dışı:

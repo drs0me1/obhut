@@ -130,8 +130,10 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual((web['ad'], web['baslangic'], web['kullanici'], web['konteyner'], web['birim'], web['ozet'], web['kanal']),
                          ('web', 'direct', '1000:1000', 'notlar_web', 'konsol-notlar_web.service', record['places']['images']['web'],
                           'registry.example/notlar/web:1.4'))
-        self.assertEqual(web['portlar'], [{'port': 8080, 'protokol': 'tcp', 'kullanim': 'caddy', 'tailscale_adi': 'notlar',
-                                           'yerel_port': 62100}])
+        self.assertEqual(web['portlar'], [{'port': 8080, 'protokol': 'tcp', 'id': 'uygulama:notlar:web:8080/tcp',
+                                           'erisim': {'tur': 'adres', 'ad': 'notlar', 'tailscale_portu': None, 'internet': ''},
+                                           'kullanim': 'caddy', 'tailscale_adi': 'notlar', 'yerel_port': 62100}])
+        self.assertEqual(detail['servisler'][1]['portlar'], [], 'the database publishes no port')
         self.assertEqual([m['tur'] for m in web['baglamalar']], ['app', 'srv'])
         self.assertEqual(web['baglamalar'][1], {'hedef': '/media', 'tur': 'srv', 'yol': '/srv/media', 'salt_okunur': True})
         self.assertEqual((web['gizliler'], web['saglik'], web['yeniden_baslama']), (['notlar-db-password'], 'healthy', 1))
@@ -212,15 +214,30 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(fark['baslangic'][1], {'servis': 'db', 'once': 'root', 'sonra': 'direct'})
         self.assertEqual(fark['portlar'], [{'anahtar': 'web:8080/tcp', 'degisim': 'kalir', 'yerel_port': 62100}])
         self.assertTrue(fark['yeniden_baslar'])
-        # A new value for the secret renews it; a raw port drops its pool port; Podman 4.9 cannot wait for health.
-        given['answers']['var:DB_PASSWORD'] = {'value': 'yeni-' + app_fixtures.SECRET}
+        # How a port that stays is reached changes in Erişim: an answer that is not its row is refused by question.
         given['answers']['port:web:8080/tcp'] = {'use': 'raw'}
+        self.assertEqual(self.s.view().definition_plan('notlar', text, given)['hatalar'],
+                         {'port:web:8080/tcp': "Bu portun kullanımı Erişim'den değişir."})
+        # A new value for the secret renews it; a port that went drops its row and pool port, a new one gets
+        # both (its name checked); Podman 4.9 cannot wait for health.
+        given['answers'].pop('port:web:8080/tcp')
+        given['answers']['var:DB_PASSWORD'] = {'value': 'yeni-' + app_fixtures.SECRET}
+        given['answers']['port:web:9090/tcp'] = {'use': 'caddy', 'tailscale_name': 'notlar-yeni'}
+        moved = app_fixtures.TEXT.replace('      - "8080"\n', '      - "9090"\n')
         original = self.p.run_tool
         self.p.run_tool = lambda argv, timeout=30, binary=False: (0, '4.9.3', '') if argv[:2] == ['podman', 'version'] else original(argv, timeout)
-        fark = self.s.view().definition_plan('notlar', app_fixtures.TEXT, given)['fark']
+        fark = self.s.view().definition_plan('notlar', moved, given)['fark']
         self.assertEqual(fark['gizliler']['yenilenen'], ['notlar-db-password'])
-        self.assertEqual(fark['portlar'], [{'anahtar': 'web:8080/tcp', 'degisim': 'kaldirilir', 'yerel_port': 62100}])
+        # The pool port the gone port released is free again.
+        self.assertEqual(fark['portlar'], [{'anahtar': 'web:9090/tcp', 'degisim': 'eklenir', 'yerel_port': 62100},
+                                           {'anahtar': 'web:8080/tcp', 'degisim': 'kaldirilir', 'yerel_port': 62100}])
         self.assertIn('Podman 5 gerekir; bu sunucuda 4.9', fark['uyarilar'][-1]['metin'])
+        given['answers']['port:web:9090/tcp'] = {'use': 'caddy', 'tailscale_name': 'panel-x'}
+        app_fixtures.record(self.env, text=app_fixtures.SIMPLE, given=json.loads(json.dumps(app_fixtures.SIMPLE_ANSWERS).replace(
+            '"tailscale_name": "sayac"', '"tailscale_name": "panel-x"')), app='sayac', ports={'app:9000/tcp': 62105})
+        self.assertEqual(self.s.view().definition_plan('notlar', moved, given)['hatalar'],
+                         {'port:web:9090/tcp': 'panel-x.ev adı zaten kullanılıyor.'})
+        given['answers'].pop('port:web:9090/tcp')
         # Answers that do not check come back by question; a keep without an earlier value is refused.
         given['answers']['var:DB_PASSWORD'] = {'value': ''}
         self.assertIn('var:DB_PASSWORD', self.s.view().definition_plan('notlar', app_fixtures.TEXT, given)['hatalar'])

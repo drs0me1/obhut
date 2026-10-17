@@ -58,7 +58,6 @@ import master_container_manager
 import master_erisim
 import master_inspector
 import master_olaylar
-import master_yayin
 import master_settings
 import master_shares
 import master_publications
@@ -1215,7 +1214,7 @@ class Panel:
         except (OSError, ValueError, KeyError, master_shares.ShareError):
             pass
         try:
-            # Konsol and the manual addresses (DD-195/252) share WebDAV's HTTPS port and budgets.
+            # Konsol and the applications' internet names (DD-195, rebuild phase 4) share WebDAV's HTTPS port and budgets.
             apps = master_publications.https_apps_active(env)
             if apps:
                 port = int(env["SHARE_HTTPS_PORT"])
@@ -1244,6 +1243,18 @@ class Panel:
         # DD-173: generate the tailnet catalogue from configured permissions,
         # never from arbitrary sockets. Keep raw listeners/technical rules intact.
         rows = [r for r in rows if r["scope"] != "tail" or (r["family"], r["proto"], r["port"]) in tail_keys]
+        # Rebuild phase 4: an application's open raw ports (the container guard's, IPv4) and its Tailscale ports
+        # (K5, Caddy on the Tailscale IPv4) are fixed rows that change in their access row.
+        for item in master_publications.app_rows(env):
+            row = item["satir"]
+            name = "%s · %s %d/%s" % (item["uygulama"], item["servis"], item["port"], item["protokol"])
+            if row["tur"] == "ham" and row["kapsam"] != "kapali":
+                rows.append({"name": name + " · ham port", "family": 4, "proto": item["protokol"], "port": row["port"],
+                             "scope": "tail" if row["kapsam"] == "tailscale" else "wan", "baseline": True, "fixed": True,
+                             "row": item["id"]})
+            elif row["tur"] == "adres" and row["tailscale_portu"] is not None:
+                rows.append({"name": name + " · Tailscale portu", "family": 4, "proto": "tcp", "port": row["tailscale_portu"],
+                             "scope": "tail", "baseline": True, "fixed": True, "row": item["id"]})
         seen = {(r["family"], r["proto"], r["port"], r["scope"]) for r in rows}
         names = {(r["proto"], r["port"]): r["name"] for r in rows}
         names.update({(r["proto"], r["port"]): r["name"] for r in tailnet if r["name"] == "Tailscale PeerAPI"})
@@ -1263,27 +1274,29 @@ class Panel:
                 rows.append({**port, "scope": "tail", "baseline": True})
         return rows
 
-    def run_worker(self, argv, data, failure):
+    def run_worker(self, argv, data, failure, seconds=master_settings.WORKER_SECONDS):
         """A root worker as its own transient unit (outside this backend's sandbox), JSON on stdin,
-        JSON object on stdout; stdin is private, so no password reaches argv, environment or journal."""
+        JSON object on stdout; stdin is private, so no password reaches argv, environment or journal.
+        seconds: the unit's RuntimeMaxSec (an access row change may restart a container: ERISIM_WORKER_SECONDS)."""
         full = ["systemd-run", "--quiet", "--wait", "--pipe", "--collect",
-                "--property=UMask=0077", "--property=RuntimeMaxSec=150",
+                "--property=UMask=0077", "--property=RuntimeMaxSec=%d" % seconds,
                 "--setenv=PYTHONDONTWRITEBYTECODE=1", *argv]
         try:
-            p = subprocess.run(full, input=json.dumps(data), capture_output=True, text=True, timeout=155, env=self.env())
+            p = subprocess.run(full, input=json.dumps(data), capture_output=True, text=True, timeout=seconds + 5, env=self.env())
             result = json.loads(p.stdout)
             if not isinstance(result, dict):
                 raise ValueError("worker response is not an object")
             self.settings_cache = (0, None)
-            return (400 if p.returncode else 200), result
+            # DD-275: the settings worker exits STALE_EXIT when the page showed another revision.
+            return (409 if p.returncode == master_settings.STALE_EXIT else 400 if p.returncode else 200), result
         except (OSError, subprocess.TimeoutExpired, ValueError, RecursionError):
             return 502, {"error": failure}
 
-    def settings_run(self, action, data, shares=False):
+    def settings_run(self, action, data, shares=False, seconds=master_settings.WORKER_SECONDS):
         helper = os.path.join(self.sbin(), "master_shares.py" if shares else "master_settings.py")
         failure = ("İşlem sonucu alınamadı. Tekrar kaydetmeden önce WebDAV listesini yenileyip durumu kontrol edin." if shares
                    else "İşlem sonucu alınamadı. Sayfayı yenileyin; onaysız işlem sunucuda geri alınır.")
-        return self.run_worker(["/usr/bin/python3", helper, "--state", self.args.state, action], data, failure)
+        return self.run_worker(["/usr/bin/python3", helper, "--state", self.args.state, action], data, failure, seconds)
 
     def actions(self):
         """Sistem → Günlük: arka uçların audit satırları (journald), yeniden eskiye."""
@@ -1350,10 +1363,16 @@ class Panel:
             wg_stopped = master_wireguard.stopped(env)
         except (OSError, KeyError):
             wg_stopped = False
+        # Rebuild phase 4: one row per application port, from the records.
+        try:
+            rows = master_publications.app_rows(env)
+        except master_settings.SettingsError as err:
+            rows = None
+            errors.append(str(err))
         return master_erisim.build(env, self.settings(), shares, containers, tailscale, self.wireguard.networks(),
-                                   wg_stopped, time.time(), errors)
+                                   wg_stopped, time.time(), errors, rows)
 
-    # -- DD-265: Erişim's sections and the Yayınla flow
+    # -- DD-265: Erişim's sections
     def guvenlik_duvari(self, fresh=False):
         """GET /api/konsol/guvenlik-duvari: the firewall as the Erişim page edits it, from the settings view
         (rules with counters, the port catalogue, listeners, the check)."""
@@ -1369,7 +1388,7 @@ class Panel:
             "denetim": {"ok": bool(fw.get("ok")), "metin": str(fw.get("check") or "")},
             "kurallar": list((manage.get("config") or {}).get("firewall") or []),
             "portlar": [{"ad": str(r.get("name", "")), "aile": int(r["family"]), "proto": str(r.get("proto", "")), "port": int(r["port"]),
-                         "kapsam": r["scope"], "sabit": bool(r.get("fixed"))}
+                         "kapsam": r["scope"], "sabit": bool(r.get("fixed")), "satir": r.get("row")}
                         for r in fw.get("ports") or [] if r.get("scope") in ("wan", "tail", "lo")],
             "dinleyiciler": None if listeners is None else [
                 {"proto": str(r["proto"]), "aile": int(r["family"]), "port": int(r["port"]), "adres": str(r["address"]),
@@ -1383,8 +1402,9 @@ class Panel:
         }
 
     def adlar(self):
-        """GET /api/konsol/adlar: the local names (base, WebDAV, manual addresses) with their on/off state,
-        the operator's own records and the forwarding of other names, as Erişim → Adresler edits them."""
+        """GET /api/konsol/adlar: the local names (base, WebDAV, the applications') with their on/off state, the
+        operator's own records and the forwarding of other names, as Erişim → Yerel adlar edits them. Konsol's name
+        and every application's Tailscale name are locked: they are switched in their own row (satir)."""
         env = read_env(self.args.state)
         domain = env.get("LOCAL_DOMAIN", "")
         try:
@@ -1394,44 +1414,24 @@ class Panel:
         except (master_settings.SettingsError, OSError, ValueError, KeyError) as err:
             dns, names, revision = master_settings.DEFAULT["dns"], [], ""
             errors = [str(err) if isinstance(err, master_settings.SettingsError) else "DNS ayarları okunamadı."]
+        try:
+            owners = {"%s.%s" % (r["satir"]["ad"], domain): r["id"] for r in master_publications.app_rows(env)
+                      if r["satir"]["tur"] == "adres"}
+        except master_settings.SettingsError as err:
+            owners = {}
+            errors.append(str(err))
+        owners["panel." + domain] = "panel"
         off = set(dns.get("disabled") or [])
-        return {"revizyon": revision, "alan": domain,
-                "adlar": [{"ad": n["name"], "aile": n.get("family"), "hedef": str(n.get("target") or ""),
-                           "kaynak": str(n.get("source") or ""), "kapali": n["name"] in off,
-                           "kilitli": n["name"] == "panel." + domain} for n in names],
+        rows = [{"ad": n["name"], "aile": n.get("family"), "hedef": str(n.get("target") or ""),
+                 "kaynak": str(n.get("source") or ""), "kapali": n["name"] in off,
+                 "kilitli": n["name"] in owners, "satir": owners.get(n["name"])} for n in names]
+        # A row's name the projection has not written yet is shown too (its row is its home).
+        listed = {r["ad"] for r in rows}
+        rows += [{"ad": name, "aile": 4, "hedef": "tailscale", "kaynak": "uygulama", "kapali": False, "kilitli": True,
+                  "satir": rid} for name, rid in sorted(owners.items()) if name not in listed and rid != "panel"]
+        return {"revizyon": revision, "alan": domain, "adlar": rows,
                 "kayitlar": list(dns.get("records") or []), "yonlendirme": bool(dns.get("forward")),
                 "sunucular": list(dns.get("servers") or []), "hatalar": errors}
-
-    def yayinlar(self):
-        """GET /api/konsol/yayinlar: every publication row and every Konsol container that could have one."""
-        env = read_env(self.args.state)
-        errors, rows, containers = [], [], None
-        try:
-            rows = master_publications.status(env)
-        except (master_settings.SettingsError, OSError, ValueError, KeyError) as err:
-            errors.append(str(err) if isinstance(err, master_settings.SettingsError) else "Yayın kaydı okunamadı.")
-        if env.get("KONTEYNER_STATE_DIR"):
-            try:
-                containers = self.containers.view().reach()
-            except master_containers.ContainerError as err:
-                errors.append(str(err))
-        try:
-            wan = master_publications.wan_ready(env)
-        except (OSError, ValueError, KeyError):
-            wan = False
-        try:
-            revision = master_settings.Manager(self.args.state).revision()
-        except (master_settings.SettingsError, OSError, ValueError, KeyError):
-            revision = ""
-        return {"revizyon": revision, "alan": env.get("LOCAL_DOMAIN", ""), "wan_ipv4": env.get("WAN_IPV4", ""),
-                "adaylar": master_yayin.candidates(env, rows, containers, wan), "hatalar": errors}
-
-    def yayin_plani(self, data, client, kanal):
-        """POST /api/konsol/yayinlar/plan: the steps of one publication (DD-265); changes nothing."""
-        env = read_env(self.args.state)
-        listing = self.yayinlar()
-        manager = master_settings.Manager(self.args.state)
-        return master_yayin.plan(env, data, listing["adaylar"], lambda request: manager.plan(request, client=client, kanal=kanal))
 
     def uygulamalar(self, fresh=False):
         """GET /api/konsol/uygulamalar: every application from its record with its live state (DD-271,
@@ -1850,7 +1850,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             plan = master_settings.Manager(self.panel.args.state).plan(data, client=self.client(), kanal=self.channel())
         except master_settings.SettingsError as err:
-            self.error(400, str(err))
+            self.error(409 if isinstance(err, master_settings.SettingsStale) else 400, str(err))
             return
         except (OSError, ValueError, KeyError):
             self.error(503, "Ayarlar okunamadı; sayfayı yenileyin.")
@@ -1864,8 +1864,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # X-Forwarded-Host, and the channel says which Caddy site carried it.
             data["host"] = (self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").lower()
             data["kanal"] = self.channel()
-        code, result = self.panel.settings_run(action, data)
-        self.audit(user, "ayar-" + action, "ayarlar", code == 200)
+        # DD-275: a WireGuard action or an access row is named in the audit line (the request's, or the pending
+        # change's). An access row's apply, and the rollback of a pending one, may restart a container: their worker
+        # gets the longer limit.
+        item = data.get("wireguard") or data.get("erisim")
+        seconds = master_settings.ERISIM_WORKER_SECONDS if action == "apply" and "erisim" in data else master_settings.WORKER_SECONDS
+        if action != "apply":
+            try:
+                pending = self.panel.pending()["bekleyen"] or {}
+            except (master_settings.SettingsError, OSError, ValueError, KeyError, TypeError):
+                pending = {}
+            item = pending.get("wireguard") or pending.get("erisim")
+            if pending.get("erisim") and action == "rollback":
+                seconds = master_settings.ERISIM_WORKER_SECONDS
+        code, result = self.panel.settings_run(action, data, seconds=seconds)
+        self.audit(user, "ayar-" + action, master_settings.audit_detail(item), code == 200)
         self.close_connection = True
         self.json(code, result)
 
@@ -1886,15 +1899,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def api_adlar(self, query):
         self.json(200, self.panel.adlar())
-
-    def api_yayinlar(self, query):
-        self.json(200, self.panel.yayinlar())
-
-    def api_yayin_plani(self, user, data):
-        try:
-            self.json(200, self.panel.yayin_plani(data, self.client(), self.channel()))
-        except master_settings.SettingsError as err:
-            self.error(400, str(err))
 
     def api_konteyner_islemi(self, user, data):
         try:
@@ -2089,6 +2093,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             env = read_env(self.panel.args.state)
             if master_applications.Records(env).exists(app):
                 raise master_containers.ContainerError(409, "Bu adla bir uygulama zaten var.")
+            # Rebuild phase 4: every Tailscale name of the new rows must be free (a state check by question).
+            taken = master_applications.name_errors(env, app, definition)
+            if taken:
+                raise master_containers.ContainerError(409, "; ".join("%s: %s" % kv for kv in sorted(taken.items())[:3]))
         except APP_ERRORS as err:
             self.error(err.status, str(err))
             return
@@ -2125,7 +2133,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                                    "revizyon": data["revizyon"]}, {"eylem": "tanim", "ad": app})
 
     def api_uygulama_yenile(self, user, data):
-        """An address source fetched again and inspected; the stored answers and the new questions come back."""
+        """An address source fetched again and inspected; the stored answers (the port answers filled from the
+        rows) and the new questions come back."""
         app = self.params["app"]
         try:
             record = self.app_view().record(app)
@@ -2135,9 +2144,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except APP_ERRORS as err:
             self.error(err.status, str(err))
             return
+        # The port answers come from the rows (their home); only a new port's question is new.
+        answers = master_applications.filled_answers(record)
         inspection = master_inspector.inspect(text)
-        self.json(200, {"metin": text, "yanitlar": record["answers"],
-                        "yeni_sorular": master_applications.new_questions(inspection, record["answers"])})
+        self.json(200, {"metin": text, "yanitlar": answers,
+                        "yeni_sorular": master_applications.new_questions(inspection, answers)})
 
     def api_uygulama_kaldir(self, user, data):
         app = self.params["app"]
@@ -2275,7 +2286,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return False
 
     # -- DD-271: WireGuard (master_wireguard; every change through master-wg). The audit line is
-    #    "wireguard-<verb>"; Konsol's audit table words it.
+    #    "wireguard-<verb>"; Konsol's audit table words it. DD-275: the access-changing actions are
+    #    settings actions (settings_action), audited as ayar-<action> with the WireGuard action named.
     def wireguard_call(self, call, *args):
         """Runs a WireGuard operation with this request's audit; JSON reply, the status of the route."""
         audit = lambda verb, detail, ok: self.audit(self.request_user, "wireguard-" + verb, detail, ok)
@@ -2297,27 +2309,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def api_wireguard(self, query):
         try:
-            self.json(200, self.panel.wireguard.state())
+            state = self.panel.wireguard.state()
         except master_wireguard.WireGuardError as err:
             self.error(err.status, str(err))
-
-    def api_wireguard_durdur(self, user, data):
-        self.wireguard_call(self.panel.wireguard.halt_all)
-
-    def api_wireguard_baslat(self, user, data):
-        self.wireguard_call(self.panel.wireguard.resume)
-
-    def api_wireguard_ag_ekle(self, user, data):
-        self.wireguard_call(self.panel.wireguard.add_network, data)
-
-    def api_wireguard_ag_kaldir(self, user, data):
-        self.wireguard_call(self.panel.wireguard.remove_network, self.params["iface"], data)
-
-    def api_wireguard_ag_yeniden_uret(self, user, data):
-        self.wireguard_call(self.panel.wireguard.reset_network, self.params["iface"], data)
-
-    def api_wireguard_ag_durum(self, user, data):
-        self.wireguard_call(self.panel.wireguard.switch_network, self.params["iface"], data)
+            return
+        # DD-275: the settings revision the tab's planned actions send ("" when it cannot be read: refused).
+        try:
+            state["revizyon"] = master_settings.Manager(self.panel.args.state).revision()
+        except (master_settings.SettingsError, OSError, ValueError, KeyError):
+            state["revizyon"] = ""
+        self.json(200, state)
 
     def api_wireguard_ag_ayarlar(self, user, data):
         self.wireguard_call(self.panel.wireguard.network_settings, self.params["iface"], data)

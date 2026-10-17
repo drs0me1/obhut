@@ -220,7 +220,7 @@ class ResourceTests(unittest.TestCase):
         with patch.object(server, "shutdown_request", side_effect=finish), \
                 patch.object(panel.UnixConnection, "send", new=send_after_rejection), \
                 patch.object(self.p, "run_tool", side_effect=AssertionError("must not mutate")):
-            status, headers, raw = unix_get(sock, "/api/konsol/wireguard/nets", {"Content-Type": "application/json"}, "POST", body)
+            status, headers, raw = unix_get(sock, "/api/konsol/wireguard/nets/wg0/peers", {"Content-Type": "application/json"}, "POST", body)
         self.assertEqual(attempted, [True])
         self.assertEqual(status, 403)
         self.assertEqual(headers["Connection"], "close")
@@ -232,7 +232,7 @@ class ResourceTests(unittest.TestCase):
             conn.request.side_effect = BrokenPipeError("write closed")
             conn.getresponse.side_effect = panel.http.client.RemoteDisconnected("no HTTP response")
             with self.assertRaises(panel.http.client.RemoteDisconnected):
-                unix_get("unused", "/api/konsol/wireguard/nets", {}, "POST", b'{}')
+                unix_get("unused", "/api/konsol/wireguard/nets/wg0/peers", {}, "POST", b'{}')
             conn.close.assert_called_once()
 
     def test_socket_is_private_and_the_group_is_opt_in(self):

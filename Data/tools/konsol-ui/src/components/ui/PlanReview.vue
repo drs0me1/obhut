@@ -16,7 +16,8 @@ const AREAS: Record<PlanDegisikligi["alan"], string> = {
   "guvenlik-duvari": "Güvenlik duvarı",
   dns: "Yerel adlar (DNS)",
   "alan-adi": "Yerel alan adı",
-  yayin: "Adresler",
+  erisim: "Adresler",
+  wireguard: "WireGuard",
 };
 const ACTIONS: Record<PlanDegisikligi["islem"], { text: string; tone: Tone }> = {
   ekle: { text: "Eklenir", tone: "ok" },

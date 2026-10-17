@@ -1,5 +1,7 @@
-// WireGuard, a built-in of the base (DD-271): Erişim → WireGuard's reads and writes under
-// /api/konsol/wireguard. Paths and shapes come from sema.ts (generated from panel/master_api.py); a path's
+// WireGuard, a built-in of the base (DD-271): Erişim → WireGuard's reads and immediate writes under
+// /api/konsol/wireguard. Starting or stopping WireGuard and adding, removing, opening, closing or regenerating
+// a network are settings changes (DD-275): the tab sends them through the settings plan with the state's
+// `revizyon`, not from here. Paths and shapes come from sema.ts (generated from panel/master_api.py); a path's
 // {iface} and {name} are filled in encoded. Every change goes through master-wg on the server; numbers go
 // as integers. QR codes and device profiles carry a device's private key: they are fetched only on an
 // explicit click, never cached (getBlob), and the caller revokes their object URL after use.
@@ -7,14 +9,9 @@ import {
   YOLLAR,
   type WireGuard,
   type WireGuardAgAyarSonucu,
-  type WireGuardAgDurumu,
-  type WireGuardAgEklendi,
   type WireGuardAgi,
-  type WireGuardAgKaldirildi,
-  type WireGuardCalismasi,
   type WireGuardCihazEklendi,
   type WireGuardCihazi,
-  type WireGuardYenidenUretildi,
 } from "./sema";
 import { getBlob, getJson, postJson } from "./http";
 import { isObject, isText, shaped } from "./konsol";
@@ -65,40 +62,12 @@ export async function readWgState(): Promise<WireGuard> {
     now: num(value.now, Date.now() / 1000),
     active_window: num(value.active_window, 45),
     networks: value.networks.filter(isNetwork).map(network),
+    revizyon: isText(value.revizyon) ? value.revizyon : "",
   };
-}
-
-/** Stops WireGuard as a whole (DD-229): every network goes down, its UDP port and forwarding go. */
-export async function stopWireGuard(): Promise<WireGuardCalismasi> {
-  return shaped(await postJson(YOLLAR.wireguard_durdur, {}), (v) => isBool(v.durduruldu));
-}
-
-/** Starts WireGuard again: the networks that were on before the stop come back. */
-export async function startWireGuard(): Promise<WireGuardCalismasi> {
-  return shaped(await postJson(YOLLAR.wireguard_baslat, {}), (v) => isBool(v.durduruldu));
-}
-
-/** A new network; the first one turns WireGuard on. */
-export async function addNetwork(port: number, dns: string, label: string): Promise<WireGuardAgEklendi> {
-  return shaped(await postJson(YOLLAR.wireguard_ag_ekle, { port, dns, label }), (v) => isText(v.iface));
 }
 
 export async function saveNetworkSettings(iface: string, dns: string, revision: string, label: string): Promise<WireGuardAgAyarSonucu> {
   return shaped(await postJson(at(YOLLAR.wireguard_ag_ayarlar, { iface }), { dns, revision, label }), (v) => isText(v.iface));
-}
-
-export async function setNetwork(iface: string, on: boolean): Promise<WireGuardAgDurumu> {
-  return shaped(await postJson(at(YOLLAR.wireguard_ag_durum, { iface }), { on }), (v) => isText(v.iface));
-}
-
-export async function removeNetwork(iface: string): Promise<WireGuardAgKaldirildi> {
-  const value = shaped<WireGuardAgKaldirildi>(await postJson(at(YOLLAR.wireguard_ag_kaldir, { iface }), { confirm: "onayla" }), () => true);
-  return { iface: isText(value.iface) ? value.iface : iface, peers: num(value.peers) };
-}
-
-export async function regenerateNetwork(iface: string): Promise<WireGuardYenidenUretildi> {
-  const value = shaped<WireGuardYenidenUretildi>(await postJson(at(YOLLAR.wireguard_ag_yeniden_uret, { iface }), { confirm: "onayla" }), () => true);
-  return { peers: num(value.peers), profiles: num(value.profiles) };
 }
 
 export async function addDevice(iface: string, name: string, dns: string, keepalive: number, mtu: number): Promise<WireGuardCihazEklendi> {

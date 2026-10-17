@@ -15,7 +15,14 @@ const OK_CHECKS = [
   { id: "dns", name: "DNS", status: "ok", detail: "yanıt veriyor" }];
 const BAD_CHECK = { id: "units", name: "2 eski birim başarısız", status: "bad", detail: "konsol-deneme ve konsol-eski her açılışta hata veriyor." };
 const WARNING = { seviye: "warn", hizmet: "paylasim", metin: "İnternetten gelen WebDAV bağlantıları şifresiz; kullanıcı adı ve parola ağda okunabilir.",
-  duzelt: { bolum: "yayinlar", hedef: "paylasim" } };
+  duzelt: { bolum: "adresler", hedef: "paylasim" } };
+// An application port's access row as Erişim lists it (rebuild phase 4): its sheet in Adresler is the row's one home.
+const NOTLAR_WEB = "uygulama:notlar:web:8080/tcp";
+const NOTLAR_ROW = { tur: "adres", ad: "notlar", tailscale_portu: 8443, internet: "notlar.example.org" };
+const accessCell = (durum, adresler = []) => ({ durum, adresler, not: "", uyari: "" });
+const ACCESS_ROW = { id: NOTLAR_WEB, ad: "notlar · web", tur: "uygulama", aciklama: "8080/tcp · Adres", uygulama: "notlar", servis: "web", anahtar: "web:8080/tcp",
+  calisiyor: true, yerel: accessCell("acik", ["127.0.0.1:62001"]), tailscale: accessCell("acik", ["notlar.ev", "100.64.0.2:8443"]),
+  wireguard: accessCell("kapali"), internet: accessCell("acik", ["notlar.example.org"]), satir: NOTLAR_ROW, web: null, ayrinti: [] };
 const ROOT_WARNING = "Bu konteyner root olarak başlıyor; kendi kullanıcısına geçmezse /srv'ye Dosyalar hesabının açamayacağı dosyalar yazabilir.";
 const D = (c) => c.repeat(64);
 const JOB = (n) => String(n).padStart(32, "0");
@@ -74,8 +81,9 @@ function details() {
         "start:web": { mode: "root" }, "start:db": { mode: "direct" } } },
     }, {
       web: { baslangic: "root", ozet: "registry.example/notlar/web@sha256:" + D("a"), calisma: 1791800000, saglik: "healthy", yeniden_baslama: 2,
-        portlar: [{ port: 8080, protokol: "tcp", kullanim: "caddy", tailscale_adi: "notlar", yerel_port: 62001 },
-          { port: 9000, protokol: "udp", kullanim: "raw", tailscale_adi: null, yerel_port: null }],
+        portlar: [{ port: 8080, protokol: "tcp", id: NOTLAR_WEB, erisim: NOTLAR_ROW, kullanim: "caddy", tailscale_adi: "notlar", yerel_port: 62001 },
+          { port: 9000, protokol: "udp", id: "uygulama:notlar:web:9000/udp", erisim: { tur: "ham", kapsam: "tailscale", port: 9001 }, kullanim: "raw",
+            tailscale_adi: null, yerel_port: null }],
         baglamalar: [{ hedef: "/data", tur: "app", yol: VERI + "notlar/veri", salt_okunur: false },
           { hedef: "/belgeler", tur: "srv", yol: "/srv/Belgeler", salt_okunur: true }, { hedef: "/tmp", tur: "tmpfs", yol: null, salt_okunur: false }],
         gizliler: ["notlar-db-password"] },
@@ -86,12 +94,14 @@ function details() {
   if (items.galeri) {
     out.galeri = ayrinti(items.galeri, {}, {
       web: { kullanici: "1000:1000", calisma: 1791750000, saglik: "unhealthy", yeniden_baslama: 5,
-        portlar: [{ port: 80, protokol: "tcp", kullanim: "caddy", tailscale_adi: "galeri", yerel_port: 62003 }] },
+        portlar: [{ port: 80, protokol: "tcp", id: "uygulama:galeri:web:80/tcp", erisim: { tur: "adres", ad: "galeri", tailscale_portu: null, internet: "" },
+          kullanim: "caddy", tailscale_adi: "galeri", yerel_port: 62003 }] },
     });
   }
   if (items.pano) {
     out.pano = ayrinti(items.pano, { koken: { tur: "adres", adres: "https://files.example.org/pano/compose.yaml", imaj: null, konteyner: null, alindi: 1791710000, sha256: D("f") } },
-      { web: { calisma: 1791760000, portlar: [{ port: 3000, protokol: "tcp", kullanim: "caddy", tailscale_adi: "pano", yerel_port: 62002 }] } });
+      { web: { calisma: 1791760000, portlar: [{ port: 3000, protokol: "tcp", id: "uygulama:pano:web:3000/tcp", erisim: { tur: "adres", ad: "pano", tailscale_portu: null, internet: "" },
+        kullanim: "caddy", tailscale_adi: "pano", yerel_port: 62002 }] } });
   }
   if (items.yedek) {
     out.yedek = ayrinti(items.yedek, { koken: { tur: "imaj", adres: null, imaj: "registry.example/yedek:1.0", konteyner: null, alindi: 1791720000, sha256: D("d") },
@@ -111,10 +121,13 @@ const data = {
     denetlendi: 1791845000, hata: "", is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true },
   bekleyen: { bekleyen: null },
   etkinlik: { items: [] },
-  erisim: { read_at: 1791845000, alan: "ev", hizmetler: [], hatalar: [], uyarilar: [WARNING],
+  erisim: { read_at: 1791845000, alan: "ev", revizyon: "rev-1", hizmetler: [ACCESS_ROW], hatalar: [], uyarilar: [WARNING],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "sunucu", surum: "1.80.0", adresler: ["100.64.0.2"], cikis_dugumu: true },
       internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: VPN_NOTE, aglar: [] }, sertifikalar: [] } },
   uygulamalar: uygulamalar(apps(), { altyapi: ALTYAPI }),
+  // Erişim → Adresler (a port's link leads there): the local names, read with the rows.
+  adlar: { revizyon: "rev-1", alan: "ev", hatalar: [], adlar: [{ ad: "notlar.ev", aile: 4, hedef: "tailscale", kaynak: "uygulama", kapali: false, kilitli: true,
+    satir: NOTLAR_WEB }], kayitlar: [], yonlendirme: false, sunucular: [] },
   ag: { read_at: 1791845000, sampled_at: 1791845000, rx: 10240, tx: 38912 },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
 };
@@ -190,7 +203,7 @@ async function noStyles(page, where) {
     const warn = page.locator('.problem-warning[data-kind="erisim"]');
     assert.equal(await warn.locator("strong").innerText(), WARNING.metin);
     assert.equal(await warn.locator(".problem-text span").innerText(), "Erişim · Paylaşımlar");
-    assert.equal(await warn.getByRole("link", { name: "Düzelt" }).getAttribute("href"), "#/erisim?sekme=adresler&yayinla=paylasim", "its fix (phase 3)");
+    assert.equal(await warn.getByRole("link", { name: "Düzelt" }).getAttribute("href"), "#/erisim?sekme=adresler&satir=paylasim", "its fix: the row's sheet");
     assert.equal(await page.getByRole("link", { name: "Tüm denetimler" }).getAttribute("href"), "#/sistem?sekme=saglik", "Sistem → Sağlık (phase 4a)");
     // Applications: every application in the list, in its order, each leading to its page.
     await page.locator(".app-card").first().waitFor();
@@ -542,13 +555,34 @@ async function noStyles(page, where) {
     await page.keyboard.press("ArrowLeft");
     await page.waitForURL((u) => u.hash === "#/uygulamalar/notlar?sekme=gunluk");
     assert.equal(await tabs.filter({ hasText: "Günlük" }).getAttribute("aria-selected"), "true");
-    // Portlar: each container port with its use; an address only on this server, a raw port closed.
+    // Portlar: each container port with its access row (an address: its names and ports; a raw port: its scope and
+    // host port), read-only, each linking to its row in Erişim → Adresler.
     await tabs.filter({ hasText: "Portlar" }).click();
     const ports = page.getByTestId("port-table");
     await ports.waitFor();
-    assert.deepEqual(await ports.locator("tbody tr").evaluateAll((els) => els.map((e) => [...e.children].map((c) => c.innerText.trim()))),
-      [["8080/tcp", "web", "Adres (Caddy satırı)", "Yalnız bu sunucu · 127.0.0.1:62001"], ["9000/udp", "web", "Ham port", "Kapalı"]]);
+    assert.deepEqual(await ports.locator("tbody tr").evaluateAll((els) => els.map((e) => e.dataset.port)), [NOTLAR_WEB, "uygulama:notlar:web:9000/udp"]);
+    assert.deepEqual(await ports.locator("tbody tr").evaluateAll((els) => els.map((e) => [e.children[0].innerText.trim(), e.children[1].innerText.trim()])),
+      [["8080/tcp", "web"], ["9000/udp", "web"]]);
+    const addressPort = ports.locator(`tr[data-port="${NOTLAR_WEB}"]`);
+    assert.deepEqual(await addressPort.getByTestId("port-address").locator("dt").allInnerTexts(), ["Adres", "Tailscale adı", "Tailscale portu", "İnternet adı"]);
+    assert.deepEqual(await addressPort.getByTestId("port-address").locator("dd").allInnerTexts(),
+      ["Yalnız bu sunucu · 127.0.0.1:62001", "notlar.ev", "TCP 8443", "notlar.example.org"]);
+    assert.deepEqual((await ports.locator('tr[data-port="uygulama:notlar:web:9000/udp"]').getByTestId("port-raw").innerText()).split("\n"), ["Ham port", "Tailscale", "UDP 9001"]);
+    assert.deepEqual(await ports.getByTestId("port-row-link").evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
+      ["#/erisim?sekme=adresler&satir=uygulama%3Anotlar%3Aweb%3A8080%2Ftcp", "#/erisim?sekme=adresler&satir=uygulama%3Anotlar%3Aweb%3A9000%2Fudp"]);
+    assert.equal(await ports.locator("button, input").count(), 0, "read-only: the row changes in Erişim");
     await shot(page, "1440-light-uygulama-portlar.png", true);
+    // The link opens the row's sheet in Adresler.
+    await addressPort.getByTestId("port-row-link").click();
+    await page.waitForURL((u) => u.hash === "#/erisim?sekme=adresler&satir=uygulama%3Anotlar%3Aweb%3A8080%2Ftcp");
+    const rowSheet = page.getByRole("dialog", { name: "notlar · web" });
+    await rowSheet.getByTestId("row-form").waitFor();
+    assert.equal(await rowSheet.getByTestId("row-name").inputValue(), "notlar");
+    await rowSheet.getByRole("button", { name: "Vazgeç" }).click();
+    await rowSheet.waitFor({ state: "detached" });
+    await page.goBack();
+    await page.waitForURL((u) => u.hash === "#/uygulamalar/notlar?sekme=portlar");
+    await ports.waitFor();
     // Depolama: every mount with its path on this server; the application's data folder.
     await tabs.filter({ hasText: "Depolama" }).click();
     await page.getByTestId("mounts").waitFor();
@@ -897,7 +931,7 @@ async function noStyles(page, where) {
       "shown and visible, a clean server's empty states (no add flow, pointing nowhere else), palette opens application pages (by name or " +
       "service), Uygulamalar (summary, state and warning pills, services, resources, version, filter chips with counts, Turkish-aware search by " +
       "name, service and image, URL state and reload, empty filters, infrastructure, errors, keyboard order and focus ring), application page " +
-      "(trail, heading focus, the warning, tabs with arrow keys and URL, Özet's services, Portlar with pool ports and closed raw ports, " +
+      "(trail, heading focus, the warning, tabs with arrow keys and URL, Özet's services, Portlar with each port's access row and its link to the row in Adresler, " +
       "Depolama's mounts and data folder, Tanım's source, file, answers without secret values and secrets by name, Günlük per service with " +
       "Yenile, an error and the Canlı switch), exact POST bodies (yeniden-baslat, durdur, guncelle, baslat, kaldir keeping and deleting the data " +
       "with the typed name), dialog focus trap, Esc and focus return, error replies, jobs in the drawer and their end reading the page again, a " +

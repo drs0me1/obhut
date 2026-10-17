@@ -1,8 +1,9 @@
-<!-- Erişim → Genel: warnings first, each with its fix (a publication in the Yayınla flow, an application's
+<!-- Erişim → Genel: warnings first, each with its fix (an access row's sheet in Adresler, an application's
      page, the Tailscale tab); the summaries (Tailscale, the internet with its open ports, WireGuard,
      certificates); then every service with its four cells in plain words. "Teknik ayrıntı" (?teknik=1) adds
-     the addresses and the technical lines. A table on wide screens, cards on narrow ones. WebDAV's row leads
-     to Dosyalar → Paylaşımlar for each folder's connections. -->
+     the addresses and the technical lines. A table on wide screens, cards on narrow ones. An access row
+     (Konsol, Paylaşımlar, each application port) links to its sheet in Adresler, where it changes; WebDAV's
+     row also leads to Dosyalar → Paylaşımlar for each folder's connections. -->
 <script setup lang="ts">
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
@@ -36,8 +37,10 @@ const noteOf = (key: string, c: ErisimHucresi) => (key === "wireguard" && c.not 
 const cellTone = (c: ErisimHucresi): Tone => (c.uyari ? "warning" : CELL_TONE[c.durum] ?? "neutral");
 const cellText = (c: ErisimHucresi) => CELL_TEXT[c.durum] ?? UNKNOWN;
 const KIND: Record<Hizmet["tur"], string> = {
-  konsol: "Konsol", konteyner: "Konteyner", elle: "Elle adres", paylasim: "Paylaşım", sistem: "Sistem", vpn: "VPN ağı", kural: "Kural",
+  konsol: "Konsol", uygulama: "Uygulama portu", konteyner: "Konteyner", paylasim: "Paylaşım", sistem: "Sistem", vpn: "VPN ağı", kural: "Kural",
 };
+/** The rows whose home is Erişim → Adresler. */
+const hasRow = (h: Hizmet) => h.tur === "konsol" || h.tur === "paylasim" || h.tur === "uygulama";
 
 const warnings = computed(() =>
   (e.value?.uyarilar ?? []).map((u, i) => ({ key: i, u, to: fixRoute(u.duzelt), tone: (u.seviye === "bad" ? "danger" : "warning") as Tone })),
@@ -135,7 +138,7 @@ const certLeft = (bitis: number | null) => (bitis ? daysUntil(bitis, serverNow()
               <span v-else>geçerli</span>
             </li>
           </ul>
-          <p v-else class="meter-note">İnternet adı olan yayın yok.</p>
+          <p v-else class="meter-note">İnternet adı olan adres yok.</p>
           <RouterLink :to="accessRoute('adresler')" class="section-link">Adresler</RouterLink>
         </Card>
       </div>
@@ -159,6 +162,7 @@ const certLeft = (bitis: number | null) => (bitis ? daysUntil(bitis, serverNow()
                   <th scope="row" class="col-main">
                     <strong>{{ h.ad }}</strong>
                     <span class="cell-sub">{{ h.aciklama || KIND[h.tur] }}</span>
+                    <RouterLink v-if="hasRow(h)" :to="accessRoute('adresler', h.id)" class="cell-note" data-testid="row-link">Adresler'de değiştir</RouterLink>
                     <RouterLink v-if="h.tur === 'paylasim'" :to="filesRoute('paylasimlar')" class="cell-note" data-testid="share-folders">Klasörler: Dosyalar → Paylaşımlar</RouterLink>
                   </th>
                   <td v-for="c in COLUMNS" :key="c.key" :data-label="c.title" :data-hucre="c.key" class="matrix-cell">

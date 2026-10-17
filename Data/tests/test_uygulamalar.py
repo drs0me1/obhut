@@ -29,7 +29,7 @@ class RouteTests(Fixture):
         super().setUp()
         self.values = app_fixtures.env(self.root)
         with self.state.open("a") as fh:
-            fh.write("".join("%s=%s\n" % kv for kv in self.values.items() if kv[0] != "STATE_FILE"))
+            fh.write("".join("%s=%s\n" % kv for kv in self.values.items() if kv[0] not in ("STATE_FILE", "LOCAL_DOMAIN")))
         self.record = app_fixtures.record(dict(self.values, STATE_FILE=str(self.state)))
 
         class Handler(panel.Handler):
@@ -104,6 +104,8 @@ class RouteTests(Fixture):
         _, detail = self.call("uygulama", "/api/konsol/uygulamalar/notlar", code=200)
         self.assertEqual([s["ad"] for s in detail["servisler"]], ["web", "db"])
         self.assertEqual(detail["yanitlar"]["answers"]["var:DB_PASSWORD"], {"set": True})
+        self.assertEqual(detail["servisler"][0]["portlar"][0]["id"], "uygulama:notlar:web:8080/tcp")
+        self.assertEqual(detail["servisler"][0]["portlar"][0]["erisim"]["tur"], "adres")
         self.call("uygulama", "/api/konsol/uygulamalar/yok", code=404)
         for bad in ("Notlar", "a_b", "..", "%2e%2e"):
             status, _, _ = test_resources.unix_get(self.sock, "/api/konsol/uygulamalar/" + bad, {"X-Konsol": "1"})
@@ -130,10 +132,15 @@ class RouteTests(Fixture):
             with self.subTest(code=code):
                 self.call("uygulama_kur", data=data, code=code)
         self.assertEqual(len(self.launched), 1)
-        # The secret values travel to the worker only, never into the audit line.
+        # A Tailscale name another application's row holds is refused by its question before the worker.
         secret = {"metin": app_fixtures.TEXT.replace("notlar", "ikinci"),
                   "yanitlar": {"name": "ikinci", "answers": {k.replace("notlar", "ikinci"): v for k, v in app_fixtures.answers()["answers"].items()}},
                   "kaynak": {"tur": "dosya"}}
+        _, refused = self.call("uygulama_kur", data=secret, code=409)
+        self.assertEqual(refused["error"], "port:web:8080/tcp: notlar.test adı zaten kullanılıyor.")
+        self.assertEqual(len(self.launched), 1)
+        # The secret values travel to the worker only, never into the audit line.
+        secret["yanitlar"]["answers"]["port:web:8080/tcp"] = {"use": "caddy", "tailscale_name": "ikinci"}
         self.call("uygulama_kur", data=secret, code=202)
         self.assertEqual(self.launched[-1][1]["yanitlar"]["answers"]["var:DB_PASSWORD"], {"value": SECRET})
         self.assertNotIn(SECRET, json.dumps(self.audits))
@@ -177,7 +184,9 @@ class RouteTests(Fixture):
             _, answer = self.call("uygulama_yenile", "/api/konsol/uygulamalar/notlar/yenile", {}, code=200)
         fetch.assert_called_once()
         self.assertEqual(fetch.call_args.args[0], "https://dosya.example.org/c.yaml")
-        self.assertEqual((answer["metin"], answer["yeni_sorular"]), (newer, ["var:LOG_LEVEL"]))
+        self.assertEqual((answer["metin"], answer["yeni_sorular"]), (newer, ["var:LOG_LEVEL"]), "a port that stays is no new question")
+        self.assertEqual(answer["yanitlar"]["answers"]["port:web:8080/tcp"], {"use": "caddy", "tailscale_name": "notlar"},
+                         "the port answers come from the rows")
         self.assertEqual(self.launched, [])
 
     def test_a_removal_needs_the_name_to_delete_data(self):

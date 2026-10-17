@@ -736,6 +736,37 @@ assert not missing, missing
         "$V2_ROOT/scripts/refresh-tailnet-config"
 }
 
+@test "refresh-tailnet hands the applications' raw ports to the address refresh after a change and on every run" {
+    local rt="$V2_ROOT/scripts/refresh-tailnet-config" body
+    # Rebuild phase 4: on the run that finds no change (boot and nightly also catch a new WAN address) and after
+    # TAILSCALE_IPV4 was rewritten and Caddy restarted.
+    [ "$(grep -cxF '    refresh_application_addresses' "$rt")" -eq 1 ]
+    [ "$(grep -cxF 'refresh_application_addresses' "$rt")" -eq 1 ]
+    [ "$(awk '/^    recover_failed_bound_units$/ {print NR; exit}' "$rt")" -lt \
+        "$(awk '/^    refresh_application_addresses$/ {print NR; exit}' "$rt")" ]
+    [ "$(awk '/^restart_bound_units$/ {print NR; exit}' "$rt")" -lt \
+        "$(awk '/^refresh_application_addresses$/ {print NR; exit}' "$rt")" ]
+    # The worker's documented entry as its own transient unit, so this unit's 150 s budget stays as it is.
+    body="$(awk '/^refresh_application_addresses\(\)/,/^}$/' "$rt")"
+    [ -n "$body" ]
+    eval "$body"
+    systemd-run() { printf '%s\n' "$*" >>"$TMP/calls"; [ ! -e "$TMP/busy" ]; }
+    UYGULAMA_STATE_DIR="$TMP/uygulamalar" SBIN_DIR="$TMP/sbin" STATE_FILE="$TMP/state.env"
+    refresh_application_addresses
+    [ ! -e "$TMP/calls" ]
+    mkdir -p "$TMP/sbin"
+    : >"$TMP/sbin/master_container_worker.py"
+    refresh_application_addresses
+    grep -qxF -- "--quiet --no-block --collect --unit=master-container-adres-yenile --property=RuntimeMaxSec=1800 --property=UMask=0077 --setenv=PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 $TMP/sbin/master_container_worker.py --state $TMP/state.env --adres-yenile" "$TMP/calls"
+    # A unit still running (or one that cannot start) is a line for the journal; the next run tries again.
+    : >"$TMP/busy"
+    run refresh_application_addresses
+    [ "$status" -eq 0 ]
+    grep -qF 'sonraki çalışmada denenecek' <<<"$output"
+    grep -qF "parser.add_argument('--adres-yenile', action='store_true', dest='refresh', required=True)" \
+        "$V2_ROOT/panel/master_container_worker.py"
+}
+
 @test "WireGuard networks wait for a checked firewall and the timer reopens failed ones" {
     local dropin="$V2_ROOT/systemd/wg-quick-master-stack.conf" rt="$V2_ROOT/scripts/refresh-tailnet-config" s4
     grep -qx 'Wants=master-firewall.service' "$dropin"
@@ -1890,14 +1921,9 @@ case "\$1" in
         printf 'wg0\t61001\tinet\t10.8.0.1\t10.8.0.0/24\tfdcc:ad94:bacf:61a4::1\tfdcc:ad94:bacf:61a4::/112\t1.1.1.1\tAna ağ\t1\t1\n'
         [ ! -e "$TMP/has-wg1" ] || printf 'wg1\t61011\tinet\t10.8.1.1\t10.8.1.0/24\tfdcc:ad94:bacf:61a4::1:1\tfdcc:ad94:bacf:61a4::1:0/112\t9.9.9.9\tMisafir\t1\t0\n' ;;
     info) [ "\$net" != wg0 ] || printf 'iphone\t10.8.0.2\tfdcc:ad94:bacf:61a4::2\t1700000000\t2048\t1024\tvar\t1.1.1.1, 1.0.0.1\t21\t1420\t1\n' ;;
-    net-add) [ "\$2" != 61001 ] || { echo "HATA: UDP 61001 kullanılıyor (wg0); başka bir port seçin" >&2; exit 1; }
-        touch "$TMP/has-wg1"; printf 'wg1\t%s\n' "\$2" ;;
-    net-remove) rm -f "$TMP/has-wg1"; printf '%s\t0\n' "\$2" ;;
     add) [ "\$2" != dup ] || { echo "HATA: 'dup' adında bir peer zaten var" >&2; exit 1; }; printf '%s\t10.8.0.3\n' "\$2" ;;
     remove | dns | keepalive) exit 0 ;;
     peer) printf '%s\t%s\n' "\$2" "\$3" ;;
-    net) [ "\$2" != kapat ] || { printf '%s\t0\n' "\$net"; exit 0; }; printf '%s\t1\n' "\$net" ;;
-    reset) printf '4\t4\n' ;;
     profile) printf '[Interface]\nPrivateKey = SECRETPRIV\nAddress = 10.8.0.2/32\n\n[Peer]\nPresharedKey = SECRETPSK\nEndpoint = 203.0.113.7:61001\n' ;;
     png) printf '\211PNG\r\n\032\nQRDATA' ;;
     *) exit 1 ;;
@@ -2065,6 +2091,79 @@ EOF
     [ "$status" -ne 0 ]
     run master_wg baslat extra
     [ "$status" -ne 0 ]
+}
+
+# master-wg as the settings worker runs it (DD-275): the held install.lock descriptor and the pending id.
+master_wg_worker() {
+    local fd="$1" id="$2"
+    shift 2
+    env OBHUT_KILIT_FD="$fd" OBHUT_AYAR_ISLEMI="$id" PATH="$TMP/bin:$PATH" STATE_FILE="$TMP/state.env" \
+        bash "$V2_ROOT/scripts/master-wg" "$@"
+}
+
+@test "master-wg's caller mode needs the held install lock and the applying change's id (DD-275)" {
+    command -v python3 >/dev/null || skip "python3 yok"
+    wg_mock_bin
+    wg_state_fixture
+    # A real flock(1) for -n FD (macOS has none); anything else fails, so a fallback to the tool's own
+    # lock (flock -w 10 9) would fail the test.
+    cat >"$TMP/bin/flock" <<'EOF'
+#!/bin/bash
+[ "$1" = -n ] && [ "$#" -eq 2 ] || exit 64
+exec python3 -c 'import fcntl, sys; fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)' "$2"
+EOF
+    chmod +x "$TMP/bin/flock"
+    local id=0123456789abcdef0123456789abcdef lock="$TMP/run/install.lock" wgd="$TMP/etc/wireguard"
+    printf 'SETTINGS_PENDING_FILE=%s/pending.json\n' "$TMP" >>"$TMP/state.env"
+    : >"$lock"
+    # 8: the holder's descriptor; 6: another open of the same file; 7: another file.
+    exec 8<"$lock" 6<"$lock" 7<"$TMP/state.env"
+    python3 -c 'import fcntl; fcntl.flock(8, fcntl.LOCK_EX)'
+    # A verb without the pending refusal needs only the lock: the phase does not matter (a rollback).
+    printf '{"id": "%s", "phase": "rollback"}\n' "$id" >"$TMP/pending.json"
+    export WG_ACTIVE=0
+    run master_wg_worker 8 "$id" --if wg0 net kapat
+    unset WG_ACTIVE
+    [ "$status" -eq 0 ]
+    [ "$output" = $'wg0\t0' ]
+    # The stop refuses a pending change in another phase or with another id, as without the mode.
+    run master_wg_worker 8 "$id" durdur
+    [ "$status" -ne 0 ]
+    case "$output" in *"bekleyen ayar"*) ;; *) false ;; esac
+    printf '{"id": "%s", "phase": "awaiting"}\n' "$id" >"$TMP/pending.json"
+    run master_wg_worker 8 "$id" durdur
+    [ "$status" -ne 0 ]
+    case "$output" in *"bekleyen ayar"*) ;; *) false ;; esac
+    printf '{"id": "%s", "phase": "applying"}\n' "fedcba9876543210fedcba9876543210" >"$TMP/pending.json"
+    run master_wg_worker 8 "$id" durdur
+    [ "$status" -ne 0 ]
+    case "$output" in *"bekleyen ayar"*) ;; *) false ;; esac
+    [ ! -e "$wgd/.durduruldu" ]
+    # Another file, another open of the lock, an unlocked lock, a missing or malformed variable: refused.
+    printf '{"id": "%s", "phase": "applying"}\n' "$id" >"$TMP/pending.json"
+    run master_wg_worker 7 "$id" durdur
+    [ "$status" -ne 0 ]
+    case "$output" in *"tanıtıcısı değil"*) ;; *) false ;; esac
+    run master_wg_worker 6 "$id" durdur
+    [ "$status" -ne 0 ]
+    case "$output" in *"kurulum kilidini tutan tanıtıcı değil"*) ;; *) false ;; esac
+    python3 -c 'import fcntl; fcntl.flock(8, fcntl.LOCK_UN)'
+    run master_wg_worker 8 "$id" durdur
+    [ "$status" -ne 0 ]
+    case "$output" in *"kilitli değil"*) ;; *) false ;; esac
+    python3 -c 'import fcntl; fcntl.flock(8, fcntl.LOCK_EX)'
+    for pair in "8|" "|$id" "2|$id" "x|$id" "8|${id}0" "8|0123456789ABCDEF0123456789ABCDEF"; do
+        run master_wg_worker "${pair%%|*}" "${pair#*|}" durdur
+        [ "$status" -ne 0 ]
+        case "$output" in *"birlikte ve geçerli"*) ;; *) false ;; esac
+    done
+    [ ! -e "$wgd/.durduruldu" ]
+    # The holder's descriptor and the applying change's id: the stop runs under the caller's lock.
+    run master_wg_worker 8 "$id" durdur
+    [ "$status" -eq 0 ]
+    case "$output" in durduruldu$'\t'*) ;; *) false ;; esac
+    [ -e "$wgd/.durduruldu" ]
+    exec 8<&- 6<&- 7<&-
 }
 
 @test "the installer's re-run and final check follow WireGuard's own state (DD-229, DD-271)" {
@@ -2312,7 +2411,7 @@ builtin_harness() {
     [ -L "$SERVER_ROOT/media" ]
 }
 
-@test "wg panel adds and removes networks and passes each network's peer actions to master-wg" {
+@test "wg panel passes each network's peer actions to master-wg; the planned actions have no route (DD-275)" {
     command -v python3 >/dev/null || skip "python3 yok"
     panel_start
     local auth=(-H 'X-Konsol: 1') json=(-H 'Content-Type: application/json')
@@ -2327,19 +2426,20 @@ builtin_harness() {
     [ "$(pc /api/konsol/wireguard/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"x","dns":"1.1.1.1","keepalive":"21","mtu":1420}')" = 400 ]
     [ "$(pc /api/konsol/wireguard/nets/wg0/peers "${auth[@]}" -d 'name=phone')" = 400 ]
     [ "$(pc '/api/konsol/wireguard/nets/wg0/peers/..%2Fx/remove' "${auth[@]}" "${json[@]}" -d '{}')" = 400 ]
-    [ "$(pc /api/konsol/wireguard/nets/wg0/reset "${auth[@]}" "${json[@]}" -d '{"confirm":"evet"}')" = 400 ]
-    [ "$(pc /api/konsol/wireguard/nets/wg1/remove "${auth[@]}" "${json[@]}" -d '{"confirm":"SIL"}')" = 400 ]
-    [ "$(pc /api/konsol/wireguard/nets "${auth[@]}" "${json[@]}" -d '{"port":61011,"scope":"all","dns":"9.9.9.9","label":""}')" = 400 ]
-    [ "$(pc /api/konsol/wireguard/nets "${auth[@]}" "${json[@]}" -d '{"port":"abc","dns":"9.9.9.9","label":""}')" = 400 ]
+    # DD-275: starting, stopping, adding, removing, opening, closing and regenerating a network are settings
+    # actions (ayarlar/plan, ayarlar/uygula); their old paths answer 404 and run nothing.
+    [ "$(pc /api/konsol/wireguard/durdur "${auth[@]}" "${json[@]}" -d '{}')" = 404 ]
+    [ "$(pc /api/konsol/wireguard/baslat "${auth[@]}" "${json[@]}" -d '{}')" = 404 ]
+    [ "$(pc /api/konsol/wireguard/nets "${auth[@]}" "${json[@]}" -d '{"port":61011,"dns":"9.9.9.9","label":"Misafir"}')" = 404 ]
+    [ "$(pc /api/konsol/wireguard/nets/wg0/reset "${auth[@]}" "${json[@]}" -d '{"confirm":"onayla"}')" = 404 ]
+    [ "$(pc /api/konsol/wireguard/nets/wg0/remove "${auth[@]}" "${json[@]}" -d '{"confirm":"onayla"}')" = 404 ]
+    [ "$(pc /api/konsol/wireguard/nets/wg0/durum "${auth[@]}" "${json[@]}" -d '{"on":false}')" = 404 ]
     [ ! -s "$TMP/mwg-calls" ]
+    [ ! -e "$TMP/sdrun-calls" ]
     [ "$(pc /api/konsol/wireguard/nets/wg0/peers "${auth[@]}" "${json[@]}" -d '{"name":"dup","dns":"1.1.1.1","keepalive":21,"mtu":1420}')" = 400 ]
     grep -q "zaten var" "$TMP/body"
-    [ "$(pc /api/konsol/wireguard/nets "${auth[@]}" "${json[@]}" -d '{"port":61001,"dns":"9.9.9.9","label":"x"}')" = 400 ]
-    grep -q "UDP 61001 kullanılıyor (wg0)" "$TMP/body"
-    # A new network: master-wg net-add, then it is listed with its label and takes its own peers.
-    [ "$(pc /api/konsol/wireguard/nets "${auth[@]}" "${json[@]}" -d '{"port":61011,"dns":"9.9.9.9","label":"Misafir"}')" = 201 ]
-    python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"iface": "wg1", "port": 61011}' "$TMP/body"
-    grep -qx 'yok|net-add|61011|9.9.9.9|Misafir' "$TMP/mwg-calls"
+    # A second network is listed with its label and takes its own peers.
+    touch "$TMP/has-wg1"
     pc /api/konsol/wireguard/state "${auth[@]}" >/dev/null
     python3 -c 'import json, sys; n = json.load(open(sys.argv[1]))["networks"][1]; assert (n["iface"], n["label"], n["dns"], n["peers"]) == ("wg1", "Misafir", "9.9.9.9", []), n' "$TMP/body"
     grep -qx 'wg1|info' "$TMP/mwg-calls"
@@ -2349,11 +2449,6 @@ builtin_harness() {
     grep -qx 'wg1|dns|guest|1.1.1.1' "$TMP/mwg-calls"
     [ "$(pc /api/konsol/wireguard/nets/wg1/peers/guest/remove "${auth[@]}" "${json[@]}" -d '{}')" = 200 ]
     grep -qx 'wg1|remove|guest' "$TMP/mwg-calls"
-    [ "$(pc /api/konsol/wireguard/nets/wg1/reset "${auth[@]}" "${json[@]}" -d '{"confirm":"Onayla"}')" = 200 ]
-    grep -qx 'wg1|reset|--onay' "$TMP/mwg-calls"
-    python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"peers": 4, "profiles": 4}' "$TMP/body"
-    [ "$(pc /api/konsol/wireguard/nets/wg1/remove "${auth[@]}" "${json[@]}" -d '{"confirm":"onayla"}')" = 200 ]
-    grep -qx 'yok|net-remove|wg1|--onay' "$TMP/mwg-calls"
     # The profile and the QR only when asked, as a download (the old masked preview is gone).
     [ "$(pc /api/konsol/wireguard/nets/wg0/peers/iphone/profile "${auth[@]}")" = 200 ]
     grep -qx 'wg0|profile|iphone' "$TMP/mwg-calls"
@@ -2376,18 +2471,11 @@ builtin_harness() {
     [ "$(pc /api/konsol/wireguard/nets/wg0/peers/iphone/keepalive "${auth[@]}" "${json[@]}" -d '{"keepalive":25}')" = 200 ]
     grep -qx 'wg0|keepalive|iphone|25' "$TMP/mwg-calls"
     [ "$(pc /api/konsol/wireguard/nets/wg0/peers/iphone/keepalive "${auth[@]}" "${json[@]}" -d '{"keepalive":"x"}')" = 400 ]
-    [ "$(pc /api/konsol/wireguard/nets/wg0/durum "${auth[@]}" "${json[@]}" -d '{"on":false}')" = 200 ]
-    grep -qx 'wg0|net|kapat' "$TMP/mwg-calls"
-    python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"iface": "wg0", "active": False}' "$TMP/body"
-    [ "$(pc /api/konsol/wireguard/nets/wg0/durum "${auth[@]}" "${json[@]}" -d '{"on":true}')" = 200 ]
-    grep -qx 'wg0|net|ac' "$TMP/mwg-calls"
+    run ! grep -qE '\|(net|net-add|net-remove|reset|durdur|baslat)(\||$)' "$TMP/mwg-calls"
     # The audit log names the action, network and peer, never a password or key.
     # The details read as the sentence Konsol shows.
     grep -q 'konsol yerel wireguard-ekle wg0/phone -> ok' "$TMP/panel.log"
-    grep -q 'konsol yerel wireguard-ag-ekle wg1 -> ok' "$TMP/panel.log"
-    grep -q 'konsol yerel wireguard-ag-kaldir wg1 -> ok' "$TMP/panel.log"
     grep -q 'konsol yerel wireguard-peer-durum wg0/iphone kapatıldı -> ok' "$TMP/panel.log"
-    grep -q 'konsol yerel wireguard-ag-durum wg0 kapatıldı -> ok' "$TMP/panel.log"
     run ! grep -qE 'panel pass|SECRETPRIV|SECRETPSK|QRDATA' "$TMP/panel.log"
 }
 
@@ -3980,6 +4068,64 @@ wg_revision() {
     run ! grep -q 'WG_PUBLIC_PORT' <<<"$(awk '/^docker_return_pairs\(\)/,/^}$/' "$fw")"
 }
 
+@test "an application's Tailscale port is a configured IPv4 tailnet entry and the exact count follows it (DD-172 amended)" {
+    local fw="$V2_ROOT/scripts/firewall.sh" f sbin="$TMP/sbin" line
+    for f in load_settings_rules check_settings_rules; do
+        eval "$(awk "/^$f\\(\\)/,/^}\$/" "$fw")"
+    done
+    mkdir -p "$sbin"
+    cp "$V2_ROOT"/panel/master_*.py "$sbin/"
+    # One application with an address row and its Tailscale port (K5).
+    python3 - "$V2_ROOT" "$TMP" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1] + "/tests")
+import app_fixtures
+import master_applications as apps
+root = Path(sys.argv[2])
+values = app_fixtures.env(root / "app")
+values.update(SETTINGS_FILE=str(root / "settings.json"), SETTINGS_PENDING_FILE=str(root / "pending.json"),
+              SETTINGS_DNS_FILE=str(root / "dns/konsol.conf"), DNSMASQ_CONF_FILE=str(root / "dns/base.conf"),
+              DNSMASQ_CONF_DIR=str(root / "dns"), SBIN_DIR=str(root / "sbin"), LOCAL_DOMAIN="ev",
+              DNS_PORT="53", CADDY_HTTP_PORT="80", SSH_PUBLIC_PORT="22", SHARE_PORT="61010")
+app_fixtures.record(values, text=app_fixtures.SIMPLE, given=app_fixtures.SIMPLE_ANSWERS, app="sayac")
+records = apps.Records(values)
+record = records.load("sayac")
+records.write("sayac", rows={"app:9000/tcp": dict(record["rows"]["app:9000/tcp"], tailscale_portu=18080)})
+(root / "state.env").write_text("".join("%s=%s\n" % kv for kv in values.items()))
+PY
+    export STATE_FILE="$TMP/state.env"
+    SETTINGS_FILE="$TMP/settings.json" SBIN_DIR="$sbin" WAN_INTERFACE=eth0 TAILSCALE_IF=tailscale0 SHARE_WAN_ACTIVE=0
+    VPN_IFACES=() VPN_PORTS=() CHAIN_SETTINGS=MASTER-SETTINGS
+    die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
+    load_settings_rules
+    line="-i tailscale0 -p tcp --dport 18080 -m comment --comment konsol-base:tail-tcp-18080 -j RETURN"
+    grep -qxF -- "$line" <<<"$SETTINGS4"
+    run ! grep -qF -- "tail-tcp-18080" <<<"$SETTINGS6"
+    # Before the tailnet's default deny, after the base's own entries.
+    awk -v l="$line" '$0 == l {k = NR} /konsol-base:tail-tcp-80 / {c = NR} /konsol-base:tail-drop/ {d = NR}
+        END { exit !(k && c && d && c < k && k < d) }' <<<"$SETTINGS4"
+    # The exact-count check: the chain as it is passes, one entry the rows no longer hold fails.
+    check_jump_exactly_one() { :; }
+    input_line() { echo 1; }
+    check_rule() { :; }
+    listing() {
+        printf -- '-A MASTER-SETTINGS -i lo -j RETURN\n-A MASTER-SETTINGS -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n'
+        while IFS= read -r line; do
+            if [ -n "$line" ]; then printf -- '-A MASTER-SETTINGS %s\n' "$line"; fi
+        done <<<"$1"
+        printf '%s' "${EXTRA:-}"
+    }
+    iptables() { listing "$SETTINGS4"; }
+    check_settings_rules iptables "$SETTINGS4"
+    EXTRA=$'-A MASTER-SETTINGS -i tailscale0 -p tcp --dport 18081 -m comment --comment konsol-base:tail-tcp-18081 -j RETURN\n'
+    run check_settings_rules iptables "$SETTINGS4"
+    [ "$status" -ne 0 ]
+    case "$output" in *"beklenmeyen kural"*) ;; *) false ;; esac
+    # The application's own port 9000 is its pool publication's, never a tailnet INPUT entry.
+    run ! grep -q -- '--dport 9000 ' <<<"$SETTINGS4"
+}
+
 @test "a WireGuard registry the firewall cannot trust stops it before any rule" {
     local fw="$V2_ROOT/scripts/firewall.sh" line
     eval "$(awk '/^load_wireguard_rules\(\)/,/^}$/' "$fw")"
@@ -4401,7 +4547,7 @@ PY
     case "$seen" in *" master_yaml "*) ;; *) echo "master_yaml not reached"; return 1 ;; esac
     case "$seen" in *" master_kube "*) ;; *) echo "master_kube not reached"; return 1 ;; esac
     stage="$(awk '/^stage_4\(\) \{/,/^}$/' "$install")"
-    grep -qF 'for panel_module in master_api master_compose master_erisim master_inspector master_kube master_olaylar master_wireguard master_yaml master_yayin; do' <<<"$stage"
+    grep -qF 'for panel_module in master_api master_compose master_erisim master_inspector master_kube master_olaylar master_wireguard master_yaml; do' <<<"$stage"
     # DD-271 (phase 3): the application engine is installed with the container helpers (the guard reads its records).
     grep -qF 'for container_helper in master_applications master_container_config master_container_network master_container_worker master_container_manager master_generator; do' <<<"$stage"
     grep -qF '[[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1' <<<"$(grep -A3 'for panel_module in' <<<"$stage")"

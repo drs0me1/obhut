@@ -1,4 +1,7 @@
-"""Publication transactions, rollback and private/public isolation (DD-191)."""
+"""The fixed rows' transactions (Konsol, WebDAV), rollback and private/public isolation (DD-191, DD-195).
+
+Decision 1 (rebuild phase 4): a row that opens or widens access waits for the confirmation from Tailscale; one
+that only closes commits at once. The applications' rows are test_access_rows'."""
 from pathlib import Path
 import json
 import subprocess
@@ -15,6 +18,8 @@ REAL_RUN = subprocess.run
 
 class PublicationTests(unittest.TestCase):
     command = fixtures.HttpsSettingsTests.command
+    confirm = fixtures.HttpsSettingsTests.confirm
+    commit = fixtures.HttpsSettingsTests.commit
 
     def setUp(self):
         fixtures.HttpsSettingsTests.setUp(self)
@@ -28,7 +33,7 @@ class PublicationTests(unittest.TestCase):
         source = "# fixture\nhttp://paylas.ayc, http://{$TAILSCALE_IPV4}:61010 {\n\trespond 401\n}\n"
         Path(self.env["SHARE_CADDY_SOURCE"]).write_text(source)
         (self.root / "sites/paylasim.caddy").write_text(source)
-        self.m.apply({"revision": self.m.revision(), "https": {"domain": "dav.example.net"}})
+        self.commit(self.payload())
 
     def payload(self, service="paylasim", tail=True, enabled=True, domain="dav.example.net", **extra):
         return {"revision": self.m.revision(), "web": dict(service=service, tail=tail, enabled=enabled, domain=domain, **extra)}
@@ -40,7 +45,7 @@ class PublicationTests(unittest.TestCase):
         return self.payload(service="panel", **item)
 
     def test_unknown_upstreams_rejected(self):
-        # The rows are WebDAV, Konsol and the operator's manual addresses; nothing else is publishable.
+        # The fixed rows are WebDAV and Konsol; an application's rows are its own (the erisim section).
         self.assertEqual(pubs.ids(), ("paylasim", "panel"))
         for service in ("wireguard", "medya", "localhost:2019", "dosya", [], None):
             with self.subTest(service=service), self.assertRaises(settings.SettingsError):
@@ -74,17 +79,15 @@ class PublicationTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertIn("Notlar", rows[0]["name"])
             self.assertNotIn("WebDAV", rows[0]["name"])
-        # DD-195/252: Konsol and the manual addresses join the same single row.
+        # DD-195, rebuild phase 4: Konsol and the applications' internet names join the same single row.
         with patch.object(pubs, "https_apps_active", return_value=["Konsol", "Notlar"]), \
                 patch.object(panel.master_settings, "tailnet_ports", return_value=[]), \
                 patch.object(instance, "ports", return_value=[]):
             rows = instance.settings_ports(self.env, [])
         self.assertEqual([r["name"] for r in rows], ["Caddy HTTPS · Konsol + Notlar + WebDAV · WAN"])
         self.assertEqual(pubs.https_apps_active(self.env), [])
-        self.m.apply(self.manual())
-        self.assertEqual(pubs.https_apps_active(self.env), ["Notlar"])
         with patch.object(pubs, "panel_active", return_value=True):
-            self.assertEqual(pubs.https_apps_active(self.env), ["Konsol", "Notlar"])
+            self.assertEqual(pubs.https_apps_active(self.env), ["Konsol"])
 
     def make_account(self):
         import master_auth
@@ -124,7 +127,9 @@ class PublicationTests(unittest.TestCase):
         pubs.config(self.env, {"web": {"panel": {"tail": True, "enabled": True, "domain": "konsol.example.net"}}})
         store = self.make_account()
         self.assertEqual(self.wan_firewall()[0], "1")  # WebDAV over HTTPS already listens
-        self.assertTrue(self.m.apply(self.panel())["committed"])
+        result = self.m.apply(self.panel())
+        self.assertEqual(result["pending"]["phase"], "awaiting", "decision 1: an internet name waits for its confirmation")
+        self.confirm(result)
         # Keeping it on with the same name needs no new word; a new name does.
         self.m.validate(self.payload(service="panel", domain="konsol.example.net"))
         with self.assertRaises(settings.SettingsError):
@@ -172,17 +177,13 @@ class PublicationTests(unittest.TestCase):
         with self.assertRaises(settings.SettingsError) as err:
             self.m.validate(self.panel())
         self.assertIn("şifresiz HTTP ile açık", str(err.exception))
-        with self.assertRaises(settings.SettingsError) as err:
-            self.m.validate(self.manual())
-        self.assertIn("şifresiz HTTP ile açık", str(err.exception))
-        self.m.validate(self.manual(enabled=False, domain=""))  # the tailnet name alone needs no port
         row = {r["service"]: r for r in pubs.status(self.env)}["paylasim"]
         self.assertEqual(row["status"], "http")
         # Closing that folder's internet connection frees the port; no WebDAV name is needed.
         item = self.s.read()["items"][0]
         self.s.change("save", {"id": item["id"], "connections": {"wan": {"enabled": False}}})
         self.assertFalse(pubs.plain_http_active(self.env))
-        self.assertTrue(self.m.apply(self.panel())["committed"])
+        self.commit(self.panel())
         self.assertTrue((self.root / "sites/panel-wan.caddy").exists())
         self.assertFalse((self.root / "sites/paylasim-wan.caddy").exists())
         self.assertEqual(self.wan_firewall(), ["1", "16", "64", "443"])
@@ -212,7 +213,7 @@ class PublicationTests(unittest.TestCase):
         self.assertNotIn("panel", self.m.config().get("web", {}))
         self.assertFalse(self.m.pending_path.exists())
         # Turning it off again removes the site and keeps the remembered name.
-        self.m.apply(self.panel())
+        self.commit(self.panel())
         self.assertTrue((self.root / "sites/panel-wan.caddy").exists())
         self.m.apply(self.payload(service="panel", enabled=False, domain="konsol.example.net"))
         self.assertFalse((self.root / "sites/panel-wan.caddy").exists())
@@ -240,6 +241,10 @@ class PublicationTests(unittest.TestCase):
         self.assertFalse((self.root / "sites/paylasim-wan.caddy").exists())
 
     def test_first_row_certificate_failure_restores_private_file(self):
+        # A first-time row: no web key yet for the publisher to reconstruct after a failed apply.
+        cfg = self.m.config()
+        cfg.pop("web", None)
+        settings.save_json(self.m.config_path, cfg)
         private = self.root / "sites/paylasim.caddy"
         old = private.read_bytes()
         with patch.object(tls, "wait_certificate", side_effect=settings.SettingsError("cert failed")):
@@ -261,7 +266,7 @@ class PublicationTests(unittest.TestCase):
 
     def test_duplicate_domains_and_mixed_writes_rejected(self):
         with self.assertRaisesRegex(settings.SettingsError, "aynı HTTPS alan adını"):
-            self.m.validate(self.manual(domain="dav.example.net"))
+            self.m.validate(self.panel(domain="dav.example.net"))
         payload = self.payload(); payload["dns"] = self.m.config()["dns"]
         with self.assertRaises(settings.SettingsError):
             self.m.validate(payload)
@@ -295,9 +300,7 @@ class PublicationTests(unittest.TestCase):
         # DD-193: no minute-long certificate wait when no public listener could open.
         import master_shares
         cases = (("paylasim", lambda: self.payload(domain="dav.example.net", tail=False), "WAN HTTPS dinleyicisi açılamadı",
-                  patch.object(master_shares.Manager, "wan_active", return_value=False)),
-                 ("elle-notlar", lambda: self.manual(tail=False), "İnternet yayını açılamadı",
-                  patch.object(pubs, "manual_active", return_value=False)))
+                  patch.object(master_shares.Manager, "wan_active", return_value=False)),)
         for service, payload, message, blocked in cases:
             with self.subTest(service=service):
                 before = self.m.config()
@@ -336,140 +339,46 @@ class PublicationTests(unittest.TestCase):
         with self.assertRaises(fixtures.shares.ShareError):
             self.s.publish()
 
-    # --- DD-252: addresses the operator enters ----------------------------------
-
-    def manual(self, local="notlar", port=8090, tail=True, enabled=True, domain="notlar.example.net", name="Notlar"):
-        return self.payload(service="elle-" + local, tail=tail, enabled=enabled, domain=domain,
-                            elle={"name": name, "local": local, "upstream": "127.0.0.1:%d" % port})
-
-    def test_manual_address_opens_its_tailnet_and_public_names(self):
-        result = self.m.apply(self.manual())
-        self.assertEqual(result, {"pending": None, "committed": True})
-        saved = self.m.config()
-        self.assertEqual(saved["elle"], {"elle-notlar": {"name": "Notlar", "local": "notlar", "upstream": "127.0.0.1:8090"}})
-        self.assertEqual(saved["web"]["elle-notlar"], {"tail": True, "enabled": True, "domain": "notlar.example.net"})
-        private = (self.root / "sites/elle-notlar.caddy").read_text()
-        self.assertIn("http://notlar.ayc {\n\treverse_proxy 127.0.0.1:8090\n}", private)
-        public = (self.root / "sites/elle-notlar-wan.caddy").read_text()
-        self.assertIn("https://notlar.example.net:443 {\n\tbind 8.8.8.8\n", public)
-        self.assertIn("reverse_proxy 127.0.0.1:8090 {", public)
-        self.assertIn("disable_http_challenge", public)
-        # The application's own login is the guard: no Konsol routes or session check.
-        self.assertNotIn("konsol", public.replace("# ", ""))
-        self.assertNotIn("forward_auth", public)
-        self.assertEqual((self.root / "dns/modul-elle.conf").read_text().splitlines()[1:],
-                         ["interface-name=notlar.ayc,tailscale0/4"])
-        self.assertIn(["systemctl", "restart", "dnsmasq"], self.calls)
-        self.assertIn("Notlar", pubs.https_apps_active(self.env))
-        tls.wait_certificate.assert_called_with(self.m.e, "notlar.example.net")
-        row = next(r for r in pubs.status(self.env) if r["service"] == "elle-notlar")
-        self.assertEqual((row["manual"], row["local"], row["upstream"]), (True, "notlar.ayc", "127.0.0.1:8090"))
-        self.assertIn("yanıt vermiyor", row["message"])  # nothing listens on the fixture port
-        self.assertIs(row["answers"], False, "DD-259: Erişim reads the probe, not the message")
-
-    def test_plan_of_a_publication_writes_no_site_and_waits_for_no_certificate(self):
-        """DD-265: a publication row's plan runs its checks (the DNS check) and writes nothing."""
+    def test_plan_of_a_fixed_row_writes_no_site_and_waits_for_no_certificate(self):
+        """DD-265: a fixed row's plan runs its checks (the DNS check) and writes nothing; decision 1 sets its window."""
         sites = sorted(p.name for p in (self.root / "sites").iterdir())
         calls = len(self.calls)
         tls.wait_certificate.reset_mock()  # setUp's own WebDAV name waited for one
-        plan = self.m.plan(self.manual())
-        self.assertEqual(plan["onay_sn"], 0)
-        self.assertEqual(plan["degisiklikler"], [{"alan": "yayin", "islem": "ekle", "nesne": "Notlar", "once": None,
-                                                  "sonra": "notlar.ayc açık · internet: notlar.example.net · hedef 127.0.0.1:8090"}])
+        plan = self.m.plan(self.payload(domain="dav2.example.net"))
+        self.assertEqual(plan["onay_sn"], 60, "a rename is an opening")
+        self.assertEqual([(i["alan"], i["islem"], i["nesne"], i["once"], i["sonra"]) for i in plan["degisiklikler"]],
+                         [("erisim", "degistir", "WebDAV · internet adı", "dav.example.net", "dav2.example.net")])
         self.assertIn("İnternet adı için HTTPS sertifikası alınır (en çok 1 dakika).", plan["etkiler"])
         self.assertEqual(sorted(p.name for p in (self.root / "sites").iterdir()), sites)
         self.assertEqual(len(self.calls), calls, "no reload, no restart")
         tls.wait_certificate.assert_not_called()
-        self.assertNotIn("elle", self.m.config())
-        self.m.apply(self.manual())
-        plan = self.m.plan(self.manual(enabled=False, domain="notlar.example.net"))
+        plan = self.m.plan(self.payload(enabled=False))
+        self.assertEqual(plan["onay_sn"], 0, "closing commits at once")
         self.assertEqual([(i["islem"], i["nesne"], i["once"], i["sonra"]) for i in plan["degisiklikler"]],
-                         [("kapat", "Notlar · internet adı", "notlar.example.net", "kapalı")])
-        plan = self.m.plan({"revision": self.m.revision(), "web": {"service": "elle-notlar", "sil": True}})
-        self.assertEqual(plan["degisiklikler"][0]["islem"], "kaldir")
-        plan = self.m.plan(self.payload(domain="dav2.example.net"))
-        self.assertEqual([(i["islem"], i["nesne"], i["once"], i["sonra"]) for i in plan["degisiklikler"]],
-                         [("degistir", "WebDAV · internet adı", "dav.example.net", "dav2.example.net")])
+                         [("kapat", "WebDAV · internet adı", "dav.example.net", "kapalı")])
+        self.assertNotIn("İnternet adı için HTTPS sertifikası alınır (en çok 1 dakika).", plan["etkiler"])
+        plan = self.m.plan(self.payload(tail=False))
+        self.assertEqual((plan["onay_sn"], plan["degisiklikler"][0]["islem"]), (0, "kapat"))
+        self.commit(self.payload(tail=False))
+        self.assertEqual(self.m.plan(self.payload())["onay_sn"], 60, "the Tailscale name switched on is an opening")
         with patch.object(tls, "check_dns", side_effect=settings.SettingsError("DNS mismatch")), \
                 self.assertRaisesRegex(settings.SettingsError, "DNS mismatch"):
             self.m.plan(self.payload(domain="dav2.example.net"))
+        # From the internet channel an opening cannot be confirmed; a closing can be applied.
+        self.assertFalse(self.m.plan(self.payload(domain="dav2.example.net"), kanal="internet")["uygulanabilir"])
+        self.assertTrue(self.m.plan(self.payload(tail=False, enabled=False), kanal="internet")["uygulanabilir"])
 
-    def test_manual_address_refuses_konsol_ports_and_foreign_upstreams(self):
-        bad = {"upstream": ("10.0.0.5:80", "localhost:8090", "127.0.0.1:0", "127.0.0.1:70000",
-                            "127.0.0.1:61009", "127.0.0.1:61010", "127.0.0.1:8090/x"),
-               "local": ("panel", "paylas", "Notlar", "1notlar", "not lar", "notlar.ev"),
-               "name": ("", "x" * 41, "a\nb")}
-        for key, values in bad.items():
-            for value in values:
-                payload = self.manual()
-                payload["web"]["elle"][key] = value
-                if key == "local":
-                    payload["web"]["service"] = "elle-" + value
-                with self.subTest(key=key, value=value), self.assertRaises(settings.SettingsError):
-                    self.m.validate(payload)
-        renamed = self.manual()
-        renamed["web"]["service"] = "elle-baska"
-        with self.assertRaises(settings.SettingsError):
-            self.m.validate(renamed)
-        with self.assertRaises(settings.SettingsError):  # the gates alone need an existing address
-            self.m.validate(self.payload(service="elle-notlar", enabled=False, domain=""))
-        self.assertNotIn("elle", self.m.config())
-
-    def test_manual_name_already_answered_by_dns_is_refused(self):
-        (self.root / "dns/modul-baska.conf").write_text("interface-name=notlar.ayc,tailscale0/4\n")
-        with self.assertRaisesRegex(settings.SettingsError, "zaten kullanılıyor"):
-            self.m.validate(self.manual())
-
-    def test_manual_limit(self):
-        saved = {"elle": {"elle-a%d" % i: {"name": "A", "local": "a%d" % i, "upstream": "127.0.0.1:%d" % (9000 + i)}
-                          for i in range(pubs.MANUAL_LIMIT)}}
-        request = self.manual(enabled=False, domain="")["web"]
-        with self.assertRaisesRegex(settings.SettingsError, "En çok"):
-            pubs.validate(self.env, saved, request)
-
-    def test_manual_tailnet_off_then_removal_leaves_nothing(self):
-        self.m.apply(self.manual(enabled=False, domain=""))
-        self.assertTrue((self.root / "sites/elle-notlar.caddy").exists())
-        self.assertFalse((self.root / "sites/elle-notlar-wan.caddy").exists())
-        self.assertNotIn("Notlar", pubs.https_apps_active(self.env))
-        self.m.apply(self.payload(service="elle-notlar", tail=False, enabled=False, domain=""))
-        self.assertFalse((self.root / "sites/elle-notlar.caddy").exists())
-        self.assertFalse((self.root / "dns/modul-elle.conf").exists())
-        self.m.apply({"revision": self.m.revision(), "web": {"service": "elle-notlar", "sil": True}})
-        saved = self.m.config()
-        self.assertEqual((saved["elle"], "elle-notlar" in saved["web"]), ({}, False))
-        self.assertEqual(sorted(p.name for p in (self.root / "sites").glob("elle-*")), [])
-        with self.assertRaisesRegex(settings.SettingsError, "bulunamadı"):
-            self.m.validate({"revision": self.m.revision(), "web": {"service": "elle-notlar", "sil": True}})
-
-    def test_manual_dns_failure_rolls_back_sites_name_and_settings(self):
-        before = self.m.config()
-        self.fail_once = "restart dnsmasq"
-        with self.assertRaises(subprocess.CalledProcessError):
-            self.m.apply(self.manual())
-        self.assertEqual(self.m.config(), before)
+    def test_an_unconfirmed_opening_is_rolled_back(self):
+        result = self.m.apply(self.payload(domain="dav2.example.net"))
+        self.assertIn("https://dav2.example.net:443", (self.root / "sites/paylasim-wan.caddy").read_text())
+        pending = self.m.pending()
+        pending["until"] = 0
+        settings.save_json(self.m.pending_path, pending)
+        self.m.guard()
         self.assertFalse(self.m.pending_path.exists())
-        self.assertFalse((self.root / "dns/modul-elle.conf").exists())
-        self.assertEqual(sorted(p.name for p in (self.root / "sites").glob("elle-*")), [])
-        self.assertNotIn("Notlar", pubs.https_apps_active(self.env))
-
-    def test_manual_names_follow_a_local_domain_change(self):
-        self.m.apply(self.manual(enabled=False, domain=""))
-        # The rename itself is under test, not the transaction's reload.
-        with patch.object(self.m, "domain_reload"), patch.object(self.m, "pending", return_value={"files_active": False}):
-            self.m.domain_apply(dict(self.m.config(), domain="ev"))
-        self.assertIn("http://notlar.ev {", (self.root / "sites/elle-notlar.caddy").read_text())
-        self.assertIn("interface-name=notlar.ev,tailscale0/4", (self.root / "dns/modul-elle.conf").read_text())
-        self.assertEqual(pubs.manual_private_site(self.m.e, pubs.manual(self.m.e)["elle-notlar"]).split("\n")[1],
-                         "http://notlar.ev {")
-
-    def test_stale_manual_sites_are_removed_but_names_ending_in_wan_kept(self):
-        self.m.apply(self.manual(local="ev-wan", enabled=False, domain=""))
-        (self.root / "sites/elle-eski.caddy").write_text("http://eski.ayc {\n\trespond 200\n}\n")
-        (self.root / "sites/elle-eski-wan.caddy").write_text("# stale\n")
-        extras = pubs.extra_sites(self.env)
-        self.assertEqual((extras["elle-eski.caddy"], extras["elle-eski-wan.caddy"]), ("", ""))
-        self.assertIn("http://ev-wan.ayc {", extras["elle-ev-wan.caddy"])
+        self.assertEqual(pubs.config(self.env)["paylasim"]["domain"], "dav.example.net")
+        self.assertIn("https://dav.example.net:443", (self.root / "sites/paylasim-wan.caddy").read_text())
+        self.assertTrue(result["pending"]["web"])
 
     # --- DD-254: the operator sees the actual cause ------------------------------
 
@@ -496,18 +405,19 @@ class PublicationTests(unittest.TestCase):
 
     def test_invalid_caddy_configuration_is_named_and_rolled_back(self):
         before = self.m.config()
-        stderr = b'{"level":"error","msg":"adapting config using caddyfile: ambiguous site definition: https://notlar.example.net:443"}'
+        site = (self.root / "sites/paylasim-wan.caddy").read_text()
+        stderr = b'{"level":"error","msg":"adapting config using caddyfile: ambiguous site definition: https://dav2.example.net:443"}'
         with self.failing("caddy validate", stderr=stderr), self.assertRaises(settings.SettingsError) as error:
-            self.m.apply(self.manual())
+            self.m.apply(self.payload(domain="dav2.example.net"))
         self.assertIn("(Caddy yapılandırması geçersiz: adapting config using caddyfile: ambiguous site definition: "
-                      "https://notlar.example.net:443); önceki yayın geri yüklendi.", str(error.exception))
+                      "https://dav2.example.net:443); önceki yayın geri yüklendi.", str(error.exception))
         self.assertEqual(self.m.config(), before)
-        self.assertEqual(sorted(p.name for p in (self.root / "sites").glob("elle-*")), [])
+        self.assertEqual((self.root / "sites/paylasim-wan.caddy").read_text(), site)
 
     def test_firewall_failure_names_the_firewall_and_its_message(self):
         with self.failing("master-firewall", stderr="[12:00:01] HATA: zincir yazılamadı\n".encode()), \
                 self.assertRaises(settings.SettingsError) as error:
-            self.m.apply(self.manual())
+            self.m.apply(self.payload(domain="dav2.example.net"))
         self.assertIn("(güvenlik duvarı uygulanamadı: zincir yazılamadı)", str(error.exception))
 
     def test_reload_failure_reads_caddys_own_reason_from_its_journal(self):
@@ -520,7 +430,7 @@ class PublicationTests(unittest.TestCase):
             return self.command(argv, **kwargs)
         with patch.object(fixtures.shares.subprocess, "run", side_effect=command), \
                 self.assertRaises(settings.SettingsError) as error:
-            self.m.apply(self.manual())
+            self.m.apply(self.payload(domain="dav2.example.net"))
         self.assertIn("(Caddy yeniden yüklenemedi: loading new config: listen tcp 8.8.8.8:443: bind: cannot assign "
                       "requested address)", str(error.exception))
 

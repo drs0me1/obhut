@@ -1,5 +1,6 @@
-"""master_applications (rebuild DD-271, phase 3): the record, the loopback pool, the guard's input, the read
-model's pieces and the drafts (K2) with their YAML emitter and the address fetch. Pure functions and
+"""master_applications (rebuild DD-271, phases 3 and 4): the record and its access rows (the row store, seeding,
+an edit's port rules, name checks and the rows of every application), the loopback pool, the guard's input, the
+read model's pieces and the drafts (K2) with their YAML emitter and the address fetch. Pure functions and
 temporary folders only; the address fetch runs against a fake resolver and connection."""
 import json
 from pathlib import Path
@@ -42,6 +43,9 @@ class RecordTests(Case):
         self.assertEqual(record["source"], {"tur": "dosya", "alindi": 1_800_000_000,
                                             "sha256": __import__("hashlib").sha256(made["text"].encode()).hexdigest()})
         self.assertEqual(record["answers"]["answers"]["var:DB_PASSWORD"], {"set": True})
+        self.assertNotIn("port:web:8080/tcp", record["answers"]["answers"], "the row holds how a port is reached")
+        self.assertEqual(record["rows"], {"web:8080/tcp": {"tur": "adres", "ad": "notlar", "tailscale_portu": None, "internet": ""}})
+        self.assertEqual(record["definition"]["services"][0]["ports"], [{"port": 8080, "protocol": "tcp"}])
         self.assertNotIn(app_fixtures.SECRET, json.dumps(record))
         folder = records.dir("notlar")
         self.assertEqual(oct(folder.stat().st_mode & 0o777), "0o700")
@@ -94,6 +98,7 @@ class RecordTests(Case):
         given["answers"]["var:DB_PASSWORD"] = {"keep": True}
         self.assertEqual(apps.stored_answers(inspection, given)["answers"]["var:DB_PASSWORD"], {"set": True})
         self.assertEqual(apps.stored_answers(inspection, given)["answers"]["start:web"], {"mode": "direct"})
+        self.assertNotIn("port:web:8080/tcp", apps.stored_answers(inspection, given)["answers"])
         self.assertEqual(apps.new_questions(inspection, {"answers": {"start:web": {}}})[:2], ["var:DB_PASSWORD", "port:web:8080/tcp"])
 
     def test_a_request_names_its_source_exactly(self):
@@ -117,6 +122,220 @@ class RecordTests(Case):
         self.assertEqual(apps.podman_version("4.9.3\n"), (4, 9))
 
 
+ADDRESS = {"tur": "adres", "ad": "notlar", "tailscale_portu": None, "internet": ""}
+# A web service with an address, a raw TCP port and a UDP port (raw, closed).
+PORTS = """name: notlar
+services:
+  web:
+    image: registry.example/notlar/web:1.4
+    ports:
+      - "8080"
+      - "2222"
+      - "5353/udp"
+"""
+PORT_ANSWERS = {"name": "notlar", "answers": {"port:web:8080/tcp": {"use": "caddy", "tailscale_name": "notlar"},
+                                              "port:web:2222/tcp": {"use": "raw"}, "port:web:5353/udp": {"use": "raw"},
+                                              "start:web": {"mode": "root"}}}
+
+
+class RowTests(Case):
+    def setUp(self):
+        super().setUp()
+        self.env.update(DNSMASQ_CONF_FILE=str(self.root / "dnsmasq/local-services.conf"), DNSMASQ_CONF_DIR=str(self.root / "dnsmasq"),
+                        SETTINGS_FILE=str(self.root / "ayarlar.json"))
+        (self.root / "dnsmasq").mkdir()
+
+    def test_install_seeds_one_row_per_port_and_the_definition_keeps_only_numbers(self):
+        made = app_fixtures.record(self.env, text=PORTS, given=PORT_ANSWERS)
+        self.assertEqual(made["rows"], {"web:8080/tcp": ADDRESS, "web:2222/tcp": {"tur": "ham", "kapsam": "kapali", "port": 2222},
+                                        "web:5353/udp": {"tur": "ham", "kapsam": "kapali", "port": 5353}})
+        self.assertEqual(made["places"]["ports"], {"web:8080/tcp": 62100}, "only an address has a pool port")
+        records = apps.Records(self.env)
+        record = records.load("notlar")
+        self.assertEqual(record["rows"], made["rows"])
+        self.assertEqual(record["definition"]["services"][0]["ports"],
+                         [{"port": 8080, "protocol": "tcp"}, {"port": 2222, "protocol": "tcp"}, {"port": 5353, "protocol": "udp"}])
+        self.assertEqual(sorted(record["answers"]["answers"]), ["start:web"])
+        path = records.dir("notlar") / "erisim.json"
+        self.assertEqual((oct(path.stat().st_mode & 0o777), json.loads(path.read_text())), ("0o600", {"satirlar": made["rows"]}))
+        # The checked definition (with its answers) is never stored as it is.
+        with self.assertRaises(cfg.ContainerConfigError):
+            records.write("notlar", definition=made["checked"])
+        with self.assertRaises(cfg.ContainerConfigError):
+            records.write("notlar", answers={"name": "notlar", "answers": {"port:web:8080/tcp": {"use": "raw"}}})
+        self.assertEqual(apps.row_id("notlar", "web:8080/tcp"), "uygulama:notlar:web:8080/tcp")
+
+    def test_anything_unexpected_in_the_rows_fails_closed(self):
+        app_fixtures.record(self.env, text=PORTS, given=PORT_ANSWERS)
+        records = apps.Records(self.env)
+        path = records.dir("notlar") / "erisim.json"
+        good = json.loads(path.read_text())
+        ham = {"tur": "ham", "kapsam": "kapali", "port": 2222}
+
+        def rows(**changes):
+            value = json.loads(json.dumps(good))
+            value["satirlar"].update(changes)
+            return value
+        cases = {
+            "garbage": "{", "not an object": [], "another key": dict(good, fazla=1), "no rows": {},
+            "a row too many": rows(**{"web:9/tcp": ham}), "a row missing": {"satirlar": {k: v for k, v in good["satirlar"].items()
+                                                                                       if k != "web:2222/tcp"}},
+            "an extra field": rows(**{"web:8080/tcp": dict(ADDRESS, not_=1)}),
+            "an address on UDP": rows(**{"web:5353/udp": dict(ADDRESS, ad="dns")}),
+            "a raw port for the pool port": rows(**{"web:8080/tcp": dict(ham, port=8080)}),
+            "an address without a pool port": rows(**{"web:2222/tcp": dict(ADDRESS, ad="ssh")}),
+            "an unknown kind": rows(**{"web:2222/tcp": {"tur": "elle", "port": 2222}}),
+            "an unknown scope": rows(**{"web:2222/tcp": dict(ham, kapsam="lan")}),
+            "a key that is not a port": {"satirlar": dict(good["satirlar"], **{"web:0/tcp": ham})},
+        }
+        for value in ("Notlar", "-notlar", "notlar-", "a" * 64, "", 7, "panel", "paylas"):
+            cases["name %r" % (value,)] = rows(**{"web:8080/tcp": dict(ADDRESS, ad=value)})
+        for value in (0, 65536, True, "8080", 1.5):
+            cases["Tailscale port %r" % (value,)] = rows(**{"web:8080/tcp": dict(ADDRESS, tailscale_portu=value)})
+            cases["raw port %r" % (value,)] = rows(**{"web:2222/tcp": dict(ham, port=value)})
+        for value in ("Notlar.example.org", "notlar.example.org.", "localhost", "notlar", "https://notlar.example.org", None):
+            cases["internet name %r" % (value,)] = rows(**{"web:8080/tcp": dict(ADDRESS, internet=value)})
+        cases["one open raw port twice"] = rows(**{"web:2222/tcp": dict(ham, kapsam="tailscale", port=9000),
+                                                   "web:8080/tcp": dict(ADDRESS, tailscale_portu=9000)})
+        for name, value in cases.items():
+            with self.subTest(case=name):
+                path.write_text(value if isinstance(value, str) else json.dumps(value))
+                path.chmod(0o600)
+                with self.assertRaises(cfg.ContainerConfigError) as err:
+                    records.load("notlar")
+                self.assertEqual(err.exception.status, 503)
+        path.write_text(json.dumps(good))
+        for name, change in (("mode", lambda: path.chmod(0o644)), ("missing", path.unlink),
+                             ("link", lambda: (path.unlink(), path.symlink_to(self.root / "elsewhere.json")))):
+            with self.subTest(case=name):
+                (self.root / "elsewhere.json").write_text(json.dumps(good))
+                change()
+                with self.assertRaises(cfg.ContainerConfigError):
+                    records.rows("notlar")
+                if path.is_symlink() or path.exists():
+                    path.unlink()
+                path.write_text(json.dumps(good))
+                path.chmod(0o600)
+        # Two closed raw rows may share a number: neither publishes.
+        path.write_text(json.dumps(rows(**{"web:5353/udp": dict(ham, port=2222)})))
+        self.assertEqual(records.load("notlar")["rows"]["web:5353/udp"]["port"], 2222)
+
+    def test_an_edit_keeps_the_row_of_a_port_that_stays(self):
+        made = app_fixtures.record(self.env, text=PORTS, given=PORT_ANSWERS)
+        record = apps.Records(self.env).load("notlar")
+        record["rows"]["web:8080/tcp"] = dict(ADDRESS, ad="yeni-ad", tailscale_portu=8443)  # as Erişim changed it
+        text = PORTS.replace('      - "2222"\n', '      - "9090"\n')
+        inspection = master_inspector.inspect(text)
+        # The ports that stay need no answer; a new one does.
+        answers, errors = apps.port_answers(record, inspection, {"name": "notlar", "answers": {
+            "start:web": {"mode": "root"}, "port:web:9090/tcp": {"use": "caddy", "tailscale_name": "notlar-9090"}}})
+        self.assertEqual(errors, {})
+        self.assertEqual(answers["answers"]["port:web:8080/tcp"], {"use": "caddy", "tailscale_name": "yeni-ad"})
+        self.assertEqual(answers["answers"]["port:web:5353/udp"], {"use": "raw"})
+        self.assertNotIn("port:web:2222/tcp", answers["answers"], "a port that went has no question")
+        definition, _values, check_errors = master_inspector.check(inspection, answers)
+        self.assertEqual(check_errors, {})
+        rows = apps.next_rows(definition, record["rows"])
+        self.assertEqual(rows, {"web:8080/tcp": record["rows"]["web:8080/tcp"], "web:5353/udp": made["rows"]["web:5353/udp"],
+                                "web:9090/tcp": dict(ADDRESS, ad="notlar-9090")})
+        # An answer given for a port that stays must be what its row is.
+        for qid, given in (("port:web:8080/tcp", {"use": "raw"}), ("port:web:8080/tcp", {"use": "caddy", "tailscale_name": "notlar"}),
+                           ("port:web:5353/udp", {"use": "caddy", "tailscale_name": "dns"})):
+            with self.subTest(qid=qid, given=given):
+                _answers, errors = apps.port_answers(record, inspection, {"name": "notlar", "answers": {qid: given}})
+                self.assertEqual(errors, {qid: "Bu portun kullanımı Erişim'den değişir."})
+        _answers, errors = apps.port_answers(record, inspection, {"name": "notlar", "answers": {
+            "port:web:8080/tcp": {"use": "caddy", "tailscale_name": "yeni-ad"}}})
+        self.assertEqual(errors, {})
+        self.assertEqual(apps.port_answers(record, inspection, "bozuk"), ("bozuk", {}), "the inspector says why")
+        # yenile: the stored answers with the port answers from the rows; only a new port is a new question.
+        filled = apps.filled_answers(record)
+        self.assertEqual(filled["answers"]["port:web:8080/tcp"], {"use": "caddy", "tailscale_name": "yeni-ad"})
+        self.assertEqual(apps.new_questions(master_inspector.inspect(PORTS), filled), [])
+        self.assertEqual(apps.new_questions(inspection, filled), ["port:web:9090/tcp"])
+
+    def test_a_new_tailscale_name_must_be_free_everywhere(self):
+        app_fixtures.record(self.env, text=PORTS, given=PORT_ANSWERS)
+        definition = app_fixtures.checked(app_fixtures.SIMPLE, app_fixtures.SIMPLE_ANSWERS)[1]
+        question = "port:app:9000/tcp"
+        named = lambda name: apps.name_errors(self.env, "sayac", json.loads(json.dumps(definition).replace('"sayac"', '"%s"' % name)))  # noqa: E731
+        self.assertEqual(named("sayac"), {})
+        self.assertEqual(named("notlar"), {question: "notlar.ev adı zaten kullanılıyor."}, "another application's row")
+        Path(self.env["DNSMASQ_CONF_FILE"]).write_text("interface-name=panel.ev,tailscale0/4\ninterface-name=temel.ev,tailscale0/4\n")
+        (self.root / "dnsmasq/modul-paylasim.conf").write_text("# konsol-off: interface-name=kapali.ev,tailscale0/4\n")
+        (self.root / "dnsmasq" / apps.DNS_FILE).write_text("interface-name=eski.ev,tailscale0/4\n")
+        Path(self.env["SETTINGS_FILE"]).write_text(json.dumps({"dns": {"records": [{"name": "kayit.ev", "target": "tailscale",
+                                                                                   "enabled": True}]}}))
+        for name in ("temel", "kapali", "kayit"):
+            with self.subTest(name=name):
+                self.assertEqual(named(name), {question: "%s.ev adı zaten kullanılıyor." % name})
+        self.assertEqual(named("eski"), {}, "the applications' own DNS file is their projection; the rows decide")
+        taken = apps.taken_names(self.env)
+        self.assertLessEqual({"panel.ev", "paylas.ev", "notlar.ev", "temel.ev", "kapali.ev", "kayit.ev"}, taken)
+        # A row renamed in Erişim holds its new name; an edit of the same application keeps its own names.
+        records = apps.Records(self.env)
+        rows = records.load("notlar")["rows"]
+        records.write("notlar", rows=dict(rows, **{"web:8080/tcp": dict(ADDRESS, ad="yeni")}))
+        self.assertEqual(named("notlar"), {})
+        self.assertEqual(named("yeni"), {question: "yeni.ev adı zaten kullanılıyor."})
+        self.assertNotIn("yeni.ev", apps.taken_names(self.env, skip_app="notlar"))
+        self.assertNotIn("yeni.ev", apps.taken_names(self.env, skip_rows={"uygulama:notlar:web:8080/tcp"}))
+        # The ports that stay are not checked again; without a local domain nothing is decided.
+        self.assertEqual(apps.name_errors(self.env, "sayac", json.loads(json.dumps(definition).replace('"sayac"', '"yeni"')),
+                                          rows={"app:9000/tcp": ADDRESS}), {})
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            apps.name_errors(dict(self.env, LOCAL_DOMAIN=""), "sayac", definition)
+        self.assertEqual(err.exception.status, 503)
+        Path(self.env["SETTINGS_FILE"]).write_text("{")
+        with self.assertRaises(cfg.ContainerConfigError):
+            named("sayac")
+
+    def test_every_row_of_every_application_with_its_pool_port(self):
+        app_fixtures.record(self.env, text=PORTS, given=PORT_ANSWERS)
+        app_fixtures.record(self.env, text=app_fixtures.SIMPLE, given=app_fixtures.SIMPLE_ANSWERS, app="sayac",
+                            ports={"app:9000/tcp": 62105})
+        (Path(self.env["UYGULAMA_STATE_DIR"]) / "yeni").mkdir(mode=0o700)  # an install that has written nothing yet
+        rows = apps.access_rows(self.env)
+        self.assertEqual([r["id"] for r in rows], ["uygulama:notlar:web:2222/tcp", "uygulama:notlar:web:5353/udp",
+                                                  "uygulama:notlar:web:8080/tcp", "uygulama:sayac:app:9000/tcp"])
+        self.assertEqual(rows[2], {"id": "uygulama:notlar:web:8080/tcp", "uygulama": "notlar", "anahtar": "web:8080/tcp",
+                                   "servis": "web", "port": 8080, "protokol": "tcp", "yerel_port": 62100, "satir": ADDRESS})
+        self.assertEqual((rows[1]["yerel_port"], rows[1]["protokol"], rows[1]["satir"]["kapsam"]), (None, "udp", "kapali"))
+        # A clash between two applications' rows stops every reader (the projection keeps what it applied).
+        records = apps.Records(self.env)
+        own = records.load("sayac")["rows"]
+        for clash in ({"tur": "adres", "ad": "notlar", "tailscale_portu": None, "internet": ""},
+                      {"tur": "adres", "ad": "sayac", "tailscale_portu": 2222, "internet": ""}):
+            with self.subTest(clash=clash):
+                notlar = records.load("notlar")["rows"]
+                records.write("notlar", rows=dict(notlar, **{"web:2222/tcp": {"tur": "ham", "kapsam": "tailscale", "port": 2222}}))
+                records.write("sayac", rows=dict(own, **{"app:9000/tcp": clash}))
+                with self.assertRaises(cfg.ContainerConfigError) as err:
+                    apps.access_rows(self.env)
+                self.assertEqual(err.exception.status, 503)
+                self.assertIn("iki satırda kullanılıyor", str(err.exception))
+        records.write("sayac", rows=own)
+        self.assertEqual(len(apps.access_rows(self.env)), 4)
+        self.assertIsNone(apps.row_conflict([("a", "x:1/tcp", {"tur": "ham", "kapsam": "internet", "port": 80}),
+                                             ("b", "y:1/udp", {"tur": "ham", "kapsam": "internet", "port": 80}),
+                                             ("c", "z:1/tcp", {"tur": "ham", "kapsam": "tailscale", "port": 80})]),
+                          "another protocol or another address is another listener")
+        self.assertIn("İnternet adı n.example.org", apps.row_conflict(
+            [("a", "x:1/tcp", dict(ADDRESS, ad="a", internet="n.example.org")),
+             ("b", "y:1/tcp", dict(ADDRESS, ad="b", internet="n.example.org"))]))
+
+    def test_open_raw_rows_are_published_on_the_addresses_state_env_names(self):
+        rows = {"web:8080/tcp": ADDRESS, "web:2222/tcp": {"tur": "ham", "kapsam": "tailscale", "port": 12222},
+                "web:5353/udp": {"tur": "ham", "kapsam": "internet", "port": 5353}, "web:9/tcp": {"tur": "ham", "kapsam": "kapali", "port": 9}}
+        self.assertEqual(apps.raw_hosts(self.env, rows), {"web:2222/tcp": {"host_ip": "100.64.0.2", "host_port": 12222},
+                                                          "web:5353/udp": {"host_ip": "203.0.113.10", "host_port": 5353}})
+        for key, value in (("TAILSCALE_IPV4", ""), ("WAN_IPV4", "yok"), ("WAN_IPV4", "127.0.0.1"), ("TAILSCALE_IPV4", "0.0.0.0")):
+            with self.subTest(key=key, value=value), self.assertRaises(cfg.ContainerConfigError) as err:
+                apps.raw_hosts(dict(self.env, **{key: value}), rows)
+            self.assertEqual(err.exception.status, 503)
+        self.assertEqual(apps.raw_hosts(dict(self.env, WAN_IPV4=""), {"web:9/tcp": rows["web:9/tcp"]}), {}, "closed needs none")
+
+
 class FolderTests(Case):
     def test_an_existing_sub_folder_keeps_the_owner_its_container_gave_it(self):
         sub = self.root / "veri" / "uyg" / "db"
@@ -138,28 +357,30 @@ class PoolTests(Case):
         definition = app_fixtures.checked(app_fixtures.SIMPLE, app_fixtures.SIMPLE_ANSWERS)[1]
         held = {62100}
         bind = lambda port: port not in held
-        # 62100 is held by a listener, 62101 by notlar, 62102 by a Yayınla row, 62103 is a base port.
-        env = dict(self.env, SOME_PORT="62103")
-        ports = apps.allocate(env, "sayac", definition, {}, manual={62102}, bind=bind)
-        self.assertEqual(ports, {"app:9000/tcp": 62104})
-        self.assertEqual(apps.allocate(env, "sayac", definition, {"app:9000/tcp": 62109, "eski:1/tcp": 62108}, manual=set(), bind=bind),
+        # 62100 is held by a listener, 62101 by notlar, 62102 is a base port.
+        env = dict(self.env, SOME_PORT="62102")
+        keys = apps.address_keys(apps.next_rows(definition))
+        ports = apps.allocate(env, "sayac", keys, {}, bind=bind)
+        self.assertEqual(ports, {"app:9000/tcp": 62103})
+        self.assertEqual(apps.allocate(env, "sayac", keys, {"app:9000/tcp": 62109, "eski:1/tcp": 62108}, bind=bind),
                          {"app:9000/tcp": 62109}, "kept across edits; a key that went is dropped")
         with self.assertRaises(cfg.ContainerConfigError) as err:
-            apps.allocate(env, "sayac", definition, {"app:9000/tcp": 62101}, manual=set(), bind=bind)
+            apps.allocate(env, "sayac", keys, {"app:9000/tcp": 62101}, bind=bind)
         self.assertEqual(err.exception.status, 409, "another application's port is never taken over")
         with self.assertRaises(cfg.ContainerConfigError) as err:
-            apps.allocate(dict(env, YAYIN_PORT_SON="62101"), "sayac", definition, {}, manual=set(), bind=bind)
+            apps.allocate(dict(env, UYGULAMA_PORT_SON="62101"), "sayac", keys, {}, bind=bind)
         self.assertIn("boş port kalmadı", str(err.exception))
         raw = json.loads(json.dumps(definition))
         raw["services"][0]["ports"][0]["use"] = "raw"
-        self.assertEqual(apps.allocate(env, "sayac", raw, {"app:9000/tcp": 62109}, manual=set(), bind=bind), {},
-                         "a raw port publishes nothing (A2)")
+        self.assertEqual(apps.allocate(env, "sayac", apps.address_keys(apps.next_rows(raw)), {"app:9000/tcp": 62109},
+                                       bind=bind), {}, "a raw row has no pool port (A2)")
 
     def test_the_guard_reads_each_bridge_and_its_loopback_publications(self):
         app_fixtures.record(self.env)
         self.assertEqual(apps.guard_input(self.env), [{"app": "notlar", "interface": apps.interface(self.env, "notlar"),
                                                        "publications": [{"service": "web", "port": 8080, "protocol": "tcp",
-                                                                         "host_ip": "127.0.0.1", "host_port": 62100}]}])
+                                                                         "scope": "local", "host_ip": "127.0.0.1",
+                                                                         "host_port": 62100}]}])
 
 
 class ReadModelTests(Case):
