@@ -276,7 +276,7 @@ class RouteReplyTests(Fixture):
     def test_the_inspector_takes_a_whole_file_and_no_more(self):
         route = next(r for r in master_api.ROUTES if r.name == "uygulama_denetle")
         padding = "# %s\n" % ("x" * 76)
-        big = (FIXTURES / "gezgin-compose.yaml").read_text() + padding * 2500
+        big = (FIXTURES / "ornek-compose.yaml").read_text() + padding * 2500
         self.assertGreater(len(big), 3 * 65536)
         status, answer = self.post("uygulama_denetle", {"metin": big})
         self.assertEqual((status, answer["inceleme"]["refusals"]), (200, []), "larger than the usual body limit")

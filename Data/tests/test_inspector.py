@@ -35,12 +35,12 @@ def refusal_keys(inspection):
     return [(r["line"], r["key"]) for r in inspection["refusals"]]
 
 
-GEZGIN = {"name": "gezgin", "answers": {
-    "port:gezgin:8080/tcp": {"use": "caddy", "tailscale_name": "gezgin"},
-    "port:gezgin:8092/tcp": {"use": "raw"},
-    "mount:gezgin:/database": {"to": "app"}, "mount:gezgin:/config": {"to": "app"},
-    "mount:gezgin:/srv": {"to": "srv", "path": "/srv", "read_only": False},
-    "start:gezgin": {"mode": "direct"}}}
+ORNEK = {"name": "ornek", "answers": {
+    "port:ornek:8080/tcp": {"use": "caddy", "tailscale_name": "ornek"},
+    "port:ornek:8092/tcp": {"use": "raw"},
+    "mount:ornek:/database": {"to": "app"}, "mount:ornek:/config": {"to": "app"},
+    "mount:ornek:/srv": {"to": "srv", "path": "/srv", "read_only": False},
+    "start:ornek": {"mode": "direct"}}}
 NOTLAR = {"name": "notlar", "answers": {
     "var:NOTLAR_VERSION": {"value": "1.5"}, "var:BASE_URL": {"value": ""}, "var:DB_PASSWORD": {"value": "s3cret-Value"},
     "var:LOG_LEVEL": {"value": ""},
@@ -58,18 +58,18 @@ class DefaultsTests(unittest.TestCase):
 
 
 class FixtureTests(unittest.TestCase):
-    def test_gezgin(self):
-        i = fixture("gezgin-compose.yaml")
-        self.assertEqual((i["format"], i["name"], i["refusals"]), ("compose", "gezgin", []))
+    def test_named_volumes_and_a_placeholder_path(self):
+        i = fixture("ornek-compose.yaml")
+        self.assertEqual((i["format"], i["name"], i["refusals"]), ("compose", "ornek", []))
         q = questions(i)
-        self.assertEqual(list(q), ["name", "port:gezgin:8080/tcp", "port:gezgin:8092/tcp", "mount:gezgin:/database",
-                                   "mount:gezgin:/config", "mount:gezgin:/srv", "start:gezgin"])
-        self.assertEqual(q["name"]["suggest"], "gezgin")
-        self.assertEqual((q["port:gezgin:8080/tcp"]["guess"], q["port:gezgin:8080/tcp"]["suggest"]), ("web", "gezgin"))
-        self.assertEqual(q["port:gezgin:8092/tcp"]["suggest"], "gezgin-8092")
-        self.assertEqual((q["mount:gezgin:/srv"]["suggest"], q["mount:gezgin:/srv"]["srv_path"]), ("srv", "/srv"))
-        self.assertEqual((q["mount:gezgin:/database"]["suggest"], q["mount:gezgin:/database"]["folder"]), ("app", "gezgin-db"))
-        start = q["start:gezgin"]
+        self.assertEqual(list(q), ["name", "port:ornek:8080/tcp", "port:ornek:8092/tcp", "mount:ornek:/database",
+                                   "mount:ornek:/config", "mount:ornek:/srv", "start:ornek"])
+        self.assertEqual(q["name"]["suggest"], "ornek")
+        self.assertEqual((q["port:ornek:8080/tcp"]["guess"], q["port:ornek:8080/tcp"]["suggest"]), ("web", "ornek"))
+        self.assertEqual(q["port:ornek:8092/tcp"]["suggest"], "ornek-8092")
+        self.assertEqual((q["mount:ornek:/srv"]["suggest"], q["mount:ornek:/srv"]["srv_path"]), ("srv", "/srv"))
+        self.assertEqual((q["mount:ornek:/database"]["suggest"], q["mount:ornek:/database"]["folder"]), ("app", "ornek-db"))
+        start = q["start:ornek"]
         self.assertEqual((start["suggest"], start["direct_user"]), ("root", "1000:1000"))
         self.assertEqual(start["open_caps"], ["CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "SETGID", "SETPCAP", "SETUID"])
         for question in i["questions"]:
@@ -226,17 +226,17 @@ class InspectorRefusalTests(unittest.TestCase):
 
 
 class CheckTests(unittest.TestCase):
-    def test_gezgin_definition(self):
-        definition, secrets, errors = check(fixture("gezgin-compose.yaml"), GEZGIN)
+    def test_named_volumes_definition(self):
+        definition, secrets, errors = check(fixture("ornek-compose.yaml"), ORNEK)
         self.assertEqual((errors, secrets), ({}, {}))
         (svc,) = definition["services"]
         self.assertEqual((definition["name"], definition["format"], definition["pod"], definition["secrets"]),
-                         ("gezgin", "compose", False, []))
+                         ("ornek", "compose", False, []))
         self.assertEqual((svc["start"], svc["user"], svc["caps_drop"], svc["no_new_privileges"]), ("direct", "1000:1000", "all", True))
-        self.assertEqual(svc["ports"], [{"port": 8080, "protocol": "tcp", "use": "caddy", "tailscale_name": "gezgin"},
+        self.assertEqual(svc["ports"], [{"port": 8080, "protocol": "tcp", "use": "caddy", "tailscale_name": "ornek"},
                                         {"port": 8092, "protocol": "tcp", "use": "raw", "tailscale_name": None}])
-        self.assertEqual(svc["mounts"], [{"target": "/database", "to": "app", "folder": "gezgin-db", "read_only": False},
-                                         {"target": "/config", "to": "app", "folder": "gezgin-config", "read_only": False},
+        self.assertEqual(svc["mounts"], [{"target": "/database", "to": "app", "folder": "ornek-db", "read_only": False},
+                                         {"target": "/config", "to": "app", "folder": "ornek-config", "read_only": False},
                                          {"target": "/srv", "to": "srv", "path": "/srv", "read_only": False}])
 
     def test_interpolation_secrets_and_start_modes(self):
@@ -367,11 +367,11 @@ class CheckTests(unittest.TestCase):
                 self.assertIn(qid, errors)
                 self.assertTrue(errors[qid])
         # Two addresses of one application may not share a Tailscale name.
-        i = fixture("gezgin-compose.yaml")
-        answers = copy.deepcopy(GEZGIN)
-        answers["answers"]["port:gezgin:8092/tcp"] = {"use": "caddy", "tailscale_name": "gezgin"}
-        self.assertIn("port:gezgin:8092/tcp", check(i, answers)[2])
-        answers["answers"]["port:gezgin:8092/tcp"] = {"use": "caddy", "tailscale_name": "gezgin-dav"}
+        i = fixture("ornek-compose.yaml")
+        answers = copy.deepcopy(ORNEK)
+        answers["answers"]["port:ornek:8092/tcp"] = {"use": "caddy", "tailscale_name": "ornek"}
+        self.assertIn("port:ornek:8092/tcp", check(i, answers)[2])
+        answers["answers"]["port:ornek:8092/tcp"] = {"use": "caddy", "tailscale_name": "ornek-dav"}
         self.assertEqual(check(i, answers)[2], {})
         # UDP may only be raw (A2).
         i = fixture("qbittorrent-compose.yaml")
@@ -498,8 +498,8 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(secrets, {"p-token": "tok"})
 
     def test_malformed_inspections_and_answers_never_raise(self):
-        i = fixture("gezgin-compose.yaml")
-        for answers in (None, [], "x", {"name": "gezgin", "answers": []}, {"name": "gezgin", "answers": {}, "other": 1},
+        i = fixture("ornek-compose.yaml")
+        for answers in (None, [], "x", {"name": "ornek", "answers": []}, {"name": "ornek", "answers": {}, "other": 1},
                         {"name": 5, "answers": {}}):
             with self.subTest(answers=answers):
                 definition, secrets, errors = check(i, answers)
@@ -507,7 +507,7 @@ class CheckTests(unittest.TestCase):
                 self.assertTrue(errors)
         for inspection in (None, {}, {"format": "compose"}, {"format": "x", "questions": []}):
             with self.subTest(inspection=inspection):
-                self.assertTrue(check(inspection, GEZGIN)[2])
+                self.assertTrue(check(inspection, ORNEK)[2])
 
     def test_variables_shape_the_definition(self):
         i = compose("""\

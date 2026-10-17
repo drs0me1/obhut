@@ -51,17 +51,19 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Install:** the four modules are installed beside the backend; the bats test now follows imports
   through every installed module.
 - **Tests:** the reader 28, Compose 37, Kubernetes 14, the inspector 21, route tests in `test_api`;
-  fixtures in `tests/fixtures/uygulama/` (Gezgin's own `compose.yaml` verbatim, linuxserver qBittorrent,
-  a web application with PostgreSQL and a secret, a Pod and a Deployment as Podman writes them, a
+  fixtures in `tests/fixtures/uygulama/` (a published-style file with named volumes and a placeholder
+  path, linuxserver qBittorrent, a web application with PostgreSQL and a secret, a Pod and a Deployment as Podman writes them, a
   hardened file, an unsafe file). Python 760 with only the eight known macOS failures; `bats` 177/177; the
   nine browser suites pass.
 - **Live check (test host, 2026-10-17, v2-256 re-run over v2-255):** the seven fixtures through Caddy and
   the real backend in 130-260 ms each; the unsafe file refused on eight lines; answers to the web
   application with a database gave its two-service definition with two Podman secret names and no secret
   value in the reply; a body over the limit and broken JSON were refused with 400.
-- **For phase 3 (`rebuild.md`):** the start question's suggestion is refined from the pulled image's own
-  user; the generator renders the new definition fields and decides the health check, `httpGet` probes,
-  the root mode's user and short image names.
+- **No application-specific behaviour:** the start question's suggestion comes from the file alone (A4):
+  a file that sets `user:` is suggested "direct", any other "root"; what an image does inside is its own
+  matter, and a file that needs more asks for it and is read or refused like any other.
+- **For phase 3 (`rebuild.md`):** the generator renders the new definition fields and decides the health
+  check, `httpGet` probes, the root mode's user and short image names.
 
 ### DD-272: The rebuild's phase 1: a clean base without the App Store (v2-255)
 

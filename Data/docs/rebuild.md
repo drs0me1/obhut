@@ -31,9 +31,10 @@ software as a Podman container that the operator adds from the software's own de
   first). An inspector (*denetçi*) reads the file, refuses what is unsafe, asks what only the operator
   can answer, and Obhut writes its own Quadlet units. systemd starts them; Podman runs them. There
   is no Docker, no Compose runtime and no Kubernetes.
-- **Obhut knows no application.** The App Store catalogue and the packages `magaza/torrent` and
-  `magaza/gezgin` leave the repository. Gezgin ships its own `compose.yaml`; qBittorrent is added from
-  any published Compose file. Nothing in the shipped tree names an application.
+- **Obhut knows no application.** The App Store catalogue and its packages leave the repository. Every
+  application is added the same way, from its own Compose or Kubernetes file: what the file asks for is
+  what the inspector reads, refuses or asks about. No application gets a mechanism, a default or a code
+  path of its own, and nothing in the shipped tree names an application.
 - **A port reaches outside only through Erişim.** Every container port is either an address (a Caddy
   row: Tailscale name, optional Tailscale port, optional internet name) or a raw port (closed,
   Tailscale or internet). The file's own host ports are never used.
@@ -158,14 +159,15 @@ set, `initContainers`, `ConfigMap` and `Secret` objects, other kinds.
 **Inspector questions.** The application name; every TCP port (Caddy row with its Tailscale name, or
 raw port; nothing preselected, A1); every UDP port (raw, closed, A2); every `${VAR}` (a value, or for a
 secret-looking name a hidden value with "Rastgele üret"); every mount (the application's folder or a
-folder under `/srv`; any other host path is refused); every container's start mode (A4). Guesses
-(web interface, known service port, secret-looking name) are shown, never applied to ports.
+folder under `/srv`: the file's own host path is never used, and system paths and engine sockets are
+refused); every container's start mode (A4, suggested from the file's `user:` alone). Guesses (web
+interface, known service port, secret-looking name) are shown, never applied to ports.
 
 **Generator rules.** One bridge `ksl-<app>`; Compose services get a network alias each; a Kubernetes
 Pod gets a `.pod`. `PublishPort` only on `127.0.0.1:<pool port>` for address rows and on the Tailscale
 or WAN IPv4 address for open raw rows. Images are pulled by the worker and pinned by digest; units use
-`Pull=never`. Start mode per A4. Secrets as `Secret=<app>-<var>,type=env,target=<VAR>`, created through
-standard input. Health checks become Quadlet health settings. No privileged mode, no devices, no host
+`Pull=never`. Start mode per A4. Secrets as `Secret=<name>,type=env,target=<VAR>` under the names the
+inspector gives (`<app>-<variable>` or `<app>-<entry>`), created through standard input. Health checks become Quadlet health settings. No privileged mode, no devices, no host
 namespaces, no host ports from the file.
 
 **Records.** `KONTEYNER_STATE_DIR/uygulamalar/<app>/`, mode 0600 files, root only:
@@ -237,7 +239,7 @@ Removed in the phase named in brackets; the leftover sweep (section 7) proves it
 
 - The store engine `scripts/master-modul`, the registry, `MODULES_*` keys, pending markers, package
   overrides, `ensure_module_files`, `reapply_modules` and every `paket_*` helper in `install.sh` [1].
-- `magaza/` entirely: `torrent`, `gezgin`, `wireguard` (moves into the base), and the built-in
+- `magaza/` entirely: the application packages, `wireguard` (moves into the base), and the built-in
   manifests `dosya` and `paylasim` (their units are installed directly) [1].
 - Every `PAKET_*` consumer in the panel, the firewall, the shares and the container modules; package
   APIs under `/api/uygulama/*`; `/api/konsol/moduller`; the `kur` action; `/uygulamalar/hesap`;
@@ -248,8 +250,8 @@ Removed in the phase named in brackets; the leftover sweep (section 7) proves it
   flows and their routes [3]; container port scopes `tailscale`/`public`, manual `elle-*` rows and the
   Yayınla flow [4].
 - Interface: the catalogue, package forms and settings, the account card, the adapter editor, the
-  Gezgin note, the Görünüm tab, Gelişmiş's create actions, every special case for a named application
-  [1, 5].
+  file-manager note in Dosyalar, the Görünüm tab, Gelişmiş's create actions, every special case for a
+  named application [1, 5].
 - Documentation and tests that describe any of the above, moved to `docs/archive/` or deleted; the
   superseded DD entries retired [6].
 
@@ -287,9 +289,9 @@ Done in v2-256 (DD-273), live-verified on the test host on 2026-10-17.
 - [x] `master_compose.py` and `master_kube.py`
 - [x] `master_inspector.py`: refusals, guesses, questions, answer checking
 - [x] A dry-run route (`POST /api/konsol/uygulamalar/denetle`) in the route table
-- [x] Acceptance fixtures: Gezgin's own `compose.yaml`, a linuxserver qBittorrent Compose file, a
-      two-service application with a database, a Kubernetes Pod from `podman kube generate`, and a
-      deliberately unsafe file
+- [x] Acceptance fixtures: published Compose files as projects ship them (named volumes, a placeholder
+      host path, a linuxserver image), a two-service application with a database, a Kubernetes Pod from
+      `podman kube generate`, and a deliberately unsafe file
 
 ### Phase 3: generating and running
 
@@ -299,8 +301,6 @@ Done in v2-256 (DD-273), live-verified on the test host on 2026-10-17.
 - [ ] Multi-container applications: one network, aliases, ordering, health; Kubernetes `.pod`
 - [ ] Bind rule (A5) and start modes (A4); DD-226 and DD-227 amended
 - [ ] Image name and existing container turned into draft files (K2)
-- [ ] The start question's suggestion refined from the pulled image's own user (an image that runs as
-      a non-root user, such as Gezgin's, is suggested "direct" even when the file has no `user:`)
 - [ ] Single-container definitions, adoption and their routes removed
 
 ### Phase 4: access rows
@@ -333,8 +333,9 @@ Done in v2-256 (DD-273), live-verified on the test host on 2026-10-17.
       for tests: `master-panel --state-env`, `--allow-host` in both backends, the `PANEL_ACTIVE_WINDOW`
       and `PANEL_SAMPLE_SECONDS` environment variables, the hidden `--state` of `obhut` and `--kaynak` of
       `master-onar`: each one is removed or moved behind the test harness
-- [ ] The test host reset by the operator (S4); install from the branch on the clean system; Gezgin
-      and qBittorrent added from their own files; every flow of the prototype done live
+- [ ] The test host reset by the operator (S4); install from the branch on the clean system;
+      applications the operator chooses added from their own published files; every flow of the
+      prototype done live
 - [ ] On `main`, a last 1.x release that turns the update offer into the clean-install notice (4.6)
 - [ ] Merge to `main`; release when the operator asks (section 8)
 
@@ -353,8 +354,8 @@ Done in v2-256 (DD-273), live-verified on the test host on 2026-10-17.
 4. **Back doors:** a test fails if the backend answers a path outside the route table other than the
    session check and the sign-in POST; no listener appears that `config/defaults.env` does not declare;
    no secret value reaches a log, a reply or a world-readable file.
-5. **Live:** the test host is cleaned (S4), the branch is installed with `KUR_REF=yeni-yapi`, the
-   phase's features are exercised, and the report says what was run and what happened. No server-side
+5. **Live:** the test host is cleaned (S4), the branch is installed (with `KUR_REF=yeni-yapi`, or before
+   its commit the same tree as an archive through `KUR_URL`), the phase's features are exercised, and the report says what was run and what happened. No server-side
    backups on the test host.
 
 ## 8. Open questions

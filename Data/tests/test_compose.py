@@ -29,20 +29,20 @@ def refused(model):
 
 
 class FixtureTests(unittest.TestCase):
-    def test_gezgins_own_file(self):
-        model = read((FIXTURES / "gezgin-compose.yaml").read_text())
+    def test_a_published_file_with_named_volumes(self):
+        model = read((FIXTURES / "ornek-compose.yaml").read_text())
         self.assertEqual(model["refusals"], [])
-        self.assertEqual((model["format"], model["name"], model["pod"]), ("compose", "gezgin", False))
+        self.assertEqual((model["format"], model["name"], model["pod"]), ("compose", "ornek", False))
         (svc,) = model["services"]
-        self.assertEqual((svc["name"], svc["line"], svc["image"], svc["image_line"]), ("gezgin", 10, "ghcr.io/drs0me1/gezgin:2", 11))
+        self.assertEqual((svc["name"], svc["line"], svc["image"], svc["image_line"]), ("ornek", 10, "registry.example/ornek/sunucu:2", 11))
         self.assertEqual(svc["restart"], "unless-stopped")
         self.assertEqual(svc["ports"], [{"port": 8080, "protocol": "tcp", "host_port": 8080, "line": 15},
                                         {"port": 8092, "protocol": "tcp", "host_port": 8092, "line": 18}])
-        self.assertEqual(svc["environment"], [{"name": "GEZGIN_WEBDAV_PORT", "value": "8092", "line": 20, "secret_ref": False,
+        self.assertEqual(svc["environment"], [{"name": "ORNEK_EK_PORT", "value": "8092", "line": 20, "secret_ref": False,
                                                "secret_key": None}])
         self.assertEqual(svc["mounts"], [
-            {"kind": "named", "source": "gezgin-db", "target": "/database", "read_only": False, "line": 22},
-            {"kind": "named", "source": "gezgin-config", "target": "/config", "read_only": False, "line": 23},
+            {"kind": "named", "source": "ornek-db", "target": "/database", "read_only": False, "line": 22},
+            {"kind": "named", "source": "ornek-config", "target": "/config", "read_only": False, "line": 23},
             {"kind": "absolute", "source": "/path/to/your/files", "target": "/srv", "read_only": False, "line": 24}])
         self.assertEqual((svc["user"], svc["health"], svc["command"], svc["caps_add"]), (None, None, None, []))
         self.assertIn((12, "container_name"), [(n["line"], n["key"]) for n in model["notes"]])
@@ -614,7 +614,7 @@ class HelperTests(unittest.TestCase):
     def test_names_and_folders(self):
         self.assertEqual(master_compose.lower_dashed("DB_PASSWORD"), "db-password")
         self.assertEqual(master_compose.safe_folder("..hidden"), "hidden")
-        self.assertEqual(master_compose.safe_folder("Gezgin DB"), "gezgin-db")
+        self.assertEqual(master_compose.safe_folder("Ornek DB"), "ornek-db")
         self.assertEqual(master_compose.safe_folder("///"), "veri")
         self.assertEqual(master_compose.capability("cap_kill"), "KILL")
         self.assertIsNone(master_compose.capability(5))
