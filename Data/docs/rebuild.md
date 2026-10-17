@@ -170,12 +170,14 @@ or WAN IPv4 address for open raw rows. Images are pulled by the worker and pinne
 inspector gives (`<app>-<variable>` or `<app>-<entry>`), created through standard input. Health checks become Quadlet health settings. No privileged mode, no devices, no host
 namespaces, no host ports from the file.
 
-**Records.** `KONTEYNER_STATE_DIR/uygulamalar/<app>/`, mode 0600 files, root only:
+**Records.** `UYGULAMA_STATE_DIR/<app>/` (`KONTEYNER_STATE_DIR/uygulamalar/`), mode 0600 files, root only:
 `kaynak.yaml` (the file exactly as given), `kaynak.json` (source kind, address, fetch time, SHA-256),
-`yanitlar.json` (answers, never secret values), `tanim.json` (the checked definition), `ozetler.json`
-(image digests). Units in `KONTEYNER_BIRIM_DIR` (`konsol-<app>.network`, `konsol-<app>-<service>.container`,
-`konsol-<app>.pod`). Data in `/var/lib/master-stack/uygulamalar/<app>/<folder>/` (A5; a new key in
-`config/defaults.env`, outside the Files account's view like every private state, DD-225). The record is
+`yanitlar.json` (answers, never secret values), `tanim.json` (the checked definition), `yerler.json`
+(what the engine allocated: pool ports, Podman secret names, image digests, stopped, revision) and `env/`.
+Units in `KONTEYNER_BIRIM_DIR` (`konsol-<app>.network`, `konsol-<app>_<service>.container`,
+`konsol-<app>.pod`; application names have no `_`, so no two applications share a name). Data in
+`UYGULAMA_VERI_DIR/<app>/<folder>/` (`/var/lib/master-stack/uygulamalar/`, A5; outside the Files account's
+view like every private state, DD-225). The record is
 the single source: units, rows and names can be generated again from it on request. This is not a
 reconcile engine; nothing runs unasked.
 
@@ -295,13 +297,18 @@ Done in v2-256 (DD-273), live-verified on the test host on 2026-10-17.
 
 ### Phase 3: generating and running
 
-- [ ] `master_generator.py`: units, secrets, folders, rows (rows applied in phase 4)
-- [ ] `master_applications.py` on the existing worker: add, start, stop, restart, update image,
+Done in v2-257 (DD-274), live-verified on the test host on 2026-10-17. A Kubernetes Pod with more than one
+container and a Compose `service_healthy` need Podman 5 (Quadlet `.pod`, `Notify=healthy`): Ubuntu 24.04's
+Podman 4.9 refuses them before any write. The base installs `catatonit` for pods and `init: true`.
+
+- [x] `master_generator.py`: units, secrets, folders, rows (rows applied in phase 4)
+- [x] `master_applications.py` on the existing worker: add, start, stop, restart, update image,
       refresh from source, edit definition, remove (keep or delete data)
-- [ ] Multi-container applications: one network, aliases, ordering, health; Kubernetes `.pod`
-- [ ] Bind rule (A5) and start modes (A4); DD-226 and DD-227 amended
-- [ ] Image name and existing container turned into draft files (K2)
-- [ ] Single-container definitions, adoption and their routes removed
+- [x] Multi-container applications: one network, aliases, ordering, health; Kubernetes `.pod`
+- [x] Bind rule (A5) and start modes (A4); DD-226 and DD-227 amended (a root start may write `/srv`, with
+      a warning: the operator's decision of 2026-10-17)
+- [x] Image name and existing container turned into draft files (K2)
+- [x] Single-container definitions, adoption and their routes removed
 
 ### Phase 4: access rows
 

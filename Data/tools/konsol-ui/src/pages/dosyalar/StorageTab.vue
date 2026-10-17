@@ -1,8 +1,8 @@
 <!-- Dosyalar → Depolama (phase 4b, DD-267): the disk the user area is on (GET /api/state: size, free, what the
      user area itself holds without the trash, whether it is its own mount), the trash in short, and the user
      area's top folders (GET /api/list) with their size, item count and who uses them: applications whose
-     containers bind the folder or a folder inside it (GET /api/konsol/depolama; a bind of the whole user
-     area counts for every folder) and folder shares. Each user links to its application's page or to
+     services bind the folder or a folder inside it (GET /api/konsol/depolama, "<service>: <target>"; a bind
+     of the whole user area counts for every folder) and folder shares. Each user links to its application's page or to
      Paylaşımlar; each folder opens in Sunucu klasörleri. -->
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
@@ -57,7 +57,7 @@ interface Use {
   name: string;
   detail: string;
   to: RouteLocationRaw;
-  kind: "konteyner" | "paylasim";
+  kind: "uygulama" | "paylasim";
 }
 
 const SHARE_ID = /^\/s\/([^/]+)\/$/;
@@ -81,7 +81,7 @@ const users = computed(() => {
       out.push({ rel, use: { key: `p${i}`, name: u.ad, kind: "paylasim", detail: `klasör paylaşımı · ${where} · ${access(u.yazilabilir)}`,
         to: filesRoute("paylasimlar", id ? { paylasim: id } : {}) } });
     } else {
-      out.push({ rel, use: { key: `u${i}`, name: u.ad, kind: u.tur, detail: `${where} · ${access(u.yazilabilir)}${u.hedef ? ` · konteynerde ${u.hedef}` : ""}`, to: appRoute(u.id) } });
+      out.push({ rel, use: { key: `u${i}`, name: u.ad, kind: u.tur, detail: `${where} · ${access(u.yazilabilir)}${u.hedef ? ` · ${u.hedef}` : ""}`, to: appRoute(u.id) } });
     }
   }
   return out;

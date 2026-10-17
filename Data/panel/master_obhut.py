@@ -10,7 +10,7 @@ backend does not answer, `durum` reads the units from systemd and says how to re
     sudo obhut denetle | onar
     sudo obhut guncelle [--evet]
     sudo obhut hesap durum | sifirla
-    sudo obhut uygulama liste [--json] | baslat|durdur|yeniden-baslat <id>
+    sudo obhut uygulama liste [--json] | baslat|durdur|yeniden-baslat <ad>
     sudo obhut yayin liste [--json] | kapat <id>|--hepsi
     sudo obhut geri-al
 
@@ -157,7 +157,7 @@ def cmd_durum(konsol, args):
             lines.append("  ! %s: %s" % (check.get("name"), check.get("detail")))
     lines.append("Uygulamalar:")
     for item in apps.get("items") or []:
-        lines.append("  %-28s %s" % (item.get("id"), item.get("durum")))
+        lines.append("  %-28s %s" % (item.get("ad"), item.get("durum")))
     if pending.get("bekleyen"):
         lines.append("Onay bekleyen bir ayar değişikliği var (geri almak için: sudo obhut geri-al).")
     show(data, args.json, lines)
@@ -205,19 +205,18 @@ def cmd_uygulama(konsol, args):
     apps = konsol.get("/api/konsol/uygulamalar")
     items = apps.get("items") or []
     if args.eylem == "liste":
-        lines = ["%-28s %-12s %s" % (i.get("id"), i.get("durum"), i.get("ad")) for i in items]
+        lines = ["%-30s %-12s %s" % (i.get("ad"), i.get("durum"),
+                                     ", ".join("%s %s" % (s.get("ad"), s.get("durum")) for s in i.get("servisler") or []))
+                 for i in items]
         show(apps, args.json, lines or ["Kurulu uygulama yok."])
         return 0
-    item = next((i for i in items if i.get("id") == args.id or i.get("konteyner") == args.id), None)
+    item = next((i for i in items if i.get("ad") == args.id), None)
     if item is None:
         raise ObhutError("Uygulama bulunamadı: %s (sudo obhut uygulama liste)" % args.id)
     if args.eylem not in (item.get("eylemler") or []):
         verb = {"baslat": "başlatılamaz", "durdur": "durdurulamaz", "yeniden-baslat": "yeniden başlatılamaz"}[args.eylem]
         raise ObhutError("%s şu an %s (durum: %s)." % (item.get("ad"), verb, item.get("durum")))
-    body = {"id": item["id"], "eylem": args.eylem}
-    if item.get("revizyon"):
-        body["revizyon"] = item["revizyon"]
-    konsol.post("/api/konsol/uygulamalar/islem", body)
+    konsol.post("/api/konsol/uygulamalar/%s/islem" % item["ad"], {"eylem": args.eylem, "revizyon": item.get("revizyon", "")})
     print("%s: %s isteği gönderildi; durumu: sudo obhut uygulama liste" % (item.get("ad"), args.eylem))
     return 0
 
@@ -294,7 +293,7 @@ def parser():
 def main(argv=None):
     args = parser().parse_args(argv)
     if getattr(args, "eylem", None) in ("baslat", "durdur", "yeniden-baslat") and not args.id:
-        print("obhut: uygulamanın kimliğini yazın (sudo obhut uygulama liste).", file=sys.stderr)
+        print("obhut: uygulamanın adını yazın (sudo obhut uygulama liste).", file=sys.stderr)
         return 2
     if args.komut == "yayin" and args.eylem == "kapat" and not (args.id or args.hepsi):
         print("obhut: yayının kimliğini ya da --hepsi yazın (sudo obhut yayin liste).", file=sys.stderr)

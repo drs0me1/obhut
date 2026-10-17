@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tailscale adres değişince state.env güncelle; Caddy ve bağlı konteyner adreslerini yenile.
+# Tailscale adres değişince state.env güncelle ve Caddy'yi yeniden başlat.
 # Ek siteler (ör. Paylaşım'ın Infuse adresi {$TAILSCALE_IPV4}:port) Caddyfile'a içe
 # aktarılır; Caddy yeniden başlayınca onlar da yeni adresle açılır (DD-98, DD-149).
 # DD-239/DD-240: 5 dakikalık döngü yok. Açılışta bir kez, her gece 03:00–04:00 arasında bir kez, Caddy
@@ -59,18 +59,6 @@ restart_bound_units() {
         systemctl restart "$unit" ||
             printf 'refresh-tailnet: %s yeniden başlatılamadı\n' "$unit" >&2
     done
-}
-
-refresh_bound_containers() {
-    [[ -n "${KONTEYNER_STATE_DIR:-}" && -n "${RUNTIME_DIR:-}" && -n "${SBIN_DIR:-}" ]] || return 0
-    [[ -f "$RUNTIME_DIR/containers-tailnet.pending" ]] || return 0
-    # Uzun yeniden oluşturma bu birimin 150 saniyelik bütçesini tüketmez. Çalışan iş
-    # varsa yeni iş açılmaz; işaret bir sonraki çalışmada (onarım ya da açılış) tekrar denenir.
-    systemd-run --quiet --no-block --collect --unit=master-container-tailnet-refresh \
-        --property=RuntimeMaxSec=900 --property=UMask=0077 \
-        --setenv=PYTHONDONTWRITEBYTECODE=1 \
-        /usr/bin/python3 "$SBIN_DIR/master_container_worker.py" --state "$STATE_FILE" --refresh-tailnet ||
-        printf 'refresh-tailnet: konteyner adres işi başlatılamadı; sonraki çalışmada denenecek\n' >&2
 }
 
 recover_failed_bound_units() {
@@ -192,8 +180,6 @@ old_v6="${TAILSCALE_IPV6:-}"
 if [[ "$new_v4" == "$old_v4" && "$new_v6" == "$old_v6" ]]; then
     printf 'refresh-tailnet: değişiklik yok (%s)\n' "$new_v4"
     recover_failed_bound_units
-    [[ -z "${RUNTIME_DIR:-}" ]] || exec 8>&-
-    refresh_bound_containers
     exit 0
 fi
 
@@ -221,12 +207,8 @@ chmod 0600 "$tmp"
 mv -f "$tmp" "$STATE_FILE"
 trap - EXIT
 
-if [[ -n "${KONTEYNER_STATE_DIR:-}" && -n "${RUNTIME_DIR:-}" ]]; then
-    printf '%s\n%s\n' "$new_v4" "$new_v6" >"$RUNTIME_DIR/containers-tailnet.pending"
-fi
 [[ -z "${RUNTIME_DIR:-}" ]] || exec 8>&-
 recover_firewall_if_broken
 restart_bound_units
-refresh_bound_containers
 
 printf 'refresh-tailnet: state.env güncellendi; Caddy yeniden başlatıldı\n'

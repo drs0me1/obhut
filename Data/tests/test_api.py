@@ -11,6 +11,7 @@ import unittest
 import unittest.mock
 from unittest.mock import patch
 
+import app_fixtures
 import test_resources
 from test_overview import Fixture
 
@@ -21,7 +22,7 @@ import master_api  # noqa: E402
 FIXTURES = DATA / "tests" / "fixtures" / "uygulama"
 
 panel = test_resources.panel
-SAMPLES = {"iface": "wg0", "name": "telefon"}
+SAMPLES = {"app": "notlar", "iface": "wg0", "name": "telefon"}
 
 
 def concrete(route):
@@ -155,28 +156,26 @@ class RouteReplyTests(Fixture):
             self.assertEqual(self.get("gelismis", "?yenile=1"), {"read_at": 3, "caddy": view["web"], "dnsmasq": view["dns"]})
         settings.assert_called_once_with(fresh=True)
         # Podman reads go to the same view as the current Konsol's.
-        row = {"id": "abc", "name": "notlar", "image": "docker.io/library/nginx:alpine", "state": "running", "status": "Up",
-               "unit": "konsol-notlar.service", "network": "konsol", "created": 1, "started": 2, "exit_code": 0, "restarts": 0,
-               "ports": [{"host_ip": "127.0.0.1", "host_port": 8090, "container_port": 80, "protocol": "tcp", "scope": "local"}],
-               "mounts": 1, "health": "", "live": True, "source": "konsol", "management_id": "konsol:notlar",
-               "revision": "r1", "actions": ["stop", "restart", "save", "remove", "image-update"], "restricted_reason": "",
-               "cpu_percent": None, "memory_bytes": 1024, "busy": None, "listening": None,
-               "update": {"state": "guncel", "channel": "alpine", "error": "", "checked_at": 5}}
+        row = {"id": "abc", "name": "notlar_web", "image": "registry.example/notlar/web@sha256:" + "a" * 64, "state": "running",
+               "status": "Up", "unit": "konsol-notlar_web.service", "network": "ksl-notlar", "created": 1, "started": 2, "exit_code": 0,
+               "restarts": 0, "ports": [{"host_ip": "127.0.0.1", "host_port": 62100, "container_port": 80, "protocol": "tcp",
+                                          "scope": "local"}],
+               "mounts": 1, "health": "", "live": True, "source": "uygulama", "uygulama": "notlar",
+               "cpu_percent": None, "memory_bytes": 1024, "busy": None, "listening": None}
         listing = {"read_at": 1, "runtime": {"version": "5.4.2", "ok": True, "error": ""}, "containers": [row],
                    "images": [{"id": "i1", "name": "docker.io/library/nginx:alpine", "size": 10, "created": 1, "used_by": ["notlar"],
                                "managed": True}],
                    "volumes": [{"name": "v", "driver": "local", "size": None, "used_by": [], "managed": True}],
-                   "networks": [{"name": "konsol", "id": "n1", "driver": "bridge", "subnets": ["10.89.1.0/24"], "used_by": ["notlar"],
+                   "networks": [{"name": "ksl-notlar", "id": "n1", "driver": "bridge", "subnets": ["10.89.1.0/24"], "used_by": ["notlar"],
                                  "managed": True, "internal": False}],
                    "storage": {"images": 1, "containers": 1, "size": None}, "resource_errors": {}}
         detail = dict(row, mounts=[{"type": "volume", "source": "v", "destination": "/data", "rw": True, "name": "v"}],
-                      config={"name": "notlar"}, editable=["ports"], protected_mounts=[], effective_autostart=True,
                       user="", command="nginx")
         fake = unittest.mock.Mock()
         fake.liste.return_value, fake.ayrinti.return_value = listing, detail
         with patch.object(panel.Handler, "container_view", return_value=fake):
             self.assertEqual(self.get("konteyner_listesi"), listing)
-            self.assertEqual(self.get("konteyner_ayrintisi", "?ad=notlar")["command"], "nginx")
+            self.assertEqual(self.get("konteyner_ayrintisi", "?ad=notlar_web")["command"], "nginx")
         status, _headers, body = test_resources.unix_get(self.sock, "/api/konsol/konteynerler/ayrinti?ad=../x", {"X-Konsol": "1"})
         self.assertEqual(status, 400, body)
 
@@ -203,24 +202,21 @@ class RouteReplyTests(Fixture):
             self.assertEqual(self.post("paylasim_kaldir", {"id": "abc"}), (200, view))
         run.assert_called_once_with("remove", {"id": "abc"}, shares=True)
         self.assertEqual(self.post("paylasim_kaldir", {"id": "abc", "x": 1})[0], 400)
-        # Depolama: an application's bind mounts under the user area and each share.
-        root = str(self.root)
-        apps = {"items": [{"id": "konteyner:notlar", "ad": "notlar", "tur": "konteyner", "konteyner": "notlar"}], "hatalar": []}
-        mounts = [{"type": "bind", "source": root + "/media", "destination": "/media", "rw": False, "name": ""},
-                  {"type": "bind", "source": "/etc/localtime", "destination": "/etc/localtime", "rw": False, "name": ""},
-                  {"type": "volume", "source": "/var/lib/containers/v", "destination": "/data", "rw": True, "name": "v"}]
-        fake = unittest.mock.Mock()
-        fake.ayrinti.return_value = {"mounts": mounts}
-        registry = {"root": root, "items": [{"id": "abc", "path": "media/filmler", "name": "filmler",
-                                             "connections": {"tailscale": {"enabled": True, "permission": "rw", "expires": None}}}]}
-        with patch.object(self.p, "uygulamalar", return_value=apps), patch.object(self.p.containers, "view", return_value=fake), \
-             patch.object(panel.master_shares, "Manager") as manager:
+        # Depolama (K7): each application's /srv folders from its record, and each share.
+        values = app_fixtures.env(self.root)
+        with self.state.open("a") as fh:
+            fh.write("UYGULAMA_STATE_DIR=%s\n" % values["UYGULAMA_STATE_DIR"])
+        app_fixtures.record(dict(values, STATE_FILE=str(self.state)))
+        registry = {"root": "/srv", "items": [{"id": "abc", "path": "media/filmler", "name": "filmler",
+                                               "connections": {"tailscale": {"enabled": True, "permission": "rw", "expires": None}}}]}
+        with patch.object(panel.master_shares, "Manager") as manager, patch.object(panel.subprocess, "run",
+                                                                                   side_effect=AssertionError("no command")):
             manager.return_value.read.return_value = registry
             answer = self.get("depolama")
-        self.assertEqual(answer["kok"], os.path.realpath(root))
+        self.assertEqual(answer["kok"], os.path.realpath(str(self.root)))
         self.assertEqual(answer["kullananlar"], [
-            {"yol": root + "/media", "id": "konteyner:notlar", "ad": "notlar", "tur": "konteyner", "hedef": "/media", "yazilabilir": False},
-            {"yol": root + "/media/filmler", "id": "paylasim", "ad": "filmler", "tur": "paylasim", "hedef": "/s/abc/", "yazilabilir": True}])
+            {"yol": "/srv/media", "id": "notlar", "ad": "notlar", "tur": "uygulama", "hedef": "web: /media", "yazilabilir": False},
+            {"yol": "/srv/media/filmler", "id": "paylasim", "ad": "filmler", "tur": "paylasim", "hedef": "/s/abc/", "yazilabilir": True}])
         self.assertEqual(answer["hatalar"], [])
 
     def raw_post(self, path, body):

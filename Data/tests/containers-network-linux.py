@@ -7,19 +7,22 @@ This exercises our actual nft guard with Netavark-shaped DNAT/SNAT and permissiv
 foreign filter chains, including what a container may open itself (DD-224): the
 internet yes; tailnet, WireGuard, private, link-local and IPv6 destinations no.
 DD-229: the container opens nothing on the host itself, only DNS on its bridge gateway.
+DD-271 (phase 3): the guard's input is an application record; its address port is published on
+127.0.0.1 only, so a DNAT to the bridge from the tailnet or the WAN finds no permit.
 Real Podman/Quadlet lifecycle is a separate live check.
 """
 import importlib.util
 import json
 import os
 from pathlib import Path
-import select
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 
 DATA = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(DATA / "panel"))
 spec = importlib.util.spec_from_file_location("container_network", DATA / "panel/master_container_network.py")
 net = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(net)
@@ -27,12 +30,6 @@ spec.loader.exec_module(net)
 
 def cmd(*args, **kw):
     return subprocess.run(args, check=True, capture_output=True, text=True, timeout=15, **kw).stdout.strip()
-
-
-def line(process, timeout=5):
-    if not select.select([process.stdout], [], [], timeout)[0]:
-        raise AssertionError("fixture session output timed out")
-    return process.stdout.readline().strip()
 
 
 SERVER = r'''
@@ -138,16 +135,17 @@ def main():
         probes += 1
     try:
         with tempfile.TemporaryDirectory(prefix="container-network-") as root:
-            env = dict(KONTEYNER_STATE_DIR=root, RUNTIME_DIR=root, KONTEYNER_NETWORK="konsol",
+            env = dict(KONTEYNER_STATE_DIR=root, RUNTIME_DIR=root, UYGULAMA_STATE_DIR=root + "/uygulamalar",
                        KONTEYNER_BRIDGE_PREFIX="ksl", KONTEYNER_NFT_TABLE="master_containers", TAILSCALE_IF="tailscale0",
                        VPN_BLOCK_DEST4=net.env_read(DATA / "config/defaults.env")["VPN_BLOCK_DEST4"])
+            import master_applications
+            bridge = master_applications.interface(env, "probe")
             wan = peer("eth0", "192.0.2", "2001:db8:1")
             tail = peer("tailscale0", "100.64.0", "fd7a:115c:a1e0:1")
             wg = peer("wg0", "10.8.0", "fd00:3")
             other = peer("eth1", "198.51.100", "2001:db8:4")
             lan = peer("eth2", "192.168.77", "2001:db8:77")
             meta = peer("eth3", "169.254.169", "2001:db8:169")
-            bridge = net.bridge_name(env)
             cmd("ip", "link", "add", bridge, "type", "bridge")
             cmd("ip", "link", "set", bridge, "up")
             ctr = peer("ceth", "10.250.0", "fd00:250", bridge)
@@ -163,15 +161,14 @@ def main():
                     if time.monotonic() > deadline:
                         raise AssertionError("fixture echo server not ready")
                     time.sleep(.05)
-            rows = []
-            for scope, port in (("local", 18080), ("tailscale", 18081), ("public", 18082)):
-                for protocol in ("tcp", "udp"):
-                    rows.append(dict(scope=scope, host_port=port, container_port=8080, protocol=protocol, public_ack=scope == "public"))
-            definition = dict(name="probe", network="bridge", ports=rows)
-            directory = Path(root) / "definitions"
-            directory.mkdir()
-            path = directory / "probe.json"
-            path.write_text(json.dumps(definition))
+            # The application record the guard reads: one address port on the loopback pool.
+            directory = Path(env["UYGULAMA_STATE_DIR"]) / "probe"
+            directory.mkdir(parents=True, mode=0o700)
+            Path(env["UYGULAMA_STATE_DIR"]).chmod(0o700)
+            path = directory / "yerler.json"
+            path.write_text(json.dumps({"revision": "a" * 32, "stopped": False, "ports": {"web:8080/tcp": 18080},
+                                        "secrets": {}, "images": {}}))
+            path.chmod(0o600)
             # Prefix guards must win over both earlier and later foreign ACCEPT chains.
             nat = ["table inet fixture {",
                    "chain early { type filter hook forward priority -20; policy accept; accept; }",
@@ -231,33 +228,24 @@ def main():
                 # Other networks still reach the host's services: the input guard names only container bridges.
                 probe(tail, "100.64.0.1", 9090, protocol, True)
             for protocol in ("tcp", "udp"):
+                # The loopback publication answers on the host; nothing reaches the bridge from outside, even
+                # where a foreign NAT rule points there (no Tailscale or WAN publication before phase 4).
                 probe([], "127.0.0.1", 18080, protocol, True)
-                probe(tail, "100.64.0.1", 18081, protocol, True)
-                probe(wan, "192.0.2.1", 18082, protocol, True)
                 for prefix in (wan, tail, wg, other):
                     probe(prefix, "10.250.0.2", 8080, protocol, False)
                     probe(prefix, "fd00:250::2", 8080, protocol, False)
                     probe(prefix, "127.0.0.1", 18080, protocol, False)
-                    if prefix != tail:
-                        probe(prefix, "100.64.0.1", 18081, protocol, False)
-                    if prefix != wan:
-                        probe(prefix, "192.0.2.1", 18082, protocol, False)
+                    probe(prefix, "100.64.0.1", 18081, protocol, False)
+                    probe(prefix, "192.0.2.1", 18082, protocol, False)
                 probe(wan, "2001:db8:1::1", 18082, protocol, False)
-                # Exit-node/transit packets with the same port never count as a local publication.
+                # Exit-node/transit packets with the same port never count as a publication.
                 probe(tail, "203.0.113.88", 18082, protocol, False)
                 probe(wg, "203.0.113.88", 18082, protocol, False)
-            # Existing inbound TCP connections must stop after changing public -> local.
-            session = subprocess.Popen([*wan, "python3", "-u", "-c",
-                "import socket,sys;s=socket.create_connection(('192.0.2.1',18082));s.settimeout(.7);s.sendall(b'before');print(s.recv(32).decode(),flush=True);sys.stdin.readline();s.sendall(b'after');\ntry: print(s.recv(32).decode(),flush=True)\nexcept OSError: print('blocked',flush=True)"],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            children.append(session)
-            assert line(session) == "before"
-            definition["ports"] = [p for p in rows if p["scope"] != "public"]
-            path.write_text(json.dumps(definition))
+            # Removing the record removes the bridge's own rule at the next apply.
+            path.unlink()
+            directory.rmdir()
             net.apply(env)
-            session.stdin.write("continue\n"); session.stdin.flush()
-            assert line(session) == "blocked", "revoked established inbound session still allowed"
-            session.wait(timeout=3)
+            assert bridge not in cmd("nft", "-j", "list", "table", "inet", env["KONTEYNER_NFT_TABLE"])
             assert outsiders == cmd("nft", "-j", "list", "table", "inet", "fixture"), "foreign table changed"
             # Tampering that keeps the table present must fail health verification.
             cmd("nft", "add", "rule", "inet", env["KONTEYNER_NFT_TABLE"], "forward", "accept")
@@ -276,7 +264,7 @@ def main():
                 pass
             else:
                 raise AssertionError("health accepted a changed input chain")
-            print(f"PASS: {probes} TCP/UDP IPv4/IPv6 packet probes (publications, container egress and the closed host side), scope revocation, foreign chains preserved, rule-integrity check")
+            print(f"PASS: {probes} TCP/UDP IPv4/IPv6 packet probes (the loopback publication, container egress and the closed host side), record removal, foreign chains preserved, rule-integrity check")
     finally:
         for child in reversed(children):
             if child.poll() is None:

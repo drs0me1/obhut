@@ -8,10 +8,7 @@ const assert = require("node:assert/strict");
 
 // Documentation values only (RFC 5737/6598 addresses, the DD examples' host and domain); shapes as in
 // tools/konsol-ui/src/api/sema.ts.
-const cell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
-const app = (name, ad, extra) => ({ id: "konteyner:" + name, ad, tur: "konteyner", aciklama: "", konteyner: name, durum: "calisiyor",
-  tailscale: cell("yok"), internet: cell("yok"), kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null },
-  eylemler: ["durdur", "yeniden-baslat", "kaldir"], revizyon: null, ...extra });
+const { uygulama, uygulamalar } = require("./yeni-harness.cjs").fixtures;
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.08.06-v2-242", surum: "1.0.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
     cores: 4, read_at: 1791845000, sampled_at: 1791845000, cpu: 2.0, mem: { total: 8300000000, used: 700000000 },
@@ -19,11 +16,8 @@ const data = {
   saglik: { status: "bad", read_at: 1791845000, checks: [
     { id: "units", name: "Servisler", status: "bad", detail: "Çalışmayan: konsol-eski.service" },
     { id: "tailscale", name: "Tailscale", status: "ok", detail: "çalışıyor" }] },
-  // Two containers; the sidebar counts every item of the list.
-  uygulamalar: { read_at: 1791845000, hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 1, kullanilmayan_imaj: 0, birim: 0, ag: 1 },
-    items: [
-      app("notlar", "Notlar", { tailscale: cell("acik", ["notlar.ev"]), adres: { tailscale: "http://notlar.ev", internet: null }, revizyon: "r1" }),
-      app("medya", "Medya")] },
+  // Two applications; the sidebar counts every item of the list.
+  uygulamalar: uygulamalar([uygulama("notlar"), uygulama("medya")]),
   ag: { read_at: 1791845000, sampled_at: 1791845000, rx: 1024, tx: 2048 },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
   guncelleme: { kurulu: "2026.08.06-v2-242", kurulu_surum: "1.0.0", son: "2026.08.06-v2-242", son_surum: "1.0.0", commit: "0".repeat(40), yeni: false, denetlendi: 1791845000, hata: "",
@@ -41,9 +35,6 @@ const h = require("./yeni-harness.cjs").create({ name: "konsol-yeni-ui", url: pr
 const { base, shots, status, calls, errors, stream, push, waitFor, newPage, count, noHorizontalScroll, shot } = h;
 // Gelişmiş (phase 4a) reads the effective configuration when it opens; yeni-sistem-ui.cjs covers the page.
 h.handlers["/api/konsol/gelismis"] = () => ({ body: { read_at: 1791845000, caddy: { entries: [], raw: [] }, dnsmasq: { listen: [], domains: [], dhcp: false, names: [], raw: [] } } });
-// Phase 4a: Uygulamalar reads Podman's own counts (yeni-uygulama-ekle-ui.cjs covers them); not a Genel read.
-h.handlers["/api/konsol/konteynerler/liste"] = () => ({ body: { read_at: 1791845000, runtime: { version: "5.4.2", ok: true, error: "" }, containers: [],
-  images: [], volumes: [], networks: [], storage: { images: 1, containers: 1, size: null }, resource_errors: {} } });
 // Phase 4b: Dosyalar' Depolama reads the files backend and who uses which folder (yeni-dosyalar-ui.cjs covers it).
 h.handlers["/api/state"] = () => ({ body: { root: "/srv", writable: true, textLimit: 1048576, trash: { count: 0, size: 0 },
   disk: { total: 250700000000, free: 238000000000, used: 0, mount: false } } });
@@ -129,7 +120,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await page.locator(".brand-host").filter({ hasText: /^sunucu · panel\.ev$/ }).waitFor();
 
     // Running jobs and the activity drawer.
-    const job = { tur: "konteyner", id: "notlar", ad: "Notlar", durum: "calisiyor", adim: "İmaj indiriliyor", bitis: null };
+    const job = { tur: "uygulama", id: "a".repeat(32), ad: "notlar · İmaj güncelleme", durum: "calisiyor", adim: "İmaj indiriliyor", bitis: null };
     push("islemler", { items: [job] });
     const activity = page.getByRole("button", { name: "İşlemler, 1 çalışıyor" });
     await activity.waitFor();
@@ -138,8 +129,8 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await drawer.waitFor();
     assert.equal(await page.evaluate(() => document.querySelector(".app").inert), true, "the page behind the drawer is inert");
     assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), "Kapat");
-    assert.equal(await drawer.locator(".job-name").innerText(), "Notlar");
-    assert.equal(await drawer.locator(".job-meta").innerText(), "Konteyner · İmaj indiriliyor");
+    assert.equal(await drawer.locator(".job-name").innerText(), "notlar · İmaj güncelleme");
+    assert.equal(await drawer.locator(".job-meta").innerText(), "Uygulama · İmaj indiriliyor");
     assert.equal(await drawer.locator(".pill").innerText(), "Çalışıyor");
     assert.equal(await drawer.getByTestId("connection").innerText(), "Canlı bağlantı açık.");
     for (let n = 0; n < 3; n++) await page.keyboard.press("Tab");
@@ -189,8 +180,8 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     const input = palette.getByRole("combobox");
     assert(await input.evaluate((el) => el === document.activeElement), "the field has focus");
     assert.deepEqual(await palette.locator(".palette-group-name").allInnerTexts(), ["Sayfalar", "Uygulamalar", "Eylemler"], "no group for the old interface (phase 4b)");
-    assert.deepEqual(await palette.locator('[aria-labelledby="palet-grup-1"] .palette-label').allInnerTexts(), ["Notlar", "Medya"]);
-    assert.equal(await palette.locator('[data-key="uygulama-konteyner:notlar"] .palette-hint').innerText(), "Uygulama", "an application opens its own page (phase 2)");
+    assert.deepEqual(await palette.locator('[aria-labelledby="palet-grup-1"] .palette-label').allInnerTexts(), ["notlar", "medya"]);
+    assert.equal(await palette.locator('[data-key="uygulama-notlar"] .palette-hint').innerText(), "Uygulama", "an application opens its own page (phase 2)");
     await shot(page, "1440-light-palette.png");
     await input.fill("İŞ");
     let labels = await optionLabels(page);

@@ -4,11 +4,11 @@
 import { accessRoute } from "./sections";
 import type { Uyari, YayinAdayi } from "./api/sema";
 
-/** Where a warning is fixed: its publication in the Yayınla flow (Adresler), the application's page (an
-    Erişim row's id is its application's id) or the Tailscale tab; without a target, Erişim itself. */
+/** Where a warning is fixed: its publication in the Yayınla flow (Adresler), the application's page (the
+    target is the application's name) or the Tailscale tab; without a target, Erişim itself. */
 export function fixRoute(fix: Uyari["duzelt"]): string {
   if (!fix) return accessRoute();
-  if (fix.bolum === "uygulama" && fix.hedef) return "/uygulamalar/" + fix.hedef;
+  if (fix.bolum === "uygulama" && fix.hedef) return "/uygulamalar/" + encodeURIComponent(fix.hedef);
   if (fix.bolum === "tailscale") return accessRoute("tailscale");
   return accessRoute("adresler", fix.hedef || "sec");
 }

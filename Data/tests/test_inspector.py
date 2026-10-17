@@ -39,7 +39,7 @@ ORNEK = {"name": "ornek", "answers": {
     "port:ornek:8080/tcp": {"use": "caddy", "tailscale_name": "ornek"},
     "port:ornek:8092/tcp": {"use": "raw"},
     "mount:ornek:/database": {"to": "app"}, "mount:ornek:/config": {"to": "app"},
-    "mount:ornek:/srv": {"to": "srv", "path": "/srv", "read_only": False},
+    "mount:ornek:/srv": {"to": "srv", "path": "/srv/ornek", "read_only": False},
     "start:ornek": {"mode": "direct"}}}
 NOTLAR = {"name": "notlar", "answers": {
     "var:NOTLAR_VERSION": {"value": "1.5"}, "var:BASE_URL": {"value": ""}, "var:DB_PASSWORD": {"value": "s3cret-Value"},
@@ -67,7 +67,7 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(q["name"]["suggest"], "ornek")
         self.assertEqual((q["port:ornek:8080/tcp"]["guess"], q["port:ornek:8080/tcp"]["suggest"]), ("web", "ornek"))
         self.assertEqual(q["port:ornek:8092/tcp"]["suggest"], "ornek-8092")
-        self.assertEqual((q["mount:ornek:/srv"]["suggest"], q["mount:ornek:/srv"]["srv_path"]), ("srv", "/srv"))
+        self.assertEqual((q["mount:ornek:/srv"]["suggest"], q["mount:ornek:/srv"]["srv_path"]), ("srv", None))
         self.assertEqual((q["mount:ornek:/database"]["suggest"], q["mount:ornek:/database"]["folder"]), ("app", "ornek-db"))
         start = q["start:ornek"]
         self.assertEqual((start["suggest"], start["direct_user"]), ("root", "1000:1000"))
@@ -237,7 +237,7 @@ class CheckTests(unittest.TestCase):
                                         {"port": 8092, "protocol": "tcp", "use": "raw", "tailscale_name": None}])
         self.assertEqual(svc["mounts"], [{"target": "/database", "to": "app", "folder": "ornek-db", "read_only": False},
                                          {"target": "/config", "to": "app", "folder": "ornek-config", "read_only": False},
-                                         {"target": "/srv", "to": "srv", "path": "/srv", "read_only": False}])
+                                         {"target": "/srv", "to": "srv", "path": "/srv/ornek", "read_only": False}])
 
     def test_interpolation_secrets_and_start_modes(self):
         definition, secrets, errors = check(fixture("notlar-compose.yaml"), NOTLAR)
@@ -255,8 +255,8 @@ class CheckTests(unittest.TestCase):
                          {"name": "POSTGRES_PASSWORD", "secret": "notlar-db-password"})
         self.assertEqual(secrets, {"notlar-db-password": "s3cret-Value",
                                    "notlar-database-url": "postgres://notlar:s3cret-Value@db:5432/notlar"})
-        self.assertEqual(definition["secrets"], [{"name": "notlar-database-url", "services": ["web"]},
-                                                 {"name": "notlar-db-password", "services": ["web", "db"]}])
+        self.assertEqual(definition["secrets"], [{"name": "notlar-database-url", "services": ["web"], "keep": False},
+                                                 {"name": "notlar-db-password", "services": ["web", "db"], "keep": False}])
         self.assertNotIn("s3cret-Value", json.dumps(definition))
         self.assertEqual((web["start"], web["user"], web["caps_drop"], web["no_new_privileges"]), ("direct", "1000:1000", "all", True))
         self.assertEqual((db["start"], db["user"], db["caps_drop"], db["no_new_privileges"]),
@@ -439,9 +439,9 @@ class CheckTests(unittest.TestCase):
         definition, secrets, errors = check(i, answers)
         self.assertEqual(errors, {})
         self.assertEqual(secrets, {"ortak-db-password": "pw", "ortak-api-token": "t1", "ortak-other-token": "t2"})
-        self.assertEqual(definition["secrets"], [{"name": "ortak-db-password", "services": ["web", "worker"]},
-                                                 {"name": "ortak-api-token", "services": ["web"]},
-                                                 {"name": "ortak-other-token", "services": ["worker"]}])
+        self.assertEqual(definition["secrets"], [{"name": "ortak-db-password", "services": ["web", "worker"], "keep": False},
+                                                 {"name": "ortak-api-token", "services": ["web"], "keep": False},
+                                                 {"name": "ortak-other-token", "services": ["worker"], "keep": False}])
         self.assertEqual(definition["services"][1]["environment"], [{"name": "PGPASSWORD", "secret": "ortak-db-password"},
                                                                     {"name": "API_TOKEN", "secret": "ortak-other-token"}])
         self.assertNotIn("pw", json.dumps(definition["services"]))
@@ -572,6 +572,182 @@ class CheckTests(unittest.TestCase):
         web, worker = definition["services"]
         self.assertEqual((web["user"], web["caps_drop"], web["caps_add"], web["no_new_privileges"]), ("33", "all", ["CHOWN"], True))
         self.assertEqual((worker["caps_drop"], worker["caps_add"]), (["SETFCAP"], ["NET_BIND_SERVICE", "SYS_CHROOT"]))
+
+
+class EditAndWarningTests(unittest.TestCase):
+    """Phase 3: {"keep": true} for a secret the application already has, the root start's /srv warning and
+    the line breaks an env file cannot carry."""
+
+    def test_a_secret_question_may_keep_the_applications_value(self):
+        i = compose("""\
+            services:
+              a:
+                image: x
+                environment:
+                  MYSQL_PASSWORD: example
+                  OPTIONAL: ""
+            """)
+        answers = {"name": "uyg", "answers": {"secret:a:MYSQL_PASSWORD": {"keep": True}, "secret:a:OPTIONAL": {"value": "o"},
+                                              "start:a": {"mode": "root"}}}
+        definition, secrets, errors = check(i, answers, frozenset({"uyg-mysql-password"}))
+        self.assertEqual(errors, {})
+        self.assertEqual(secrets, {"uyg-optional": "o"}, "a kept value is not returned")
+        self.assertEqual(definition["secrets"], [{"name": "uyg-mysql-password", "services": ["a"], "keep": True},
+                                                 {"name": "uyg-optional", "services": ["a"], "keep": False}])
+        self.assertEqual(definition["services"][0]["environment"][0], {"name": "MYSQL_PASSWORD", "secret": "uyg-mysql-password"})
+        for existing in (frozenset(), frozenset({"uyg-optional"}), frozenset({"baska-mysql-password"})):
+            with self.subTest(existing=existing):
+                definition, secrets, errors = check(i, answers, existing)
+                self.assertEqual((definition, secrets), (None, {}))
+                self.assertEqual(errors, {"secret:a:MYSQL_PASSWORD": master_inspector.KEEP_MISSING})
+        for keep in ({"keep": False}, {"keep": "true"}, {"keep": True, "value": "x"}):
+            answers["answers"]["secret:a:MYSQL_PASSWORD"] = keep
+            with self.subTest(keep=keep):
+                self.assertIn("secret:a:MYSQL_PASSWORD", check(i, answers, frozenset({"uyg-mysql-password"}))[2])
+        self.assertEqual(check(i, answers, "uyg-mysql-password")[2], {"dosya": "Saklanan gizli değerlerin listesi okunamadı."})
+        self.assertIn("dosya", check(i, answers, [5])[2])
+
+    def test_a_secret_variable_keeps_its_value_unless_it_is_composed(self):
+        i = fixture("notlar-compose.yaml")
+        answers = copy.deepcopy(NOTLAR)
+        answers["answers"]["var:DB_PASSWORD"] = {"keep": True}
+        existing = frozenset({"notlar-db-password", "notlar-database-url"})
+        # DATABASE_URL holds the password inside other text: it cannot be built from a kept value.
+        self.assertEqual(check(i, answers, existing)[2], {"var:DB_PASSWORD": master_inspector.KEEP_COMPOSED})
+        i = compose("""\
+            services:
+              web:
+                image: x
+                environment: {DB_PASSWORD: "${DB_PASSWORD}"}
+              db:
+                image: y
+                environment: ["POSTGRES_PASSWORD=${DB_PASSWORD:?required}"]
+            """)
+        answers = {"name": "uyg", "answers": {"var:DB_PASSWORD": {"keep": True}, "start:web": {"mode": "root"},
+                                              "start:db": {"mode": "root"}}}
+        definition, secrets, errors = check(i, answers, frozenset({"uyg-db-password"}))
+        self.assertEqual((errors, secrets), ({}, {}))
+        self.assertEqual(definition["secrets"], [{"name": "uyg-db-password", "services": ["web", "db"], "keep": True}])
+        self.assertEqual(check(i, answers)[2], {"var:DB_PASSWORD": master_inspector.KEEP_MISSING})
+        # Only a secret is kept; a plain variable needs its value.
+        i = compose("services:\n  a:\n    image: x\n    environment: ['TZ=${TZ}']\n")
+        errors = check(i, {"name": "uyg", "answers": {"var:TZ": {"keep": True}, "start:a": {"mode": "root"}}},
+                       frozenset({"uyg-tz"}))[2]
+        self.assertEqual(errors, {"var:TZ": "Bir değer girin."})
+
+    def test_a_kubernetes_secret_may_keep_its_value(self):
+        i = fixture("sayac-deployment.yaml")
+        answers = {"name": "sayac", "answers": {
+            "port:sayac:9000/tcp": {"use": "caddy", "tailscale_name": "sayac"}, "port:sayac:9001/udp": {"use": "raw"},
+            "mount:sayac:/data": {"to": "app"}, "secret:sayac/token": {"keep": True}, "start:sayac": {"mode": "root"}}}
+        definition, secrets, errors = check(i, answers, frozenset({"sayac-counter-token"}))
+        self.assertEqual((errors, secrets, definition["secrets"][0]["keep"]), ({}, {}, True))
+        self.assertEqual(check(i, answers)[2], {"secret:sayac/token": master_inspector.KEEP_MISSING})
+
+    def test_a_root_start_with_a_writable_srv_folder_is_warned_about(self):
+        i = fixture("qbittorrent-compose.yaml")
+        answers = {"name": "aktarim", "answers": {
+            "port:qbittorrent:8080/tcp": {"use": "caddy", "tailscale_name": "aktarim"},
+            "port:qbittorrent:6881/tcp": {"use": "raw"}, "port:qbittorrent:6881/udp": {"use": "raw"},
+            "mount:qbittorrent:/config": {"to": "app"}, "start:qbittorrent": {"mode": "root"},
+            "mount:qbittorrent:/downloads": {"to": "srv", "path": "/srv/downloads", "read_only": False}}}
+        definition = check(i, answers)[0]
+        self.assertEqual(definition["warnings"], [{"service": "qbittorrent", "text":
+                                                   "Bu konteyner root olarak başlıyor; kendi kullanıcısına geçmezse /srv'ye "
+                                                   "Dosyalar hesabının açamayacağı dosyalar yazabilir."}])
+        for change in ({"start:qbittorrent": {"mode": "direct"}},
+                       {"mount:qbittorrent:/downloads": {"to": "srv", "path": "/srv/downloads", "read_only": True}},
+                       {"mount:qbittorrent:/downloads": {"to": "app"}}):
+            changed = copy.deepcopy(answers)
+            changed["answers"].update(change)
+            with self.subTest(change=change):
+                self.assertEqual(check(i, changed)[0]["warnings"], [])
+        self.assertEqual(check(fixture("ornek-compose.yaml"), ORNEK)[0]["warnings"], [])
+
+    def test_a_direct_start_as_another_user_with_a_writable_srv_folder_is_warned_about(self):
+        i = compose("""\
+            services:
+              web:
+                image: registry.example/web:1
+                user: "999:999"
+                volumes: ["/srv/web:/data"]
+            """)
+        answers = {"name": "web", "answers": {"start:web": {"mode": "direct"},
+                                              "mount:web:/data": {"to": "srv", "path": "/srv/web", "read_only": False}}}
+        self.assertEqual(check(i, answers)[0]["warnings"], [{"service": "web", "text":
+                                                             "Bu konteyner 999:999 kullanıcısıyla başlıyor; /srv'ye "
+                                                             "Dosyalar hesabının açamayacağı dosyalar yazabilir."}])
+        answers["answers"]["mount:web:/data"]["read_only"] = True
+        self.assertEqual(check(i, answers)[0]["warnings"], [])
+
+    def test_srv_paths_follow_the_bind_anchor_rule(self):
+        # DD-226's anchors pin a non-hidden sub-folder of /srv in plain characters; the answer is refused early.
+        i = compose("""\
+            services:
+              web:
+                image: registry.example/web:1
+                volumes: ["/srv:/srv", "veri:/veri"]
+            volumes: {veri: {}}
+            """)
+        q = {x["id"]: x for x in i["questions"]}
+        self.assertEqual((q["mount:web:/srv"]["suggest"], q["mount:web:/srv"]["srv_path"]), ("srv", None))
+        for path in ("/srv", "/srv/Müzik", "/srv/.gizli", "/srv/a/../b", "/srv/a/"):
+            answers = {"name": "web", "answers": {"start:web": {"mode": "root"}, "mount:web:/veri": {"to": "app"},
+                                                  "mount:web:/srv": {"to": "srv", "path": path, "read_only": True}}}
+            with self.subTest(path=path):
+                self.assertIn("mount:web:/srv", check(i, answers)[2])
+        answers["answers"]["mount:web:/srv"]["path"] = "/srv/Muzik ve Film"
+        self.assertEqual(check(i, answers)[2], {})
+
+    def test_an_env_file_line_cannot_break(self):
+        # The file's own text is refused at inspect, with its line.
+        i = compose("""\
+            services:
+              a:
+                image: x
+                environment:
+                  MOTD: |
+                    hello
+                    world
+                  NOTE: "a\\rb ${X}"
+                  API_TOKEN: |
+                    a secret
+                    may hold lines
+            """)
+        self.assertEqual([(r["line"], r["key"]) for r in i["refusals"]], [(5, "environment"), (8, "environment")])
+        pod = inspect("apiVersion: v1\nkind: Pod\nmetadata: {name: p}\nspec:\n  containers:\n  - name: a\n    image: x\n"
+                      "    env:\n    - {name: MOTD, value: \"a\\nb\"}\n")
+        self.assertEqual([(r["line"], r["key"]) for r in pod["refusals"]], [(9, "environment")])
+        # An answer or a default is refused for the variable it came from; a secret may hold a line break.
+        i = compose("""\
+            services:
+              a:
+                image: x
+                environment: ["GREETING=${GREETING}", "DEFAULTED=${OTHER:-a\\nb}", "DB_PASSWORD=${DB_PASSWORD}"]
+            """)
+        self.assertEqual(i["refusals"], [])
+        base = {"name": "uyg", "answers": {"var:GREETING": {"value": "hi"}, "var:OTHER": {"value": "set"},
+                                           "var:DB_PASSWORD": {"value": "-----BEGIN-----\nkey\n-----END-----"},
+                                           "start:a": {"mode": "root"}}}
+        definition, secrets, errors = check(i, base)
+        self.assertEqual((errors, secrets), ({}, {"uyg-db-password": "-----BEGIN-----\nkey\n-----END-----"}))
+        for qid, value in (("var:GREETING", "a\nb"), ("var:GREETING", "a\rb"), ("var:OTHER", "")):
+            answers = copy.deepcopy(base)
+            answers["answers"][qid] = {"value": value}
+            with self.subTest(qid=qid, value=value):
+                definition, _s, errors = check(i, answers)
+                self.assertIsNone(definition)
+                self.assertEqual(list(errors), [qid])
+                self.assertIn("satır sonu", errors[qid])
+        # A working folder from a variable may not carry a control character either.
+        i = compose("services:\n  a:\n    image: x\n    working_dir: ${WD}\n")
+        errors = check(i, {"name": "uyg", "answers": {"var:WD": {"value": "/a\nb"}, "start:a": {"mode": "root"}}})[2]
+        self.assertEqual(list(errors), ["var:WD"])
+
+    def test_the_start_question_names_no_image_family(self):
+        why = questions(fixture("ornek-compose.yaml"))["start:ornek"]["why"]
+        self.assertNotRegex(why.lower(), "linuxserver|gosu|ör\\.")
+        self.assertIn("kendi kullanıcısına geçiyor", why)
 
 
 if __name__ == "__main__":

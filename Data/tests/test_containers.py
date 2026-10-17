@@ -2,7 +2,8 @@
 
 Podman is base infrastructure; panel/master_containers.py maps read-only podman output for the
 root backend. No real podman: every command answers from canned output, so the tests cover the
-mapping, the masking and the gates; a route test runs the real backend handler on a Unix socket."""
+mapping, the masking and the gates; a route test runs the real backend handler on a Unix socket. An
+application's log is its units' journal (test_container_manager); there is no podman logs read."""
 import importlib.machinery
 import importlib.util
 import json
@@ -39,11 +40,6 @@ INSPECT = [{"Id": "2073a1b2c3d4e5f6", "Name": "deneme-medya", "ImageName": "ghcr
                        "Labels": {"PODMAN_SYSTEMD_UNIT": "deneme-medya.service", "org.opencontainers.image.version": "5.2.4", "org.opencontainers.image.source": "https://github.com/x/y", "org.opencontainers.image.title": "Medya"}}}]
 INSPECT_BRIDGE = [dict(INSPECT[0], Name="web", HostConfig={"NetworkMode": "bridge", "PortBindings": {"80/tcp": [{"HostIp": "", "HostPort": "8081"}], "53/udp": [{"HostIp": "127.0.0.1", "HostPort": "5353"}]}},
                        NetworkSettings={"Ports": {}}, Mounts=[], Config={"Cmd": ["nginx", "-g", "daemon off;"], "Labels": {}})]
-LOGS = ("2026-10-02T22:24:19+02:00 The WebUI administrator username is: admin\n"
-        "2026-10-02T22:24:19+02:00 A temporary password is provided for this session: Zq3pL9ab2\n"
-        "2026-10-02T22:24:20+02:00 token=abc.def.ghi api_key: XYZ Private key = 12345\n"
-        "2026-10-02T22:24:20+02:00 [ls.io-init] done.\n\n")
-
 
 class Ctx:
     def __init__(self):
@@ -69,8 +65,6 @@ class Ctx:
             if name == "web":
                 return 0, json.dumps(INSPECT_BRIDGE), ""
             return 125, "", 'Error: no such object: "%s"' % name
-        if key == "logs":
-            return (0, LOGS, "") if argv[-1] == "deneme-medya" else (125, "", "Error: no container with name or ID \"%s\" found: no such container" % argv[-1])
         raise AssertionError(argv)
 
 
@@ -80,14 +74,13 @@ class ContainerViewTests(unittest.TestCase):
         self.view = containers.Containers(self.ctx.run)
 
     def call(self, sub, method="GET", **query):
-        """The backend route's logic: GET only, three read paths, a ContainerError becomes its status."""
-        if method != "GET" or sub not in ("liste", "ayrinti", "gunluk"):
+        """The backend route's logic: GET only, two read paths, a ContainerError becomes its status."""
+        if method != "GET" or sub not in ("liste", "ayrinti"):
             raise RuntimeError("404 bulunamadı")
         try:
             if sub == "liste":
                 return 200, self.view.liste()
-            name = containers.name_of(query.get("ad", ""))
-            return 200, self.view.ayrinti(name) if sub == "ayrinti" else self.view.gunluk(name, query.get("satir", "200"))
+            return 200, self.view.ayrinti(containers.name_of(query.get("ad", "")))
         except containers.ContainerError as err:
             raise RuntimeError("%d %s" % (err.status, err))
 
@@ -98,6 +91,7 @@ class ContainerViewTests(unittest.TestCase):
         medya, web = answer["containers"]
         self.assertEqual((medya["id"], medya["name"], medya["state"], medya["unit"], medya["network"], medya["ports"], medya["mounts"], medya["restarts"]),
                          ("2073a1b2c3d4", "deneme-medya", "running", "deneme-medya.service", "host", [], 2, 2))
+        self.assertEqual((medya["uygulama"], web["uygulama"]), ("", ""), "no application's labels")
         self.assertEqual((medya["created"], medya["started"], medya["exit_code"]), (1790972658, 1790972659, 0))
         self.assertEqual((web["state"], web["exit_code"], web["network"], web["unit"]), ("exited", 3, "podman", ""))
         self.assertEqual(web["ports"], [{"host_ip": "0.0.0.0", "host_port": 8081, "container_port": 80, "protocol": "tcp"}])
@@ -137,23 +131,8 @@ class ContainerViewTests(unittest.TestCase):
                                       {"host_ip": "0.0.0.0", "host_port": 8081, "container_port": 80, "protocol": "tcp"}])
         self.assertEqual((w["network"], w["labels"], w["command"]), ("bridge", {"version": "", "source": "", "title": ""}, "nginx -g daemon off;"))
 
-    def test_logs_are_returned_as_written_and_the_tail_is_bounded(self):
-        # DD-251: no masking or other filter; only blank lines go.
-        code, log = self.call("gunluk", ad="deneme-medya")
-        self.assertEqual((code, log["name"], log["truncated"]), (200, "deneme-medya", False))
-        self.assertNotIn("masked", log)
-        self.assertEqual(log["lines"], [l for l in LOGS.splitlines() if l], "every line as the runtime wrote it")
-        self.assertEqual(self.ctx.calls[-1][0], ["podman", "logs", "--timestamps", "--tail", "200", "deneme-medya"])
-        self.call("gunluk", ad="deneme-medya", satir="500")
-        self.assertEqual(self.ctx.calls[-1][0][4], "500")
-        self.call("gunluk", ad="deneme-medya", satir="7")
-        self.assertEqual(self.ctx.calls[-1][0][4], "200", "an unknown tail falls back to 200")
-        with self.assertRaises(RuntimeError) as err:
-            self.call("gunluk", ad="yok")
-        self.assertIn("404", str(err.exception))
-
     def test_gates_names_methods_and_paths(self):
-        for bad in ("", "-x", "a b", "x" * 65, "../etc", "a;b"):
+        for bad in ("", "-x", "a b", "x" * 129, "../etc", "a;b"):
             with self.subTest(bad=bad), self.assertRaises(RuntimeError) as err:
                 self.call("ayrinti", ad=bad)
             self.assertIn("400", str(err.exception))

@@ -2,22 +2,16 @@
 """Yayınla (DD-265): what can be published, and the plan of one publication.
 
 A publication is one row of the Caddy publication table (DD-191/195/252): a Tailscale name
-(<ad>.<alan>) and an optional internet (HTTPS) name. candidates() lists every row and every Konsol
-container that could have one; plan() turns the four decisions of the Yayınla flow (what, who, which
-name, plan) into the requests the page then sends to the existing write routes:
-
-- a Konsol container that listens on no loopback port first gets one, through the container save
-  job (DD-211), with a free port from YAYIN_PORT_ILK–YAYIN_PORT_SON;
-- then the publication row, through the settings transaction (master_settings.plan/apply).
-
-The two cannot be one transaction (separate locks, rollbacks and revisions), so they run in order;
-when the second fails, the loopback port stays and is harmless. This module changes nothing: the
-settings plan is the same dry run apply validates with (DD-265), and its failure is the plan's
-"engel".
+(<ad>.<alan>) and an optional internet (HTTPS) name. candidates() lists every row and every container
+that could have one: a container is published from a port it already listens on at 127.0.0.1 (an
+application's address port, DD-271 phase 3). plan() turns the four decisions of the Yayınla flow (what,
+who, which name, plan) into the request the page then sends to the settings transaction
+(master_settings.plan/apply). This module changes nothing: the settings plan is the same dry run apply
+validates with (DD-265), and its failure is the plan's "engel". Phase 4 replaces the flow with the
+access rows.
 """
 import copy
 import re
-import socket
 
 from master_settings import SettingsError, require
 
@@ -82,18 +76,16 @@ def candidates(env, rows, containers, wan_ready=True):
                 local.append({"host_port": host, "container_port": inner})
             else:
                 others.append({"kapsam": str(p.get("scope") or ""), "host_port": host, "container_port": inner})
-        own = c.get("source") == "konsol"
-        info = {"ad": c["name"], "kaynak": "konsol" if own else "dis", "calisiyor": c.get("state") == "running",
-                "yerel_portlar": local, "diger_portlar": others, "port_eklenebilir": own,
-                "onerilen_port": (others[0]["container_port"] if others else local[0]["container_port"] if local else None)}
+        app = c.get("uygulama") if c.get("source") == "uygulama" else None
+        info = {"ad": c["name"], "kaynak": "uygulama" if app else "dis", "uygulama": app or None,
+                "calisiyor": c.get("state") == "running", "yerel_portlar": local, "diger_portlar": others}
         joined = next((sid for sid, r in sorted(manual.items()) if upstream_port(r.get("upstream")) in
                        {x["host_port"] for x in local}), None)
         if joined:
             row = manual.pop(joined)
             out.append(item("konteyner:" + c["name"], "konteyner", c["name"], row, konteyner=info, internet_engel=no_wan))
         else:
-            reason = "" if local or own else ("Konsol dışında yönetilen bu konteynerin yalnız bu sunucuda dinleyen portu yok; "
-                                              "önce Uygulamalar'da yönetime alın.")
+            reason = "" if local else "Bu konteynerin yalnız bu sunucuda (127.0.0.1) dinleyen bir portu yok; yayımlanamaz."
             out.append(item("konteyner:" + c["name"], "konteyner", c["name"], None, konteyner=info,
                             yerel_ad=None, kullanilabilir=not reason, neden=reason, internet_engel=no_wan))
     for sid, row in sorted(manual.items()):
@@ -104,32 +96,9 @@ def candidates(env, rows, containers, wan_ready=True):
     return out
 
 
-def free_port(env, used, bind=None):
-    """The first loopback port in YAYIN_PORT_ILK–YAYIN_PORT_SON that no definition, publication or
-    listener uses. bind(port) -> bool tests that nothing holds it now (a bound socket is closed at once)."""
-    def bindable(port):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind(("127.0.0.1", port))
-                return True
-            except OSError:
-                return False
-    bind = bind or bindable
-    try:
-        first, last = int(env.get("YAYIN_PORT_ILK", "")), int(env.get("YAYIN_PORT_SON", ""))
-    except ValueError:
-        raise SettingsError("Yerel port aralığı tanımlı değil; kurulumu yeniden çalıştırın.")
-    require(0 < first <= last < 65536, "Yerel port aralığı geçersiz; kurulumu yeniden çalıştırın.")
-    for port in range(first, last + 1):
-        if port not in used and bind(port):
-            return port
-    raise SettingsError("Yerel port aralığında boş port kalmadı.")
-
-
-def plan(env, request, cands, settings_plan, container_detail, pick_port):
-    """The steps of one publication. settings_plan(data) is Manager.plan bound to the operator's
-    address and channel; container_detail(name) the container's detail row (config, revision);
-    pick_port() a free loopback port."""
+def plan(env, request, cands, settings_plan):
+    """The step of one publication. settings_plan(data) is Manager.plan bound to the operator's address and
+    channel."""
     c = next((x for x in cands if x["id"] == request["hedef"]), None)
     require(c is not None, "Yayımlanacak uygulama bulunamadı; sayfayı yenileyin.")
     require(c["kullanilabilir"], c["neden"] or "Bu uygulama şu an yayımlanamaz.")
@@ -146,23 +115,7 @@ def plan(env, request, cands, settings_plan, container_detail, pick_port):
         require(bool(PUB_LOCAL_RE.fullmatch(local)), "Tailscale adı küçük harfle başlamalı; yalnız küçük harf, rakam ve tire (en çok 31).")
         name = (request.get("ad") or c["ad"]).strip()
         require(bool(NAME_RE.fullmatch(name)), "Ad 1–40 karakter olmalı.")
-        if box["yerel_portlar"]:
-            port = box["yerel_portlar"][0]["host_port"]
-        else:
-            inner = request.get("konteyner_portu") or box["onerilen_port"]
-            require(bool(number(inner)), "Uygulamanın konteyner içinde dinlediği portu yazın (ör. 8080).")
-            row = container_detail(box["ad"])
-            config = copy.deepcopy(row.get("config") or {})
-            require(bool(config) and "save" in (row.get("actions") or []), "Bu konteynerin ayarları buradan değiştirilemez; uygulamanın Ayarlar sekmesine bakın.")
-            require(config.get("network") != "none", "Ağsız bir konteyner port yayımlayamaz; önce uygulamanın Ayarlar sekmesinden bir ağ seçin.")
-            port = pick_port()
-            config["ports"] = list(config.get("ports") or []) + [
-                {"scope": "local", "host_port": port, "container_port": inner, "protocol": "tcp", "public_ack": False}]
-            steps.append({"tur": "konteyner", "baslik": "Konteynere yalnız bu sunucuda dinleyen port",
-                          "aciklama": "127.0.0.1:%d → konteynerde %d/tcp. Konteyner yeniden oluşturulur; kısa bir kesinti olur." % (port, inner),
-                          "istek": {"action": "save", "name": box["ad"], "revision": row.get("revision") or "", "config": config}})
-            warnings.append({"seviye": "info", "metin": "İki adım sırayla uygulanır. İkincisi başarısız olursa eklenen port yalnız bu "
-                             "sunucuda dinler ve zararsız olarak kalır."})
+        port = box["yerel_portlar"][0]["host_port"]
         web = {"service": MANUAL_PREFIX + local, "tail": tail, "enabled": internet, "domain": domain,
                "elle": {"name": name, "local": local, "upstream": "127.0.0.1:%d" % port}}
     data = {"revision": request["revizyon"], "web": web}

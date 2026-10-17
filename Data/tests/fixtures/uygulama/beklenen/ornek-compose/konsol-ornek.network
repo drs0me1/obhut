@@ -1,0 +1,10 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: ornek uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması ornek: ağ
+
+[Network]
+NetworkName=ksl-ornek
+Driver=bridge
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=ornek
+PodmanArgs=--interface-name=ksl4f43613d59

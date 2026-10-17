@@ -348,10 +348,14 @@ class ServiceKeyTests(unittest.TestCase):
         self.assertEqual(s["labels"], {"a": "1", "b": ""})
         s = service("labels:\n  com.example.x: 2\n  empty:\n")["services"][0]
         self.assertEqual(s["labels"], {"com.example.x": "2", "empty": ""})
-        for label in ("io.containers.autoupdate", "io.podman.annotations.x", "PODMAN_SYSTEMD_UNIT"):
+        for label in ("io.containers.autoupdate", "io.podman.annotations.x", "PODMAN_SYSTEMD_UNIT",
+                      "io.master-stack.managed", "io.master-stack.uygulama"):
             with self.subTest(label=label):
                 model = service("labels:\n  %s: registry\n" % label)
                 self.assertEqual(refused(model), [(5, "labels")])
+                self.assertEqual(model["services"][0]["labels"], {})
+        # Obhut's own labels say who owns a container; the refusal names them as Obhut's.
+        self.assertIn("Obhut", service("labels:\n  - io.master-stack.managed=uygulama\n")["refusals"][0]["text"])
         self.assertEqual(refused(service("labels:\n  - a=1\n  - a=2\n")), [(6, "labels")])
 
     def test_capabilities_from_the_default_set_only(self):
@@ -418,7 +422,9 @@ class ServiceKeyTests(unittest.TestCase):
         for text in ("healthcheck:\n  test: [NONE]\n", "healthcheck:\n  disable: true\n  test: [CMD, x]\n"):
             with self.subTest(text=text):
                 model = service(text)
-                self.assertIsNone(model["services"][0]["health"])
+                # NONE turns the image's own check off too (None would keep it).
+                self.assertEqual(model["services"][0]["health"], {"test": ["NONE"], "interval": None, "timeout": None,
+                                                                  "retries": None, "start_period": None})
                 self.assertIn("kapalı", model["notes"][-1]["text"])
         for text in ("healthcheck:\n  test: [curl, x]\n", "healthcheck:\n  test: [CMD]\n", "healthcheck:\n  test: []\n",
                      "healthcheck:\n  test: [CMD, x]\n  interval: often\n", "healthcheck:\n  test: [CMD, x]\n  retries: many\n",

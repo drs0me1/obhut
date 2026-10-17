@@ -3,7 +3,7 @@
 questions; the operator's answers → a checked application definition. Standard library only.
 
     inspect(text) -> inspection
-    check(inspection, answers) -> (definition, secrets, errors)
+    check(inspection, answers, existing_secrets=frozenset()) -> (definition, secrets, errors)
 
 inspect never raises for bad input: a reading error is a refusal with its line. The inspection carries
 the reader's model (services, variables) so that check needs nothing else; it is computed by the server
@@ -12,6 +12,14 @@ server's state can answer (a name taken, a folder that exists) belong to phase 3
 no secret value; secrets come back separately as {name: value} and are never echoed to the browser.
 Guesses are shown beside each question and never applied to ports (A1). Nothing here writes, runs or
 fetches anything.
+
+On an edit, existing_secrets holds the logical secret names the application already has: a secret
+question (or a secret variable) answered {"keep": true} keeps that value, when the name it gives is one
+of them. A kept name is marked "keep": true in the definition's secrets and is absent from the returned
+values. A plain environment value goes into an env file one line per variable, so a line break or NUL
+in it is refused for the question or variable it came from (a file's own text: at inspect, with its
+line); a secret may hold one, it reaches Podman on standard input. The definition's warnings name each
+root-start service with a writable /srv folder (DD-227 as amended in phase 3).
 """
 import posixpath
 import re
@@ -44,6 +52,14 @@ APP_NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,29}\Z")
 TAILSCALE_NAME_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\Z")
 RESERVED_NAMES = ("panel", "paylas")
 ROOT_DROPS = ("SETFCAP", "SYS_CHROOT")
+# What one line of an env file cannot carry (Podman reads it line by line and drops a final CR).
+LINE_BREAK_RE = re.compile(r"[\n\r\x00]")
+KEEP_MISSING = "Saklanacak eski bir değer yok; bir değer girin."
+KEEP_COMPOSED = "Bu değer bir ortam değişkeninde başka metinle birleşiyor; eski değer saklanamaz, yeniden girin."
+SRV_PATH_RE = re.compile(r"/[A-Za-z0-9_./ -]+")
+ROOT_SRV_WARNING = ("Bu konteyner root olarak başlıyor; kendi kullanıcısına geçmezse /srv'ye Dosyalar hesabının "
+                    "açamayacağı dosyalar yazabilir.")
+USER_SRV_WARNING = "Bu konteyner %s kullanıcısıyla başlıyor; /srv'ye Dosyalar hesabının açamayacağı dosyalar yazabilir."
 
 
 def _failed(line, key, text):
@@ -278,12 +294,15 @@ class _Inspector:
             qid = "mount:%s:%s" % (svc["name"], mount["target"])
             folder = self.folder_of(svc, mount)
             srv_path = self.srv_guess(mount)
+            wants_srv = srv_path is not None
+            if wants_srv and _srv_path(srv_path):
+                srv_path = None  # /srv itself or a name DD-226 would refuse: the operator picks the folder
             source = mount["source"] or "adsız birim"
             self.ask(qid, "mount", mount["line"], "%s: %s" % (svc["name"], mount["target"]),
                      "Dosyada %s. Uygulamanın klasörüne ya da %s altından bir klasöre bağlanır; başka bir sunucu yolu "
                      "kullanılmaz." % (source, SRV),
                      service=svc["name"], target=mount["target"], source=mount["source"], source_kind=mount["kind"],
-                     read_only=mount["read_only"], suggest="srv" if srv_path else "app", folder=folder, srv_path=srv_path)
+                     read_only=mount["read_only"], suggest="srv" if wants_srv else "app", folder=folder, srv_path=srv_path)
 
     def folder_of(self, svc, mount):
         """The application folder's sub-folder for a mount; one source, one folder (Compose shares named volumes)."""
@@ -318,6 +337,17 @@ class _Inspector:
                 return mount["target"] if target == SRV else SRV + mount["target"]
         return None
 
+    def plain_text(self, svc, entry, refs):
+        """A plain value is one line of the env file: the file's own text may not break it (a variable's
+        answer or default is checked once it is known)."""
+        if refs and self.compose:
+            literal = "".join(p for p in master_compose.template_parts(entry["value"]) if isinstance(p, str))
+        else:
+            literal = entry["value"]
+        if LINE_BREAK_RE.search(literal):
+            self.refuse(entry["line"], "environment", "%s: %s değeri satır sonu ya da NUL içeremez; ortam değişkenleri "
+                                                      "dosyaya birer satır yazılır." % (svc["name"], entry["name"]))
+
     def secret_questions(self, svc, secret_vars):
         for entry in svc["environment"]:
             refs = env_refs(entry)
@@ -340,12 +370,15 @@ class _Inspector:
                 self.kube_secrets[qid] = self.questions[-1]
                 continue
             if refs:
+                if not (self.compose and any(r["name"] in secret_vars for r in refs)):
+                    self.plain_text(svc, entry, refs)
                 continue
             elif entry["value"] == "":
                 why = "Dosyada boş; değerini siz verirsiniz, Podman secret olur."
             elif secret_name(entry["name"]):
                 why = "Adı gizli bir değer gibi; dosyadaki değer kullanılmaz, değerini siz verirsiniz, Podman secret olur."
             else:
+                self.plain_text(svc, entry, [])
                 continue
             self.ask("secret:%s:%s" % (svc["name"], entry["name"]), "secret", entry["line"],
                      "%s: %s (gizli değer)" % (svc["name"], entry["name"]), why, service=svc["name"], env=entry["name"],
@@ -360,8 +393,8 @@ class _Inspector:
             why = ("Dosya kullanıcıyı belirtiyor (%s): doğrudan bu kullanıcıyla başlayabilir; bütün yetkiler kapalı, "
                    "yeni yetki kazanılamaz." % user)
         else:
-            why = ("Dosya kullanıcı belirtmiyor: imaj büyük olasılıkla root başlayıp kendi kullanıcısına geçiyor "
-                   "(ör. linuxserver, gosu). Doğrudan başlatılırsa %s ile başlar ve açılmayabilir." % DIRECT_USER)
+            why = ("Dosya kullanıcı belirtmiyor: imaj büyük olasılıkla root başlayıp kendi kullanıcısına geçiyor. "
+                   "Doğrudan başlatılırsa %s ile başlar ve açılmayabilir." % DIRECT_USER)
         self.ask("start:" + svc["name"], "start", svc["line"], "%s: nasıl başlasın?" % svc["name"], why,
                  service=svc["name"], suggest="direct" if user and not caps else "root", user=user,
                  direct_user=user or DIRECT_USER, caps_add=list(caps), open_caps=open_caps)
@@ -389,25 +422,33 @@ def _srv_path(path):
         return reason
     if not path.startswith("/") or re.search(r"[\x00-\x1f\x7f]", path):
         return "Mutlak bir yol olmalı."
+    # DD-226's bind anchors take a non-hidden sub-folder of SERVER_ROOT in these characters only; refuse here
+    # what bagla would refuse at the container's start.
     parts = path.split("/")[1:]
-    if path != SRV and (not under(path, SRV) or any(p in ("", ".", "..") or p.startswith(".") for p in parts)):
-        return "%s ya da altında, gizli klasör ve '..' içermeyen bir yol olmalı." % SRV
+    if path == SRV or not under(path, SRV) or any(p in ("", ".", "..") or p.startswith(".") for p in parts):
+        return "%s altında, gizli olmayan bir klasör olmalı (%s'nin kendisi bağlanamaz)." % (SRV, SRV)
+    if not SRV_PATH_RE.fullmatch(path):
+        return "Klasör yolu yalnız İngilizce harf, rakam, boşluk, '.', '_' ve '-' içerebilir."
     return None
 
 
-def check(inspection, answers):
+def check(inspection, answers, existing_secrets=frozenset()):
     """(definition, secrets, errors): the definition and the secret values when every answer is valid,
-    else (None, {}, {question id: Turkish text}). Never raises."""
+    else (None, {}, {question id: Turkish text}). existing_secrets: the logical secret names a kept answer
+    may refer to (an edit). Never raises."""
     try:
-        return _Check(inspection, answers).run()
+        if isinstance(existing_secrets, (str, bytes)) or not all(isinstance(s, str) for s in existing_secrets):
+            return None, {}, {"dosya": "Saklanan gizli değerlerin listesi okunamadı."}
+        return _Check(inspection, answers, frozenset(existing_secrets)).run()
     except Exception:  # noqa: BLE001 - fail closed
         return None, {}, {"dosya": "Yanıtlar denetlenirken bir iç hata oldu; tanım çıkarılmadı."}
 
 
 class _Check:
-    def __init__(self, inspection, answers):
+    def __init__(self, inspection, answers, existing_secrets=frozenset()):
         self.i = inspection
         self.a = answers
+        self.existing = existing_secrets
         self.errors = {}
 
     def error(self, qid, text):
@@ -451,7 +492,7 @@ class _Check:
                     self.error(qid, "Bu Tailscale adı bu uygulamada başka bir portta da kullanılıyor.")
         if self.errors:
             return None, {}, self.errors
-        return _Definition(i, name, chosen, questions).build(self)
+        return _Definition(i, name, chosen, questions, self.existing).build(self)
 
     @staticmethod
     def shape(answer, keys):
@@ -485,7 +526,14 @@ class _Check:
             return None
         return answer["value"]
 
+    def kept(self, answer):
+        """{"keep": true}: keep the value the application already has (whether it has one is known only
+        once the secret's name is, in _Definition)."""
+        return self.shape(answer, ("keep",)) and answer["keep"] is True
+
     def a_var(self, q, answer):
+        if q["secret"] and self.kept(answer):
+            return {"keep": True}
         value = self.value(q, answer)
         if value is None:
             return None
@@ -496,6 +544,8 @@ class _Check:
         return {"value": value}
 
     def a_secret(self, q, answer):
+        if self.kept(answer):
+            return {"keep": True}
         value = self.value(q, answer)
         if value is None:
             return None
@@ -528,18 +578,22 @@ class _Check:
 
 
 class _Definition:
-    def __init__(self, inspection, name, chosen, questions):
+    def __init__(self, inspection, name, chosen, questions, existing_secrets=frozenset()):
         self.i = inspection
         self.app = name
         self.chosen = chosen
         self.questions = questions
+        self.existing = existing_secrets
         self.compose = inspection["format"] == "compose"
-        self.values = {qid[4:]: v["value"] for qid, v in chosen.items() if qid.startswith("var:")}
+        self.values = {qid[4:]: v["value"] for qid, v in chosen.items() if qid.startswith("var:") and "value" in v}
+        self.kept_vars = {qid[4:] for qid, v in chosen.items() if qid.startswith("var:") and v.get("keep")}
         self.secret_vars = {q["name"] for q in questions.values() if q["kind"] == "var" and q["secret"]}
         self.secret_names = {}
         self.secret_of = {}
         self.secret_values = {}
         self.secret_users = {}
+        self.kept = set()
+        self.check = None
 
     def sub(self, text):
         return master_compose.substitute(text, self.values) if self.compose and text is not None else text
@@ -558,15 +612,22 @@ class _Definition:
             candidates = ["%s-%d" % (master_compose.lower_dashed(fallback), n)]
             n += 1
 
-    def secret(self, identity, preferred, fallback, value, service):
+    def secret(self, identity, preferred, fallback, value, service, keep=None):
+        """keep: the question id of a kept answer; the value stays the application's, if it has this name."""
         name = self.allocate(identity, preferred, fallback)
-        self.secret_values[name] = value
+        if keep is not None:
+            if name not in self.existing:
+                self.check.error(keep, KEEP_MISSING)
+            self.kept.add(name)
+        else:
+            self.secret_values[name] = value
         users = self.secret_users.setdefault(name, [])
         if service not in users:
             users.append(service)
         return name
 
     def build(self, check):
+        self.check = check
         services = []
         for svc in self.i["services"]:
             try:
@@ -577,8 +638,17 @@ class _Definition:
             self.after(check, svc, out)
         if check.errors:
             return None, {}, check.errors
+        warnings = []
+        for out in services:
+            if not any(m["to"] == "srv" and not m["read_only"] for m in out["mounts"]):
+                continue
+            if out["start"] == "root":
+                warnings.append({"service": out["name"], "text": ROOT_SRV_WARNING})
+            elif out["user"] not in (DIRECT_USER, DIRECT_USER.split(":")[0]):
+                warnings.append({"service": out["name"], "text": USER_SRV_WARNING % out["user"]})
         definition = {"name": self.app, "format": self.i["format"], "pod": self.i["pod"], "services": services,
-                      "secrets": [{"name": n, "services": u} for n, u in self.secret_users.items()]}
+                      "secrets": [{"name": n, "services": u, "keep": n in self.kept} for n, u in self.secret_users.items()],
+                      "warnings": warnings}
         return definition, dict(self.secret_values), {}
 
     def after(self, check, svc, out):
@@ -590,8 +660,8 @@ class _Definition:
             blame("image", "%s: değişkenlerle imaj adı boş ya da boşluklu kalıyor." % svc["name"])
         if out["start"] == "direct" and not master_compose.USER_RE.fullmatch(out["user"] or ""):
             blame("user", "%s: değişkenlerle kullanıcı boş kalıyor." % svc["name"])
-        if out["workdir"] is not None and not out["workdir"].startswith("/"):
-            blame("working_dir", "%s: çalışma klasörü mutlak bir yol olmalı." % svc["name"])
+        if out["workdir"] is not None and (not out["workdir"].startswith("/") or re.search(r"[\x00-\x1f\x7f]", out["workdir"])):
+            blame("working_dir", "%s: çalışma klasörü denetim karakteri içermeyen mutlak bir yol olmalı." % svc["name"])
 
     def service(self, svc):
         name = svc["name"]
@@ -633,31 +703,54 @@ class _Definition:
             "mounts": [self.mount(name, m) for m in svc["mounts"]],
         }
 
+    def answered(self, qid, identity, preferred, fallback, service):
+        """The secret of a question: its value, or the application's own for {"keep": true}."""
+        answer = self.chosen[qid]
+        if answer.get("keep"):
+            return self.secret(identity, preferred, fallback, None, service, keep=qid)
+        return self.secret(identity, preferred, fallback, answer["value"], service)
+
     def env(self, service, entry):
         name = entry["name"]
         if entry["secret_ref"]:
             ref = entry["secret_key"]
-            return {"name": name, "secret": self.secret(("kube", ref), "%s-%s" % (self.app, name),
-                                                        "%s-%s" % (self.app, ref.replace("/", "-")),
-                                                        self.chosen["secret:" + ref]["value"], service)}
+            return {"name": name, "secret": self.answered("secret:" + ref, ("kube", ref), "%s-%s" % (self.app, name),
+                                                          "%s-%s" % (self.app, ref.replace("/", "-")), service)}
         qid = "secret:%s:%s" % (service, name)
         if qid in self.chosen:
-            return {"name": name, "secret": self.secret(("question", qid), "%s-%s" % (self.app, name),
-                                                        "%s-%s-%s" % (self.app, service, name),
-                                                        self.chosen[qid]["value"], service)}
+            return {"name": name, "secret": self.answered(qid, ("question", qid), "%s-%s" % (self.app, name),
+                                                          "%s-%s-%s" % (self.app, service, name), service)}
         refs = env_refs(entry) if self.compose else []
         secret_refs = [r for r in refs if r["name"] in self.secret_vars]
         if not secret_refs:
-            return {"name": name, "value": self.sub(entry["value"]) if self.compose else self.expanded[name]}
-        value = self.sub(entry["value"])
+            return self.plain(service, entry, refs, self.sub(entry["value"]) if self.compose else self.expanded[name])
         parts = master_compose.template_parts(entry["value"])
+        kept = [r["name"] for r in secret_refs if r["name"] in self.kept_vars]
         if len(parts) == 1 and len(secret_refs) == 1:
             var = secret_refs[0]["name"]
-            secret = self.secret(("var", var), "%s-%s" % (self.app, var), "%s-var-%s" % (self.app, var), value, service)
-        else:
-            secret = self.secret(("env", service, name), "%s-%s" % (self.app, name), "%s-%s-%s" % (self.app, service, name),
-                                 value, service)
+            identity, preferred, fallback = ("var", var), "%s-%s" % (self.app, var), "%s-var-%s" % (self.app, var)
+            if kept:
+                return {"name": name, "secret": self.secret(identity, preferred, fallback, None, service, keep="var:" + var)}
+            return {"name": name, "secret": self.secret(identity, preferred, fallback, self.sub(entry["value"]), service)}
+        for var in kept:
+            # The composed value holds the kept one: it cannot be built without it.
+            self.check.error("var:" + var, KEEP_COMPOSED)
+        if kept:
+            return {"name": name, "secret": ""}
+        secret = self.secret(("env", service, name), "%s-%s" % (self.app, name), "%s-%s-%s" % (self.app, service, name),
+                             self.sub(entry["value"]), service)
         return {"name": name, "secret": secret}
+
+    def plain(self, service, entry, refs, value):
+        """A plain value goes into the env file as one line: a line break or NUL is refused for the variable
+        whose answer (or default) brought it."""
+        if LINE_BREAK_RE.search(value):
+            names = [r["name"] for r in refs]
+            culprit = next((n for n in names if LINE_BREAK_RE.search(self.values.get(n) or "")), names[0] if names else None)
+            self.check.error("var:" + culprit if culprit else "dosya",
+                             "%s: %s değeri satır sonu ya da NUL içeremez; ortam değişkenleri dosyaya birer satır yazılır."
+                             % (service, entry["name"]))
+        return {"name": entry["name"], "value": value}
 
     def port(self, service, port):
         answer = self.chosen["port:%s:%d/%s" % (service, port["port"], port["protocol"])]

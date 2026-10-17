@@ -39,6 +39,8 @@ USER_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}(?::[A-Za-z0-9_][A-Za-z0-
 SIGNAL_RE = re.compile(r"(?:(?:SIG)?[A-Z][A-Z0-9]{1,11}(?:[+-][0-9]{1,2})?|[0-9]{1,2})\Z")
 # Podman's own labels steer Podman itself (io.containers.autoupdate would update an image unasked, DD-214).
 PODMAN_LABELS = ("io.containers.", "io.podman.", "PODMAN_")
+# Obhut's own labels say who owns a container (master_generator.labels); a file never sets them.
+OBHUT_LABELS = ("io.master-stack.",)
 SHELL_CHARS = frozenset("|&;<>()`\n")
 _TR = str.maketrans("çğıöşüÇĞİÖŞÜâîûÂÎÛ", "cgiosucgiosuaiuaiu")
 
@@ -638,6 +640,8 @@ class _Reader:
                 self.f.refuse(lline, "labels", "Geçersiz ya da iki kez yazılmış etiket adı: %s" % key[:64])
             elif key.startswith(PODMAN_LABELS):
                 self.f.refuse(lline, "labels", "Podman'ın kendi etiketi (%s) dosyadan verilmez." % key[:64])
+            elif key.startswith(OBHUT_LABELS):
+                self.f.refuse(lline, "labels", "Obhut'un kendi etiketi (%s) dosyadan verilmez." % key[:64])
             elif self.scan(text, lline, svc["name"], "labels"):
                 svc["labels"][key] = text
 
@@ -930,7 +934,9 @@ class _Reader:
             else:
                 self.f.refuse(kline, key, UNKNOWN % key)
         if disabled:
+            # NONE turns the image's own check off too; None (no healthcheck key) keeps it.
             self.f.note(line, "healthcheck", "Sağlık denetimi kapalı.")
+            svc["health"] = {"test": ["NONE"], "interval": None, "timeout": None, "retries": None, "start_period": None}
             return
         if not health["test"]:
             self.f.note(line, "healthcheck", "Denetim komutu yok; imajın kendi sağlık denetimi kullanılır.")

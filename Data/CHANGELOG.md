@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### 2026-10-17 — Applications run from their own Compose or Kubernetes files (v2-257, branch `yeni-yapi`)
+
+- An application is installed from its own Compose or Kubernetes file and the operator's answers
+  (DD-274): Obhut writes its Quadlet units, pulls and pins its images, creates its secrets as Podman
+  secrets, gives each address port a local port, starts its containers in order and waits until they are
+  running and healthy. Anything that fails is taken back, and the job says which service stopped and where
+  its journal is. Konsol's screens for adding and editing arrive in a later phase; the routes are in place.
+- Each application has its own network; Compose services reach each other by name, a Kubernetes Pod's
+  containers share `localhost`. A Pod with several containers and a Compose `service_healthy` need
+  Podman 5 (Debian 13, Ubuntu 26.04); on Ubuntu 24.04 such a file is refused before anything is written.
+- A container starts either directly as its own user (no privileges at all) or as root with Podman's
+  usual privileges minus a few; a root start, or a start as another user, that can write to `/srv` is
+  shown with a warning.
+- Uygulamalar lists the applications with their services, resources and update state. Each application's
+  page shows its services, ports, folders, file and answers (never a secret's value) and its logs per
+  service, and starts, stops, restarts, updates or removes it; removal keeps the data unless the
+  application's name is typed.
+- A draft file can be made from an `https` address, an image name or a container that already runs on
+  the server; taking over a container moves its data into the new application.
+- Removed: Konsol's single-container definitions, "Bir imajdan", "Yönetime al", the definition editor and
+  the container settings tab, and Yayınla's step that added a local port to a container.
+- The base installs `catatonit`, which Podman needs for pods and for `init: true`.
+
 ### 2026-10-17 — Konsol reads Compose and Kubernetes files (v2-256, branch `yeni-yapi`)
 
 - Konsol can read an application's own Compose or Kubernetes YAML file and inspect it without changing

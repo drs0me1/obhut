@@ -8,7 +8,6 @@ import {
   type AyarPlani,
   type AyarSonucu,
   type GuvenlikDuvari,
-  type KonteynerIsi,
   type KuralTaslagi,
   type Tamam,
   type YayinAdayi,
@@ -61,7 +60,7 @@ export async function planPublication(request: YayinIstegi): Promise<YayinPlani>
     isCandidate(v.hedef) && isList(v.adimlar) && (v.plan === null || isPlan(v.plan)) && isText(v.engel) && isList(v.uyarilar));
   return {
     ...value,
-    adimlar: value.adimlar.filter((a) => isObject(a) && (a.tur === "konteyner" || a.tur === "ayar") && isText(a.baslik) && isObject(a.istek)),
+    adimlar: value.adimlar.filter((a) => isObject(a) && a.tur === "ayar" && isText(a.baslik) && isObject(a.istek)),
     plan: value.plan ? cleanPlan(value.plan) : null,
     dns: isObject(value.dns) && isText(value.dns.ad) && isText(value.dns.deger) ? value.dns : null,
     uyarilar: value.uyarilar.filter((u) => isObject(u) && isText(u.metin)),
@@ -112,9 +111,4 @@ export async function readNames(): Promise<Adlar> {
     sunucular: isList(value.sunucular) ? value.sunucular.filter(isText) : [],
     hatalar: isList(value.hatalar) ? value.hatalar.filter(isText) : [],
   };
-}
-
-/** A container job (DD-211) as a Yayınla plan's step asks for it; the body goes out unchanged. */
-export async function startContainerJob(request: Record<string, unknown>): Promise<KonteynerIsi & { id: string }> {
-  return shaped<KonteynerIsi & { id: string }>(await postJson(YOLLAR.konteyner_islemi, request), (v) => isText(v.id) && v.id !== "");
 }

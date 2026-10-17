@@ -11,17 +11,15 @@ const NOW = 1791845000;
 const DAY = 86400;
 const VPN_NOTE = "WireGuard cihazları yalnız internete çıkar; bu sunucudaki hizmetlere ulaşamaz.";
 const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
-const ucell = (durum, adresler = [], uyari = "", not = "") => ({ durum, adresler, uyari, not });
-const app = (o) => ({ tur: "konteyner", durum: "calisiyor", tailscale: ucell("yok"), internet: ucell("yok"), kaynak: { cpu: null, bellek: null },
-  guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null, aciklama: "", ...o });
+const { uygulama, uygulamalar, ayrinti } = require("./yeni-harness.cjs").fixtures;
 const row = (id, ad, tur, cells, ayrinti = [], aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, calisiyor: true, yerel: cell("yok"),
   tailscale: cell("yok"), wireguard: cell("kapali", [], VPN_NOTE), internet: cell("yok"), yayinlar: [], ayrinti, ...cells });
 
 const WARNINGS = [
   { seviye: "warn", hizmet: "paylasim", metin: "İnternetten gelen WebDAV bağlantıları şifresiz; kullanıcı adı ve parola ağda okunabilir.",
     duzelt: { bolum: "yayinlar", hedef: "paylasim" } },
-  { seviye: "warn", hizmet: "konteyner:medya", metin: "medya: 203.0.113.10:8096/tcp doğrudan internete açık; şifreleme ve giriş uygulamanın kendisinde.",
-    duzelt: { bolum: "uygulama", hedef: "konteyner:medya" } },
+  { seviye: "warn", hizmet: "konteyner:medya_web", metin: "medya_web: 203.0.113.10:8096/tcp doğrudan internete açık; şifreleme ve giriş uygulamanın kendisinde.",
+    duzelt: { bolum: "uygulama", hedef: "medya" } },
   { seviye: "warn", hizmet: "konteyner:notlar", metin: "notlar.example.org sertifikası 10 gün sonra doluyor; Caddy kendiliğinden yeniler, yenilemezse internetten erişim kesilir.",
     duzelt: { bolum: "yayinlar", hedef: "konteyner:notlar" } },
 ];
@@ -30,8 +28,8 @@ const ROWS = [
   row("konteyner:notlar", "notlar", "konteyner", { yerel: cell("acik", ["127.0.0.1:8090 → 80/tcp"]), tailscale: cell("acik", ["notlar.ev"]),
     internet: cell("acik", ["notlar.example.org"]) }, [{ baslik: "Konteyner portu", deger: "127.0.0.1:8090 → 80/tcp" },
     { baslik: "DNS", deger: "notlar.ev → 100.64.0.2" }, { baslik: "Caddy", deger: "notlar.example.org → 127.0.0.1:8090" }], "Konteyner"),
-  row("konteyner:medya", "medya", "konteyner", { yerel: cell("kapali"), tailscale: cell("acik", ["100.64.0.2:8096/tcp"]),
-    internet: cell("acik", ["203.0.113.10:8096/tcp"], "", "Doğrudan WAN") }, [{ baslik: "Port", deger: "0.0.0.0:8096 → 8096/tcp" }], "Konteyner"),
+  row("konteyner:medya_web", "medya_web", "konteyner", { uygulama: "medya", yerel: cell("kapali"), tailscale: cell("acik", ["100.64.0.2:8096/tcp"]),
+    internet: cell("acik", ["203.0.113.10:8096/tcp"], "", "Doğrudan WAN") }, [{ baslik: "Port", deger: "0.0.0.0:8096 → 8096/tcp" }], "Uygulama · medya"),
   row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev", "100.64.0.2:61010"], "2 klasör"), internet: cell("acik", ["http://203.0.113.10:61010"], "1 klasör", "Şifresiz HTTP") },
     [{ baslik: "Klasör · Filmler", deger: "Tailscale açık · İnternet açık" }], "WebDAV · 2 klasör"),
   row("sistem:ssh", "SSH", "sistem", { tailscale: cell("acik", ["22/tcp"]), internet: cell("acik", ["203.0.113.10:22/tcp"]) }, [], "Uzak kabuk"),
@@ -57,19 +55,21 @@ function erisim(o = {}) {
 const GUARD_APP = "Yalnız uygulamanın kendi girişi korur; Konsol bu adreste giriş denetlemez.";
 const cand = (o) => ({ servis: null, yerel_ad: null, tailscale: false, internet: false, alan_adi: "", durum: "disabled", mesaj: "İnternet yayını kapalı.", bitis: null,
   hedef: null, giris: GUARD_APP, onay_kelimesi: false, internet_engel: "", kullanilabilir: true, neden: "", konteyner: null, ...o });
-const box = (o) => ({ kaynak: "konsol", calisiyor: true, yerel_portlar: [], diger_portlar: [], port_eklenebilir: true, onerilen_port: null, ...o });
+const NO_LOOPBACK = "Bu konteynerin yalnız bu sunucuda (127.0.0.1) dinleyen bir portu yok; yayımlanamaz.";
+const box = (o) => ({ kaynak: "dis", uygulama: null, calisiyor: true, yerel_portlar: [], diger_portlar: [], ...o });
 function candidates() {
   return [
     cand({ id: "panel", tur: "konsol", ad: "Konsol", servis: "panel", yerel_ad: "panel.ev", tailscale: true, giris: "İnternetten Konsol hesabıyla giriş istenir.", onay_kelimesi: true }),
     cand({ id: "konteyner:notlar", tur: "konteyner", ad: "notlar", servis: "elle-notlar", yerel_ad: "notlar.ev", tailscale: true, internet: true,
       alan_adi: "notlar.example.org", durum: "ready", mesaj: "Sertifika doğrulandı.", bitis: NOW + 10 * DAY, hedef: "127.0.0.1:8090",
-      konteyner: box({ ad: "notlar", yerel_portlar: [{ host_port: 8090, container_port: 80 }], onerilen_port: 80 }) }),
-    cand({ id: "konteyner:medya", tur: "konteyner", ad: "medya", konteyner: box({ ad: "medya", diger_portlar: [{ kapsam: "internet", host_port: 8096, container_port: 8096 }],
-      onerilen_port: 8096 }) }),
-    cand({ id: "konteyner:kutu", tur: "konteyner", ad: "kutu", konteyner: box({ ad: "kutu", onerilen_port: null }) }),
-    cand({ id: "konteyner:dis", tur: "konteyner", ad: "dis", kullanilabilir: false,
-      neden: "Konsol dışında yönetilen bu konteynerin yalnız bu sunucuda dinleyen portu yok; önce Uygulamalar'da yönetime alın.",
-      konteyner: box({ ad: "dis", kaynak: "dis", port_eklenebilir: false }) }),
+      konteyner: box({ ad: "notlar", yerel_portlar: [{ host_port: 8090, container_port: 80 }] }) }),
+    // An application's container published straight on the internet (no loopback port): nothing to name.
+    cand({ id: "konteyner:medya_web", tur: "konteyner", ad: "medya_web", kullanilabilir: false, neden: NO_LOOPBACK,
+      konteyner: box({ ad: "medya_web", kaynak: "uygulama", uygulama: "medya", diger_portlar: [{ kapsam: "public", host_port: 8096, container_port: 8096 }] }) }),
+    // An application's address port: the container listens on its pool port at 127.0.0.1 (DD-271 phase 3).
+    cand({ id: "konteyner:kutu_web", tur: "konteyner", ad: "kutu_web",
+      konteyner: box({ ad: "kutu_web", kaynak: "uygulama", uygulama: "kutu", yerel_portlar: [{ host_port: 62001, container_port: 80 }] }) }),
+    cand({ id: "konteyner:dis", tur: "konteyner", ad: "dis", kullanilabilir: false, neden: NO_LOOPBACK, konteyner: box({ ad: "dis" }) }),
     cand({ id: "elle:yazici", tur: "elle", ad: "Yazıcı", servis: "elle-yazici", yerel_ad: "yazici.ev", tailscale: true, hedef: "127.0.0.1:631", mesaj: "Hedef yanıt vermiyor." }),
     cand({ id: "paylasim", tur: "paylasim", ad: "WebDAV paylaşımları", servis: "paylasim", yerel_ad: "paylas.ev", tailscale: true, durum: "http", mesaj: "HTTPS alan adı tanımlanmadı.",
       giris: "Klasör hesapları korur; her klasörün internet erişimi Paylaşımlar'dan açılır." }),
@@ -124,13 +124,7 @@ const data = {
   bekleyen: { bekleyen: null },
   etkinlik: { items: [] },
   erisim: erisim(),
-  uygulamalar: { read_at: NOW, hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 3, kullanilmayan_imaj: 0, birim: 2, ag: 3 }, items: [
-    app({ id: "konteyner:notlar", ad: "notlar", konteyner: "notlar", aciklama: "Konteyner · docker.io/library/nginx",
-      tailscale: ucell("acik", ["notlar.ev"]), internet: ucell("acik", ["notlar.example.org"]), adres: { tailscale: "http://notlar.ev", internet: "https://notlar.example.org" },
-      eylemler: ["durdur", "kaldir"] }),
-    app({ id: "konteyner:medya", ad: "medya", konteyner: "medya", aciklama: "Konteyner · docker.io/library/nginx",
-      tailscale: ucell("acik", ["100.64.0.2:8096/tcp"]), internet: ucell("acik", ["203.0.113.10:8096/tcp"], "Doğrudan WAN"), eylemler: ["durdur", "kaldir"] }),
-    app({ id: "konteyner:kutu", ad: "kutu", konteyner: "kutu", aciklama: "Konteyner · docker.io/library/busybox", eylemler: ["durdur", "kaldir"] })] },
+  uygulamalar: uygulamalar([uygulama("kutu"), uygulama("medya")]),
   yayinlar: { revizyon: "rev-1", alan: "ev", wan_ipv4: "203.0.113.10", adaylar: candidates(), hatalar: [] },
   adlar: names(),
   "guvenlik-duvari": firewall(),
@@ -189,13 +183,8 @@ function publicationPlan(req) {
   let web = { service: c.servis, tail: req.tailscale, enabled: req.internet, domain: req.alan_adi };
   if (c.tur === "konsol" && req.onay) web.confirm = req.onay;
   if (!c.servis) {
-    if (!c.konteyner.yerel_portlar.length) {
-      steps.push({ tur: "konteyner", baslik: "Konteynere yalnız bu sunucuda dinleyen port",
-        aciklama: `127.0.0.1:62100 → konteynerde ${req.konteyner_portu ?? c.konteyner.onerilen_port}/tcp. Konteyner yeniden oluşturulur; kısa bir kesinti olur.`,
-        istek: { action: "save", name: c.konteyner.ad, revision: "r".repeat(32), config: { name: c.konteyner.ad, image: "docker.io/library/nginx:1.27",
-          ports: [{ scope: "local", host_port: 62100, container_port: req.konteyner_portu ?? c.konteyner.onerilen_port, protocol: "tcp", public_ack: false }] } } });
-    }
-    web = { service: "elle-" + local, tail: req.tailscale, enabled: req.internet, domain: req.alan_adi, elle: { name: req.ad ?? c.ad, local, upstream: "127.0.0.1:62100" } };
+    web = { service: "elle-" + local, tail: req.tailscale, enabled: req.internet, domain: req.alan_adi,
+      elle: { name: req.ad ?? c.ad, local, upstream: "127.0.0.1:" + c.konteyner.yerel_portlar[0].host_port } };
   }
   const istek = { revision: req.revizyon, web };
   steps.push({ tur: "ayar", baslik: "Ad ve erişim", aciklama: `Tailscale adı ${local}.ev ${req.tailscale ? "açık" : "kapalı"}; internet adı ${req.internet ? req.alan_adi : "kapalı"}.`, istek });
@@ -203,7 +192,7 @@ function publicationPlan(req) {
   return { hedef: c, adimlar: steps, engel, dns: req.internet && req.alan_adi ? { ad: req.alan_adi, tur: "A", deger: "203.0.113.10" } : null,
     plan: engel ? null : plan({ degisiklikler: [item("yayin", req.internet ? "ac" : "degistir", `${c.ad} · internet adı`, c.internet ? c.alan_adi : "kapalı", req.internet ? req.alan_adi : "kapalı")],
       etkiler: ["Caddy yapılandırması yeniden yüklenir.", ...(req.internet ? ["İnternet adı için HTTPS sertifikası alınır (en çok 1 dakika)."] : [])] }),
-    uyarilar: steps.length > 1 ? [{ seviye: "info", metin: "İki adım sırayla uygulanır. İkincisi başarısız olursa eklenen port yalnız bu sunucuda dinler ve zararsız olarak kalır." }] : [] };
+    uyarilar: [] };
 }
 h.handlers["/api/konsol/yayinlar/plan"] = ({ method, body }) => {
   if (method !== "POST") return undefined;
@@ -211,15 +200,11 @@ h.handlers["/api/konsol/yayinlar/plan"] = ({ method, body }) => {
   if (forced) return typeof forced === "function" ? forced(body) : forced;
   return { body: publicationPlan(body) };
 };
-h.handlers["/api/konsol/uygulamalar/ayrinti"] = ({ query }) => {
-  const item = data.uygulamalar.items.find((a) => a.id === query.get("id"));
-  if (!item) return { status: 404, body: { error: "Uygulama bulunamadı." } };
-  return { body: { uygulama: item, konteyner: null, erisim: data.erisim.hizmetler.find((r) => r.id === item.id) ?? null } };
-};
-let jobSeq = 6;
-h.handlers["/api/konsol/konteynerler/islem"] = ({ method, body }) =>
-  (method === "POST" ? { status: 202, body: { id: `is-${++jobSeq}`, action: body.action, name: body.name, state: "running", step: "" } } : undefined);
-const job = (o) => ({ tur: "konteyner", id: "is-7", ad: "medya · Kaydet", durum: "calisiyor", adim: "", bitis: null, ...o });
+// An application's page (a warning's Düzelt leads there).
+h.dynamic.push([/^\/api\/konsol\/uygulamalar\/([a-z][a-z0-9-]*)$/, (req, m) => {
+  const item = data.uygulamalar.items.find((a) => a.ad === m[1]);
+  return item ? { body: ayrinti(item) } : { status: 404, body: { error: "Uygulama bulunamadı." } };
+}]);
 
 // ---- helpers
 const url = (hash) => new URL("/" + hash, base).href;
@@ -253,7 +238,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     const fixes = page.getByTestId("access-warnings").locator(".problem");
     assert.deepEqual(await fixes.locator("strong").allInnerTexts(), WARNINGS.map((w) => w.metin));
     assert.deepEqual(await fixes.getByRole("link", { name: "Düzelt" }).evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
-      ["#/erisim?sekme=adresler&yayinla=paylasim", "#/uygulamalar/konteyner:medya", "#/erisim?sekme=adresler&yayinla=konteyner%3Anotlar"]);
+      ["#/erisim?sekme=adresler&yayinla=paylasim", "#/uygulamalar/medya", "#/erisim?sekme=adresler&yayinla=konteyner%3Anotlar"]);
     await page.getByTestId("page-desc").filter({ hasText: "6 hizmet Tailscale'de · 5 hizmet internette · 3 uyarı" }).waitFor();
     // Summaries.
     const ts = page.getByTestId("sum-tailscale");
@@ -306,8 +291,9 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     assert.equal(await hashOf(page), "#/erisim?sekme=adresler", "closing removes the flow from the address");
     await page.goto(url("#/erisim"));
     await page.getByTestId("access-warnings").getByRole("link", { name: "Düzelt" }).nth(1).click();
-    await page.waitForURL((u) => u.hash === "#/uygulamalar/konteyner:medya");
+    await page.waitForURL((u) => u.hash === "#/uygulamalar/medya");
     await page.locator("main h1").filter({ hasText: "medya" }).waitFor();
+    await page.getByTestId("service").first().waitFor();
     await page.context().close();
 
     // ================= Tailscale: the device, its key, the exit node and the admin console
@@ -367,9 +353,10 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     assert.equal(await notlarRow.locator('[data-hucre="tailscale"]').innerText(), "notlar.ev\naçık");
     assert.equal(await notlarRow.locator('[data-hucre="internet"]').innerText(), "notlar.example.org\n" + GUARD_APP);
     assert.match(await notlarRow.locator('[data-hucre="durum"]').innerText(), new RegExp(`Sertifika hazır[\\s\\S]*Sertifika: ${KEY_DATE}`));
-    assert.equal(await pubs.locator('tr[data-yayin="konteyner:medya"] [data-eylem="duzenle"]').innerText(), "Yayınla", "not published yet");
+    assert.equal(await pubs.locator('tr[data-yayin="konteyner:kutu_web"] [data-eylem="duzenle"]').innerText(), "Yayınla", "not published yet");
     assert(await pubs.locator('tr[data-yayin="konteyner:dis"] [data-eylem="duzenle"]').isDisabled(), "unavailable");
-    assert.match(await pubs.locator('tr[data-yayin="konteyner:dis"]').innerText(), /yönetime alın/);
+    assert(await pubs.locator('tr[data-yayin="konteyner:medya_web"] [data-eylem="duzenle"]').isDisabled(), "no loopback port: nothing to name");
+    assert.match(await pubs.locator('tr[data-yayin="konteyner:dis"]').innerText(), /dinleyen bir portu yok/);
     assert.equal(await pubs.locator('[data-eylem="kaldir"]').count(), 2, "manual addresses (one joined to its container) can be removed");
     assert.equal(await page.getByTestId("dns-hint").locator(".mono").innerText(), "203.0.113.10");
     // Local names: one row per name, the locked one disabled, the operator's record, forwarding.
@@ -568,7 +555,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await options.first().waitFor();
     assert.deepEqual(await options.evaluateAll((ls) => ls.map((l) => l.dataset.aday)), [...candidates().map((c) => c.id), "yeni"]);
     assert(await flow.locator('[data-aday="konteyner:dis"] input').isDisabled(), "an unavailable candidate cannot be chosen");
-    assert.match(await flow.locator('[data-aday="konteyner:dis"]').innerText(), /yönetime alın/);
+    assert.match(await flow.locator('[data-aday="konteyner:dis"]').innerText(), /dinleyen bir portu yok/);
     await flow.getByTestId("flow-go").click();
     await flow.getByText("Yayımlanacak olanı seçin.").waitFor();
     await flow.locator('[data-aday="panel"]').click();
@@ -598,9 +585,9 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     await flow.waitFor({ state: "detached" });
     await page.context().close();
 
-    // ================= a container without a loopback port: the container step, then the settings step
+    // ================= an application's address port (127.0.0.1, DD-271 phase 3): its names, then the settings step
     page = await newPage();
-    await page.goto(url("#/erisim?sekme=adresler&yayinla=konteyner:medya"));
+    await page.goto(url("#/erisim?sekme=adresler&yayinla=konteyner:kutu_web"));
     flow = flowSheet(page);
     await flow.waitFor();
     await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
@@ -608,72 +595,45 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     assert.equal(await flow.getByRole("switch", { name: "Tailscale adı" }).getAttribute("aria-checked"), "true", "a new publication starts on the tailnet");
     assert.equal(await flow.getByRole("switch", { name: "İnternet adı (HTTPS)" }).getAttribute("aria-checked"), "false");
     await flow.getByTestId("flow-go").click();
-    assert.equal(await flow.getByTestId("flow-name").inputValue(), "medya");
-    assert.equal(await flow.getByTestId("flow-local").inputValue(), "medya", "the server's own choice of name");
-    assert.equal(await flow.getByTestId("flow-inner").inputValue(), "8096", "the suggested inner port");
+    assert.equal(await flow.getByTestId("flow-name").inputValue(), "kutu_web");
+    assert.equal(await flow.getByTestId("flow-local").inputValue(), "kutu-web", "the server's own choice of name");
     await flow.getByTestId("flow-local").fill("film_1");
     await flow.getByTestId("flow-go").click();
     await flow.getByText("Küçük harfle başlamalı; yalnız küçük harf, rakam ve tire (en çok 31).").waitFor();
     await flow.getByTestId("flow-local").fill("notlar");
     await flow.getByText("notlar.ev adı zaten kullanılıyor.").waitFor();
-    await flow.getByTestId("flow-local").fill("film");
-    await flow.getByTestId("flow-inner").fill("8097");
+    await flow.getByTestId("flow-local").fill("kutu");
     await flow.getByTestId("flow-go").click();
     await flow.getByTestId("plan").waitFor();
-    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "konteyner:medya", revizyon: "rev-1", tailscale: true, internet: false, alan_adi: "", yerel: "film", konteyner_portu: 8097 });
-    assert.deepEqual(await flow.getByTestId("flow-steps").locator(".flow-run").evaluateAll((ls) => ls.map((l) => l.dataset.tur)), ["konteyner", "ayar"]);
-    assert.match(await flow.locator('.plan-warning[data-seviye="info"]').first().innerText(), /İki adım sırayla uygulanır/);
-    const medyaPlan = publicationPlan(lastPost("yayinlar/plan"));
+    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "konteyner:kutu_web", revizyon: "rev-1", tailscale: true, internet: false, alan_adi: "", yerel: "kutu" });
+    assert.deepEqual(await flow.getByTestId("flow-steps").locator(".flow-run").evaluateAll((ls) => ls.map((l) => l.dataset.tur)), ["ayar"]);
+    const kutuPlan = publicationPlan(lastPost("yayinlar/plan"));
+    assert.equal(kutuPlan.adimlar[0].istek.web.elle.upstream, "127.0.0.1:62001", "the application's own pool port");
     await shot(page, "1440-light-yayinla-konteyner.png");
-    const applies = posts("ayarlar/uygula").length;
     await flow.getByTestId("flow-go").click();
-    await waitFor(() => posts("konteynerler/islem").length === 1, "the container step");
-    assert.deepEqual(lastPost("konteynerler/islem"), medyaPlan.adimlar[0].istek, "the container request goes out unchanged");
-    await flow.getByTestId("run-state").first().filter({ hasText: "Sürüyor…" }).waitFor();
-    await waitFor(() => h.stream.clients.size === 1, "event stream");
-    push("islemler", { items: [job({ adim: "Konteyner yeniden oluşturuluyor" })] });
-    await flow.locator(".flow-run").first().locator(".cell-note").filter({ hasText: "Konteyner yeniden oluşturuluyor" }).waitFor();
-    await page.waitForTimeout(150);
-    assert.equal(posts("ayarlar/uygula").length, applies, "the settings step waits for the container job");
-    push("islemler", { items: [job({ durum: "tamam", bitis: NOW + 5 })] });
     await flow.getByTestId("flow-done").waitFor();
-    assert.deepEqual(lastPost("ayarlar/uygula"), medyaPlan.adimlar[1].istek, "then the settings request, unchanged");
-    assert.deepEqual(await flow.getByTestId("run-state").allInnerTexts(), ["Tamam", "Tamam"]);
+    assert.deepEqual(lastPost("ayarlar/uygula"), kutuPlan.adimlar[0].istek, "the settings request, unchanged");
+    assert.deepEqual(await flow.getByTestId("run-state").allInnerTexts(), ["Tamam"]);
+    assert.equal(posts("konteynerler/islem").length, 0, "no container job");
     await flow.getByTestId("flow-go").click();
     await flow.waitFor({ state: "detached" });
 
-    // The second step fails: the container keeps its loopback port (harmless) and the name did not open.
-    await page.goto(url("#/erisim?yayinla=konteyner:kutu"));
+    // The settings step fails: the name did not open, and the plan can be checked again.
+    await page.goto(url("#/erisim?yayinla=konteyner:kutu_web"));
     flow = flowSheet(page);
     await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
     await flow.getByTestId("flow-go").click();
-    assert.equal(await flow.getByTestId("flow-inner").inputValue(), "", "no suggestion");
-    await flow.getByTestId("flow-go").click();
-    await flow.getByText("Uygulamanın konteyner içinde dinlediği portu yazın (ör. 8080).").waitFor();
-    await flow.getByTestId("flow-inner").fill("3000");
     await flow.getByTestId("flow-go").click();
     await flow.getByTestId("plan").waitFor();
-    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "konteyner:kutu", revizyon: "rev-1", tailscale: true, internet: false, alan_adi: "", konteyner_portu: 3000 });
+    assert.deepEqual(lastPost("yayinlar/plan"), { hedef: "konteyner:kutu_web", revizyon: "rev-1", tailscale: true, internet: false, alan_adi: "" });
     expectedFailures = ["/api/konsol/ayarlar/uygula"];
     applyReplies.push({ status: 400, body: { error: "Caddy yapılandırması doğrulanamadı." } });
     await flow.getByTestId("flow-go").click();
-    await waitFor(() => posts("konteynerler/islem").length === 2, "the container step");
-    push("islemler", { items: [job({ id: "is-8", ad: "kutu · Kaydet", durum: "tamam", bitis: NOW + 9 })] });
     await flow.getByTestId("flow-error").waitFor();
-    assert.equal(await flow.getByTestId("flow-error").innerText(),
-      "Ad açılmadı: Caddy yapılandırması doğrulanamadı. Konteyner artık yalnız bu sunucuda dinleyen bir portta da dinliyor; bu zararsızdır.");
-    assert.deepEqual(await flow.getByTestId("run-state").allInnerTexts(), ["Tamam", "Başarısız"]);
+    assert.equal(await flow.getByTestId("flow-error").innerText(), "Caddy yapılandırması doğrulanamadı.");
+    assert.deepEqual(await flow.getByTestId("run-state").allInnerTexts(), ["Başarısız"]);
     assert.equal(await flow.getByTestId("flow-go").innerText(), "Yeniden denetle");
     await shot(page, "1440-light-yayinla-hata.png");
-    // A failing container job stops before the settings step.
-    await flow.getByTestId("flow-go").click();
-    await flow.getByTestId("plan").waitFor();
-    const before = posts("ayarlar/uygula").length;
-    await flow.getByTestId("flow-go").click();
-    await waitFor(() => posts("konteynerler/islem").length === 3, "the container step again");
-    push("islemler", { items: [job({ id: "is-9", ad: "kutu · Kaydet", durum: "hata", adim: "imaj çekilemedi", bitis: NOW + 12 })] });
-    await flow.getByTestId("flow-error").filter({ hasText: "Konteyner işlemi başarısız: imaj çekilemedi" }).waitFor();
-    assert.equal(posts("ayarlar/uygula").length, before, "no settings step after a failed container job");
     expectedFailures = [];
     await flow.getByTestId("flow-back").click();
     await flow.getByTestId("flow-back").click();
@@ -966,28 +926,10 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
     data.bekleyen = { bekleyen: null };
     expectedFailures = [];
 
-    // ================= an application's Erişim tab opens the flow over its page
+    // ================= the palette: Erişim's tabs and the Yayınla action
     page = await newPage();
-    await page.goto(url("#/uygulamalar/konteyner:notlar?sekme=erisim"));
-    await page.getByTestId("access-edit").click();
-    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("yayinla") === "konteyner:notlar" && u.hash.startsWith("#/uygulamalar/konteyner:notlar"));
-    flow = flowSheet(page);
-    await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
-    assert.equal(await currentStep(flow), "2Kim");
-    await page.keyboard.press("Escape");
-    await flow.waitFor({ state: "detached" });
-    assert.equal(await hashOf(page), "#/uygulamalar/konteyner:notlar?sekme=erisim");
-    assert(await page.getByTestId("access-edit").evaluate((el) => el === document.activeElement), "focus returns to the button");
-    // Without an Erişim row, "Yayınla" opens the flow for the application's own id.
-    await page.goto(url("#/uygulamalar/konteyner:kutu?sekme=erisim"));
-    await page.getByTestId("access-publish").click();
-    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("yayinla") === "konteyner:kutu" && u.hash.startsWith("#/uygulamalar/konteyner:kutu"));
-    flow = flowSheet(page);
-    await flow.getByRole("switch", { name: "Tailscale adı" }).waitFor();
-    assert.equal(await currentStep(flow), "2Kim");
-    await page.keyboard.press("Escape");
-    await flow.waitFor({ state: "detached" });
-    // The palette: Erişim's tabs and the Yayınla action.
+    await page.goto(url("#/erisim"));
+    await page.getByTestId("matrix").waitFor();
     await page.keyboard.press("Control+K");
     const palette = page.getByRole("dialog", { name: "Komut paleti" });
     const input = palette.getByRole("combobox");
@@ -1016,7 +958,7 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
         assert(await noHorizontalScroll(page), `1440 ${colorScheme} ${name}`);
         await shot(page, `1440-${colorScheme}-${name}.png`, true);
       }
-      await page.goto(url("#/erisim?sekme=adresler&yayinla=konteyner:medya"));
+      await page.goto(url("#/erisim?sekme=adresler&yayinla=konteyner:kutu_web"));
       await flowSheet(page).getByRole("switch", { name: "Tailscale adı" }).waitFor();
       await shot(page, `1440-${colorScheme}-yayinla.png`);
       await page.context().close();
@@ -1060,12 +1002,12 @@ const KEY_DATE = dateText(NOW + 10 * DAY);
       "warning, exit node, admin console link, disconnected), Adresler (publications with state, certificate and guard; local names with the " +
       "locked one and raw sources; DNS draft → plan → apply with exact bodies; a refused plan and re-check; the local domain: plan, 300 s, " +
       "confirmation only from the new address, rollback; removing a manual address), the Yayınla flow (a published container's internet name with the DNS record and the " +
-      "certificate wait, the Konsol row with the typed word as onay, a container needing a port: the exact container request, the job's end " +
-      "through islemler, the exact settings request, a failing second step and a failing job, another port as a manual address, engel and " +
+      "certificate wait, the Konsol row with the typed word as onay, an application's address port named through the exact settings request, " +
+      "a failing settings step and Yeniden denetle, no container step, another port as a manual address, engel and " +
       "Yeniden denetle, both names off, Konsol without an account, an unknown target), Güvenlik duvarı (the base's ports with rules, listeners, locked rows, " +
       "draft with a baseline switch and a new rule, checks, IPv6, tabs, technical rules with counters, plan → apply → 60 s → Onayla and Geri al, " +
       "a plan that cannot be applied, the WireGuard tab without networks), the leave guard on the DNS, domain and firewall drafts, the stuck rollback (retry, typed discard), a refused confirmation, the internet channel's confirmation " +
-      "message, the application page's Erişim tab (with a row, and Yayınla without one), the palette, 1440/390/320 in light and dark. Screenshots: " + h.shots);
+      "message, a warning's Düzelt to an application's page, the palette, 1440/390/320 in light and dark. Screenshots: " + h.shots);
   } finally {
     await h.stop();
   }

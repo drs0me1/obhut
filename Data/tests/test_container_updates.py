@@ -1,6 +1,6 @@
-"""DD-214: explicit image updates. The base compares a Konsol container's installed digest with what
-the tag it was saved from points to now (registry manifests only, cached), and serves the status on a
-GET-only route behind the usual gates."""
+"""DD-214: explicit image updates. The base compares an application's pinned digest of each service with
+what the tag in its file points to now (registry manifests only, cached); the applications' list shows the
+state per service and ?yenile asks again (DD-271, phase 3)."""
 import json
 from pathlib import Path
 import sys
@@ -12,11 +12,11 @@ from unittest.mock import patch
 PANEL = Path(__file__).resolve().parents[1] / "panel"
 sys.path.insert(0, str(PANEL))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import app_fixtures  # noqa: E402
 import master_containers as containers  # noqa: E402
-import master_container_config as config  # noqa: E402
 import master_container_manager as manager  # noqa: E402
 
-REPO = "ghcr.io/example/medya"
+REPO = "registry.example/medya"
 OLD = REPO + "@sha256:" + "b5" * 32
 AMD, ARM, OTHER = "sha256:" + "11" * 32, "sha256:" + "22" * 32, "sha256:" + "33" * 32
 INDEX = {"mediaType": "application/vnd.oci.image.index.v1+json", "manifests": [
@@ -79,13 +79,28 @@ class UpdateStatusTests(unittest.TestCase):
         self.assertEqual(containers.image_repo("localhost:5000/a/b:1"), "localhost:5000/a/b")
 
 
+MEDYA = """name: medya
+services:
+  web:
+    image: registry.example/medya:latest
+  pinned:
+    image: registry.example/medya@sha256:%s
+""" % ("b5" * 32)
+MEDYA_ANSWERS = {"name": "medya", "answers": {"start:web": {"mode": "root"}, "start:pinned": {"mode": "root"}}}
+
+
 class ManagerUpdateTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name).resolve()
-        self.env = {"KONTEYNER_STATE_DIR": str(root / "containers"), "KONTEYNER_NETWORK": "konsol"}
-        (root / "state").write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
+        self.env = app_fixtures.env(root)
+        app_fixtures.write_state(root, self.env)
+        record = app_fixtures.record(self.env, text=MEDYA, given=MEDYA_ANSWERS, app="medya")
+        assert record["places"]["images"]["web"].startswith(REPO + "@")
+        # The pinned digest is the old one the registry fake knows.
+        places = dict(record["places"], images={"web": OLD, "pinned": OLD})
+        app_fixtures.apps.Records(self.env).write("medya", places=places)
         self.registry = Registry(local=(OTHER,))
         self.calls = []
 
@@ -95,39 +110,24 @@ class ManagerUpdateTests(unittest.TestCase):
                 return 0, "amd64\n", ""
             if argv[:2] in (["podman", "image"], ["podman", "manifest"]):
                 return self.registry(argv, timeout)
-            if argv[:2] == ["podman", "inspect"]:
-                return 1, "", "no such container"
             if argv[:2] == ["podman", "version"]:
                 return 0, "5.4.2", ""
             return 0, "[]", ""
-        self.p = types.SimpleNamespace(args=types.SimpleNamespace(state=str(root / "state")), run_tool=run_tool, env=lambda: {})
+        self.p = types.SimpleNamespace(args=types.SimpleNamespace(state=str(root / "state.env")), run_tool=run_tool, env=lambda: {})
         self.s = manager.Service(self.p)
-        self.save("medya", REPO + ":latest")
-
-    def save(self, name, image_ref):
-        """A saved Konsol definition: the installed digest and the reference it was created from."""
-        config.Store(self.env).save({"schema": 1, "name": name, "revision": "a" * 32, "image": OLD, "image_ref": image_ref,
-                                     "network": "konsol", "ports": [], "mounts": [], "environment": [], "command": [],
-                                     "autostart": True, "manual_stop": False, "restart": "on-failure", "cpus": "", "memory": ""})
 
     def remote_calls(self):
         return [c for c in self.calls if c[:3] == ["podman", "manifest", "inspect"]]
 
-    def test_a_konsol_definition_can_update_and_reports_cached_status(self):
-        row = self.s.view().ayrinti("medya")
-        self.assertIn("image-update", row["actions"])
-        self.assertIsNone(row["update"], "no registry call while drawing the list")
+    def test_each_service_of_an_application_reports_its_cached_status(self):
+        self.assertIsNone(self.s.update_of("medya"), "no registry call while nothing asked")
         self.assertEqual(self.remote_calls(), [])
         answer = self.s.updates()
-        self.assertEqual(answer["items"]["medya"], {"state": "var", "channel": REPO + ":latest", "error": ""})
+        self.assertEqual(answer["items"]["medya"], {"web": {"state": "var", "channel": REPO + ":latest", "error": ""},
+                                                    "pinned": {"state": "sabit", "channel": "", "error": ""}})
         self.assertNotIn("candidate", json.dumps(answer), "the browser never receives a pull target")
-        self.assertEqual(self.s.view().ayrinti("medya")["update"]["state"], "var")
-        # A definition created from a digest follows no tag: it never asks the registry.
-        self.save("belgeler", OLD)
-        self.s.forget_updates()
-        answer = self.s.updates()
-        self.assertEqual(answer["items"]["belgeler"], {"state": "sabit", "channel": "", "error": ""})
-        self.assertEqual(len(self.remote_calls()), 2, "one registry read per check, for the tag-following definition")
+        self.assertEqual(self.s.update_of("medya")["web"]["state"], "var")
+        self.assertEqual(len(self.remote_calls()), 1, "a service whose file pins a digest never asks the registry")
 
     def test_cache_ttl_forced_refresh_min_interval_and_forget(self):
         self.s.updates()
@@ -146,17 +146,17 @@ class ManagerUpdateTests(unittest.TestCase):
         self.s.updates()
         self.assertEqual(len(self.remote_calls()), 4)
 
-    def test_a_successful_image_change_invalidates_the_cache(self):
+    def test_a_successful_application_job_invalidates_the_cache(self):
         self.s.updates()
-        self.s.jobs["a" * 32] = {"id": "a" * 32, "state": "running", "name": "medya", "action": "image-update"}
+        self.s.jobs["a" * 32] = {"id": "a" * 32, "state": "running", "name": "medya", "action": "uygulama-guncelle"}
         with patch.object(self.s, "operation", return_value={"id": "a" * 32, "state": "done"}), \
              patch.object(manager.subprocess, "run", return_value=types.SimpleNamespace(returncode=0, stdout='{"ok": true}')):
-            self.s._execute("a" * 32, "image-update", {"name": "medya"})
+            self.s._execute("a" * 32, "uygulama-guncelle", {"name": "medya"})
         self.assertIsNone(self.s.update_of("medya"))
 
 
 class RouteTests(unittest.TestCase):
-    def test_get_only_route_behind_the_gates(self):
+    def test_the_list_asks_again_only_when_told(self):
         from test_resources import panel, start_unix, unix_get
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -169,15 +169,17 @@ class RouteTests(unittest.TestCase):
                 pass
         Handler.panel = p
         _server, sock = start_unix(self, Handler)
-        answer = {"checked_at": 1, "items": {"web": {"state": "guncel", "channel": "x:1", "error": ""}}, "cached": True}
-        with patch.object(manager.Service, "updates", return_value=answer) as updates:
-            self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/guncellemeler", {})[0], 403)
-            code, _, raw = unix_get(sock, "/api/konsol/konteynerler/guncellemeler", {"X-Konsol": "1"})
-            self.assertEqual((code, json.loads(raw)), (200, answer))
-            self.assertEqual(updates.call_args.kwargs, {"force": False})
-            unix_get(sock, "/api/konsol/konteynerler/guncellemeler?yenile=1", {"X-Konsol": "1"})
+        empty = {"read_at": 1, "items": [], "kaynaklar": [], "hatalar": [],
+                 "altyapi": {"podman": "5.4.2", "calisiyor": True, "imaj": 0, "kullanilmayan_imaj": 0, "birim": 0, "ag": 0}}
+        view = types.SimpleNamespace(applications=lambda: empty)
+        with patch.object(manager.Service, "updates") as updates, patch.object(p.containers, "view", return_value=view):
+            code, _, raw = unix_get(sock, "/api/konsol/uygulamalar", {"X-Konsol": "1"})
+            self.assertEqual((code, json.loads(raw)), (200, empty))
+            updates.assert_not_called()
+            unix_get(sock, "/api/konsol/uygulamalar?yenile=1", {"X-Konsol": "1"})
             self.assertEqual(updates.call_args.kwargs, {"force": True})
-            self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/guncellemeler", {"X-Konsol": "1", "Content-Type": "application/json"}, "POST", b"{}")[0], 404)
+            self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/guncellemeler", {"X-Konsol": "1"})[0], 404,
+                             "the per-container route is gone")
 
 
 if __name__ == "__main__":

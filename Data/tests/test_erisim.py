@@ -65,11 +65,12 @@ SHARES = {
     ],
 }
 CONTAINERS = {"runtime": {"ok": True, "version": "5.4.2", "error": ""}, "containers": [
-    {"name": "notlar", "source": "konsol", "state": "running", "live": True, "ports": [
+    # DD-271 (phase 3): an application's container names its application; any other container is external.
+    {"name": "notlar", "source": "uygulama", "uygulama": "notlar", "state": "running", "live": True, "ports": [
         {"host_ip": "100.64.0.2", "host_port": 8091, "container_port": 8080, "protocol": "tcp", "scope": "tailscale"},
         {"host_ip": "100.64.0.2", "host_port": 8092, "container_port": 8092, "protocol": "tcp", "scope": "tailscale"},
         {"host_ip": "127.0.0.1", "host_port": 8093, "container_port": 8080, "protocol": "tcp", "scope": "local"}]},
-    {"name": "medya", "source": "external", "state": "running", "live": True, "ports": [
+    {"name": "medya", "source": "external", "uygulama": None, "state": "running", "live": True, "ports": [
         {"host_ip": "127.0.0.1", "host_port": 8094, "container_port": 80, "protocol": "tcp", "scope": "local"}]},
 ]}
 TAILSCALE = {"BackendState": "Running", "Version": "1.90.1-t0f0b1c2d3",
@@ -108,7 +109,7 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual(self.states(medya), ("acik", "kapali", "kapali", "kapali"))
         self.assertEqual(medya["yerel"]["adresler"], ["127.0.0.1:8094 → 80/tcp"])
         self.assertEqual((medya["uygulama"], medya["calisiyor"], medya["yayinlar"], medya["aciklama"]),
-                         ("medya", True, [], "Konteyner · Konsol dışında yönetiliyor"))
+                         (None, True, [], "Konteyner · Konsol dışında yönetiliyor"), "an external container has no page")
         ssh = self.row(result, "sistem:ssh")
         self.assertEqual(self.states(ssh), ("yok", "acik", "kapali", "acik"))
         self.assertEqual(ssh["internet"]["adresler"], ["203.0.113.10:22/tcp"])
@@ -133,7 +134,7 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual(notlar["yerel"]["adresler"], ["127.0.0.1:8093 → 8080/tcp"])
         self.assertEqual(notlar["tailscale"]["adresler"], ["100.64.0.2:8091 → 8080/tcp", "100.64.0.2:8092/tcp", "notlar.ev"])
         self.assertEqual(notlar["internet"]["adresler"], ["notlar.example.org"])
-        self.assertEqual((notlar["yayinlar"], notlar["uygulama"], notlar["aciklama"]), (["elle-notlar"], "notlar", "Konteyner"))
+        self.assertEqual((notlar["yayinlar"], notlar["uygulama"], notlar["aciklama"]), (["elle-notlar"], "notlar", "Uygulama · notlar"))
         details = [(d["baslik"], d["deger"]) for d in notlar["ayrinti"]]
         self.assertIn(("Caddy", "notlar.example.org → 127.0.0.1:8093"), details)
         self.assertIn(("DNS", "notlar.ev → 100.64.0.2"), details)
@@ -215,7 +216,12 @@ class ReadModelTests(unittest.TestCase):
         self.assertIn("192.168.1.5:9000/tcp adresindeki yayın tanınmıyor", texts[0])
         self.assertIn("203.0.113.10:8443 → 443/tcp doğrudan internete açık", texts[1])
         self.assertEqual({(w["hizmet"], w["duzelt"]["bolum"], w["duzelt"]["hedef"]) for w in result["uyarilar"]},
-                         {("konteyner:notlar", "uygulama", "konteyner:notlar")}, "DD-265: fixed on the application's page")
+                         {("konteyner:notlar", "uygulama", "notlar")}, "DD-265: fixed on the application's page")
+        # A container of no application has no page to fix it on.
+        containers["containers"][1]["ports"].append(
+            {"host_ip": "0.0.0.0", "host_port": 8444, "container_port": 443, "protocol": "tcp", "scope": "public"})
+        warnings = [w for w in self.build(containers=containers)["uyarilar"] if w["hizmet"] == "konteyner:medya"]
+        self.assertEqual([w["duzelt"] for w in warnings], [None])
 
     def test_a_container_without_publications_is_closed_not_unknown(self):
         containers = {"runtime": CONTAINERS["runtime"], "containers": [

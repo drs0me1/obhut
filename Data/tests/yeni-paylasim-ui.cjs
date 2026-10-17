@@ -49,10 +49,7 @@ function withConn(v, id, scope, patch) {
   return next;
 }
 
-const ucell = (durum, adresler = [], uyari = "", not = "") => ({ durum, adresler, uyari, not });
-const app = (o) => ({ tur: "konteyner", durum: "calisiyor", tailscale: ucell("yok"), internet: ucell("yok"),
-  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
-  aciklama: "", ...o });
+const { uygulama, uygulamalar } = require("./yeni-harness.cjs").fixtures;
 const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
 const row = (id, ad, tur, cells, aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, calisiyor: true, yerel: cell("yok"), tailscale: cell("yok"),
   wireguard: cell("kapali"), internet: cell("yok"), yayinlar: [], ayrinti: [], ...cells });
@@ -63,8 +60,8 @@ const ROWS = [
   row("panel", "Konsol", "konsol", { tailscale: cell("acik", ["panel.ev"]), internet: cell("kapali") }, "Yönetim paneli"),
   row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"], "2 klasör"), internet: cell("acik", [WAN], "1 klasör", "Şifresiz HTTP") }, "WebDAV · 3 klasör"),
 ];
-// One container, so the palette has its Uygulamalar group.
-const APPS = [app({ id: "konteyner:notlar", ad: "notlar", konteyner: "notlar", aciklama: "Konteyner · docker.io/library/nginx" })];
+// One application, so the palette has its Uygulamalar group.
+const APPS = [uygulama("notlar")];
 
 const data = {
   kaynaklar: { host: "sunucu", version: "2026.10.16-v2-250", surum: "1.1.0", domain: "ev", os: "Debian GNU/Linux 13 (trixie)", kernel: "6.12.0", uptime: 432000,
@@ -78,8 +75,7 @@ const data = {
   erisim: { read_at: NOW, alan: "ev", hatalar: [], uyarilar: [], hizmetler: ROWS,
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "", surum: "", adresler: [], cikis_dugumu: null },
       internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
-  uygulamalar: { read_at: NOW, hatalar: [],
-    altyapi: { podman: "5.4.2", calisiyor: true, imaj: 2, kullanilmayan_imaj: 0, birim: 1, ag: 2 }, items: APPS },
+  uygulamalar: uygulamalar(APPS),
   yayinlar: { revizyon: "rev-1", alan: "ev", wan_ipv4: "203.0.113.10", hatalar: [], adaylar: [
     cand({ id: "panel", tur: "konsol", ad: "Konsol", servis: "panel", yerel_ad: "panel.ev", tailscale: true, giris: "İnternetten Konsol hesabıyla giriş istenir.", onay_kelimesi: true }),
     cand({ id: "paylasim", tur: "paylasim", ad: "WebDAV paylaşımları", servis: "paylasim", yerel_ad: "paylas.ev", tailscale: true, durum: "http", mesaj: "HTTPS alan adı tanımlanmadı.",
@@ -89,8 +85,6 @@ const data = {
   ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048 },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
   depolama: { read_at: NOW, kok: "/srv", kullananlar: [], hatalar: [] },
-  "konteynerler/liste": { read_at: NOW, runtime: { version: "5.4.2", ok: true, error: "" }, containers: [], images: [], volumes: [], networks: [],
-    storage: { images: 2, containers: 2, size: null }, resource_errors: {} },
 };
 
 let expectedFailures = [];
@@ -670,7 +664,7 @@ async function openShares(page, extra = "") {
     await page.waitForURL((u) => u.hash === SHARES_URL);
     await card(page, A).waitFor();
     await page.goto(url("#/uygulamalar"));
-    await page.locator('tr[data-uygulama="konteyner:notlar"]').waitFor();
+    await page.locator('tr[data-uygulama="notlar"]').waitFor();
     // The palette: no "Eski arayüz"; Paylaşımlar is a Dosyalar tab.
     await page.keyboard.press("Control+K");
     const palette = page.getByRole("dialog", { name: "Komut paleti" });

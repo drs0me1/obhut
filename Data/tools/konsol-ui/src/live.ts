@@ -22,7 +22,7 @@ import {
   type Uyari,
 } from "./api/sema";
 import { getJson } from "./api/http";
-import { isApp } from "./api/konsol";
+import { cleanApp, isApp } from "./api/konsol";
 import { openEvents } from "./api/olaylar";
 
 export type Connection = "baslangic" | "canli" | "yeniden" | "yoklama";
@@ -38,7 +38,7 @@ export const live = reactive({
   bekleyen: undefined as BekleyenDegisiklik | null | undefined,
   /** Date.now() when bekleyen.seconds was read; the banner counts down from there. */
   bekleyenAt: 0,
-  /** Applications (DD-261): the containers in one list. */
+  /** Applications (DD-271): each from its record, with its live state. */
   uygulamalar: null as Uygulamalar | null,
   guncelleme: null as Guncelleme | null,
   /** Erişim's warnings; null while unknown. */
@@ -111,7 +111,8 @@ const apply: Record<Key, (data: unknown) => void> = {
     const value = data as unknown as Uygulamalar;
     live.uygulamalar = {
       ...value,
-      items: value.items.filter(isApp),
+      items: value.items.filter(isApp).map(cleanApp),
+      kaynaklar: Array.isArray(value.kaynaklar) ? value.kaynaklar.filter((k) => isObject(k) && isText(k.ad)) : [],
       altyapi: isObject(value.altyapi) ? value.altyapi : { podman: "", calisiyor: false, imaj: 0, kullanilmayan_imaj: 0, birim: 0, ag: 0 },
       hatalar: Array.isArray(value.hatalar) ? value.hatalar.filter(isText) : [],
     };

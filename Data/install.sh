@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-256"
+V2_VERSION="2026.08.06-v2-257"
 # DD-260: insanların gördüğü sürüm (anlamlı sürümleme; yalnız bir yayında değişir, vX.Y.Z etiketlenir).
 # V2_VERSION yapı numarasıdır: Konsol güncelleme önerirken sunucular onu karşılaştırır.
 OBHUT_SURUM="1.1.0"
@@ -96,9 +96,10 @@ KONTEYNER_BIRIM_DIR=$KONTEYNER_BIRIM_DIR
 KONTEYNER_STATE_DIR=$KONTEYNER_STATE_DIR
 KONTEYNER_LOCK=$KONTEYNER_LOCK
 KONTEYNER_BAGLAMA_DIR=$KONTEYNER_BAGLAMA_DIR
-KONTEYNER_NETWORK=$KONTEYNER_NETWORK
 KONTEYNER_BRIDGE_PREFIX=$KONTEYNER_BRIDGE_PREFIX
 KONTEYNER_NFT_TABLE=$KONTEYNER_NFT_TABLE
+UYGULAMA_STATE_DIR=$UYGULAMA_STATE_DIR
+UYGULAMA_VERI_DIR=$UYGULAMA_VERI_DIR
 YAYIN_PORT_ILK=$YAYIN_PORT_ILK
 YAYIN_PORT_SON=$YAYIN_PORT_SON
 DOWNLOADS_UID=$DOWNLOADS_UID
@@ -584,8 +585,9 @@ stage_1() {
     check_nft_iptables required
     # DD-208: konteyner çalışma ortamı, önerileri olmadan (buildah, criu, slirp4netns gelmez).
     # Netavark köprü/NAT kurallarını, master-firewall yalnız kendi giriş korumasını yönetir.
+    # DD-274: catatonit Pod'ların altyapı konteyneri (yerel pause imajı) ve init: true (RunInit) içindir.
     retry "apt-podman" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
-        podman netavark aardvark-dns
+        podman netavark aardvark-dns catatonit
     check_podman
     # DD-271: WireGuard yerleşiktir; araçları önerileri olmadan (DKMS ve derleyiciler gelmez, modül
     # çekirdeğindir). Ağ kurulmaz; aşama 4 birim ekini ve çekirdek modülünü hazırlar.
@@ -827,7 +829,7 @@ stage_4() {
     # DD-259: Konsol'un rota tablosu, Erişim okuma modeli ve canlı olaylar; DD-271: WireGuard ve denetçi
     # (YAML okuyucu, Compose ve Kubernetes okuyucuları; arka uç yükler).
     local panel_module
-    for panel_module in master_api master_compose master_erisim master_inspector master_kube master_olaylar master_uygulamalar master_wireguard master_yaml master_yayin; do
+    for panel_module in master_api master_compose master_erisim master_inspector master_kube master_olaylar master_wireguard master_yaml master_yayin; do
         atomic_write "$SBIN_DIR/$panel_module.py" 0755 <"$V2_ROOT/panel/$panel_module.py"
         [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     done
@@ -838,11 +840,12 @@ stage_4() {
     # DD-268: sunucunun durumu ve SSH'den kurtarma (sudo obhut); Konsol'un soketini ve yukarıdaki araçları kullanır.
     atomic_write "$SBIN_DIR/master_obhut.py" 0755 <"$V2_ROOT/panel/master_obhut.py"
     atomic_write "$SBIN_DIR/obhut" 0755 <"$V2_ROOT/scripts/obhut"
-    # Konteyner okuma/yönetim araçları. Yazma çalışanı backend sandbox'ının dışında çalışır.
+    # Konteyner okuma/yönetim araçları. Yazma çalışanı backend sandbox'ının dışında çalışır. DD-271 (aşama 3):
+    # uygulamaların kayıtları ve üreteci; konteyner koruması kayıtları okur, değişince güvenlik duvarı yeniden kurulur.
     atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     local container_helper
-    for container_helper in master_container_config master_container_network master_container_worker master_container_manager; do
+    for container_helper in master_applications master_container_config master_container_network master_container_worker master_container_manager master_generator; do
         atomic_write "$SBIN_DIR/$container_helper.py" 0755 <"$V2_ROOT/panel/$container_helper.py"
         if [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 1 ]]; then
             PANEL_HELPERS_CHANGED=1
@@ -851,7 +854,7 @@ stage_4() {
     done
     # DD-226: Konsol konteynerinin birimi her açılışta bağlanan klasörlerini bununla sabitler.
     atomic_write "$SBIN_DIR/master_container_binds.py" 0755 <"$V2_ROOT/panel/master_container_binds.py"
-    install -d -m 0700 "$KONTEYNER_STATE_DIR"
+    install -d -m 0700 "$KONTEYNER_STATE_DIR" "$UYGULAMA_STATE_DIR" "$UYGULAMA_VERI_DIR"
     atomic_write "$SBIN_DIR/master-konsol" 0755 <"$V2_ROOT/scripts/master-konsol"
     atomic_write "$SBIN_DIR/master_webdav.py" 0755 <"$V2_ROOT/panel/master_webdav.py"
     [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || SHARE_HELPERS_CHANGED=1

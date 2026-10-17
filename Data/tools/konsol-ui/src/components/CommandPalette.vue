@@ -7,9 +7,9 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Icon, type IconName } from "./icons";
 import { trapTab } from "./focus";
-import { ADD_FLOWS, SECTIONS, SECTION_TABS, accessRoute, addRoute } from "../sections";
+import { SECTIONS, SECTION_TABS, accessRoute } from "../sections";
 import { apps } from "../live";
-import { KIND_TEXT } from "../apps";
+import { FORMAT_TEXT } from "../apps";
 import { appRoute } from "../router";
 import { THEMES, setTheme, theme, type ThemeChoice } from "../theme";
 import { closeSurface, openSurface, ui } from "../ui";
@@ -47,13 +47,13 @@ const items = computed<Item[]>(() => {
   }
   for (const app of apps.value ?? []) {
     list.push({
-      key: "uygulama-" + app.id,
+      key: "uygulama-" + app.ad,
       group: "Uygulamalar",
       label: app.ad,
       hint: "Uygulama",
       icon: "box",
-      words: `${app.id} ${KIND_TEXT[app.tur]}`,
-      run: { kind: "route", to: router.resolve(appRoute(app.id)).path },
+      words: `${FORMAT_TEXT[app.bicim] ?? ""} ${app.servisler.map((s) => s.ad).join(" ")}`,
+      run: { kind: "route", to: router.resolve(appRoute(app.ad)).path },
     });
   }
   const themeWords: Record<ThemeChoice, string> = { sistem: "görünüm otomatik", acik: "görünüm aydınlık light", koyu: "görünüm karanlık dark" };
@@ -77,9 +77,6 @@ const items = computed<Item[]>(() => {
     words: "yayın adres alan adı internet tailscale https aç paylaş",
     run: { kind: "route", to: accessRoute("genel", "sec") },
   });
-  for (const f of ADD_FLOWS) {
-    list.push({ key: "ekle-" + f.id, group: "Eylemler", label: f.label, hint: "Uygulamalar", icon: "plus", words: f.keywords, run: { kind: "route", to: addRoute(f.id) } });
-  }
   list.push({
     key: "islemler",
     group: "Eylemler",

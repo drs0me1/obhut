@@ -1,5 +1,6 @@
 <!-- Genel Bakış (DD-258, phase 2): health first — what needs attention, each with its one fix, or a calm
-     "Her şey yolunda" — then the applications, resources, network and the server. Health and Erişim's
+     "Her şey yolunda" — then the applications (each with its state and a link to its page), resources,
+     network and the server. Health and Erişim's
      warnings come live (live.ts); repair is asked of GET /api/konsol/onarim (started only on the tailnet,
      DD-239); the network card reads the WAN rates (GET /api/konsol/ag) every 5 s, only while this page is
      shown and the browser tab is visible. -->
@@ -15,7 +16,7 @@ import StatusPill from "../components/ui/StatusPill.vue";
 import UsageBar from "../components/ui/UsageBar.vue";
 import type { Tone } from "../components/ui/types";
 import { apps, checkLevel, live, serverNow } from "../live";
-import { accessLine, appState, openTarget } from "../apps";
+import { appLine, appState, warningText } from "../apps";
 import { fixRoute } from "../access";
 import { appRoute } from "../router";
 import { readNetwork, readRepair, startRepair } from "../api/konsol";
@@ -33,9 +34,10 @@ interface Problem {
   fix: string;
 }
 
+// A warning names its Erişim row; an application's container row is named after its application.
 const serviceNames = computed(() => {
   const names = new Map<string, string>([["panel", "Konsol"], ["tailscale", "Tailscale"], ["paylasim", "Paylaşımlar"]]);
-  for (const app of live.uygulamalar?.items ?? []) names.set(app.id, app.ad);
+  for (const row of live.erisim?.hizmetler ?? []) if (!names.has(row.id)) names.set(row.id, row.uygulama ?? row.ad);
   return names;
 });
 
@@ -129,7 +131,7 @@ watch(repairJobs, (jobs) => {
 });
 
 // ---- applications
-const cards = computed(() => (apps.value ?? []).map((app) => ({ app, state: appState(app), line: accessLine(app), open: openTarget(app) })));
+const cards = computed(() => (apps.value ?? []).map((app) => ({ app, state: appState(app), line: appLine(app) })));
 
 // ---- resources (each value checked: an event may carry only part of the object)
 const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -258,38 +260,25 @@ watch(() => live.offset, () => (now.value = serverNow()));
         <RouterLink to="/uygulamalar" class="section-link" data-testid="all-apps">Tümü ({{ apps ? apps.length : UNKNOWN }})</RouterLink>
       </div>
       <div v-if="cards.length" class="app-grid">
-        <article v-for="c in cards" :key="c.app.id" class="app-card" :data-uygulama="c.app.id">
+        <article v-for="c in cards" :key="c.app.ad" class="app-card" :data-uygulama="c.app.ad">
           <div class="app-card-head">
             <AppIcon :app="c.app" />
             <div class="app-card-name">
-              <RouterLink :to="appRoute(c.app.id)" class="app-name">{{ c.app.ad }}</RouterLink>
+              <RouterLink :to="appRoute(c.app.ad)" class="app-name">{{ c.app.ad }}</RouterLink>
               <StatusPill :tone="c.state.tone" :dot="c.app.durum === 'calisiyor'">{{ c.state.text }}</StatusPill>
             </div>
           </div>
-          <p class="app-line">{{ c.line }}<template v-if="c.app.guncelleme === 'yeni'"> · <span class="fresh">yeni sürüm var</span></template></p>
+          <p class="app-line">{{ c.line }}<template v-if="c.app.uyari"> · <span class="warn-text">{{ warningText(c.app.uyari) }}</span></template><template v-if="c.app.guncelleme === 'yeni'"> · <span class="fresh">yeni sürüm var</span></template></p>
           <div class="app-card-actions">
-            <a
-              v-if="c.open"
-              class="btn btn-primary btn-sm"
-              :href="c.open"
-              target="_blank"
-              rel="noopener noreferrer"
-              :aria-label="`${c.app.ad} uygulamasını yeni sekmede aç`"
-              data-eylem="ac"
-            >
-              Aç<Icon name="open" :size="16" />
-            </a>
-            <RouterLink :to="appRoute(c.app.id)" class="btn btn-secondary btn-sm" :aria-label="`${c.app.ad} ayrıntıları`">Ayrıntı</RouterLink>
+            <RouterLink :to="appRoute(c.app.ad)" class="btn btn-secondary btn-sm" :aria-label="`${c.app.ad} ayrıntıları`">Ayrıntı</RouterLink>
           </div>
         </article>
       </div>
       <Card v-else as="div">
         <EmptyState
-          :title="apps ? 'Henüz uygulama yok' : 'Uygulamalar henüz okunamadı'"
-          :text="apps ? 'Bir imajdan konteyner çalıştırabilir ya da Podman\'da var olan bir konteyneri yönetime alabilirsiniz.' : ''"
-        >
-          <RouterLink v-if="apps" to="/uygulamalar" class="btn btn-secondary">Uygulama ekle</RouterLink>
-        </EmptyState>
+          :title="apps ? 'Henüz uygulama yok.' : 'Uygulamalar henüz okunamadı'"
+          :text="apps ? 'Compose ya da Kubernetes dosyasından uygulama eklemek Konsol\'un yeni ekranlarıyla gelecek.' : ''"
+        />
       </Card>
     </section>
 

@@ -54,6 +54,24 @@ class FixtureTests(unittest.TestCase):
         for key in ("annotations", "creationTimestamp", "labels", "drop", "stdin", "tty", "type", "hostPort"):
             self.assertIn(key, noted)
 
+    def test_object_labels_never_reach_a_container(self):
+        # Kubernetes labels and annotations are notes: none of them, Podman's or Obhut's own, labels a container.
+        model = read("""\
+            apiVersion: v1
+            kind: Pod
+            metadata:
+              name: deneme
+              labels: {io.master-stack.managed: uygulama, io.master-stack.uygulama: baska}
+              annotations: {io.master-stack.uygulama/app: baska, io.containers.autoupdate/app: registry}
+            spec:
+              containers:
+              - name: app
+                image: docker.io/library/nginx:1.27
+            """)
+        self.assertEqual(model["refusals"], [])
+        self.assertEqual(model["services"][0]["labels"], {})
+        self.assertEqual({n["key"] for n in model["notes"]} & {"labels", "annotations"}, {"labels", "annotations"})
+
     def test_a_deployment_with_one_replica_and_its_claim(self):
         model = read((FIXTURES / "sayac-deployment.yaml").read_text())
         self.assertEqual(model["refusals"], [])

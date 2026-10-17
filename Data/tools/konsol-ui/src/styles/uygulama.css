@@ -1,13 +1,6 @@
-/* Phase 4a (DD-258): Uygulamalar' add flows (a container from an image, adoption), the container editor
-   and its review, an application's settings and ports, the log's search and the folder picker. Colours
-   only from tokens.css; nothing needs a style attribute (the CSP allows none). */
-
-/* ---- a sheet that holds a form with rows (the container editor) is wider on a wide screen */
-@media (min-width: 761px) {
-  .modal-sheet:has(.uyg-wide) {
-    width: min(720px, 100%);
-  }
-}
+/* An application's page (DD-271, phase 3) and Uygulamalar' infrastructure card; the folder picker of a
+   share (Dosyalar → Paylaşımlar); the log's search. Colours only from tokens.css; nothing needs a style
+   attribute (the CSP allows none). */
 
 /* ---- the folder picker */
 .folder-picker {
@@ -105,25 +98,7 @@
   transform: scaleX(-1);
 }
 
-/* ---- form sections and editable rows */
-.container-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  min-width: 0;
-  container-type: inline-size;
-}
-
-.form-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
+/* ---- a titled group of fields (a share's connections) */
 .form-section-title {
   display: flex;
   align-items: center;
@@ -134,140 +109,16 @@
   font-weight: 650;
 }
 
-.form-section-title .icon {
-  color: var(--muted);
+/* ---- Uygulamalar' list and infrastructure */
+.state-cell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
-.edit-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.edit-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px 12px;
-  align-items: start;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-}
-
-.edit-row .row-wide {
-  grid-column: 1 / -1;
-}
-
-.edit-row .row-remove {
-  justify-self: end;
-}
-
-.edit-row .field-error {
-  margin: 0;
-}
-
-.port-row {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
-.mount-row,
-.env-row {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
-.mount-row .folder-picker,
-.mount-row .field:has(.folder-picker) {
-  grid-column: 1 / -1;
-}
-
-.adopt-row {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-@container (min-width: 560px) {
-  .port-row {
-    grid-template-columns: minmax(150px, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(88px, 0.8fr) auto;
-  }
-
-  .mount-row {
-    grid-template-columns: minmax(160px, 0.8fr) minmax(0, 1.6fr) minmax(0, 1.2fr) auto auto;
-  }
-
-  .mount-row .field:has(.folder-picker) {
-    grid-column: auto;
-  }
-
-  /* An open folder panel needs the whole row. */
-  .mount-row .field:has(.folder-panel) {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-
-  /* Beside fields with a label above them, a checkbox and a remove button line up with the controls. */
-  .edit-row > .check-row,
-  .edit-row > .row-remove {
-    margin-top: 26px;
-  }
-
-  .env-row {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto auto;
-  }
-
-  .edit-row .row-remove {
-    justify-self: auto;
-  }
-}
-
-.edit-row .check-row {
-  min-height: var(--tap);
-}
-
-.public-ack {
-  border-color: var(--danger-line);
-  background: var(--danger-tint);
-}
-
-.check-calm input {
-  accent-color: var(--accent);
-}
-
-/* A long line of text is easier to read than a field across the whole page. */
-.form-section > .field,
-.form-section > .form-row,
-.settings-tab .form-stack > .field {
-  max-width: 640px;
-}
-
-.textarea {
-  min-height: 84px;
-  padding: 10px 14px;
-  line-height: 1.5;
-  resize: vertical;
-}
-
-/* ---- the review */
-.review-facts dd {
+.svc-cell {
   overflow-wrap: anywhere;
-}
-
-.plan-removed {
-  text-decoration: line-through;
-}
-
-.plan-warning[data-ton="ok"] .icon {
-  color: var(--ok);
-}
-
-/* ---- Uygulamalar' add card and infrastructure */
-.add-option .warn-text {
-  font-size: 13px;
-}
-
-.infra-counts {
-  font-size: 13.5px;
 }
 
 .infra-links {
@@ -285,21 +136,11 @@
 }
 
 .summary-tab,
-.settings-tab {
+.definition-tab {
   display: flex;
   flex-direction: column;
   gap: 14px;
   min-width: 0;
-}
-
-.settings-tab[hidden] {
-  display: none;
-}
-
-.summary-notes {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .secret-note {
@@ -308,20 +149,6 @@
   gap: 6px;
   color: var(--muted);
   font-size: 13px;
-}
-
-.settings-tab .card {
-  padding: 18px 20px;
-  border-radius: var(--r-lg);
-}
-
-.settings-tab .draft-bar {
-  position: static;
-  box-shadow: none;
-}
-
-.settings-tab .draft-bar:has(.btn-primary:disabled) {
-  border-color: var(--line);
 }
 
 /* ---- the log's tools and matches */
@@ -340,4 +167,15 @@
   border-radius: 3px;
   background: var(--warn);
   color: var(--log-bg);
+}
+
+/* Tanım → Yanıtlar: a question id ("mount:web:/usr/share/nginx/html") can be longer than the card is wide, so
+   each answer sits under its id instead of beside it. */
+.facts.answer-facts {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px 0;
+}
+
+.facts.answer-facts dd + dt {
+  margin-top: 10px;
 }

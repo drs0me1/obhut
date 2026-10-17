@@ -17,7 +17,8 @@ on but not working; "not" says why).
 
 DD-265: a warning names the row it is about by the row's id ("konteyner:x", "elle:x", "panel"; ""
 when it is about no row) and where it is fixed: "duzelt" = {bolum, hedef}, bolum one of yayinlar (a
-publication; hedef is the row id), uygulama (an application's page), tailscale.
+publication; hedef is the row id), uygulama (an application's page; hedef is the application's name,
+DD-271 phase 3), tailscale. A container of no application has no page: its warning names no place.
 """
 import datetime
 
@@ -134,6 +135,8 @@ def warning(seviye, hizmet, metin, bolum, hedef=""):
 
 def add_container(row, item, env, warnings):
     """A container's publications on a service row."""
+    app = row["uygulama"]
+    fix = ("uygulama", app) if app else (None, "")
     for group in port_groups(item.get("ports")):
         text = port_text(group, env)
         detail(row, "Konteyner portu", text)
@@ -144,10 +147,10 @@ def add_container(row, item, env, warnings):
         elif group["scope"] == "public":
             open_cell(row["internet"], text)
             warnings.append(warning("warn", row["id"], "%s: %s doğrudan internete açık; şifreleme ve giriş uygulamanın kendisinde."
-                                    % (row["ad"], text), "uygulama", row["id"]))
+                                    % (row["ad"], text), *fix))
         else:
-            warnings.append(warning("warn", row["id"], "%s: %s adresindeki yayın tanınmıyor; uygulamanın sayfasından denetleyin."
-                                    % (row["ad"], text), "uygulama", row["id"]))
+            warnings.append(warning("warn", row["id"], "%s: %s adresindeki yayın tanınmıyor; Gelişmiş → Podman'dan denetleyin."
+                                    % (row["ad"], text), *fix))
 
 
 def share_row(env, pub, shares, wireguard, warnings):
@@ -266,9 +269,10 @@ def build(env, settings, shares, containers, tailscale, networks, wg_stopped, no
 
     manual = {sid: pub for sid, pub in pubs.items() if pub.get("manual")}
     for item in items:
+        app = item.get("uygulama") if item.get("source") == "uygulama" else None
         row = service("konteyner:" + item["name"], item["name"], "konteyner",
-                      "Konteyner" if item.get("source") == "konsol" else "Konteyner · Konsol dışında yönetiliyor",
-                      wireguard, item["name"], item.get("state") == "running")
+                      "Uygulama · %s" % app if app else "Konteyner · Konsol dışında yönetiliyor",
+                      wireguard, app or None, item.get("state") == "running")
         add_container(row, item, env, warnings)
         local = {g["host_port"] for g in port_groups(item.get("ports")) if g["scope"] == "local" and g["host_ip"] == "127.0.0.1"}
         for sid, pub in sorted(manual.items()):

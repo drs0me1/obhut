@@ -1,9 +1,12 @@
-"""Container manager persistence and failure contracts; all services and Podman are fakes."""
-import copy
-import hashlib
+"""The root worker (rebuild DD-271, phase 3): an application's lifecycle and Gelişmiş's Podman resources.
+Podman, systemctl, Quadlet and the guard are fakes; every rollback path is driven to its end and checked
+for what it left behind. No secret value may reach an argument, a file other than Podman's standard
+input, an operation record, a log line or a reply."""
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,665 +15,747 @@ import uuid
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'panel'))
-import master_container_binds as binds
-import master_container_config as cfg
-import master_container_worker as worker
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import app_fixtures  # noqa: E402
+import master_applications as apps  # noqa: E402
+import master_container_config as cfg  # noqa: E402
+import master_container_worker as worker  # noqa: E402
+import master_generator  # noqa: E402
+import master_inspector  # noqa: E402
 
-DIGEST = 'registry.example/app@sha256:' + 'a' * 64
+SECRET = app_fixtures.SECRET
+POD = """apiVersion: v1
+kind: Pod
+metadata:
+  name: ikili
+spec:
+  containers:
+  - name: web
+    image: registry.example/ikili/web:1
+    ports:
+    - containerPort: 8080
+  - name: cache
+    image: registry.example/ikili/cache:2
+"""
+TAKEOVER = """name: devir
+services:
+  app:
+    image: registry.example/devir:3
+    volumes:
+      - veri:/data
+volumes:
+  veri:
+"""
 
 
-class FakeRun:
-    def __init__(self):
-        self.calls = []
-        self.containers = {}
-        self.active = set()
-        self.fail = None
-        self.image = DIGEST
-        self.images = {}
-        self.volumes = set()
-        self.volume_options = {}
-        self.routes = []
-        self.quadlets = None
-        self.ignore_user = False
-        self.dropped = None  # Podman 5.4.2 reports a fully dropped capability set as null (nrm, 2026-10-05)
-        self.omit = ()
+def auto_answers(text, name, **given):
+    """Answers for every question: root start, the application's folder, raw ports, a plain value."""
+    out = {}
+    for q in master_inspector.inspect(text)['questions']:
+        kind = q['kind']
+        if kind == 'start':
+            out[q['id']] = {'mode': 'root'}
+        elif kind == 'mount':
+            out[q['id']] = {'to': 'app'}
+        elif kind == 'port':
+            out[q['id']] = {'use': 'raw'}
+        elif kind in ('var', 'secret'):
+            out[q['id']] = {'value': SECRET}
+    out.update(given)
+    return {'name': name, 'answers': {k: v for k, v in out.items() if k != 'name'}}
 
-    def __call__(self, argv, **kwargs):
-        self.calls.append(list(argv))
-        if self.fail and self.fail in ' '.join(argv):
-            self.fail = None
-            return subprocess.CompletedProcess(argv, 1, '', 'sensitive failure password=never-print')
+
+class FakeHost:
+    """Podman, systemctl and Quadlet as the worker sees them. Starting a container unit creates its container
+    from the unit file (labels, user, capabilities); stopping removes it (Quadlet's --rm)."""
+
+    def __init__(self, env):
+        self.env = env
+        self.calls, self.inputs = [], []
+        self.containers, self.networks, self.pods = {}, set(), set()
+        self.secrets = {}
+        self.units = {}
+        self.digest = {}
+        self.fail = []
+        self.unhealthy = set()
+        self.restarts = {}
+        self.vanish = set()
+        self.version = '5.4.2'
+        self.volumes = {}
+        self.reloads = 0
+
+    def fails(self, *parts):
+        self.fail.append(' '.join(parts))
+
+    def unit_text(self, unit):
+        name = unit[:-len('.service')]
+        for suffix in ('.container', '.pod', '.network'):
+            base = name[:-len('-pod')] if suffix == '.pod' and name.endswith('-pod') else \
+                name[:-len('-network')] if suffix == '.network' and name.endswith('-network') else name
+            path = Path(self.env['KONTEYNER_BIRIM_DIR']) / (base + suffix)
+            if path.exists() and (suffix != '.container' or base == name):
+                return suffix, path.read_text()
+        return None, None
+
+    def __call__(self, argv, timeout=60, input=None, **kwargs):
+        argv = list(argv)
+        self.calls.append(argv)
+        if input is not None:
+            self.inputs.append(input)
+        line = ' '.join(argv)
+        for i, part in enumerate(self.fail):
+            if part in line:
+                del self.fail[i]
+                return subprocess.CompletedProcess(argv, 1, '', 'sensitive failure password=never-print')
         out, code = '', 0
-        if argv[:3] == ['podman', 'container', 'exists']:
+        if argv[:2] == ['podman', 'version']:
+            out = self.version + '\n'
+        elif argv[:3] == ['podman', 'container', 'exists']:
             code = 0 if argv[-1] in self.containers else 1
+            if code == 0 and argv[-1] in self.vanish:
+                self.vanish.discard(argv[-1])
+                self.containers.pop(argv[-1])
+                self.units['konsol-%s.service' % argv[-1]] = 'failed'
+        elif argv[:3] == ['podman', 'network', 'exists']:
+            code = 0 if argv[-1] in self.networks else 1
+        elif argv[:3] == ['podman', 'pod', 'exists']:
+            code = 0 if argv[-1] in self.pods else 1
         elif argv[:3] == ['podman', 'inspect', '--type']:
             if argv[-1] in self.containers:
                 out = json.dumps([self.containers[argv[-1]]])
             else:
-                code = 1
+                code = 125
+        elif argv[:2] == ['podman', 'pull']:
+            pass
         elif argv[:3] == ['podman', 'image', 'inspect']:
-            out = json.dumps([self.images.get(argv[-1], {'Id': 'sha256:' + 'a' * 64, 'RepoDigests': [self.image], 'Config': {}})])
-        elif argv[:3] == ['podman', 'ps', '-a']:
-            out = json.dumps([] if '--filter' in argv else list(self.containers.values()))
-        elif argv[:2] == ['podman', 'rename']:
-            self.containers[argv[-1]] = self.containers.pop(argv[-2])
-            self.containers[argv[-1]]['Name'] = argv[-1]
+            repository, _ref = master_generator.image_reference(argv[-1])
+            digest = self.digest.get(repository, 'sha256:' + 'd' * 64)
+            out = json.dumps([{'Id': 'sha256:' + 'e' * 64, 'RepoDigests': [repository + '@' + digest],
+                               'Config': {'ExposedPorts': {'8080/tcp': {}, '53/udp': {}}, 'Volumes': {'/data': {}}}}])
+        elif argv[:3] == ['podman', 'secret', 'create']:
+            self.secrets[argv[-2]] = input
+        elif argv[:3] == ['podman', 'secret', 'rm']:
+            self.secrets.pop(argv[-1], None)
+        elif argv[:3] == ['podman', 'secret', 'inspect']:
+            code = 0 if argv[-1] in self.secrets else 125
         elif argv[:2] == ['podman', 'rm']:
             self.containers.pop(argv[-1], None)
-        elif argv[:2] in (['podman', 'start'], ['podman', 'stop'], ['podman', 'restart']):
-            self.containers[argv[-1]]['State']['Running'] = argv[1] != 'stop'
-        elif argv[:3] == ['podman', 'network', 'inspect']:
-            out = json.dumps([{'name': argv[-1], 'driver': 'bridge', 'network_interface': 'ksl' + hashlib.sha256(argv[-1].encode()).hexdigest()[:10],
-                               'labels': {cfg.MANAGED_LABEL: 'konsol'}}])
+        elif argv[:3] == ['podman', 'pod', 'rm']:
+            self.pods.discard(argv[-1])
+        elif argv[:3] == ['podman', 'network', 'rm']:
+            self.networks.discard(argv[-1])
+        elif argv[:2] == ['podman', 'stop']:
+            self.containers[argv[-1]]['State'].update(Running=False, Status='exited')
+        elif argv[:2] == ['podman', 'start']:
+            self.containers[argv[-1]]['State'].update(Running=True, Status='running')
+        elif argv[:3] == ['podman', 'volume', 'create']:
+            pass
         elif argv[:3] == ['podman', 'volume', 'inspect']:
-            out = json.dumps([{'Name': argv[-1], 'Driver': 'local', 'Options': self.volume_options}])
-        elif argv[:3] == ['podman', 'network', 'ls']:
-            out = '[]'
-        elif argv[:4] == ['ip', '-j', '-4', 'route']:
-            out = json.dumps(self.routes)
-        elif argv[:2] == ['systemctl', 'is-active']:
-            code = 0 if argv[-1] in self.active else 3
-        elif argv[:2] == ['systemctl', 'start']:
-            self.active.add(argv[-1])
-            name = argv[-1][len('konsol-'):-len('.service')]
-            lines = (self.quadlets / ('konsol-' + name + '.container')).read_text().splitlines() if self.quadlets else []
-            value = lambda key: next((l.split('=', 1)[1] for l in lines if l.startswith(key + '=')), '')
-            user = '' if self.ignore_user or not value('User') else value('User') + ':' + value('Group')
-            caps = self.dropped if 'DropCapability=all' in lines and not self.ignore_user else ['CAP_CHOWN', 'CAP_DAC_OVERRIDE']
-            self.containers[name] = {'Name': name, 'State': {'Running': True}, 'EffectiveCaps': caps, 'BoundingCaps': caps,
-                                     'Config': {'Labels': {cfg.MANAGED_LABEL: 'konsol', 'PODMAN_SYSTEMD_UNIT': argv[-1]}, 'User': user}}
-            for key in self.omit:
-                self.containers[name].pop(key)
-        elif argv[:2] == ['systemctl', 'stop']:
-            self.active.discard(argv[-1])
-            self.containers.pop(argv[-1][len('konsol-'):-len('.service')], None)
+            out = json.dumps([self.volumes[argv[-1]]])
+        elif argv[0] == 'cp':
+            source, target = argv[-2].rstrip('.'), argv[-1]
+            shutil.copytree(source, target, dirs_exist_ok=True)
+        elif argv[:2] == ['systemctl', 'daemon-reload']:
+            self.reloads += 1
+        elif argv[:2] == ['systemctl', 'show'] and 'NRestarts' in argv:
+            out = '%d\n' % self.restarts.get(argv[-1], 0)
         elif argv[:2] == ['systemctl', 'show']:
-            out = 'loaded\n'
-        elif argv[:3] in (['podman', 'volume', 'exists'], ['podman', 'network', 'exists']):
-            code = 0
+            out = self.units.get(argv[-1], 'inactive') + '\n'
+        elif argv[:2] == ['systemctl', 'start']:
+            self.start(argv[-1])
+        elif argv[:2] == ['systemctl', 'stop']:
+            self.units[argv[-1]] = 'inactive'
+            name = argv[-1][len('konsol-'):-len('.service')]
+            self.containers.pop(name, None)
+            if argv[-1].endswith('-pod.service'):
+                self.pods.discard(name[:-len('-pod')])
         elif argv[0] == '/fixture/quadlet':
-            name = next(Path(kwargs['env']['QUADLET_UNIT_DIRS']).glob('*.container')).stem
-            out = '# ' + name + '.service\n[Service]\nExecStart=/usr/bin/podman\n'
+            folder = Path(kwargs['env']['QUADLET_UNIT_DIRS'])
+            names = [p.stem + '.service' for p in folder.glob('*.container')]
+            names += [p.stem + '-pod.service' for p in folder.glob('*.pod')]
+            names += [p.stem + '-network.service' for p in folder.glob('*.network')]
+            out = ''.join('---%s---\n[Service]\nExecStart=/usr/bin/podman\n' % n for n in sorted(names))
+        else:
+            raise AssertionError('unexpected command: %r' % argv)
         return subprocess.CompletedProcess(argv, code, out, '')
+
+    def start(self, unit):
+        kind, text = self.unit_text(unit)
+        if kind is None:
+            raise AssertionError('no unit file for ' + unit)
+        self.units[unit] = 'active'
+        if kind == '.pod':
+            self.pods.add(re.search(r'^PodName=(.*)$', text, re.M).group(1))
+            return
+        if kind == '.network':
+            self.networks.add(re.search(r'^NetworkName=(.*)$', text, re.M).group(1))
+            return
+        network = re.search(r'^Network=konsol-(.*)\.network$', text, re.M)
+        if network:
+            self.networks.add('ksl-' + network.group(1))
+        name = re.search(r'^ContainerName=(.*)$', text, re.M).group(1)
+        labels = dict(l.split('=', 1) for l in re.findall(r'^Label=(.*)$', text, re.M))
+        labels['PODMAN_SYSTEMD_UNIT'] = unit
+        user = re.search(r'^User=(.*)$', text, re.M)
+        caps = None if 'DropCapability=all' in text else ['CAP_CHOWN', 'CAP_KILL']
+        health = 'unhealthy' if name in self.unhealthy else 'healthy'
+        self.containers[name] = {'Id': 'f' * 64, 'Name': name, 'State': {'Running': True, 'Status': 'running',
+                                                                         'Health': {'Status': health}},
+                                 'EffectiveCaps': caps, 'BoundingCaps': caps,
+                                 'Config': {'Labels': labels, 'User': user.group(1) if user else ''}}
+
+    def started(self):
+        return [c[-1] for c in self.calls if c[:2] == ['systemctl', 'start']]
+
+    def stopped(self):
+        return [c[-1] for c in self.calls if c[:2] == ['systemctl', 'stop']]
 
 
 class FakeNetwork:
-    tail_ip = '100.64.0.7'
+    """The guard: it reads every record as the real one does, and remembers which applications it saw."""
 
-    @staticmethod
-    def validate_ports(env, ports, name, run):
-        return ports
+    def __init__(self):
+        self.applied = []
+        self.fail = 0
 
-    def bindings(self, env, ports, run):
-        return [('%s:%s:%s/%s' % (self.tail_ip if p['scope'] == 'tailscale' else '127.0.0.1',
-                                 p['host_port'], p['container_port'], p['protocol'])) for p in ports]
-
-    @staticmethod
-    def apply(env, run):
-        return None
+    def apply(self, env, run):
+        if self.fail:
+            self.fail -= 1
+            raise cfg.ContainerConfigError(503, 'Konteyner yönlendirme koruması uygulanamadı.')
+        self.applied.append([row['app'] for row in apps.guard_input(env)])
 
 
-class ContainerTests(unittest.TestCase):
+class WorkerCase(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix='container-manager-')
+        self.tmp = tempfile.TemporaryDirectory(prefix='uygulama-worker-')
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
-        for name in ('srv/data', 'srv/.gizli', 'srv/media', 'state', 'run', 'quadlet'):
-            (self.root / name).mkdir(parents=True)
-        self.env = {'KONTEYNER_STATE_DIR': str(self.root / 'state'), 'KONTEYNER_BIRIM_DIR': str(self.root / 'quadlet'),
-                    'KONTEYNER_LOCK': str(self.root / 'run/container.lock'), 'RUNTIME_DIR': str(self.root / 'run'),
-                    'SBIN_DIR': str(self.root / 'sbin'),
-                    'SERVER_ROOT': str(self.root / 'srv'), 'FILES_PANEL_TRASH': '.cop',
-                    'TAILSCALE_IPV4': '100.64.0.7',
-                    'KONTEYNER_BAGLAMA_DIR': str(self.root / 'run/konteyner-baglama'),
-                    'DOWNLOADS_UID': '1000', 'DOWNLOADS_GID': '1000'}
-        self.state = self.root / 'state.env'
-        self.state.write_text(''.join(k + '=' + v + '\n' for k, v in self.env.items()))
-        self.runner = FakeRun()
-        self.runner.quadlets = self.root / 'quadlet'
-        self.store = cfg.Store(self.env)
-        self.manager = worker.Manager(str(self.state), run=self.runner, network=FakeNetwork(), generator='/fixture/quadlet')
-        self.config = {'name': 'demo', 'image': 'registry.example/app:1', 'network': 'bridge', 'ports': [],
-                       'mounts': [{'type': 'bind', 'source': str(self.root / 'srv/data'), 'destination': '/data', 'read_only': False}],
-                       'environment': [{'name': 'TOKEN', 'value': 'test-secret', 'secret': True}],
-                       'command': ['serve', 'literal $HOME', '100%'], 'autostart': True, 'restart': 'on-failure', 'cpus': '1.5', 'memory': '256M'}
+        self.env = app_fixtures.env(self.root)
+        for key in ('KONTEYNER_BIRIM_DIR', 'RUNTIME_DIR'):
+            Path(self.env[key]).mkdir(parents=True)
+        self.state = app_fixtures.write_state(self.root, self.env)
+        self.host = FakeHost(self.env)
+        self.guard = FakeNetwork()
+        self.now = [1000.0]
+        self.manager = worker.Manager(str(self.state), run=self.host, network=self.guard, quadlet='/fixture/quadlet',
+                                      clock=lambda: self.now[0], sleep=self.tick)
+        self.checked = []
+        # /srv itself is the host's; the DD-226 walk is checked in its own test.
+        patcher = patch.object(worker.binds, 'walk', side_effect=lambda source: self.checked.append(source) or os.open(self.root, os.O_RDONLY))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(apps, 'bindable', return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(apps, 'manual_ports', return_value=set())
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    def execute(self, action, data):
-        return self.manager.execute(action, data, uuid.uuid4().hex)
+    def tick(self, seconds):
+        self.now[0] += seconds
 
-    def create(self, start=False):
-        self.execute('create', {'name': 'demo', 'config': self.config, 'start': start})
-        return self.store.load('demo')
+    def execute(self, action, request):
+        return self.manager.execute(action, request, uuid.uuid4().hex)
 
-    def test_config_validates_before_writing_and_refuses_unsafe_bind_and_ports(self):
-        for change in ({'name': '../bad'}, {'image': 'ubuntu'}, {'ports': [{'scope': 'public', 'host_port': 8080, 'container_port': 80, 'protocol': 'tcp', 'public_ack': False}]},
-                       {'environment': [{'name': 'BAD\nX', 'value': 'secret', 'secret': True}]},
-                       {'mounts': [{'type': 'bind', 'source': '/etc', 'destination': '/etc', 'read_only': False}]},
-                       {'mounts': [{'type': 'bind', 'source': str(self.root / 'srv'), 'destination': '/all', 'read_only': True}]},
-                       {'privileged': True}):
-            with self.subTest(change=change), self.assertRaises(cfg.ContainerConfigError):
-                cfg.validate(dict(self.config, **change), self.env)
-        self.assertEqual(self.runner.calls, [])
-        self.assertEqual(self.store.list(), [])
+    def install(self, text=None, given=None, name='notlar', source=None):
+        text = app_fixtures.TEXT if text is None else text
+        given = app_fixtures.answers() if given is None else given
+        return self.execute('uygulama-kur', {'name': name, 'metin': text, 'yanitlar': given, 'kaynak': source or {'tur': 'dosya'}})
 
-    def test_bind_symlinks_hidden_folders_and_the_trash_are_refused(self):
-        (self.root / 'srv/link').symlink_to(self.root / 'srv/data', target_is_directory=True)
-        bind = lambda source: dict(self.config, mounts=[{'type': 'bind', 'source': str(self.root / source),
-                                                         'destination': '/data', 'read_only': True}])
-        for source in ('srv/link', 'srv/.gizli'):
-            with self.subTest(source=source), self.assertRaises(cfg.ContainerConfigError):
-                cfg.validate(bind(source), self.env)
-        # The Files trash stays out of containers under any name, and so does everything inside it.
-        env = dict(self.env, FILES_PANEL_TRASH='cop')
-        (self.root / 'srv/cop/eski').mkdir(parents=True)
-        for source in ('srv/cop', 'srv/cop/eski'):
-            with self.subTest(source=source), self.assertRaises(cfg.ContainerConfigError) as caught:
-                cfg.validate(bind(source), env)
-            self.assertEqual(str(caught.exception), 'Çöp klasörü konteynere bağlanamaz.')
-        self.assertEqual(cfg.validate(bind('srv/data'), env)['mounts'][0]['source'], str(self.root / 'srv/data'))
+    def record(self, app='notlar'):
+        return apps.Records(self.env).load(app)
 
-    def test_create_pins_image_and_persists_private_definition_without_secrets_in_unit_or_result(self):
-        result = self.execute('create', {'name': 'demo', 'config': self.config, 'start': False})
-        d = self.store.load('demo')
-        self.assertEqual(d['image'], DIGEST)
-        self.assertEqual(d['image_ref'], self.config['image'])
-        self.assertEqual(d['schema'], 1)
-        self.assertEqual((self.root / 'state/definitions/demo.json').stat().st_mode & 0o777, 0o600)
-        self.assertNotIn('test-secret', json.dumps(result))
-        self.assertNotIn('test-secret', (self.root / 'quadlet/konsol-demo.container').read_text())
-        self.assertNotIn('test-secret', json.dumps(self.runner.calls))
-        self.assertEqual(d['environment'][0]['value'], 'test-secret')
+    def unit_files(self):
+        return sorted(p.name for p in Path(self.env['KONTEYNER_BIRIM_DIR']).iterdir())
 
-    def test_quadlet_volume_is_raw_scalar_while_exec_and_environment_file_use_argument_syntax(self):
-        source = self.root / 'srv/proof space'
-        source.mkdir()
-        self.config['mounts'] = [{'type': 'bind', 'source': str(source), 'destination': '/proof space', 'read_only': False},
-                                 {'type': 'volume', 'source': 'data-volume', 'destination': '/cache', 'read_only': True}]
-        self.create()
-        lines = self.manager.quadlet('demo').read_text().splitlines()
-        # Quadlet 5.4 addVolumes uses LookupAll + SplitN, not its argument/unquote parser.
-        # A wrapping quote reaches Podman as part of the rw/ro option, including paths with spaces.
-        # DD-226: a bind mounts its pinned anchor, never the path; the real path stays a mount dependency.
-        anchor = binds.anchor_path(self.manager.env, 'demo', 0, str(source))
-        self.assertEqual([line for line in lines if line.startswith('Volume=')],
-                         ['Volume=' + str(anchor) + ':/proof space:rw', 'Volume=data-volume:/cache:ro'])
-        self.assertIn('RequiresMountsFor="' + str(source) + '"', lines)
-        self.assertIn('EnvironmentFile="' + str(self.store.environment_path('demo')) + '"', lines)
-        self.assertIn('Exec="serve" "literal $$HOME" "100%%"', lines)
+    def assert_no_secret(self, *values):
+        """No secret value in an argument, a file Obhut wrote, an operation record or a reply."""
+        for value in values or (SECRET,):
+            self.assertFalse([c for c in self.host.calls if any(value in a for a in c)], 'a secret in argv')
+            for path in self.root.rglob('*'):
+                if path.is_file():
+                    self.assertNotIn(value.encode(), path.read_bytes(), 'a secret in ' + str(path))
 
-    def test_quadlet_waits_for_the_firewall_but_never_restarts_with_it(self):
-        # DD-223: Wants/After instead of Requires= (a firewall restart no longer restarts the
-        # container); the unit only checks the guard a locked writer applied, and retries.
-        d = self.create()
-        lines = self.manager.quadlet('demo').read_text().splitlines()
-        self.assertIn('After=network-online.target master-firewall.service', lines)
-        self.assertIn('Wants=network-online.target master-firewall.service', lines)
-        self.assertEqual([l for l in lines if l.split('=', 1)[0] in ('Requires', 'Requisite', 'BindsTo', 'PartOf')], [])
-        pre = [l for l in lines if l.startswith('ExecStartPre=')]
-        guard = [l for l in pre if 'master_container_network.py' in l]
-        self.assertEqual(len(guard), 1)
-        self.assertEqual(pre[0], guard[0], 'the guard is checked before anything else')
-        self.assertTrue(guard[0].endswith(' --check'), guard[0])
-        self.assertIn('RestartSec=10s', lines)
-        # Without a network there is no publication and nothing to wait for.
-        self.assertNotIn('master_container_network.py', cfg.render_quadlet(dict(d, network='none', ports=[]), self.manager.env, []))
+    def assert_nothing_left(self, app='notlar'):
+        self.assertFalse(os.path.lexists(Path(self.env['UYGULAMA_STATE_DIR']) / app), 'the record was removed')
+        self.assertEqual([n for n in self.unit_files() if n.startswith('konsol-' + app)], [], 'no unit file stays')
+        self.assertEqual({k for k in self.host.secrets if k.startswith('obhut_%s_' % app)}, set(), 'no secret stays')
+        self.assertEqual([c for c in self.host.containers if c.startswith(app + '_')], [])
+        self.assertNotIn('ksl-' + app, self.host.networks)
+        self.assertNotIn(app, self.guard.applied[-1], 'the guard was applied again without it')
 
-    def test_bind_sources_are_pinned_after_the_guard_check_and_released_on_stop(self):
-        # DD-226: ExecStartPre checks the guard, then pins every bind source; ExecStopPost releases.
-        self.config['mounts'].append({'type': 'volume', 'source': 'cache-volume', 'destination': '/cache', 'read_only': False})
-        self.create()
-        lines = self.manager.quadlet('demo').read_text().splitlines()
-        helper = '"' + str(Path(self.env['SBIN_DIR']) / 'master_container_binds.py') + '"'
-        state = '"' + str(self.state) + '"'
-        pre = [l for l in lines if l.startswith('ExecStartPre=')]
-        self.assertEqual(len(pre), 2)
-        self.assertTrue(pre[0].endswith(' --check'), pre[0])
-        self.assertEqual(pre[1], 'ExecStartPre=/usr/bin/python3 ' + helper + ' --state ' + state + ' bagla "demo" "' + str(self.root / 'srv/data') + '"')
-        self.assertIn('ExecStopPost=-/usr/bin/python3 ' + helper + ' --state ' + state + ' birak "demo"', lines)
-        self.assertIn('Volume=' + str(binds.anchor_path(self.manager.env, 'demo', 0, str(self.root / 'srv/data'))) + ':/data:rw', lines)
-        self.assertIn('Volume=cache-volume:/cache:rw', lines)
-        # Without a bind there is nothing to pin or release.
-        d = self.store.load('demo')
-        plain = cfg.render_quadlet(dict(d, mounts=[m for m in d['mounts'] if m['type'] == 'volume']), self.manager.env, [])
-        self.assertNotIn('master_container_binds.py', plain)
-        self.assertNotIn('RequiresMountsFor=', plain)
+    def operation(self):
+        folder = Path(self.env['KONTEYNER_STATE_DIR']) / 'operations'
+        return json.loads(sorted(folder.iterdir(), key=lambda p: p.stat().st_mtime_ns)[-1].read_text())
 
-    def test_files_account_runs_without_capabilities_and_writes_group_writable(self):
-        # DD-227: User/Group from the state, DropCapability=all and a group-writable umask; ready() proves them.
-        self.config['user'] = 'downloads'
-        d = self.create(start=True)
-        lines = self.manager.quadlet('demo').read_text().splitlines()
-        for line in ('User=1000', 'Group=1000', 'DropCapability=all', 'NoNewPrivileges=true',
-                     'PodmanArgs=--cpus=1.5 --memory=256M --umask=0002'):
-            self.assertIn(line, lines)
-        self.assertEqual(d['user'], 'downloads')
-        self.assertEqual(self.runner.containers['demo']['Config']['User'], '1000:1000')
 
-    def test_image_account_cannot_write_server_folders(self):
-        self.config['user'] = 'image'
+class InstallTests(WorkerCase):
+    def test_install_records_pins_creates_secrets_and_starts_in_order(self):
+        result = self.install()
+        record = self.record()
+        self.assertEqual(result, {'ok': True, 'ad': 'notlar', 'revizyon': record['places']['revision']})
+        places = record['places']
+        self.assertEqual(places['ports'], {'web:8080/tcp': 62100})
+        self.assertEqual(places['images'], {'web': 'registry.example/notlar/web@sha256:' + 'd' * 64,
+                                            'db': 'registry.example/notlar/db@sha256:' + 'd' * 64})
+        [podman] = places['secrets'].values()
+        self.assertRegex(podman, r'^obhut_notlar_[0-9a-f]{8}$')
+        self.assertEqual(self.host.secrets, {podman: SECRET}, 'the value went to Podman on standard input only')
+        create = next(c for c in self.host.calls if c[:3] == ['podman', 'secret', 'create'])
+        self.assertEqual(create[-1], '-')
+        self.assertIn('io.master-stack.uygulama=notlar', create)
+        self.assertEqual(record['answers']['answers']['var:DB_PASSWORD'], {'set': True})
+        self.assertEqual((record['source']['tur'], record['text']), ('dosya', app_fixtures.TEXT))
+        folder = Path(self.env['UYGULAMA_STATE_DIR']) / 'notlar'
+        self.assertEqual(oct(folder.stat().st_mode & 0o777), '0o700')
+        self.assertEqual({p.name: oct(p.stat().st_mode & 0o777) for p in folder.iterdir() if p.is_file()},
+                         {n: '0o600' for n in apps.FILES})
+        self.assertEqual((folder / 'env/web.env').read_text(), 'LOG_LEVEL=info\n')
+        data = Path(self.env['UYGULAMA_VERI_DIR']) / 'notlar'
+        self.assertEqual(sorted(p.name for p in data.iterdir()), ['db-data', 'uploads'])
+        self.assertEqual(oct((data / 'uploads').stat().st_mode & 0o777), '0o700')
+        self.assertEqual(self.unit_files(), ['konsol-notlar.network', 'konsol-notlar_db.container', 'konsol-notlar_web.container'])
+        self.assertEqual(self.host.started(), ['konsol-notlar_db.service', 'konsol-notlar_web.service'], 'dependencies first')
+        self.assertEqual(self.guard.applied[0], ['notlar'], 'the guard knew the bridge before anything started')
+        self.assertEqual(self.checked, ['/srv/media'], 'the /srv folder was walked at install time')
+        self.assertEqual([c[-1] for c in self.host.calls if c[:2] == ['podman', 'pull']],
+                         ['registry.example/notlar/web:1.4', 'registry.example/notlar/db:16'])
+        self.assertEqual(self.operation()['state'], 'done')
+        self.assertNotIn('metin', json.dumps(self.operation()))
+        self.assert_no_secret()
+
+    def test_one_pull_per_distinct_image(self):
+        text = app_fixtures.SIMPLE.replace('volumes:\n  veri:\n', '').replace('    volumes:\n      - veri:/data\n', '')
+        text = text.replace('services:\n', 'services:\n  ikinci:\n    image: registry.example/sayac:2\n')
+        given = auto_answers(text, 'sayac')
+        self.install(text, given, 'sayac')
+        self.assertEqual([c[-1] for c in self.host.calls if c[:2] == ['podman', 'pull']], ['registry.example/sayac:2'])
+
+    def test_the_name_must_be_free_everywhere(self):
+        cases = {'record': lambda: app_fixtures.record(self.env),
+                 'unit': lambda: (Path(self.env['KONTEYNER_BIRIM_DIR']) / 'konsol-notlar_eski.container').write_text('x'),
+                 'container': lambda: self.host.containers.update(notlar_web={'Name': 'notlar_web'}),
+                 'network': lambda: self.host.networks.add('ksl-notlar'),
+                 'pod': lambda: self.host.pods.add('notlar')}
+        for what, make in cases.items():
+            with self.subTest(what=what):
+                self.setUp()
+                make()
+                with self.assertRaises(cfg.ContainerConfigError) as err:
+                    self.install()
+                self.assertEqual(err.exception.status, 409)
+                self.assertFalse([c for c in self.host.calls if c[:2] in (['podman', 'pull'], ['systemctl', 'start'])
+                                  or c[:3] == ['podman', 'secret', 'create']])
+
+    def test_refusals_come_before_any_write(self):
+        def no_write():
+            self.assertFalse(os.path.lexists(Path(self.env['UYGULAMA_STATE_DIR']) / 'notlar'))
+            self.assertEqual(self.unit_files(), [])
+            self.assertFalse([c for c in self.host.calls if c[:2] == ['podman', 'pull']])
+        given = app_fixtures.answers()
+        given['answers']['var:DB_PASSWORD'] = {'value': ''}
+        for request, status in (({'metin': app_fixtures.TEXT, 'yanitlar': given}, 400),
+                                ({'metin': 'services: [', 'yanitlar': app_fixtures.answers()}, 409),
+                                ({'metin': 'x' * (256 * 1024 + 1), 'yanitlar': app_fixtures.answers()}, 400),
+                                ({'metin': app_fixtures.TEXT, 'yanitlar': app_fixtures.answers(), 'name': 'baska'}, 400)):
+            with self.subTest(request=str(request)[:60]):
+                with self.assertRaises(cfg.ContainerConfigError) as err:
+                    self.execute('uygulama-kur', dict({'name': 'notlar', 'kaynak': {'tur': 'dosya'}}, **request))
+                self.assertEqual(err.exception.status, status)
+                no_write()
+        # The /srv folder is walked without following a link; a missing or linked one stops the install.
+        with patch.object(worker.binds, 'walk', side_effect=worker.binds.BindError('Bağlanan klasör eksik: /srv/media')):
+            with self.assertRaises(cfg.ContainerConfigError) as err:
+                self.install()
+        self.assertEqual(err.exception.status, 409)
+        no_write()
+
+    def test_podman_4_9_runs_neither_a_health_wait_nor_a_pod(self):
+        self.host.version = '4.9.3'
         with self.assertRaises(cfg.ContainerConfigError) as err:
-            self.create()
-        self.assertIn('Dosyalar hesabıyla', str(err.exception))
-        self.assertFalse(any(c[0] == 'podman' for c in self.runner.calls), 'refused before any pull or stop')
-        self.assertEqual(self.store.list(), [])
-        for mounts in ([dict(self.config['mounts'][0], read_only=True)],
-                       [{'type': 'volume', 'source': 'cache-volume', 'destination': '/cache', 'read_only': False}]):
-            with self.subTest(mounts=mounts):
-                self.assertEqual(cfg.validate(dict(self.config, mounts=mounts), self.env)['user'], 'image')
+            self.install()
+        self.assertIn('Podman 5 gerekir; bu sunucuda 4.9', str(err.exception))
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.install(POD, auto_answers(POD, 'ikili'), 'ikili')
+        self.assertIn('Podman 5 gerekir; bu sunucuda 4.9', str(err.exception))
+        self.assertEqual(self.unit_files(), [])
+        self.assertFalse(os.listdir(self.env['UYGULAMA_STATE_DIR']) if os.path.exists(self.env['UYGULAMA_STATE_DIR']) else [])
+        # A single-service file runs on 4.9.
+        self.install(app_fixtures.SIMPLE, app_fixtures.SIMPLE_ANSWERS, 'sayac')
+        self.assertTrue(self.record('sayac'))
+
+    def test_a_pod_starts_first_and_its_members_belong_to_the_application(self):
+        self.install(POD, auto_answers(POD, 'ikili'), 'ikili')
+        self.assertEqual(self.host.started()[0], 'konsol-ikili-pod.service')
+        self.assertIn('konsol-ikili.pod', self.unit_files())
+        self.assertIn('ikili', self.host.pods)
+
+    def test_a_failure_at_every_step_takes_back_what_the_job_did(self):
+        steps = [('pull', ('podman pull --quiet registry.example/notlar/db:16',)),
+                 ('secret', ('podman secret create',)),
+                 ('dryrun', ('/fixture/quadlet --dryrun',)),
+                 ('reload', ('systemctl daemon-reload',)),
+                 ('first start', ('systemctl start konsol-notlar_db.service',)),
+                 ('second start', ('systemctl start konsol-notlar_web.service',))]
+        for label, parts in steps + [('unhealthy', ()), ('restarted', ()), ('gone', ()), ('wrong user', ()), ('guard', ())]:
+            with self.subTest(step=label):
+                self.setUp()
+                existing = Path(self.env['UYGULAMA_VERI_DIR']) / 'notlar' / 'uploads'
+                if label == 'unhealthy':
+                    self.host.unhealthy.add('notlar_web')
+                elif label == 'restarted':
+                    # It stopped at once and systemd restarts it: the job says so instead of waiting.
+                    self.host.restarts['konsol-notlar_web.service'] = 1
+                elif label == 'gone':
+                    # It exits between `exists` and `inspect` (Quadlet's --rm); then its unit has failed.
+                    self.host.vanish.add('notlar_web')
+                elif label == 'wrong user':
+                    original = self.host.start
+                    self.host.start = lambda unit: (original(unit), self.host.containers.get('notlar_web', {}).get('Config', {}).update(User='0'))
+                elif label == 'guard':
+                    self.guard.fail = 1
+                else:
+                    self.host.fails(*parts)
+                if label == 'second start':
+                    # Data kept from an earlier removal stays; only what this job made goes.
+                    existing.mkdir(parents=True)
+                    (existing / 'eski').write_text('kept')
+                with self.assertRaises(cfg.ContainerConfigError) as err:
+                    self.install()
+                self.assertIn('Yapılan her şey geri alındı', str(err.exception))
+                if label in ('restarted', 'gone'):
+                    self.assertIn('journalctl -u konsol-notlar_web.service', str(err.exception))
+                if label != 'guard':
+                    self.assert_nothing_left()
+                self.assertFalse(os.path.lexists(Path(self.env['UYGULAMA_STATE_DIR']) / 'notlar'))
+                self.assertEqual(self.host.containers, {})
+                if label == 'second start':
+                    self.assertEqual((existing / 'eski').read_text(), 'kept')
+                    self.assertFalse((Path(self.env['UYGULAMA_VERI_DIR']) / 'notlar' / 'db-data').exists())
+                else:
+                    self.assertFalse((Path(self.env['UYGULAMA_VERI_DIR']) / 'notlar').exists())
+                record = self.operation()
+                self.assertEqual(record['state'], 'failed')
+                self.assertTrue(record['failed_step'])
+                self.assertNotIn('never-print', json.dumps(record), 'a tool error is never echoed')
+                self.assert_no_secret()
+
+    def test_a_failed_rollback_says_so(self):
+        self.host.fails('systemctl start konsol-notlar_web.service')
+        self.host.fails('podman secret rm')
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.install()
+        self.assertIn('Geri alma da tamamlanamadı', str(err.exception))
+
+
+class TakeoverTests(WorkerCase):
+    def old(self, running=True):
+        point = self.root / 'volumes/veri/_data'
+        point.mkdir(parents=True)
+        (point / 'kayit.txt').write_text('eski veri')
+        self.host.volumes['veri'] = {'Name': 'veri', 'Driver': 'local', 'Options': {}, 'Mountpoint': str(point)}
+        self.host.containers['eski'] = {'Id': 'a' * 64, 'Name': 'eski', 'State': {'Running': running, 'Status': 'running'},
+                                        'Config': {'Labels': {}}, 'Mounts': [{'Type': 'volume', 'Name': 'veri', 'Destination': '/data'}]}
+
+    def request(self):
+        return {'name': 'devir', 'metin': TAKEOVER, 'yanitlar': auto_answers(TAKEOVER, 'devir'),
+                'kaynak': {'tur': 'konteyner', 'konteyner': 'eski'}}
+
+    def test_the_old_container_stops_its_volume_is_copied_and_it_goes_only_when_the_application_is_ready(self):
+        self.old()
+        self.execute('uygulama-kur', self.request())
+        copied = Path(self.env['UYGULAMA_VERI_DIR']) / 'devir/veri/kayit.txt'
+        self.assertEqual(copied.read_text(), 'eski veri')
+        order = [' '.join(c[:2]) + ' ' + c[-1] for c in self.host.calls if c[:2] in (['podman', 'stop'], ['systemctl', 'start'], ['podman', 'rm'])]
+        self.assertEqual(order, ['podman stop eski', 'systemctl start konsol-devir_app.service', 'podman rm eski'])
+        rm = next(c for c in self.host.calls if c[:2] == ['podman', 'rm'])
+        self.assertNotIn('--volumes', rm, 'the old named volume stays')
+        self.assertEqual(self.record('devir')['source'], dict(self.record('devir')['source'], tur='konteyner', konteyner='eski'))
+
+    def test_a_failed_takeover_starts_the_old_container_again(self):
+        self.old()
+        self.host.fails('systemctl start konsol-devir_app.service')
         with self.assertRaises(cfg.ContainerConfigError):
-            cfg.validate(dict(self.config, user='root'), self.env)
+            self.execute('uygulama-kur', self.request())
+        self.assertTrue(self.host.containers['eski']['State']['Running'])
+        self.assertFalse((Path(self.env['UYGULAMA_VERI_DIR']) / 'devir').exists())
+        self.assert_nothing_left('devir')
 
-    def test_account_defaults_new_definitions_to_files_and_keeps_older_ones_as_they_ran(self):
-        d = self.create()
-        self.assertEqual(d['user'], 'downloads', 'an omitted account means least privilege for a new definition')
-        self.assertEqual(cfg.validate(self.config, self.env, d)['user'], 'downloads', 'preserved when omitted')
-        older = {k: v for k, v in d.items() if k != 'user'}  # stored before DD-227: it ran as the image's account
-        rendered = cfg.render_quadlet(older, self.manager.env, [])
-        self.assertNotIn('User=', rendered)
-        self.assertNotIn('--umask', rendered)
-        with self.assertRaises(cfg.ContainerConfigError):  # saving it with a writable folder needs the switch
-            cfg.validate(self.config, self.env, older)
+    def test_a_volume_is_copied_only_into_a_new_folder(self):
+        self.old()
+        (Path(self.env['UYGULAMA_VERI_DIR']) / 'devir/veri').mkdir(parents=True)
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('uygulama-kur', self.request())
+        self.assertIn('zaten var', str(err.exception))
+        self.assertTrue(self.host.containers['eski']['State']['Running'], 'refused before the old container stopped')
 
-    def test_files_account_ids_must_be_valid(self):
-        d = dict(self.create(), user='downloads')
-        for uid in ('0', 'abc', ''):
-            with self.subTest(uid=uid), self.assertRaises(cfg.ContainerConfigError) as err:
-                cfg.render_quadlet(d, dict(self.manager.env, DOWNLOADS_UID=uid), [])
-            self.assertEqual(err.exception.status, 503)
+    def test_only_a_standalone_container_is_taken_over(self):
+        self.old()
+        self.host.containers['eski']['Config']['Labels'] = {'PODMAN_SYSTEMD_UNIT': 'baskasi.service'}
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('uygulama-kur', self.request())
+        self.assertEqual(err.exception.status, 409)
+        self.assertEqual(self.host.containers['eski']['State']['Running'], True, 'nothing was stopped')
 
-    def test_ready_proves_the_files_account_and_dropped_capabilities(self):
-        self.config['user'] = 'downloads'
-        self.runner.ignore_user = True  # Podman did not apply the account
-        with self.assertRaises(cfg.ContainerConfigError):
-            self.create(start=True)
-        self.assertNotIn('konsol-demo.service', self.runner.active)
-        self.runner.ignore_user = False
-        for omit in (('EffectiveCaps',), ('BoundingCaps',)):  # an inspect without the field proves nothing
-            self.runner.omit = omit
-            with self.subTest(omit=omit), self.assertRaises(cfg.ContainerConfigError) as err:
-                self.create(start=True)
-            self.assertEqual(err.exception.status, 502)
-            self.assertNotIn('konsol-demo.service', self.runner.active)
-        self.runner.omit = ()
-        self.runner.dropped = []  # another Podman may print the empty set as a list
-        self.assertEqual(self.create(start=True)['user'], 'downloads')
-        self.assertIn('konsol-demo.service', self.runner.active)
 
-    def test_adoption_maps_the_downloads_account_and_refuses_other_users(self):
-        info = self.external()
-        for user, expected in (('1000:1000', 'downloads'), ('1000', 'downloads'), ('', 'image')):
-            info['Config']['User'] = user
-            preview = self.execute('adopt', {'name': 'foreign', 'preview': True})['preview']
-            self.assertEqual((preview['unsupported'], preview['config']['user']), ([], expected), user)
-        info['Config']['User'] = '33'
-        self.assertIn('User', self.execute('adopt', {'name': 'foreign', 'preview': True})['preview']['unsupported'])
+class LifecycleTests(WorkerCase):
+    def setUp(self):
+        super().setUp()
+        self.install()
+        self.host.calls.clear()
 
-    def test_stale_revision_refuses_before_any_mutation(self):
-        d = self.create()
-        before = len(self.runner.calls)
-        for action in ('save', 'start', 'stop', 'restart', 'remove'):
+    def revision(self):
+        return self.record()['places']['revision']
+
+    def unit(self, service):
+        return (Path(self.env['KONTEYNER_BIRIM_DIR']) / ('konsol-notlar_%s.container' % service)).read_text()
+
+    def test_stop_and_start_keep_the_order_and_the_boot_choice(self):
+        self.execute('uygulama-durdur', {'name': 'notlar', 'revizyon': self.revision()})
+        self.assertEqual(self.host.stopped(), ['konsol-notlar_web.service', 'konsol-notlar_db.service'], 'reverse order')
+        self.assertTrue(self.record()['places']['stopped'])
+        self.assertNotIn('[Install]', self.unit('web'))
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('uygulama-yeniden-baslat', {'name': 'notlar', 'revizyon': self.revision()})
+        self.assertEqual(err.exception.status, 409, 'restart is for a running application')
+        self.host.calls.clear()
+        self.execute('uygulama-baslat', {'name': 'notlar', 'revizyon': self.revision()})
+        self.assertEqual(self.host.started(), ['konsol-notlar_db.service', 'konsol-notlar_web.service'])
+        self.assertFalse(self.record()['places']['stopped'])
+        self.assertIn('WantedBy=multi-user.target', self.unit('web'))
+        self.assert_no_secret()
+
+    def test_restart_stops_in_reverse_and_starts_in_order(self):
+        self.execute('uygulama-yeniden-baslat', {'name': 'notlar', 'revizyon': self.revision()})
+        self.assertEqual(self.host.stopped(), ['konsol-notlar_web.service', 'konsol-notlar_db.service'])
+        self.assertEqual(self.host.started(), ['konsol-notlar_db.service', 'konsol-notlar_web.service'])
+
+    def test_a_stale_revision_changes_nothing(self):
+        for action in ('uygulama-baslat', 'uygulama-durdur', 'uygulama-yeniden-baslat', 'uygulama-guncelle', 'uygulama-kaldir'):
             with self.subTest(action=action), self.assertRaises(cfg.ContainerConfigError) as err:
-                self.execute(action, {'name': 'demo', 'revision': '0'*32, 'config': self.config})
+                self.execute(action, {'name': 'notlar', 'revizyon': 'b' * 32, 'veri': 'sakla'})
             self.assertEqual(err.exception.status, 409)
-        self.assertEqual(len(self.runner.calls), before)
-        self.assertEqual(self.store.load('demo'), d)
+        self.assertFalse([c for c in self.host.calls if c[:2] in (['systemctl', 'stop'], ['systemctl', 'start'])])
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('uygulama-baslat', {'name': 'yok', 'revizyon': 'b' * 32})
+        self.assertEqual(err.exception.status, 404)
 
-    def test_stop_latch_survives_edit_and_start_clears_it(self):
-        d = self.create(start=True)
-        self.execute('stop', {'name': 'demo', 'revision': d['revision']})
-        d = self.store.load('demo')
-        self.assertTrue(d['manual_stop'])
-        self.assertTrue(d['autostart'])
-        self.assertNotIn('WantedBy=', (self.root / 'quadlet/konsol-demo.container').read_text())
-        modified = copy.deepcopy(self.config)
-        modified['environment'][0].pop('value')
-        modified['memory'] = '512M'
-        self.execute('save', {'name': 'demo', 'revision': d['revision'], 'config': modified})
-        d = self.store.load('demo')
-        self.assertTrue(d['manual_stop'])
-        self.assertEqual(d['environment'][0]['value'], 'test-secret')
-        self.assertNotIn('konsol-demo.service', self.runner.active)
-        self.execute('start', {'name': 'demo', 'revision': d['revision']})
-        self.assertFalse(self.store.load('demo')['manual_stop'])
-        self.assertIn('konsol-demo.service', self.runner.active)
+    def test_a_failed_stop_restores_the_record_and_the_running_units(self):
+        before = apps.Records(self.env).snapshot('notlar')
+        self.host.fails('systemctl daemon-reload')
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('uygulama-durdur', {'name': 'notlar', 'revizyon': self.revision()})
+        self.assertIn('Önceki durum geri yüklendi', str(err.exception))
+        self.assertEqual(apps.Records(self.env).snapshot('notlar'), before)
+        self.assertIn('WantedBy=multi-user.target', self.unit('web'))
+        self.assertEqual(self.host.started(), ['konsol-notlar_db.service', 'konsol-notlar_web.service'])
 
-    def test_bad_validation_does_not_stop_running_service(self):
-        d = self.create(start=True)
-        before = len(self.runner.calls)
+    def test_a_failed_start_stops_what_started_and_keeps_it_stopped(self):
+        self.execute('uygulama-durdur', {'name': 'notlar', 'revizyon': self.revision()})
+        before = apps.Records(self.env).snapshot('notlar')
+        self.host.calls.clear()
+        self.host.fails('systemctl start konsol-notlar_web.service')
         with self.assertRaises(cfg.ContainerConfigError):
-            self.execute('save', {'name': 'demo', 'revision': d['revision'], 'config': dict(self.config, memory='1M\nExecStart=/bad')})
-        self.assertFalse(any(c[:2] == ['systemctl', 'stop'] for c in self.runner.calls[before:]))
-        self.assertIn('konsol-demo.service', self.runner.active)
+            self.execute('uygulama-baslat', {'name': 'notlar', 'revizyon': self.revision()})
+        self.assertEqual(apps.Records(self.env).snapshot('notlar'), before)
+        self.assertNotIn('[Install]', self.unit('web'))
+        self.assertIn('konsol-notlar_db.service', self.host.stopped())
+        self.assertEqual(self.host.units.get('konsol-notlar_db.service'), 'inactive')
 
-    def test_failed_recreation_restores_definition_and_running_state(self):
-        d = self.create(start=True)
-        old = (self.root / 'quadlet/konsol-demo.container').read_bytes()
-        self.runner.fail = 'systemctl start konsol-demo.service'
+    def test_update_pulls_again_and_changes_only_when_a_digest_moved(self):
+        result = self.execute('uygulama-guncelle', {'name': 'notlar', 'revizyon': self.revision()})
+        self.assertEqual(result['changed'], False)
+        self.assertFalse([c for c in self.host.calls if c[:2] in (['systemctl', 'stop'], ['systemctl', 'start'])])
+        self.host.digest['registry.example/notlar/web'] = 'sha256:' + '7' * 64
+        result = self.execute('uygulama-guncelle', {'name': 'notlar', 'revizyon': self.revision()})
+        self.assertEqual(result['changed'], True)
+        self.assertIn('Image=registry.example/notlar/web@sha256:' + '7' * 64, self.unit('web'))
+        self.assertEqual(self.host.started()[-2:], ['konsol-notlar_db.service', 'konsol-notlar_web.service'])
+
+    def test_a_failed_update_puts_back_the_old_digests_and_starts_them(self):
+        old = self.unit('web')
+        self.host.digest['registry.example/notlar/web'] = 'sha256:' + '7' * 64
+        self.host.unhealthy.add('notlar_web')
         with self.assertRaises(cfg.ContainerConfigError):
-            self.execute('save', {'name': 'demo', 'revision': d['revision'], 'config': dict(self.config, memory='512M')})
-        self.assertEqual(self.store.load('demo'), d)
-        self.assertEqual((self.root / 'quadlet/konsol-demo.container').read_bytes(), old)
-        self.assertIn('konsol-demo.service', self.runner.active)
+            self.execute('uygulama-guncelle', {'name': 'notlar', 'revizyon': self.revision()})
+        self.assertEqual(self.unit('web'), old)
+        self.assertEqual(self.record()['places']['images']['web'], 'registry.example/notlar/web@sha256:' + 'd' * 64)
+        self.assertEqual(self.host.units.get('konsol-notlar_web.service'), 'active', 'the old units run again')
 
-    def test_remove_retains_mounts_named_volumes_and_image(self):
-        self.config['mounts'].append({'type': 'volume', 'source': 'data-volume', 'destination': '/cache', 'read_only': False})
-        d = self.create(start=True)
-        before = len(self.runner.calls)
-        self.execute('remove', {'name': 'demo', 'revision': d['revision']})
-        self.assertIsNone(self.store.load('demo'))
-        self.assertFalse((self.root / 'quadlet/konsol-demo.container').exists())
-        self.assertTrue((self.root / 'srv/data').exists())
-        self.assertFalse(any(c[:3] in (['podman', 'volume', 'rm'], ['podman', 'image', 'rm']) for c in self.runner.calls[before:]))
+    def test_an_edit_keeps_a_secret_renews_another_and_writes_the_new_environment(self):
+        [old_secret] = self.record()['places']['secrets'].values()
+        given = app_fixtures.answers()
+        given['answers']['var:DB_PASSWORD'] = {'keep': True}
+        text = app_fixtures.TEXT.replace('LOG_LEVEL: info', 'LOG_LEVEL: debug')
+        self.execute('uygulama-tanim', {'name': 'notlar', 'metin': text, 'yanitlar': given, 'revizyon': self.revision()})
+        record = self.record()
+        self.assertEqual(list(record['places']['secrets'].values()), [old_secret], 'the kept value is the same secret')
+        self.assertFalse([c for c in self.host.calls if c[:3] == ['podman', 'secret', 'create']])
+        self.assertEqual((Path(self.env['UYGULAMA_STATE_DIR']) / 'notlar/env/web.env').read_text(), 'LOG_LEVEL=debug\n')
+        self.assertEqual(record['text'], text)
+        self.assertEqual(record['places']['ports'], {'web:8080/tcp': 62100}, 'the allocation is kept for the same key')
+        # A new value: a new secret; the old one goes only after the new units run.
+        self.host.calls.clear()
+        given['answers']['var:DB_PASSWORD'] = {'value': 'yeni-' + SECRET}
+        self.execute('uygulama-tanim', {'name': 'notlar', 'metin': text, 'yanitlar': given, 'revizyon': self.revision()})
+        [new_secret] = self.record()['places']['secrets'].values()
+        self.assertNotEqual(new_secret, old_secret)
+        self.assertEqual(self.host.secrets, {new_secret: 'yeni-' + SECRET})
+        calls = [' '.join(c) for c in self.host.calls]
+        last_start = max(i for i, c in enumerate(calls) if c.startswith('systemctl start'))
+        removal = next(i for i, c in enumerate(calls) if c == 'podman secret rm ' + old_secret)
+        self.assertGreater(removal, last_start)
+        self.assert_no_secret(SECRET, 'yeni-' + SECRET)
 
-    def test_operations_are_redacted_and_duplicate_ids_cannot_repeat_actions(self):
-        op = uuid.uuid4().hex
-        self.manager.execute('create', {'name': 'demo', 'config': self.config}, op)
-        record = json.loads((self.root / ('state/operations/' + op + '.json')).read_text())
-        self.assertEqual(record['state'], 'done')
-        self.assertNotIn('test-secret', json.dumps(record))
-        count = len(self.runner.calls)
+    def test_a_failed_edit_takes_its_new_secret_back_and_runs_the_old_application(self):
+        before = apps.Records(self.env).snapshot('notlar')
+        units = self.unit_files(), self.unit('web')
+        secrets = dict(self.host.secrets)
+        given = app_fixtures.answers()
+        given['answers']['var:DB_PASSWORD'] = {'value': 'yeni-' + SECRET}
+        self.host.fails('systemctl start konsol-notlar_web.service')
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('uygulama-tanim', {'name': 'notlar', 'metin': app_fixtures.TEXT, 'yanitlar': given, 'revizyon': self.revision()})
+        self.assertIn('Önceki durum geri yüklendi', str(err.exception))
+        self.assertEqual(apps.Records(self.env).snapshot('notlar'), before)
+        self.assertEqual((self.unit_files(), self.unit('web')), units)
+        self.assertEqual(self.host.secrets, secrets, 'the new secret is gone, the old one kept')
+        self.assertEqual(self.host.units.get('konsol-notlar_web.service'), 'active')
+
+    def test_an_edit_drops_a_service_and_keeps_its_folder(self):
+        text = app_fixtures.SIMPLE.replace('sayac', 'notlar')
+        given = auto_answers(text, 'notlar')
+        self.execute('uygulama-tanim', {'name': 'notlar', 'metin': text, 'yanitlar': given, 'revizyon': self.revision()})
+        self.assertEqual(self.unit_files(), ['konsol-notlar.network', 'konsol-notlar_app.container'])
+        self.assertTrue((Path(self.env['UYGULAMA_VERI_DIR']) / 'notlar/db-data').is_dir(), 'a dropped folder stays on disk')
+        self.assertEqual(self.host.secrets, {}, 'a dropped secret goes after the new units run')
+        self.assertNotIn('notlar_db', self.host.containers)
+
+    def test_an_edit_cannot_rename_the_application(self):
+        given = app_fixtures.answers()
+        given['name'] = 'baska'
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('uygulama-tanim', {'name': 'notlar', 'metin': app_fixtures.TEXT.replace('name: notlar', 'name: baska'),
+                                            'yanitlar': given, 'revizyon': self.revision()})
+        self.assertEqual(err.exception.status, 409)
+
+    def test_removal_keeps_the_data_by_default_and_deletes_it_only_with_the_name(self):
+        data = Path(self.env['UYGULAMA_VERI_DIR']) / 'notlar'
         with self.assertRaises(cfg.ContainerConfigError):
-            self.manager.execute('create', {'name': 'demo', 'config': self.config}, op)
-        self.assertEqual(len(self.runner.calls), count)
+            self.execute('uygulama-kaldir', {'name': 'notlar', 'revizyon': self.revision(), 'veri': 'sil', 'onay': 'yanlis'})
+        self.execute('uygulama-kaldir', {'name': 'notlar', 'revizyon': self.revision(), 'veri': 'sakla'})
+        self.assert_nothing_left()
+        self.assertTrue((data / 'uploads').is_dir(), 'K9: the data stays')
+        self.assertFalse([c for c in self.host.calls if c[:3] == ['podman', 'image', 'rm']], 'images stay for Gelişmiş')
+        self.install()
+        self.execute('uygulama-kaldir', {'name': 'notlar', 'revizyon': self.revision(), 'veri': 'sil', 'onay': 'notlar'})
+        self.assertFalse(data.exists())
 
-    def test_foreign_controllers_and_reserved_system_names_refuse_mutation(self):
-        for attrs in ({'Config': {'Labels': {'PODMAN_SYSTEMD_UNIT': 'foreign.service'}}},
-                      {'Pod': 'somepod'}, {'Config': {'Labels': {'com.docker.compose.project': 'p'}}}):
-            self.runner.containers['foreign'] = dict({'Name': 'foreign', 'State': {'Running': False}}, **attrs)
-            with self.assertRaises(cfg.ContainerConfigError):
-                self.execute('remove', {'name': 'foreign'})
-        self.assertFalse(any(c[:2] == ['podman', 'rm'] for c in self.runner.calls))
-        for name in ('konsol-notlar', 'master-notlar', 'libpod-notlar'):
-            with self.subTest(name=name), self.assertRaises(cfg.ContainerConfigError) as caught:
-                self.execute('create', {'name': name, 'config': dict(self.config, name=name)})
-            self.assertEqual((caught.exception.status, str(caught.exception)), (409, 'Bu ad bir sistem hizmetine ait.'))
-            with self.assertRaises(cfg.ContainerConfigError) as caught:
-                self.execute('start', {'name': name})
-            self.assertEqual(caught.exception.status, 409)
-        self.assertTrue(cfg.reserved('konsol-notlar'))
-        self.assertFalse(cfg.reserved('notlar'))
-        self.assertEqual(self.store.list(), [])
-
-    def test_redact_never_modifies_stored_values(self):
-        d = self.create()
-        redacted = cfg.redact(d)
-        self.assertNotIn('value', redacted['environment'][0])
-        self.assertTrue(redacted['environment'][0]['present'])
-        self.assertEqual(d['environment'][0]['value'], 'test-secret')
-
-    def external(self, name='foreign'):
-        info = {'Id': 'b'*64, 'Name': name, 'ImageName': 'registry.example/app:1', 'Image': 'sha256:' + 'a'*64,
-                'State': {'Running': True}, 'Config': {'Labels': {}, 'Cmd': ['serve'], 'Env': ['TOKEN=import-secret']},
-                'HostConfig': {'NetworkMode': 'bridge', 'PortBindings': {}, 'RestartPolicy': {'Name': 'no'}}, 'Mounts': []}
-        self.runner.containers[name] = info
-        return info
-
-    def test_standalone_lifecycle_and_adoption_preview_are_non_destructive(self):
-        self.external()
-        preview = self.execute('adopt', {'name': 'foreign', 'preview': True})['preview']
-        self.assertEqual(preview['unsupported'], [])
-        self.assertNotIn('import-secret', json.dumps(preview))
-        self.assertEqual(self.store.list(), [])
-        self.assertFalse(any(c[:2] in (['podman', 'stop'], ['podman', 'rename']) for c in self.runner.calls))
-        self.execute('stop', {'name': 'foreign'})
-        self.assertFalse(self.runner.containers['foreign']['State']['Running'])
-        self.execute('start', {'name': 'foreign'})
-        self.assertTrue(self.runner.containers['foreign']['State']['Running'])
-
-    def test_adoption_preserves_imported_secrets_and_stale_preview_is_refused(self):
-        info = self.external()
-        preview = self.execute('adopt', {'name': 'foreign', 'preview': True})['preview']
+    def test_an_interrupted_removal_can_be_run_again(self):
+        self.host.fails('podman secret rm')
+        revision = self.revision()
         with self.assertRaises(cfg.ContainerConfigError):
-            self.execute('adopt', {'name': 'foreign', 'confirm': True, 'preview_fingerprint': 'wrong', 'config': preview['config']})
-        self.assertTrue(info['State']['Running'])
-        self.execute('adopt', {'name': 'foreign', 'confirm': True, 'preview_fingerprint': preview['fingerprint'],
-                               'config': preview['config'], 'start': False})
-        self.assertEqual(self.store.load('foreign')['environment'][0]['value'], 'import-secret')
-        self.assertNotIn('konsol-foreign.service', self.runner.active)
-        self.assertFalse(any(name.startswith('konsol-adopt-') for name in self.runner.containers))
+            self.execute('uygulama-kaldir', {'name': 'notlar', 'revizyon': revision, 'veri': 'sakla'})
+        self.assertTrue(self.record(), 'the record stays until the end, so the removal can be repeated')
+        self.assertEqual(self.unit_files(), [])
+        self.execute('uygulama-kaldir', {'name': 'notlar', 'revizyon': revision, 'veri': 'sakla'})
+        self.assert_nothing_left()
 
-    def test_unsupported_adoption_options_block_before_stop(self):
-        info = self.external()
-        info['HostConfig']['Privileged'] = True
-        preview = self.execute('adopt', {'name': 'foreign', 'preview': True})['preview']
-        self.assertIn('Privileged', preview['unsupported'])
+
+class DraftAndResourceTests(WorkerCase):
+    def test_an_image_draft_is_a_compose_file_the_inspector_reads(self):
+        result = self.execute('uygulama-taslak', {'name': 'registry.example/sayac:2', 'imaj': 'registry.example/sayac:2'})
+        self.assertEqual(result['kaynak'], {'tur': 'imaj', 'imaj': 'registry.example/sayac:2'})
+        inspection = master_inspector.inspect(result['metin'])
+        self.assertEqual(inspection['refusals'], [])
+        self.assertEqual([(p['port'], p['protocol']) for p in inspection['services'][0]['ports']], [(53, 'udp'), (8080, 'tcp')])
+        self.assertEqual(self.unit_files(), [])
+        self.assertFalse(os.path.exists(self.env['UYGULAMA_STATE_DIR']))
         with self.assertRaises(cfg.ContainerConfigError):
-            self.execute('adopt', {'name': 'foreign', 'confirm': True, 'preview_fingerprint': preview['fingerprint'], 'config': preview['config']})
-        self.assertFalse(any(c[:2] == ['podman', 'stop'] for c in self.runner.calls))
+            self.execute('uygulama-taslak', {'name': 'x', 'imaj': 'Kötü İmaj'})
 
-    def test_adoption_preserves_observed_pid_limit_including_stock_podman_default(self):
-        for observed, expected in ((2048, '2048'), (512, '512'), (-1, '-1'), (0, '-1')):
-            with self.subTest(observed=observed):
-                info = self.external()
-                info['HostConfig'].update(PidsLimit=observed, IpcMode='shareable', PidMode='private', UTSMode='private', UsernsMode='')
-                preview = self.execute('adopt', {'name': 'foreign', 'preview': True})['preview']
-                self.assertEqual(preview['unsupported'], [])
-                self.assertEqual(preview['config']['pids_limit'], expected)
-                self.execute('adopt', {'name': 'foreign', 'confirm': True, 'preview_fingerprint': preview['fingerprint'],
-                                       'config': preview['config'], 'start': False})
-                saved = self.store.load('foreign')
-                self.assertEqual(saved['pids_limit'], expected)
-                self.assertIn('PidsLimit=' + expected, self.manager.quadlet('foreign').read_text())
-                edited = self.store.redact(saved)
-                edited.pop('pids_limit')  # Existing UI versions do not send the hidden supported field.
-                edited['memory'] = '256M'
-                self.execute('save', {'name': 'foreign', 'revision': saved['revision'], 'config': edited})
-                saved = self.store.load('foreign')
-                self.assertEqual(saved['pids_limit'], expected)
-                self.execute('remove', {'name': 'foreign', 'revision': saved['revision']})
+    def test_an_image_or_network_an_application_uses_is_not_removed(self):
+        self.install()
+        pinned = self.record()['places']['images']['web']
+        original = self.host.__call__
 
-    def test_pid_limit_validation_is_structured_and_never_a_raw_podman_argument(self):
-        self.assertEqual(cfg.validate(dict(self.config, pids_limit='4096'), self.env)['pids_limit'], '4096')
-        for value in ('0', '-2', '10 --privileged', '9223372036854775808', True, 2048):
-            with self.subTest(value=value), self.assertRaises(cfg.ContainerConfigError):
-                cfg.validate(dict(self.config, pids_limit=value), self.env)
-
-    def test_running_adoption_preserves_ulimits_and_stop_signal_when_editor_omits_them(self):
-        info = self.external()
-        info['Config']['StopSignal'] = 'SIGTERM'  # Runtime default, absent from the image config.
-        info['HostConfig'].update(PidsLimit=2048, Ulimits=[
-            {'Name': 'RLIMIT_NOFILE', 'Soft': 1048576, 'Hard': 1048576},
-            {'Name': 'RLIMIT_NPROC', 'Soft': 1048576, 'Hard': 1048576},
-            {'Name': 'RLIMIT_CORE', 'Soft': 0, 'Hard': 18446744073709551615}])
-        expected = [{'name': 'nofile', 'soft': 1048576, 'hard': 1048576},
-                    {'name': 'nproc', 'soft': 1048576, 'hard': 1048576},
-                    {'name': 'core', 'soft': 0, 'hard': -1}]
-        preview = self.execute('adopt', {'name': 'foreign', 'preview': True})['preview']
-        self.assertEqual(preview['unsupported'], [])
-        self.assertEqual(preview['config']['ulimits'], expected)
-        self.assertEqual(preview['config']['stop_signal'], 'SIGTERM')
-        self.execute('adopt', {'name': 'foreign', 'confirm': True, 'preview_fingerprint': preview['fingerprint'],
-                               'config': preview['config'], 'start': True})
-        saved = self.store.load('foreign')
-        edited = self.store.redact(saved)
-        for key in ('ulimits', 'stop_signal', 'pids_limit'):
-            edited.pop(key)
-        edited['memory'] = '128M'
-        self.execute('save', {'name': 'foreign', 'revision': saved['revision'], 'config': edited})
-        saved = self.store.load('foreign')
-        self.assertEqual(saved['ulimits'], expected)
-        self.assertEqual(saved['stop_signal'], 'SIGTERM')
-        lines = self.manager.quadlet('foreign').read_text().splitlines()
-        self.assertIn('StopSignal=SIGTERM', lines)
-        self.assertIn('Ulimit=nofile=1048576:1048576', lines)
-        self.assertIn('Ulimit=core=0:-1', lines)
-
-    def test_ulimit_and_signal_validation_rejects_malformed_values_before_any_stop(self):
-        expected = [{'name': 'nofile', 'soft': 512, 'hard': 2048}]
-        valid = cfg.validate(dict(self.config, ulimits=expected, stop_signal='SIGUSR1'), self.env)
-        self.assertEqual(valid['ulimits'], expected)
-        self.assertEqual(valid['stop_signal'], 'SIGUSR1')
-        for changed in ({'ulimits': [{'name': 'nofile --privileged', 'soft': 1, 'hard': 2}]},
-                        {'ulimits': [{'name': 'nofile', 'soft': -1, 'hard': 10}]},
-                        {'ulimits': [{'name': 'nofile', 'soft': True, 'hard': 10}]},
-                        {'ulimits': expected + expected}, {'stop_signal': 'SIGTERM\nExecStart=/bad'},
-                        {'stop_signal': '65'}, {'stop_signal': True}):
-            with self.subTest(changed=changed), self.assertRaises(cfg.ContainerConfigError):
-                cfg.validate(dict(self.config, **changed), self.env)
-        self.assertEqual(self.runner.calls, [])
-
-    def test_failed_adoption_returns_original_container(self):
-        self.external()
-        preview = self.execute('adopt', {'name': 'foreign', 'preview': True})['preview']
-        self.runner.fail = 'systemctl start konsol-foreign.service'
+        def run(argv, timeout=60, input=None, **kwargs):
+            if list(argv[:3]) == ['podman', 'image', 'inspect'] and argv[-1] == pinned:
+                return subprocess.CompletedProcess(argv, 0, json.dumps([{'Id': 'sha256:' + 'e' * 64, 'RepoDigests': [pinned]}]), '')
+            if list(argv[:3]) == ['podman', 'ps', '-a']:
+                return subprocess.CompletedProcess(argv, 0, '[]', '')
+            if list(argv[:3]) == ['podman', 'network', 'inspect']:
+                return subprocess.CompletedProcess(argv, 0, json.dumps([{'driver': 'bridge', 'labels': {
+                    'io.master-stack.managed': 'uygulama', 'io.master-stack.uygulama': 'notlar'}}]), '')
+            return original(argv, timeout=timeout, input=input, **kwargs)
+        self.manager.run = run
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('image-remove', {'image': pinned})
+        self.assertIn('uygulamanın kaydında', str(err.exception))
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.execute('network-remove', {'name': 'ksl-notlar'})
+        self.assertIn('uygulamayla birlikte', str(err.exception))
         with self.assertRaises(cfg.ContainerConfigError):
-            self.execute('adopt', {'name': 'foreign', 'confirm': True, 'preview_fingerprint': preview['fingerprint'],
-                                   'config': preview['config'], 'start': True})
-        self.assertIsNone(self.store.load('foreign'))
-        self.assertTrue(self.runner.containers['foreign']['State']['Running'])
-        self.assertEqual(self.runner.containers['foreign']['Config']['Env'], ['TOKEN=import-secret'])
+            self.execute('network-create', {'name': 'ksl-baska'})
+
+    def test_an_operation_id_runs_once_and_its_record_never_holds_the_request(self):
+        ident = uuid.uuid4().hex
+        request = {'name': 'notlar', 'metin': app_fixtures.TEXT, 'yanitlar': app_fixtures.answers(), 'kaynak': {'tur': 'dosya'}}
+        self.manager.execute('uygulama-kur', request, ident)
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            worker.Manager(str(self.state), run=self.host, network=self.guard).execute('uygulama-kur', request, ident)
+        self.assertEqual(err.exception.status, 409)
+        record = json.loads((Path(self.env['KONTEYNER_STATE_DIR']) / 'operations' / (ident + '.json')).read_text())
+        self.assertEqual(set(record) - {'result', 'finished_at'}, {'id', 'action', 'name', 'state', 'step', 'created_at', 'updated_at'})
+        self.assertEqual((record['name'], record['action']), ('notlar', 'uygulama-kur'))
 
     def test_a_job_waits_briefly_for_a_held_install_lock(self):
-        # DD-266: the share guard holds install.lock for a moment every 30 s; a job waits for it.
         import fcntl
         import threading
-        lock = self.root / 'run/install.lock'
-        lock.parent.mkdir(parents=True, exist_ok=True)
-        held = open(lock, 'a')
-        self.addCleanup(held.close)
-        fcntl.flock(held, fcntl.LOCK_EX)
-        timer = threading.Timer(0.5, lambda: fcntl.flock(held, fcntl.LOCK_UN))
-        timer.start()
-        self.addCleanup(timer.cancel)
-        self.execute('volume-create', {'name': 'waited'})
-        self.assertIn(['podman', 'volume', 'create', '--label', 'io.master-stack.managed=konsol', 'waited'],
-                      [c[:6] for c in self.runner.calls if c[:3] == ['podman', 'volume', 'create']])
-        # Held for longer than the wait: the job refuses, nothing runs.
-        fcntl.flock(held, fcntl.LOCK_EX)
-        before = len(self.runner.calls)
-        with patch.object(worker, 'LOCK_WAIT', 0.3), self.assertRaises(cfg.ContainerConfigError) as caught:
-            self.execute('volume-create', {'name': 'refused'})
-        self.assertEqual(caught.exception.status, 409)
-        self.assertEqual(len(self.runner.calls), before)
+        lock = Path(self.env['RUNTIME_DIR']) / 'install.lock'
+        with open(lock, 'a') as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+            timer = threading.Timer(0.5, lambda: fcntl.flock(held.fileno(), fcntl.LOCK_UN))
+            timer.start()
+            try:
+                self.execute('volume-create', {'name': 'yedek'})
+            finally:
+                timer.cancel()
+        self.assertIn(['podman', 'volume', 'create', '--label', 'io.master-stack.managed=konsol', 'yedek'], self.host.calls)
+        with open(lock, 'a') as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+            with patch.object(worker, 'LOCK_WAIT', 0.2), self.assertRaises(cfg.ContainerConfigError) as err:
+                self.execute('volume-create', {'name': 'ikinci'})
+        self.assertEqual(err.exception.status, 409)
 
-    def test_volume_and_network_deletion_checks_stopped_definition_references(self):
-        self.config['mounts'] = [{'type': 'volume', 'source': 'my-volume', 'destination': '/data', 'read_only': False}]
-        self.create()
-        for action, name in (('volume-remove', 'my-volume'), ('network-remove', 'konsol')):
-            with self.assertRaises(cfg.ContainerConfigError) as caught:
-                self.execute(action, {'name': name})
-            self.assertEqual(caught.exception.status, 409)
-        self.execute('volume-create', {'name': 'unused'})
-        self.execute('volume-remove', {'name': 'unused'})
-        self.assertIn(['podman', 'volume', 'rm', 'unused'], self.runner.calls)
+    def test_a_pending_settings_change_blocks_every_job(self):
+        pending = self.root / 'ayarlar-bekleyen.json'
+        pending.write_text('{}')
+        self.env['SETTINGS_PENDING_FILE'] = str(pending)
+        self.state = app_fixtures.write_state(self.root, self.env)
+        manager = worker.Manager(str(self.state), run=self.host, network=self.guard, quadlet='/fixture/quadlet')
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            manager.execute('uygulama-kur', {'name': 'notlar', 'metin': app_fixtures.TEXT, 'yanitlar': app_fixtures.answers(),
+                                             'kaynak': {'tur': 'dosya'}}, uuid.uuid4().hex)
+        self.assertIn('Onay bekleyen', str(err.exception))
 
-    def test_image_delete_protects_saved_definition_pins(self):
-        self.create()
-        with self.assertRaises(cfg.ContainerConfigError) as caught:
-            self.execute('image-remove', {'image': 'sha256:' + 'a'*64})
-        self.assertEqual(caught.exception.status, 409)
-        self.assertFalse(any(c[:3] == ['podman', 'image', 'rm'] for c in self.runner.calls))
-        # Once no saved definition or container uses it, the image goes.
-        self.store.delete('demo')
-        self.assertTrue(self.execute('image-remove', {'image': 'sha256:' + 'a'*64})['removed'])
-        self.assertIn(['podman', 'image', 'rm', 'sha256:' + 'a'*64], self.runner.calls)
 
-    def test_image_update_is_explicit_and_preserves_stopped_state(self):
-        d = self.create()
-        self.runner.image = 'registry.example/app@sha256:' + 'c'*64
-        self.execute('image-update', {'name': 'demo', 'revision': d['revision']})
-        self.assertEqual(self.store.load('demo')['image'], self.runner.image)
-        self.assertNotIn('konsol-demo.service', self.runner.active)
-        self.assertIn(['podman', 'pull', '--quiet', 'registry.example/app:1'], self.runner.calls)
-
-    def test_stop_works_without_available_tailnet_address(self):
-        d = self.create(start=True)
-        with patch.object(self.manager.network, 'bindings', side_effect=ValueError('tailnet unavailable')):
-            self.execute('stop', {'name': 'demo', 'revision': d['revision']})
-        self.assertTrue(self.store.load('demo')['manual_stop'])
-
-    def test_start_revalidates_bind_paths_after_they_are_replaced_by_symlinks(self):
-        d = self.create()
-        (self.root / 'srv/data').rmdir()
-        (self.root / 'srv/data').symlink_to(self.root / 'srv/media', target_is_directory=True)
-        with self.assertRaises(cfg.ContainerConfigError):
-            self.execute('start', {'name': 'demo', 'revision': d['revision']})
-        self.assertNotIn('konsol-demo.service', self.runner.active)
-
-    def test_failed_operation_keeps_step_and_never_echoes_subprocess_secrets(self):
-        d = self.create(start=True)
-        op = uuid.uuid4().hex
-        self.runner.fail = 'systemctl start konsol-demo.service'
-        with self.assertRaises(cfg.ContainerConfigError):
-            self.manager.execute('restart', {'name': 'demo', 'revision': d['revision']}, op)
-        record = json.loads((self.root / ('state/operations/' + op + '.json')).read_text())
-        self.assertEqual(record['state'], 'failed')
-        self.assertIn('failed_step', record)
-        self.assertNotIn('never-print', json.dumps(record))
-
-    def test_tailnet_refresh_preserves_stop_latch_revision_and_skips_unchanged_units(self):
-        self.config['ports'] = [{'scope': 'tailscale', 'host_port': 18080, 'container_port': 80,
-                                 'protocol': 'tcp', 'public_ack': False}]
-        d = self.create(start=True)
-        self.execute('stop', {'name': 'demo', 'revision': d['revision']})
-        old = self.store.load('demo')
-        pending = self.root / 'run/containers-tailnet.pending'
-        pending.write_text('100.64.0.9\n\n')
-        self.manager.network.tail_ip = '100.64.0.9'
-        before = len(self.runner.calls)
-        result = self.manager.refresh_tailnet()
-        self.assertEqual(result['updated'], ['demo'])
-        self.assertFalse(pending.exists())
-        self.assertEqual(self.store.load('demo'), old)
-        self.assertNotIn('konsol-demo.service', self.runner.active)
-        self.assertIn('PublishPort=100.64.0.9:18080:80/tcp', self.manager.quadlet('demo').read_text())
-        self.assertFalse(any(c[:2] == ['systemctl', 'start'] for c in self.runner.calls[before:]))
-        before = len(self.runner.calls)
-        result = self.manager.refresh_tailnet()
-        self.assertEqual(result['updated'], [])
-        self.assertEqual(self.runner.calls[before:], [])
-
-    def test_tailnet_refresh_running_target_and_newer_pending_event_is_preserved(self):
-        self.config['ports'] = [{'scope': 'tailscale', 'host_port': 18080, 'container_port': 80,
-                                 'protocol': 'tcp', 'public_ack': False}]
-        old = self.create(start=True)
-        pending = self.root / 'run/containers-tailnet.pending'
-        pending.write_text('100.64.0.9\n\n')
-        self.manager.network.tail_ip = '100.64.0.9'
-        with patch.object(self.manager.network, 'apply', side_effect=lambda *a, **kw: pending.write_text('100.64.0.10\n\n')):
-            result = self.manager.refresh_tailnet()
-        self.assertTrue(result['ok'])
-        self.assertEqual(pending.read_text(), '100.64.0.10\n\n')
-        self.assertEqual(self.store.load('demo'), old)
-        self.assertIn('konsol-demo.service', self.runner.active)
-
-    def test_tailnet_refresh_failure_retains_pending_event(self):
-        self.config['ports'] = [{'scope': 'tailscale', 'host_port': 18080, 'container_port': 80,
-                                 'protocol': 'tcp', 'public_ack': False}]
-        self.create()
-        pending = self.root / 'run/containers-tailnet.pending'
-        pending.write_text('100.64.0.9\n\n')
-        with patch.object(self.manager.network, 'bindings', side_effect=ValueError('unavailable')):
-            result = self.manager.refresh_tailnet()
-        self.assertFalse(result['ok'])
-        self.assertEqual(result['errors'][0]['name'], 'demo')
-        self.assertTrue(pending.exists())
-
-    def test_named_volume_cannot_bypass_bind_policy_with_driver_options(self):
-        self.config['mounts'] = [{'type': 'volume', 'source': 'foreign-volume', 'destination': '/data', 'read_only': False}]
-        self.runner.volume_options = {'type': 'none', 'o': 'bind', 'device': '/etc'}
-        with self.assertRaises(cfg.ContainerConfigError):
-            self.create()
-        self.assertIsNone(self.store.load('demo'))
-        self.assertFalse(any(c[:2] == ['systemctl', 'start'] for c in self.runner.calls))
-
-    def test_unsafe_definition_file_is_a_structured_failure(self):
-        d = self.create()
-        path = self.store.path('demo')
-        path.unlink()
-        path.symlink_to(self.state)
-        with self.assertRaises(cfg.ContainerConfigError) as caught:
-            self.store.list()
-        self.assertEqual(caught.exception.status, 503)
-
-    def test_explicit_network_subnet_cannot_shadow_host_or_vpn_routes(self):
-        self.runner.routes = [{'dst': 'default', 'gateway': '192.168.1.1'}, {'dst': '10.42.0.0/24', 'dev': 'wg0'}]
-        for subnet in ('10.42.0.0/24', '169.254.0.0/16', '0.0.0.0/16'):
-            with self.subTest(subnet=subnet), self.assertRaises(cfg.ContainerConfigError):
-                self.execute('network-create', {'name': 'custom', 'subnet': subnet})
-        self.assertFalse(any(c[:3] == ['podman', 'network', 'create'] for c in self.runner.calls))
-        self.execute('network-create', {'name': 'custom', 'subnet': '172.29.1.0/24'})
-        self.assertTrue(any(c[:3] == ['podman', 'network', 'create'] for c in self.runner.calls))
+class SrvWalkTests(unittest.TestCase):
+    def test_install_time_check_refuses_a_linked_or_hidden_folder(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name).resolve()
+        (root / 'srv/media').mkdir(parents=True)
+        (root / 'elsewhere').mkdir()
+        (root / 'srv/link').symlink_to(root / 'elsewhere', target_is_directory=True)
+        env = dict(app_fixtures.env(root), SERVER_ROOT=str(root / 'srv'))
+        state = app_fixtures.write_state(root, env)
+        manager = worker.Manager(str(state), run=FakeHost(env))
+        self.assertEqual(manager.srv_folder(str(root / 'srv/media')), str(root / 'srv/media'))
+        for path in ('srv/link', 'srv/.cop', 'srv/yok', 'elsewhere', 'srv'):
+            with self.subTest(path=path), self.assertRaises(cfg.ContainerConfigError) as err:
+                manager.srv_folder(str(root / path))
+            self.assertEqual(err.exception.status, 409)
 
 
 if __name__ == '__main__':

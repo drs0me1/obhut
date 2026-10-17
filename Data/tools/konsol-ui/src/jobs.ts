@@ -1,4 +1,4 @@
-// Waiting for a background job the page started (a container save of the Yayınla flow, DD-211): the job
+// Waiting for a background job the page started (Gelişmiş's Podman resource jobs, DD-211): the job
 // appears in the live "islemler" topic (or GET /api/konsol/etkinlik while polling) and stays listed for
 // 120 s after it ends, so its end is seen even when it was quick.
 import { watch } from "vue";

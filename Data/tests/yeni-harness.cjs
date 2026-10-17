@@ -19,7 +19,11 @@
      h.unsigned(path) => true for GET paths a plain link opens without X-Konsol (a file's download);
                Playwright does not route a download, so the static server answers such a path from its
                exact handler (logged like the routed requests);
-     expected  URL fragments whose failed loads (4xx/5xx) are part of the current scenario. */
+     expected  URL fragments whose failed loads (4xx/5xx) are part of the current scenario.
+
+   const { uygulama, servis, uygulamalar, ayrinti } = require("./yeni-harness.cjs").fixtures;
+     builders of the application shapes (api/sema.ts: Uygulama, UygulamaServisi, Uygulamalar, UygulamaAyrinti)
+     with neutral defaults (registry.example images); every field can be overridden. */
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || "playwright");
 const assert = require("node:assert/strict");
 const childProcess = require("node:child_process");
@@ -279,4 +283,25 @@ function create({ name, url, data, expected = () => [] }) {
   return h;
 }
 
-module.exports = { create };
+// ---- application fixtures (DD-271, phase 3)
+const servis = (ad, o = {}) => ({ ad, durum: "calisiyor", imaj: `registry.example/${ad}:1`, guncelleme: "sabit", ...o });
+
+const uygulama = (ad, o = {}) => ({ ad, durum: "calisiyor", bicim: "compose", servisler: [servis("web")], kaynak: { cpu: null, bellek: null },
+  guncelleme: "sabit", eylemler: ["durdur", "yeniden-baslat"], revizyon: "rev-" + ad, is: null, koken: "dosya", durduruldu: false, uyari: 0, ...o });
+
+const uygulamalar = (items, o = {}) => ({ read_at: 1791845000, items, kaynaklar: [],
+  altyapi: { podman: "5.4.2", calisiyor: true, imaj: 1, kullanilmayan_imaj: 0, birim: 0, ag: 1 }, hatalar: [], ...o });
+
+/** An application's detail from its list item; `servisler` overrides each service's detail by name. */
+function ayrinti(item, o = {}, servisler = {}) {
+  const svc = (s) => ({ ad: s.ad, durum: s.durum, baslangic: "direct", kullanici: null, imaj: s.imaj, ozet: null, kanal: s.imaj, guncelleme: s.guncelleme,
+    konteyner: `${item.ad}_${s.ad}`, birim: `konsol-${item.ad}_${s.ad}.service`, calisma: null, saglik: "", yeniden_baslama: 0, portlar: [], baglamalar: [],
+    gizliler: [], ...(servisler[s.ad] || {}) });
+  return { uygulama: item, servisler: item.servisler.map(svc), gizliler: [], uyarilar: [],
+    koken: { tur: item.koken, adres: null, imaj: null, konteyner: null, alindi: 1791700000, sha256: "0".repeat(64) },
+    metin: "services:\n" + item.servisler.map((s) => `  ${s.ad}:\n    image: ${s.imaj}\n`).join(""), yanitlar: { name: item.ad, answers: {} },
+    birimler: [`konsol-${item.ad}.network`, ...item.servisler.map((s) => `konsol-${item.ad}_${s.ad}.container`)].sort(),
+    veri: `/var/lib/master-stack/uygulamalar/${item.ad}`, ag: `ksl-${item.ad}`, pod: null, ...o };
+}
+
+module.exports = { create, fixtures: { servis, uygulama, uygulamalar, ayrinti } };

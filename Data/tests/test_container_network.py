@@ -1,219 +1,56 @@
-"""Container publication validation and owned nft policy; no host mutations."""
+"""The container guard's owned nft policy (DD-223, DD-224, DD-229) and its input, the application records
+(rebuild DD-271, phase 3); no host mutations."""
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "panel"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import app_fixtures  # noqa: E402
+import master_applications as apps  # noqa: E402
+
 SPEC = importlib.util.spec_from_file_location("container_network", Path(__file__).resolve().parents[1] / "panel/master_container_network.py")
 network = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(network)
 DATA = Path(__file__).resolve().parents[1]
 
 
-def port(scope="local", host=18080, container=8080, protocol="tcp", **extra):
-    return dict(scope=scope, host_port=host, container_port=container, protocol=protocol, **extra)
+def app_row(app, *pools):
+    return {"app": app, "interface": "ksl" + "%010x" % (abs(hash(app)) % 16 ** 10),
+            "publications": [{"service": "web", "port": 8080 + n, "protocol": "tcp", "host_ip": "127.0.0.1", "host_port": pool}
+                             for n, pool in enumerate(pools)]}
 
 
 class NetworkTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.env = {"KONTEYNER_STATE_DIR": self.tmp.name, "RUNTIME_DIR": self.tmp.name,
-                    "KONTEYNER_NETWORK": "konsol", "KONTEYNER_BRIDGE_PREFIX": "ksl",
-                    "KONTEYNER_NFT_TABLE": "master_containers", "TAILSCALE_IF": "tailscale0",
-                    "SSH_PUBLIC_PORT": "22", "DNS_PORT": "53",
-                    "VPN_BLOCK_DEST4": network.env_read(DATA / "config/defaults.env")["VPN_BLOCK_DEST4"]}
+        self.root = Path(self.tmp.name).resolve()
+        self.env = dict(app_fixtures.env(self.root), VPN_BLOCK_DEST4=network.env_read(DATA / "config/defaults.env")["VPN_BLOCK_DEST4"])
+        (self.root / "run").mkdir()
         self.calls = []
-        self.ss = ""
-        self.podman = []
-        self.inspected = None
-        self.tail = "100.64.0.1"
+        self.applied = None
 
     def runner(self, argv, timeout=20):
-        self.calls.append(argv)
-        if argv[:4] == ["ip", "-j", "address", "show"]:
-            dev = argv[-1]
-            rows = [] if dev == "tailscale0" and not self.tail else [{"ifname": dev, "addr_info": [
-                {"family": "inet", "local": self.tail if dev == "tailscale0" else "192.0.2.1", "scope": "global"}]}]
-            return subprocess.CompletedProcess(argv, 0, json.dumps(rows), "")
-        if argv[:4] == ["ip", "-j", "route", "show"]:
-            return 0, '[{"dev":"eth0","metric":100}]', ""
-        if argv[0] == "ss":
-            return 0, self.ss, ""
-        if argv[:3] == ["podman", "ps", "-a"]:
-            return 0, json.dumps(self.podman), ""
-        if argv[:3] == ["podman", "inspect", "--type"]:
-            return 0, json.dumps([self.inspected]), ""
+        """nft as the guard sees it: what the last apply loaded is what a list shows."""
+        self.calls.append(list(argv))
+        if argv[:3] == ["nft", "-j", "list"]:
+            if self.applied is None:
+                return 1, "", "Error: No such file or directory"
+            return 0, json.dumps({"nftables": [{"metainfo": {"version": "test"}}] + self.applied}), ""
+        if argv[:3] == ["nft", "-j", "-c"]:
+            return 0, "", ""
+        if argv[:2] == ["nft", "-j"] and argv[2] == "-f":
+            with open(argv[3], encoding="utf-8") as fh:
+                self.applied = [next(iter(c.values())) for c in json.load(fh)["nftables"] if "add" in c]
+            return 0, "", ""
         self.fail("Unexpected command: " + repr(argv))
-
-    def validate(self, ports, **kw):
-        return network.validate_ports(self.env, ports, "example", run=self.runner, **kw)
-
-    def definitions(self, *rows):
-        root = Path(self.tmp.name) / "definitions"
-        root.mkdir(exist_ok=True)
-        for row in rows:
-            (root / (row["name"] + ".json")).write_text(json.dumps(row))
-
-    def test_explicit_bindings_and_no_mutations(self):
-        rows = self.validate([port(), port("tailscale", 18081), port("public", 18082, public_ack=True)])
-        self.assertEqual(network.bindings(self.env, rows, run=self.runner), [
-            "127.0.0.1:18080:8080/tcp", "100.64.0.1:18081:8080/tcp", "0.0.0.0:18082:8080/tcp"])
-        self.assertFalse(any(c[0] in ("nft", "iptables", "ip6tables") for c in self.calls))
-
-    def test_public_requires_boolean_explicit_ack(self):
-        for value in (None, False, "true", 1):
-            with self.subTest(value=value), self.assertRaises(network.NetworkError):
-                self.validate([port("public", public_ack=value)])
-
-    def test_types_ranges_protocols_and_unknown_keys(self):
-        bad = [port(host=True), port(host=0), port(host=65536), port(host="8080"), port(host=3.5),
-               port(container=0), port(protocol="sctp"), port(protocol="TCP"), port(scope="all"),
-               port(host_ip="0.0.0.0")]
-        for row in bad:
-            with self.subTest(row=row), self.assertRaises(network.NetworkError):
-                self.validate([row])
-
-    def test_reserved_even_if_not_listening(self):
-        for host in (22, 53):
-            with self.subTest(host=host), self.assertRaises(network.NetworkError):
-                self.validate([port(host=host)])
-
-    def test_every_state_port_key_is_reserved(self):
-        # The base's own ports are every *_PORT key of state.env, listening or not.
-        self.env.update(SHARE_PORT="61010", FILES_PANEL_PORT="61009", KONTEYNER_SAYI="19997")
-        self.assertEqual(network.reserved_ports(self.env), {22, 53, 61009, 61010})
-        for host in (61009, 61010):
-            with self.subTest(host=host), self.assertRaises(network.NetworkError) as err:
-                self.validate([port(host=host)])
-            self.assertEqual(err.exception.status, 409)
-        self.assertEqual(len(self.validate([port(host=19997)])), 1)
-
-    def test_duplicate_overlap_and_independent_protocols(self):
-        for rows in ([port(), port()], [port(), port("public", public_ack=True)]):
-            with self.subTest(rows=rows), self.assertRaises(network.NetworkError):
-                self.validate(rows)
-        self.assertEqual(len(self.validate([port(), port(protocol="udp")])), 2)
-        self.assertEqual(len(self.validate([port(), port("tailscale")])), 2)
-
-    def test_saved_stopped_definition_reserves_binding_except_self(self):
-        self.definitions({"name": "other", "network": "bridge", "ports": [port()], "manual_stop": True})
-        with self.assertRaises(network.NetworkError):
-            self.validate([port()])
-        self.assertEqual(len(network.validate_ports(self.env, [port()], "other", run=self.runner)), 1)
-
-    def test_socket_conflicts_including_ipv6_wildcard(self):
-        for addr in ("0.0.0.0:18080", "[::]:18080", "*:18080", "127.0.0.1:18080"):
-            self.ss = "tcp LISTEN 0 128 %s *:*\n" % addr
-            with self.subTest(addr=addr), self.assertRaises(network.NetworkError):
-                self.validate([port()])
-        self.ss = "udp UNCONN 0 0 127.0.0.1:18080 0.0.0.0:*\n"
-        self.assertEqual(len(self.validate([port()])), 1)
-
-    def test_external_podman_mapping_conflicts_even_without_socket(self):
-        self.podman = [{"Names": ["foreign"], "Ports": [{"host_ip": "", "host_port": 18080,
-                          "container_port": 80, "protocol": "tcp", "range": 1}]}]
-        with self.assertRaises(network.NetworkError):
-            self.validate([port()])
-
-    def own_runtime(self):
-        self.podman = [{"Id": "a" * 64, "Names": ["example"], "Ports": [
-            {"host_ip": "127.0.0.1", "host_port": 18080, "container_port": 8080, "protocol": "tcp", "range": 1}]}]
-        self.inspected = {"Id": "a" * 64, "Name": "example", "State": {"Running": True, "ConmonPid": 43210},
-                          "Config": {"Labels": {"io.master-stack.managed": "konsol", "PODMAN_SYSTEMD_UNIT": "konsol-example.service"}},
-                          "HostConfig": {"PortBindings": {"8080/tcp": [
-                              {"HostIp": "127.0.0.1", "HostPort": "18080"},
-                              {"HostIp": "100.64.0.1", "HostPort": "18081"},
-                              {"HostIp": "0.0.0.0", "HostPort": "18082"}]}}}
-        self.ss = 'tcp LISTEN 0 4096 127.0.0.1:18080 0.0.0.0:* users:(("conmon",pid=43210,fd=5))\n'
-
-    def test_running_target_conmon_bindings_allow_save_and_restart_for_all_scopes(self):
-        self.own_runtime()
-        self.ss += 'tcp LISTEN 0 4096 100.64.0.1:18081 0.0.0.0:* users:(("conmon",pid=43210,fd=6))\n'
-        self.ss += 'tcp LISTEN 0 4096 0.0.0.0:18082 0.0.0.0:* users:(("conmon",pid=43210,fd=7))\n'
-        rows = [port(container=9090), port('tailscale', 18081), port('public', 18082, public_ack=True)]
-        self.assertEqual(len(self.validate(rows)), 3)
-        self.assertIn(['ss', '-H', '-lntup'], self.calls)
-
-    def test_owned_udp_mapping_is_distinct_from_tcp_and_requires_complete_socket_owners(self):
-        self.own_runtime()
-        self.inspected['HostConfig']['PortBindings']['8080/udp'] = [{'HostIp': '127.0.0.1', 'HostPort': '18080'}]
-        self.ss += 'udp UNCONN 0 0 127.0.0.1:18080 0.0.0.0:* users:(("conmon",pid=43210,fd=8))\n'
-        self.assertEqual(len(self.validate([port(), port(protocol='udp')])), 2)
-        self.ss = self.ss.replace('fd=8))', 'fd=8),unknown-owner)')
-        with self.assertRaises(network.NetworkError):
-            self.validate([port(protocol='udp')])
-
-    def test_conmon_exception_requires_exact_live_owner_and_runtime_mapping(self):
-        for defect in ('foreign-pid', 'foreign-process', 'mixed-owners', 'missing-owner', 'missing-mapping',
-                       'different-address', 'different-protocol', 'stopped', 'missing-conmon', 'foreign-controller',
-                       'name-mismatch', 'id-mismatch', 'missing-inventory', 'definition-only'):
-            self.own_runtime()
-            if defect == 'foreign-pid': self.ss = self.ss.replace('43210', '43211')
-            elif defect == 'foreign-process': self.ss = self.ss.replace('conmon', 'nginx')
-            elif defect == 'mixed-owners': self.ss = self.ss.replace('fd=5))', 'fd=5),("nginx",pid=43211,fd=6))')
-            elif defect == 'missing-owner': self.ss = self.ss.split(' users:')[0] + '\n'
-            elif defect == 'missing-mapping': self.inspected['HostConfig']['PortBindings'] = {}
-            elif defect == 'different-address': self.inspected['HostConfig']['PortBindings']['8080/tcp'][0]['HostIp'] = '127.0.0.2'
-            elif defect == 'different-protocol': self.inspected['HostConfig']['PortBindings'] = {'8080/udp': [{'HostIp': '127.0.0.1', 'HostPort': '18080'}]}
-            elif defect == 'stopped': self.inspected['State']['Running'] = False
-            elif defect == 'missing-conmon': self.inspected['State'].pop('ConmonPid')
-            elif defect == 'foreign-controller': self.inspected['Config']['Labels']['PODMAN_SYSTEMD_UNIT'] = 'foreign.service'
-            elif defect == 'name-mismatch': self.inspected['Name'] = 'foreign'
-            elif defect == 'id-mismatch': self.inspected['Id'] = 'b' * 64
-            elif defect in ('missing-inventory', 'definition-only'):
-                self.podman = []
-                if defect == 'definition-only': self.definitions({'name': 'example', 'network': 'bridge', 'ports': [port()]})
-            with self.subTest(defect=defect), self.assertRaises(network.NetworkError):
-                self.validate([port()])
-
-    def test_proven_standalone_adoption_owns_conmon_but_another_listener_still_conflicts(self):
-        self.own_runtime()
-        self.inspected['Config']['Labels'] = {}
-        self.assertEqual(len(self.validate([port()])), 1)
-        self.ss += 'tcp LISTEN 0 128 127.0.0.2:18080 0.0.0.0:* users:(("other",pid=12345,fd=4))\n'
-        with self.assertRaises(network.NetworkError):
-            self.validate([port('public', public_ack=True)])
-
-    def test_tailscale_resolution_never_uses_stale_env_or_wildcard(self):
-        self.env["TAILSCALE_IPV4"] = "100.64.0.9"
-        for value in (None, "0.0.0.0", "127.0.0.1", "192.0.2.1", "::1", "100.64.0.1;drop"):
-            self.tail = value
-            with self.subTest(value=value), self.assertRaises(network.NetworkError):
-                network.bindings(self.env, [port("tailscale")], run=self.runner)
-
-    def test_fail_closed_on_unreadable_runtime_inventory(self):
-        with self.assertRaises(network.NetworkError):
-            network.validate_ports(self.env, [port()], "example", run=lambda *a, **k: (1, "", "failed"))
-
-    def test_policy_no_blanket_established_and_scoped_dnat(self):
-        rows = [{"name": "example", "network": "bridge", "ports": [port(), port("tailscale", 18081),
-                 port("public", 18082, public_ack=True)]}]
-        policy = network.policy(self.env, rows, run=self.runner)
-        chain = next(x["chain"] for x in policy if "chain" in x)
-        self.assertEqual((chain["family"], chain["hook"], chain["prio"], chain["policy"]), ("inet", "forward", -10, "accept"))
-        text = json.dumps(policy)
-        self.assertIn('"direction"', text)
-        self.assertIn('"reply"', text)
-        self.assertIn('"dnat"', text)
-        self.assertIn('"tailscale0"', text)
-        self.assertIn('"192.0.2.1"', text)
-        self.assertIn('"100.64.0.1"', text)
-        self.assertNotIn('"ip6"', text, "IPv6 ingress is denied, not implicitly opened")
-        self.assertNotIn('18080', text, "local publications get no forward permit")
-        self.assertEqual(self.egress_rules(policy)[-1][-1], {"drop": None})
-
-    def test_policy_identity_and_corrupt_definitions_fail_closed(self):
-        with self.assertRaises(network.NetworkError):
-            network.policy(dict(self.env, KONTEYNER_BRIDGE_PREFIX="*"), [], run=self.runner)
-        self.definitions({"name": "broken", "network": "bridge", "ports": [port("public")]})
-        with self.assertRaises(network.NetworkError):
-            network.policy(self.env, network.read_definitions(self.env), run=self.runner)
 
     def egress_rules(self, objects):
         return [o["rule"]["expr"] for o in objects if "rule" in o and o["rule"]["chain"] == "forward"]
@@ -221,12 +58,78 @@ class NetworkTests(unittest.TestCase):
     def input_rules(self, objects):
         return [o["rule"]["expr"] for o in objects if "rule" in o and o["rule"]["chain"] == "input"]
 
+    def test_each_application_bridge_returns_its_own_traffic_and_a_loopback_publication_needs_no_permit(self):
+        rows = [app_row("notlar", 62100, 62101), app_row("sayac", 62102)]
+        policy = network.policy(self.env, rows)
+        chain = next(x["chain"] for x in policy if "chain" in x)
+        self.assertEqual((chain["family"], chain["hook"], chain["prio"], chain["policy"]), ("inet", "forward", -10, "accept"))
+        m = lambda key, right, op="==": {"match": {"op": op, "left": {"meta": {"key": key}}, "right": right}}
+        rules = self.egress_rules(policy)
+        bridges = sorted(r["interface"] for r in rows)
+        self.assertEqual(rules[-3:], [[m("iifname", b), m("oifname", b), {"return": None}] for b in bridges] + [[{"drop": None}]])
+        text = json.dumps(policy)
+        for value in ("62100", "62101", "62102", '"dnat"', '"ip6"', '"accept": null'):
+            self.assertNotIn(value, text, "the host reaches 127.0.0.1 through OUTPUT DNAT; nothing else is opened")
+
+    def test_the_guard_reads_the_application_records(self):
+        record = app_fixtures.record(self.env)
+        rows = network.applications(self.env)
+        self.assertEqual(rows, [{"app": "notlar", "interface": apps.interface(self.env, "notlar"),
+                                 "publications": [{"service": "web", "port": 8080, "protocol": "tcp", "host_ip": "127.0.0.1",
+                                                   "host_port": record["places"]["ports"]["web:8080/tcp"]}]}])
+        self.assertRegex(rows[0]["interface"], r"^ksl[0-9a-f]{10}$")
+        network.apply(self.env, run=self.runner)
+        self.assertTrue(network.check(self.env, run=self.runner))
+        self.assertIn(rows[0]["interface"], json.dumps(self.applied))
+        # Removing the record leaves the applied rules stale: the check says so; a new apply drops the bridge.
+        apps.Records(self.env).remove("notlar")
+        with self.assertRaises(network.NetworkError) as err:
+            network.check(self.env, run=self.runner)
+        self.assertEqual(err.exception.status, 503)
+        network.apply(self.env, run=self.runner)
+        self.assertNotIn(rows[0]["interface"], json.dumps(self.applied))
+
+    def test_an_install_without_its_places_yet_is_left_out_and_anything_unreadable_fails_closed(self):
+        app_fixtures.record(self.env)
+        partial = Path(self.env["UYGULAMA_STATE_DIR"]) / "yeni"
+        partial.mkdir(mode=0o700)
+        self.assertEqual([r["app"] for r in network.applications(self.env)], ["notlar"], "stricter, never wider")
+        places = partial / "yerler.json"
+        for bad in ("{", json.dumps({"revision": "x"}), json.dumps({"revision": "a" * 32, "stopped": False, "images": {},
+                                                                   "secrets": {}, "ports": {"web:8080/tcp": "62100"}})):
+            with self.subTest(bad=bad):
+                places.write_text(bad)
+                places.chmod(0o600)
+                with self.assertRaises(network.NetworkError) as err:
+                    network.applications(self.env)
+                self.assertEqual(err.exception.status, 503)
+        places.unlink()
+        (Path(self.env["UYGULAMA_STATE_DIR"]) / "Bozuk_ad").mkdir(mode=0o700)
+        with self.assertRaises(network.NetworkError):
+            network.applications(self.env)
+        os.rmdir(Path(self.env["UYGULAMA_STATE_DIR"]) / "Bozuk_ad")
+        with self.assertRaises(network.NetworkError):
+            network.applications(dict(self.env, UYGULAMA_STATE_DIR=""))
+
+    def test_a_publication_on_any_other_address_fails_closed_until_phase_4(self):
+        row = app_row("notlar", 62100)
+        for address in ("0.0.0.0", "100.64.0.2", "192.0.2.1", ""):
+            row["publications"][0]["host_ip"] = address
+            with self.subTest(address=address), patch.object(apps, "guard_input", return_value=[copy.deepcopy(row)]), \
+                    self.assertRaises(network.NetworkError):
+                network.applications(self.env)
+        with patch.object(apps, "guard_input", return_value=[dict(app_row("notlar"), interface="eth0")]), \
+                self.assertRaises(network.NetworkError):
+            network.applications(self.env)
+
+    def test_policy_identity_fails_closed(self):
+        with self.assertRaises(network.NetworkError):
+            network.policy(dict(self.env, KONTEYNER_BRIDGE_PREFIX="*"), [])
+
     def test_containers_open_nothing_on_the_host_but_gateway_dns(self):
         # DD-229: the input chain at -10 ends in a drop for anything a bridge opens to the host itself;
         # only replies to host-opened connections and DNS to the address of the incoming bridge pass.
-        rows = [{"name": "example", "network": "bridge", "ports": [port("public", 18082, public_ack=True),
-                                                                  port("tailscale", 18081)]}]
-        policy = network.policy(self.env, rows, run=self.runner)
+        policy = network.policy(self.env, [app_row("notlar", 62100)])
         chains = [o["chain"] for o in policy if "chain" in o]
         self.assertEqual([(c["name"], c["hook"], c["prio"], c["policy"]) for c in chains],
                          [("forward", "forward", -10, "accept"), ("input", "input", -10, "accept")])
@@ -244,15 +147,12 @@ class NetworkTests(unittest.TestCase):
             [m("nfproto", "ipv4"), m("l4proto", "udp"), dport("udp"), fib, {"return": None}],
             [m("nfproto", "ipv4"), m("l4proto", "tcp"), dport("tcp"), fib, {"return": None}],
             [{"drop": None}]])
-        # Publications never open the host side: no port but DNS appears in the input chain.
-        text = json.dumps(self.input_rules(policy))
-        for value in ("18081", "18082", "192.0.2.1", "100.64.0.1", "accept"):
-            self.assertNotIn(value, text)
+        self.assertNotIn("62100", json.dumps(self.input_rules(policy)))
 
     def test_container_egress_rules_come_after_the_hot_path_and_replies(self):
-        # DD-224: exit-node/WireGuard traffic leaves after one rule; replies to publications pass
-        # before any egress drop; then IPv6, tailscale0 and every block-list prefix, in list order.
-        rules = self.egress_rules(network.policy(self.env, [], run=self.runner))
+        # DD-224: exit-node/WireGuard traffic leaves after one rule; replies pass before any egress drop;
+        # then IPv6, tailscale0 and every block-list prefix, in list order.
+        rules = self.egress_rules(network.policy(self.env, []))
         m = lambda key, right, op="==": {"match": {"op": op, "left": {"meta": {"key": key}}, "right": right}}
         self.assertEqual(rules[0], [m("iifname", "ksl*", "!="), m("oifname", "ksl*", "!="), {"return": None}])
         self.assertEqual([r[-1] for r in rules[1:3]], [{"return": None}] * 2)
@@ -274,7 +174,7 @@ class NetworkTests(unittest.TestCase):
         source = (DATA / "panel/master_container_network.py").read_text(encoding="utf-8")
         for literal in ("169.254", "172.16", "192.168"):
             self.assertNotIn(literal, source)
-        single = self.egress_rules(network.policy(dict(self.env, VPN_BLOCK_DEST4="203.0.113.9/32 10.0.0.0/8"), [], run=self.runner))
+        single = self.egress_rules(network.policy(dict(self.env, VPN_BLOCK_DEST4="203.0.113.9/32 10.0.0.0/8"), []))
         self.assertEqual([r[2]["match"]["right"] for r in single[5:7]],
                          ["203.0.113.9", {"prefix": {"addr": "10.0.0.0", "len": 8}}])
 
@@ -286,11 +186,11 @@ class NetworkTests(unittest.TestCase):
             else:
                 env["VPN_BLOCK_DEST4"] = value
             with self.subTest(value=value), self.assertRaises(network.NetworkError) as err:
-                network.policy(env, [], run=self.runner)
+                network.policy(env, [])
             self.assertEqual(err.exception.status, 503)
 
     def test_health_detects_a_missing_or_reordered_egress_rule(self):
-        expected = network.policy(self.env, [], run=self.runner)
+        expected = network.policy(self.env, [])
         rules = [i for i, o in enumerate(expected) if "rule" in o]
         missing = [o for i, o in enumerate(expected) if i != rules[6]]
         self.assertFalse(network.same_policy(expected, {"nftables": copy.deepcopy(missing)}))
@@ -301,24 +201,18 @@ class NetworkTests(unittest.TestCase):
 
     def test_check_names_a_missing_guard_table(self):
         # DD-223: a container unit's start precondition says why the container waits.
-        def missing(argv, timeout=20):
-            if argv[:3] == ["nft", "-j", "list"]:
-                return 1, "", "Error: No such file or directory\nlist table inet master_containers"
-            return self.runner(argv, timeout)
         with self.assertRaises(network.NetworkError) as err:
-            network.check(self.env, run=missing)
+            network.check(self.env, run=self.runner)
         self.assertEqual(str(err.exception), "Konteyner yönlendirme koruması eksik veya güncel değil.")
 
         def broken(argv, timeout=20):
-            if argv[:3] == ["nft", "-j", "list"]:
-                return 1, "", "Error: Operation not permitted"
-            return self.runner(argv, timeout)
+            return 1, "", "Error: Operation not permitted"
         with self.assertRaises(network.NetworkError) as err:
             network.check(self.env, run=broken)
         self.assertEqual(str(err.exception), "Ağ durumu okunamadı: nft")
 
     def test_health_comparison_checks_rules_not_only_existence(self):
-        expected = network.policy(self.env, [], run=self.runner)
+        expected = network.policy(self.env, [app_row("notlar")])
         actual = {"nftables": [{"metainfo": {"version": "test"}}] + copy.deepcopy(expected)}
         for row in actual["nftables"][1:]:
             next(iter(row.values()))["handle"] = 3
@@ -326,30 +220,19 @@ class NetworkTests(unittest.TestCase):
         actual["nftables"][-1]["rule"]["expr"][-1] = {"accept": None}
         self.assertFalse(network.same_policy(expected, actual))
 
-    def test_health_accepts_nft_inferred_protocols_but_not_changed_tuple(self):
-        expected = network.policy(self.env, [{"name": "example", "network": "bridge",
-            "ports": [port("tailscale", 18081)]}], run=self.runner)
+    def test_health_accepts_nft_inferred_protocols_but_not_a_changed_port(self):
+        expected = network.policy(self.env, [])
         canonical = copy.deepcopy(expected)
         for obj in canonical:
-            if "rule" not in obj:
-                continue
-            expr = obj["rule"]["expr"]
-            implied = any(e.get("match", {}).get("left", {}).get("ct", {}).get("key") == "daddr" for e in expr)
-            obj["rule"]["expr"] = [e for e in expr if not (
-                e.get("match", {}).get("left", {}).get("meta", {}).get("key") == "l4proto"
-                or implied and e.get("match", {}).get("left", {}).get("meta", {}).get("key") == "nfproto")]
-            for e in expr:
-                ct = e.get("match", {}).get("left", {}).get("ct", {})
-                ct.pop("family", None)
-        self.assertTrue(network.same_policy(expected, {"nftables": canonical}))
+            if "rule" in obj:
+                obj["rule"]["expr"] = [e for e in obj["rule"]["expr"]
+                                       if e.get("match", {}).get("left", {}).get("meta", {}).get("key") != "l4proto"]
+        self.assertTrue(network.same_policy(expected, {"nftables": canonical}), "nft elides l4proto implied by the port match")
         changed = copy.deepcopy(canonical)
         for obj in changed:
             for e in obj.get("rule", {}).get("expr", []):
-                if e.get("match", {}).get("left", {}).get("ct", {}).get("key") == "daddr":
-                    e["match"]["right"] = "100.64.0.2"
-        self.assertFalse(network.same_policy(expected, {"nftables": changed}))
-        changed = copy.deepcopy(canonical)
-        changed[-2]["rule"]["expr"] = [e for e in changed[-2]["rule"]["expr"] if "payload" not in e.get("match", {}).get("left", {})]
+                if e.get("match", {}).get("left", {}).get("payload", {}).get("field") == "dport":
+                    e["match"]["right"] = 5353
         self.assertFalse(network.same_policy(expected, {"nftables": changed}))
 
 

@@ -2983,7 +2983,7 @@ PY
     s7="$(awk '/^stage_7\(\)/,/^print_summary\(\)/' "$V2_ROOT/install.sh")"
     # Stage 1 installs the runtime without recommends (no buildah, criu, slirp4netns) and requires it.
     grep -qF 'retry "apt-podman" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \' <<<"$s1"
-    grep -qx '        podman netavark aardvark-dns' <<<"$s1"
+    grep -qx '        podman netavark aardvark-dns catatonit' <<<"$s1"
     [ "$(grep -n 'check_nft_iptables required' <<<"$s1" | cut -d: -f1)" -lt "$(grep -n 'check_podman$' <<<"$s1" | cut -d: -f1)" ]
     grep -qx '    check_podman' <<<"$s7"
     grep -qF "podman info --format '{{.Version.Version}} {{.Host.OCIRuntime.Name}}'" "$V2_ROOT/install.sh"
@@ -2991,21 +2991,26 @@ PY
     [ "$(cat "$V2_ROOT/install.sh" | grep -vE '^[[:space:]]*#' | grep -cE 'podman\.socket|podman-auto-update|systemctl (enable|start)[^#]*podman')" -eq 0 ]
     # The base read mapper stays read-only; manager writes have one gated route and an external worker.
     grep -qF 'atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"' "$V2_ROOT/install.sh"
-    # DD-266: the reads are table routes too, on the same view; no Podman path is matched by hand.
-    for read in liste ayrinti guncellemeler islem; do
+    # DD-266: the reads are table routes too, on the same view; no Podman path is matched by hand. DD-271
+    # (phase 3): image updates are read per application (GET /api/konsol/uygulamalar).
+    for read in liste ayrinti islem; do
         grep -qF "Route(\"GET\", \"/api/konsol/konteynerler/$read\"," "$V2_ROOT/panel/master_api.py"
     done
+    run ! grep -qF '/api/konsol/konteynerler/guncellemeler' "$V2_ROOT/panel/master_api.py"
     grep -qF 'return self.panel.containers.view()' "$V2_ROOT/panel/master-panel"
     [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 0 ]
-    # DD-265: the one write route is declared in the route table and goes to the same broker.
+    # DD-265: Gelişmiş's resource route is declared in the route table and goes to the same broker as every
+    # application job (DD-271): one transient unit per job, the request on its standard input.
     grep -qF 'Route("POST", "/api/konsol/konteynerler/islem", "konteyner_islemi",' "$V2_ROOT/panel/master_api.py"
     grep -qF 'self.panel.containers.submit(data)' "$V2_ROOT/panel/master-panel"
-    grep -qF -- '--property=RuntimeMaxSec=900' "$V2_ROOT/panel/master_container_manager.py"
-    # Podman read commands only, the environment never returned; logs unfiltered, a managed container's
-    # from its unit journal (DD-251).
-    run ! grep -qE '"(run|create|pull|rm|rmi|stop|start|kill|exec|restart|reset)"' "$mc"
+    grep -qF 'self.panel.containers.submit_app(action, app, request)' "$V2_ROOT/panel/master-panel"
+    grep -qF "'--property=RuntimeMaxSec=%d' % seconds" "$V2_ROOT/panel/master_container_manager.py"
+    grep -qF 'input=json.dumps(data)' "$V2_ROOT/panel/master_container_manager.py"
+    # Podman read commands only, the environment never returned; an application's log is its units' journal,
+    # unfiltered (DD-251).
+    run ! grep -qE '"(run|create|pull|rm|rmi|stop|start|kill|exec|restart|reset|logs)"' "$mc"
     run ! grep -qE 'SECRET_RE|MASK|mask\(' "$mc" "$V2_ROOT/panel/master_container_manager.py"
-    grep -qF "rc,text,_=self.run(['journalctl','-u',unit,'-n',str(tail),'--no-pager','-o','short-iso'],30)" "$V2_ROOT/panel/master_container_manager.py"
+    grep -qF "self.run(['journalctl', '-u', objects['units'][service], '-n', str(tail), '--no-pager', '-o', 'short-iso'], 30)" "$V2_ROOT/panel/master_container_manager.py"
     run ! grep -qE '"Env"|\.get\("Env"' "$mc"
     run ! grep -qiE 'qbittorrent|wireguard|torrent' "$mc"
 }
@@ -3027,8 +3032,34 @@ PY
     run ! grep -qE 'for container_helper in .*master_container_binds' <<<"$stage4"
     run ! grep -qiE 'qbittorrent|torrent|wireguard|PAKET_' "$V2_ROOT/panel/master_container_binds.py"
     # DD-227: the generic container code (account rule included) names no application either.
-    run ! grep -qiE 'qbittorrent|torrent|wireguard' "$V2_ROOT/panel/master_container_config.py" "$V2_ROOT/panel/master_container_worker.py"
-    grep -qF "'master_container_binds.py'" "$V2_ROOT/tests/containers-worker-linux.py"
+    run ! grep -qiE 'qbittorrent|torrent|wireguard' "$V2_ROOT/panel/master_container_config.py" "$V2_ROOT/panel/master_container_worker.py" \
+        "$V2_ROOT/panel/master_applications.py" "$V2_ROOT/panel/master_generator.py"
+    # DD-271 (phase 3): the generator writes the pin into every unit with a /srv folder; the worker walks the
+    # same folders with this helper's rules before an install.
+    grep -qF '"%s/master_container_binds.py" % env["SBIN_DIR"]' "$V2_ROOT/panel/master_generator.py"
+    grep -qF 'binds.checked_source(self.env, path)' "$V2_ROOT/panel/master_container_worker.py"
+}
+
+@test "applications have their own record and data folders, private to root (DD-271, phase 3)" {
+    local stage4 key
+    grep -qx 'UYGULAMA_STATE_DIR="/etc/master-stack/containers/uygulamalar"' "$V2_ROOT/config/defaults.env"
+    grep -qx 'UYGULAMA_VERI_DIR="/var/lib/master-stack/uygulamalar"' "$V2_ROOT/config/defaults.env"
+    for key in UYGULAMA_STATE_DIR UYGULAMA_VERI_DIR; do
+        awk '/^write_state\(\)/,/^}$/' "$V2_ROOT/install.sh" | grep -qx "$key=\$$key"
+    done
+    stage4="$(awk '/^stage_4\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -qF 'install -d -m 0700 "$KONTEYNER_STATE_DIR" "$UYGULAMA_STATE_DIR" "$UYGULAMA_VERI_DIR"' <<<"$stage4"
+    # The data lives below PRIVATE_STATE_ROOT, which Files and WebDAV never see (DD-225).
+    (
+        # shellcheck source=/dev/null
+        source "$V2_ROOT/config/defaults.env"
+        case "$UYGULAMA_VERI_DIR" in "$PRIVATE_STATE_ROOT"/*) ;; *) exit 1 ;; esac
+    )
+    # The single-container model's shared network and its address refresh are gone.
+    run ! grep -rqE --exclude-dir=__pycache__ 'KONTEYNER_NETWORK|containers-tailnet|--refresh-tailnet' \
+        "$V2_ROOT/config" "$V2_ROOT/install.sh" "$V2_ROOT/panel" "$V2_ROOT/scripts" "$V2_ROOT/systemd"
+    # The backend's sandbox stays as narrow as it was: the worker writes the records, the backend reads them.
+    run ! grep -qE 'UYGULAMA|containers' "$V2_ROOT/systemd/master-panel.service"
 }
 
 @test "the server's private state is hidden from the uid-1000 data units (DD-225)" {
@@ -4370,7 +4401,9 @@ PY
     case "$seen" in *" master_yaml "*) ;; *) echo "master_yaml not reached"; return 1 ;; esac
     case "$seen" in *" master_kube "*) ;; *) echo "master_kube not reached"; return 1 ;; esac
     stage="$(awk '/^stage_4\(\) \{/,/^}$/' "$install")"
-    grep -qF 'for panel_module in master_api master_compose master_erisim master_inspector master_kube master_olaylar master_uygulamalar master_wireguard master_yaml master_yayin; do' <<<"$stage"
+    grep -qF 'for panel_module in master_api master_compose master_erisim master_inspector master_kube master_olaylar master_wireguard master_yaml master_yayin; do' <<<"$stage"
+    # DD-271 (phase 3): the application engine is installed with the container helpers (the guard reads its records).
+    grep -qF 'for container_helper in master_applications master_container_config master_container_network master_container_worker master_container_manager master_generator; do' <<<"$stage"
     grep -qF '[[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1' <<<"$(grep -A3 'for panel_module in' <<<"$stage")"
     # The event stream is never compressed (the encoder would hold small events back); everything else is.
     grep -qx $'\t@sikistir not path /api/konsol/olaylar' "$caddy"

@@ -1,0 +1,33 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: notlar uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması notlar: notlar-web
+After=network-online.target master-firewall.service
+Wants=network-online.target master-firewall.service
+RequiresMountsFor="/srv/notlar/html"
+
+[Container]
+ContainerName=notlar_notlar-web
+Image=docker.io/library/nginx@sha256:57342e7a20bd0b4b3822efa795d2a3d31ae2c7e916818e71b022cd1777bc96c6
+Pull=never
+Pod=konsol-notlar.pod
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=notlar
+LogDriver=journald
+DropCapability=NET_BIND_SERVICE SETFCAP SYS_CHROOT
+EnvironmentFile="/etc/master-stack/containers/uygulamalar/notlar/env/notlar-web.env"
+Volume=/run/master-stack/konteyner-baglama/notlar_notlar-web/0a4cd55d6da4674b:/usr/share/nginx/html:ro
+Volume=/var/lib/master-stack/uygulamalar/notlar/notlar_cache:/var/cache/nginx:rw
+Exec=nginx -g "daemon off;"
+
+[Service]
+Restart=always
+RestartSec=10s
+TimeoutStartSec=180
+TimeoutStopSec=75
+UMask=0077
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_network.py" --state "/etc/master-stack/state.env" --check
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_binds.py" --state "/etc/master-stack/state.env" bagla "notlar_notlar-web" "/srv/notlar/html"
+ExecStopPost=-/usr/bin/python3 "/usr/local/sbin/master_container_binds.py" --state "/etc/master-stack/state.env" birak "notlar_notlar-web"
+
+[Install]
+WantedBy=multi-user.target

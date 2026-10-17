@@ -1,7 +1,9 @@
-"""DD-265: the Yayınla flow's read model and plan (master_yayin), and the phase 3 routes of the root backend:
+"""DD-265: the Yayınla flow's read model and plan (master_yayin), and the routes of the root backend:
 the settings transaction's plan and writes from the route table, the firewall and DNS-name views, the
-publication candidates and plan. No real Caddy, systemd, Podman or DNS: the backend's sources are faked
-with the shapes they return; documentation addresses only."""
+publication candidates and plan. DD-271 (phase 3): a container is published from a port it already listens on
+at 127.0.0.1 (an application's address port); the step that added one to a container is gone. No real
+Caddy, systemd, Podman or DNS: the backend's sources are faked with the shapes they return; documentation
+addresses only."""
 import copy
 import json
 from pathlib import Path
@@ -33,17 +35,14 @@ ROWS = [
      "expires": 1790000000},
 ]
 CONTAINERS = {"runtime": {"ok": True}, "containers": [
-    {"name": "notlar", "source": "konsol", "state": "running",
+    {"name": "notlar_web", "source": "uygulama", "uygulama": "notlar", "state": "running",
      "ports": [{"scope": "local", "host_ip": "127.0.0.1", "host_port": 8090, "container_port": 80, "protocol": "tcp"}]},
-    {"name": "medya", "source": "konsol", "state": "running",
-     "ports": [{"scope": "tailscale", "host_ip": "100.64.0.2", "host_port": 8096, "container_port": 8096, "protocol": "tcp"},
-               {"scope": "tailscale", "host_ip": "100.64.0.2", "host_port": 7359, "container_port": 7359, "protocol": "udp"}]},
-    {"name": "dis", "source": "external", "state": "running", "ports": []},
+    {"name": "medya_web", "source": "uygulama", "uygulama": "medya", "state": "running",
+     "ports": [{"scope": "local", "host_ip": "127.0.0.1", "host_port": 62101, "container_port": 8096, "protocol": "tcp"},
+               {"scope": "local", "host_ip": "127.0.0.1", "host_port": 62102, "container_port": 7359, "protocol": "udp"}]},
+    {"name": "dis", "source": "external", "uygulama": None, "state": "running",
+     "ports": [{"scope": "tailscale", "host_ip": "100.64.0.2", "host_port": 8097, "container_port": 80, "protocol": "tcp"}]},
 ]}
-DETAIL = {"config": {"name": "medya", "image": "docker.io/library/nginx:1.27", "network": "bridge", "user": "downloads",
-                     "ports": [{"scope": "tailscale", "host_port": 8096, "container_port": 8096, "protocol": "tcp", "public_ack": False}],
-                     "environment": [{"name": "TOKEN", "secret": True, "present": True}]},
-          "revision": "r" * 32, "actions": ["stop", "restart", "save", "remove", "image-update"]}
 
 
 def cands(rows=ROWS, containers=CONTAINERS, wan=True):
@@ -59,7 +58,7 @@ class CandidateTests(unittest.TestCase):
         items = cands()
         for c in items:
             master_api.check(master_api.ref("YayinAdayi"), c)
-        self.assertEqual([c["id"] for c in items], ["panel", "konteyner:notlar", "konteyner:medya", "konteyner:dis",
+        self.assertEqual([c["id"] for c in items], ["panel", "konteyner:notlar_web", "konteyner:medya_web", "konteyner:dis",
                                                     "elle:yazici", "paylasim"])
         panel_row = by_id(items, "panel")
         self.assertEqual((panel_row["onay_kelimesi"], panel_row["giris"]), (True, master_yayin.GUARD_KONSOL))
@@ -73,20 +72,19 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual({c["giris"] for c in items if c["tur"] == "konteyner"}, {master_yayin.GUARD_APP},
                          "only the application's own login guards a container")
 
-    def test_containers_join_their_manual_address_or_offer_a_loopback_port(self):
+    def test_containers_join_their_manual_address_or_offer_their_loopback_port(self):
         items = cands()
-        notes = by_id(items, "konteyner:notlar")
-        self.assertEqual((notes["servis"], notes["hedef"], notes["konteyner"]["yerel_portlar"]),
-                         ("elle-notlar", "127.0.0.1:8090", [{"host_port": 8090, "container_port": 80}]))
+        notes = by_id(items, "konteyner:notlar_web")
+        self.assertEqual((notes["servis"], notes["hedef"], notes["konteyner"]["yerel_portlar"], notes["konteyner"]["uygulama"]),
+                         ("elle-notlar", "127.0.0.1:8090", [{"host_port": 8090, "container_port": 80}], "notlar"))
         self.assertNotIn("elle:notlar", [c["id"] for c in items], "joined, not listed twice")
-        media = by_id(items, "konteyner:medya")
-        self.assertEqual((media["servis"], media["kullanilabilir"], media["konteyner"]["port_eklenebilir"],
-                          media["konteyner"]["onerilen_port"]), (None, True, True, 8096))
-        self.assertEqual(media["konteyner"]["diger_portlar"], [{"kapsam": "tailscale", "host_port": 8096, "container_port": 8096}],
-                         "a UDP port is not a web interface")
+        media = by_id(items, "konteyner:medya_web")
+        self.assertEqual((media["servis"], media["kullanilabilir"], media["konteyner"]["kaynak"], media["konteyner"]["yerel_portlar"]),
+                         (None, True, "uygulama", [{"host_port": 62101, "container_port": 8096}]), "a UDP port is not a web interface")
         outside = by_id(items, "konteyner:dis")
         self.assertEqual((outside["kullanilabilir"], outside["konteyner"]["kaynak"]), (False, "dis"))
-        self.assertIn("yönetime alın", outside["neden"])
+        self.assertIn("127.0.0.1", outside["neden"])
+        self.assertNotIn("port_eklenebilir", outside["konteyner"])
 
     def test_no_public_address_blocks_every_internet_name(self):
         items = cands(wan=False)
@@ -109,8 +107,8 @@ class PlanTests(unittest.TestCase):
         self.seen.append(data)
         return {"revizyon": data["revision"], "onay_sn": 0, "degisiklikler": [], "etkiler": [], "uyarilar": [], "uygulanabilir": True}
 
-    def plan(self, request, settings_plan=None, detail=lambda name: copy.deepcopy(DETAIL), port=lambda: 62101):
-        result = master_yayin.plan(ENV, request, self.items, settings_plan or self.settings_plan, detail, port)
+    def plan(self, request, settings_plan=None):
+        result = master_yayin.plan(ENV, request, self.items, settings_plan or self.settings_plan)
         master_api.check(master_api.ref("YayinPlani"), result)
         return result
 
@@ -131,67 +129,40 @@ class PlanTests(unittest.TestCase):
         closing = self.plan(self.request("panel", internet=False, alan_adi="", onay="onayla"))
         self.assertEqual((closing["engel"], closing["dns"]), ("", None))
 
-    def test_a_container_without_a_loopback_port_gets_one_first(self):
-        result = self.plan(self.request("konteyner:medya", yerel="medya"))
-        container, row = result["adimlar"]
-        self.assertEqual(container["tur"], "konteyner")
-        self.assertEqual(container["istek"]["action"], "save")
-        self.assertEqual((container["istek"]["name"], container["istek"]["revision"]), ("medya", "r" * 32))
-        self.assertEqual(container["istek"]["config"]["ports"][-1],
-                         {"scope": "local", "host_port": 62101, "container_port": 8096, "protocol": "tcp", "public_ack": False})
-        self.assertEqual(container["istek"]["config"]["environment"], DETAIL["config"]["environment"],
-                         "a secret value stays on the server; the save keeps it")
+    def test_a_container_is_published_from_its_loopback_port_in_one_step(self):
+        result = self.plan(self.request("konteyner:medya_web", yerel="medya"))
+        [row] = result["adimlar"]
         self.assertEqual(row["istek"]["web"], {"service": "elle-medya", "tail": True, "enabled": True, "domain": "medya.example.org",
-                                               "elle": {"name": "medya", "local": "medya", "upstream": "127.0.0.1:62101"}})
+                                               "elle": {"name": "medya_web", "local": "medya", "upstream": "127.0.0.1:62101"}})
         self.assertIn(master_yayin.GUARD_APP, [w["metin"] for w in result["uyarilar"]])
-        self.assertTrue(any("İki adım" in w["metin"] for w in result["uyarilar"]))
         self.assertFalse(any("çalışmıyor" in w["metin"] for w in result["uyarilar"]))
         stopped = copy.deepcopy(CONTAINERS)
         stopped["containers"][1]["state"] = "exited"
         self.items = cands(containers=stopped)
-        self.assertTrue(any("çalışmıyor" in w["metin"] for w in self.plan(self.request("konteyner:medya"))["uyarilar"]),
+        self.assertTrue(any("çalışmıyor" in w["metin"] for w in self.plan(self.request("konteyner:medya_web"))["uyarilar"]),
                         "a stopped container keeps its state; the name answers once it runs")
         self.items = cands()
         # A container with a loopback port and its manual address: only the row.
-        result = self.plan(self.request("konteyner:notlar"))
-        self.assertEqual([s["tur"] for s in result["adimlar"]], ["ayar"])
+        result = self.plan(self.request("konteyner:notlar_web"))
         self.assertEqual(result["adimlar"][0]["istek"]["web"]["service"], "elle-notlar")
 
     def test_refusals_and_a_failing_check(self):
         for request, text in ((self.request("konteyner:yok"), "bulunamadı"),
-                              (self.request("konteyner:dis"), "yönetime alın"),
-                              (self.request("konteyner:medya", yerel="Medya!"), "Tailscale adı"),
-                              (self.request("konteyner:medya", ad=""), None)):
+                              (self.request("konteyner:dis"), "127.0.0.1"),
+                              (self.request("konteyner:medya_web", yerel="Medya!"), "Tailscale adı"),
+                              (self.request("konteyner:medya_web", ad=""), None)):
             with self.subTest(request=request):
                 if text is None:
                     self.plan(request)  # an empty display name falls back to the container's
                     continue
                 with self.assertRaisesRegex(master_settings.SettingsError, text):
                     self.plan(request)
-        no_hint = copy.deepcopy(CONTAINERS)
-        no_hint["containers"][1]["ports"] = []
-        self.items = cands(containers=no_hint)
-        with self.assertRaisesRegex(master_settings.SettingsError, "konteyner içinde dinlediği port"):
-            self.plan(self.request("konteyner:medya"))
-        self.assertEqual(self.plan(self.request("konteyner:medya", konteyner_portu=3000))["adimlar"][0]["istek"]["config"]["ports"][-1]
-                         ["container_port"], 3000)
-        none = copy.deepcopy(DETAIL)
-        none["config"]["network"] = "none"
-        with self.assertRaisesRegex(master_settings.SettingsError, "Ağsız"):
-            self.plan(self.request("konteyner:medya", konteyner_portu=3000), detail=lambda name: none)
 
         def refuse(data):
             raise master_settings.SettingsError("dav.example.org adı 203.0.113.10 adresine çözülmüyor.")
         self.items = cands()
         result = self.plan(self.request("paylasim", alan_adi="dav.example.org"), settings_plan=refuse)
         self.assertEqual((result["plan"], result["engel"]), (None, "dav.example.org adı 203.0.113.10 adresine çözülmüyor."))
-
-    def test_free_port_skips_used_and_held_ports(self):
-        self.assertEqual(master_yayin.free_port(ENV, {62100}, bind=lambda port: port != 62101), 62102)
-        with self.assertRaisesRegex(master_settings.SettingsError, "boş port"):
-            master_yayin.free_port(ENV, {62100, 62101, 62102}, bind=lambda port: True)
-        with self.assertRaisesRegex(master_settings.SettingsError, "aralığı"):
-            master_yayin.free_port({}, set(), bind=lambda port: True)
 
 
 class RouteTests(Fixture):
@@ -315,16 +286,20 @@ class RouteTests(Fixture):
                                                                  "internet": False, "alan_adi": ""})[0], 400)
         self.assertEqual(self.call("/api/konsol/yayinlar/plan", {"hedef": "elle:notlar"})[0], 400, "the request's shape")
 
-    def test_the_podman_pages_container_requests_pass_the_table(self):
+    def test_only_gelismis_resource_jobs_pass_the_container_route(self):
         jobs = []
         patch.object(self.p.containers, "submit", side_effect=lambda data: jobs.append(data) or
                      {"id": "a" * 32, "action": data["action"], "name": data.get("name") or data.get("image"),
                       "state": "running", "step": "Başlatılıyor"}).start()
-        for data in ({"action": "start", "name": "medya", "revision": None}, {"action": "image-remove", "image": "b" * 64},
-                     {"action": "adopt", "name": "dis", "preview": True}):
+        for data in ({"action": "image-remove", "image": "b" * 64}, {"action": "network-create", "name": "ag", "subnet": "",
+                                                                    "internal": False}):
             with self.subTest(data=data):
                 self.assertEqual(self.call("/api/konsol/konteynerler/islem", data)[0], 202)
-        self.assertEqual(jobs[0], {"action": "start", "name": "medya", "revision": None})
+        for data in ({"action": "start", "name": "medya", "revision": None}, {"action": "adopt", "name": "dis", "preview": True},
+                     {"action": "save", "name": "medya", "config": {}}):
+            with self.subTest(data=data):
+                self.assertEqual(self.call("/api/konsol/konteynerler/islem", data)[0], 400)
+        self.assertEqual(len(jobs), 2)
 
 
 if __name__ == "__main__":

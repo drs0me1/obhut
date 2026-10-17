@@ -102,7 +102,9 @@ class BindTests(unittest.TestCase):
                     binds.bagla(self.env, "demo", [good, str(self.root / source)])
                 self.assertEqual(self.fake.table, {}, "the first, valid source was released again")
                 self.assertFalse((Path(self.env["KONTEYNER_BAGLAMA_DIR"]) / "demo").exists())
-        for name in ("../x", "", "a/b", ".hidden", "x" * 65):
+        # The anchor key is a container name, <app>_<service>: up to 30 + 1 + 63 characters fit, 129 do not.
+        binds.checked_name("a" * 30 + "_" + "s" * 63)
+        for name in ("../x", "", "a/b", ".hidden", "x" * 129):
             with self.subTest(name=name), self.assertRaises(binds.BindError):
                 binds.bagla(self.env, name, [good])
 

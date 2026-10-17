@@ -17,23 +17,20 @@ const DAY = 86400;
 const KB = 1024, MB = 1024 * KB, GB = 1024 * MB;
 const TZ = "Europe/Istanbul";
 const SHA = (c) => c.repeat(64);
-const ucell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
-/** A container application as GET /api/konsol/uygulamalar lists it (the only kind there is). */
-const app = (name, o = {}) => ({ id: "konteyner:" + name, ad: name, tur: "konteyner", konteyner: name, aciklama: "", durum: "calisiyor",
-  tailscale: ucell("yok"), internet: ucell("yok"), kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null },
-  eylemler: [], revizyon: null, ...o });
-const APPS = [app("galeri"), app("indirici"), app("notlar")];
+const { uygulama, uygulamalar } = require("./yeni-harness.cjs").fixtures;
+const APPS = [uygulama("galeri"), uygulama("indirici"), uygulama("notlar")];
 const conn = (active, o = {}) => ({ enabled: active, permission: "ro", expires: null, expired: false, available: true, active, reason: "", url: "", ...o });
 const SHARES = { host: "paylas.ev", max: 32, tail_enabled: true, limits: {},
   wan: { available: false, address: "", reason: "kapalı", mode: "off", domain: "", port: 443 },
   items: [{ id: "f1lm", path: "Filmler", name: "Filmler", username: "aile", created: NOW - 9 * DAY, changed: NOW - DAY, type: "dir", available: true,
     connections: { tailscale: conn(true), wan: conn(false) }, urls: { tailscale: "" }, url: "" }] };
-const STORAGE = { read_at: NOW, kok: "/srv", hatalar: ["notlar2: konteyner okunamadı (podman inspect 125)"], kullananlar: [
-  { yol: "/srv", id: "konteyner:galeri", ad: "galeri", tur: "konteyner", hedef: "/srv", yazilabilir: true },
-  { yol: "/srv/Belgeler/arsiv", id: "konteyner:notlar", ad: "notlar", tur: "konteyner", hedef: "/data", yazilabilir: false },
+// Each application's /srv mounts from its record ("<service>: <target>") and each folder share (GET /api/konsol/depolama).
+const STORAGE = { read_at: NOW, kok: "/srv", hatalar: ["notlar2: Uygulama kaydı okunamadı."], kullananlar: [
+  { yol: "/srv", id: "galeri", ad: "galeri", tur: "uygulama", hedef: "web: /srv", yazilabilir: true },
+  { yol: "/srv/Belgeler/arsiv", id: "notlar", ad: "notlar", tur: "uygulama", hedef: "web: /data", yazilabilir: false },
   { yol: "/srv/Filmler", id: "paylasim", ad: "Filmler", tur: "paylasim", hedef: "/s/f1lm/", yazilabilir: false },
-  { yol: "/srv/eski", id: "konteyner:eski", ad: "eski", tur: "konteyner", hedef: "/old", yazilabilir: true },
-  { yol: "/srv/indirilenler", id: "konteyner:indirici", ad: "indirici", tur: "konteyner", hedef: "/downloads", yazilabilir: true },
+  { yol: "/srv/eski", id: "eski", ad: "eski", tur: "uygulama", hedef: "isci: /old", yazilabilir: true },
+  { yol: "/srv/indirilenler", id: "indirici", ad: "indirici", tur: "uygulama", hedef: "web: /downloads", yazilabilir: true },
 ] };
 
 const data = {
@@ -48,7 +45,7 @@ const data = {
   erisim: { read_at: NOW, alan: "ev", hizmetler: [], uyarilar: [], hatalar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null }, internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
       wireguard: { kurulu: false, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
-  uygulamalar: { read_at: NOW, hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 2, kullanilmayan_imaj: 0, birim: 1, ag: 2 }, items: APPS },
+  uygulamalar: uygulamalar(APPS),
   paylasim: SHARES,
   depolama: STORAGE,
 };
@@ -355,21 +352,21 @@ async function drop(page, files, type = "drop") {
     assert.equal(await folders.locator(".meter-note").first().innerText(), "/srv altındaki klasörler, boyutları ve onları kullanan uygulamalar ve paylaşımlar.");
     assert.deepEqual(await folders.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.klasor)), [".gizli", "Belgeler", "Cep", "Çizgi", "Filmler", "ılık", "indirilenler"],
       "folders first in Turkish order: Ç after C, ı before i");
-    assert.equal(await page.getByTestId("whole").innerText(), "Bütün kullanıcı alanını kullanan: galeri (okuma-yazma · konteynerde /srv).");
+    assert.equal(await page.getByTestId("whole").innerText(), "Bütün kullanıcı alanını kullanan: galeri (okuma-yazma · web: /srv).");
     const uses = async (name) => folders.locator(`tr[data-klasor="${name}"] .files-uses li`).evaluateAll((lis) => lis.map((li) => ({
       kind: li.dataset.kullanan, text: li.innerText.replace(/\s+/g, " ").trim(), href: li.querySelector("a")?.getAttribute("href") ?? null })));
     assert.deepEqual(await uses("Filmler"), [
       { kind: "paylasim", text: "Filmler klasör paylaşımı · Filmler · salt okunur", href: "#/dosyalar?sekme=paylasimlar&paylasim=f1lm" },
-      { kind: "konteyner", text: "galeri tüm kullanıcı alanı", href: "#/uygulamalar/konteyner:galeri" }]);
+      { kind: "uygulama", text: "galeri tüm kullanıcı alanı", href: "#/uygulamalar/galeri" }]);
     assert.deepEqual(await uses("indirilenler"), [
-      { kind: "konteyner", text: "indirici indirilenler · okuma-yazma · konteynerde /downloads", href: "#/uygulamalar/konteyner:indirici" },
-      { kind: "konteyner", text: "galeri tüm kullanıcı alanı", href: "#/uygulamalar/konteyner:galeri" }]);
-    assert.deepEqual((await uses("Belgeler"))[0], { kind: "konteyner", text: "notlar Belgeler/arsiv · salt okunur · konteynerde /data", href: "#/uygulamalar/konteyner:notlar" });
+      { kind: "uygulama", text: "indirici indirilenler · okuma-yazma · web: /downloads", href: "#/uygulamalar/indirici" },
+      { kind: "uygulama", text: "galeri tüm kullanıcı alanı", href: "#/uygulamalar/galeri" }]);
+    assert.deepEqual((await uses("Belgeler"))[0], { kind: "uygulama", text: "notlar Belgeler/arsiv · salt okunur · web: /data", href: "#/uygulamalar/notlar" });
     const filmler = folders.locator('tr[data-klasor="Filmler"]');
     assert.deepEqual(await filmler.locator("td").allInnerTexts().then((c) => c.slice(0, 2)), [bytes(1450 * MB), "3 öge"]);
     assert.equal(await folders.locator('tr[data-klasor="Çizgi"] td').first().innerText(), "—", "an empty folder has no size");
-    assert.equal(await page.getByTestId("storage-warning").innerText(), "notlar2: konteyner okunamadı (podman inspect 125)");
-    assert.equal((await page.getByTestId("elsewhere").locator("li").innerText()).replace(/\s+/g, " "), "eski eski · okuma-yazma · konteynerde /old");
+    assert.equal(await page.getByTestId("storage-warning").innerText(), "notlar2: Uygulama kaydı okunamadı.");
+    assert.equal((await page.getByTestId("elsewhere").locator("li").innerText()).replace(/\s+/g, " "), "eski eski · okuma-yazma · isci: /old");
     assert.match(await page.getByTestId("root-files").innerText(), /^Kökte ayrıca 3 dosya var/);
     await shot(page, "1440-light-depolama.png", true);
     // A folder opens in Sunucu klasörleri.
@@ -975,8 +972,8 @@ async function drop(page, files, type = "drop") {
 
     assert.deepEqual(h.errors, []);
     console.log("PASS: Konsol phase 4b Dosyalar under the production CSP — Depolama (the disk with what the user area holds and its mount, " +
-      "the trash in short with its link, the top folders in Turkish order with size, count and who uses them: containers' binds with their " +
-      "access and container path, a bind of the whole user area for every folder, folder shares, binds outside the listed folders, a failed " +
+      "the trash in short with its link, the top folders in Turkish order with size, count and who uses them: applications' /srv mounts with " +
+      "their access and service target, a bind of the whole user area for every folder, folder shares, binds outside the listed folders, a failed " +
       "read), Sunucu klasörleri (order with numbers, sizes and times, share marks, Paylaş / Paylaşımı yönet links with yeni= and paylasim=, " +
       "the filter with Turkish case rules in ara=, ticks on every row and Tümünü seç, folders as history entries, a folder that cannot be " +
       "opened, uploads from the picker with a skipped name, the queue one at a time with progress, cancel waiting and running uploads, " +

@@ -11,8 +11,8 @@ let a root container mount another host directory. Each generated unit therefore
 `bagla` walks every source from / without following links, binds the directory behind that
 descriptor onto a root-owned anchor (KONTEYNER_BAGLAMA_DIR/NAME/<hash>) and verifies the
 anchor's identity; the Quadlet mounts the anchor, never the path. Only base invariants are
-checked here (absolute, no '..', a non-hidden subfolder of SERVER_ROOT). The protected folders
-stay a save-time check: no store or lock is involved at start.
+checked here (absolute, no '..', a non-hidden subfolder of SERVER_ROOT, so never the trash); the
+worker checks the same at install time. No record or lock is involved at start.
 """
 import argparse
 import ctypes
@@ -31,7 +31,8 @@ MS_PRIVATE = 1 << 18
 MNT_DETACH = 2
 UMOUNT_NOFOLLOW = 8
 ROOT_UID = 0
-NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+# The anchor key is the container name, <app>_<service> (DD-271: up to 30 + 1 + 63 characters).
+NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 SOURCE_RE = re.compile(r"/[A-Za-z0-9_./ -]+")
 ANCHOR_RE = re.compile(r"[0-9a-f]{16}")
 

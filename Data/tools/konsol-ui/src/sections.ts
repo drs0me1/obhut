@@ -28,9 +28,9 @@ export const SECTIONS: readonly Section[] = [
     id: "uygulamalar",
     title: "Uygulamalar",
     short: "Uygulamalar",
-    description: "Sunucudaki konteynerler tek listede.",
+    description: "Uygulamalar ve servisleri tek listede.",
     icon: "apps",
-    keywords: "konteyner podman imaj ekle kaldır yönetime al",
+    keywords: "uygulama servis konteyner podman imaj compose kubernetes başlat durdur kaldır",
   },
   {
     id: "erisim",
@@ -146,17 +146,3 @@ export const SECTION_TABS: Partial<Record<SectionId, readonly { id: string; labe
   gelismis: ADVANCED_TABS.map((t) => ({ ...t, to: advancedRoute(t.id) })),
   dosyalar: FILES_TABS.map((t) => ({ ...t, to: filesRoute(t.id) })),
 };
-
-/** Uygulamalar' add flows (phase 4a), opened over the list with ?ekle= (one container's adoption with
-    &ad=); the palette lists each one. */
-export const ADD_FLOWS = [
-  { id: "imaj", label: "İmajdan konteyner oluştur", keywords: "konteyner podman imaj yeni oluştur docker ekle" },
-  { id: "sahiplen", label: "Var olan konteyneri yönetime al", keywords: "benimse sahiplen konteyner podman dışarıda yönet" },
-] as const;
-
-export type AddFlow = (typeof ADD_FLOWS)[number]["id"];
-
-/** The address of an add flow over Uygulamalar. */
-export function addRoute(flow: AddFlow, extra: Record<string, string> = {}): string {
-  return "/uygulamalar?" + new URLSearchParams({ ekle: flow, ...extra }).toString();
-}

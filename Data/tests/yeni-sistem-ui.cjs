@@ -11,10 +11,7 @@ const assert = require("node:assert/strict");
 const NOW = 1791845000;
 const DAY = 86400;
 const HEX = (c) => c.repeat(32);
-const ucell = (durum, adresler = []) => ({ durum, adresler, uyari: "", not: "" });
-const app = (o) => ({ tur: "konteyner", durum: "calisiyor", tailscale: ucell("yok"), internet: ucell("yok"),
-  kaynak: { cpu: null, bellek: null }, guncelleme: "sabit", adres: { tailscale: null, internet: null }, eylemler: [], revizyon: null,
-  aciklama: "", ...o });
+const { uygulama, uygulamalar } = require("./yeni-harness.cjs").fixtures;
 
 const CHECKS = [
   { id: "firewall", name: "Güvenlik duvarı", status: "ok", detail: "Kurallar beklendiği gibi" },
@@ -44,6 +41,7 @@ const AUDIT = [
   { at: NOW - 900, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-peer-durum", detail: "wg0/telefon kapatıldı", ok: true },
   { at: NOW - 1050, source: "panel", user: "konsol", client: "100.64.0.5", action: "wireguard-ag-durum", detail: "wg0 açıldı", ok: true },
   { at: NOW - 1500, source: "panel", user: "konsol", client: "100.64.0.5", action: "konteyner-image-pull", detail: "docker.io/library/redis:7.4", ok: true },
+  { at: NOW - 1600, source: "panel", user: "konsol", client: "100.64.0.5", action: "uygulama-kaldir", detail: "notlar (veri: sakla)", ok: true },
   { at: NOW - 1800, source: "dosya", user: "dosyalar", client: "100.64.0.6", action: "klasor", detail: "Filmler", ok: true },
   { at: NOW - 2100, source: "panel", user: "konsol", client: "203.0.113.50", action: "parola-degis", detail: "-", ok: false },
   { at: NOW - 2400, source: "panel", user: "konsol", client: "100.64.0.5", action: "ayar-apply", detail: "ayarlar", ok: true },
@@ -107,8 +105,7 @@ const data = {
   erisim: { read_at: NOW, alan: "ev", hizmetler: [], uyarilar: [], hatalar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "", surum: "", adresler: [], cikis_dugumu: null },
       internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
-  uygulamalar: { read_at: NOW, hatalar: [], altyapi: { podman: "5.4.2", calisiyor: true, imaj: 3, kullanilmayan_imaj: 1, birim: 3, ag: 3 }, items: [
-    app({ id: "konteyner:notlar", ad: "Notlar", konteyner: "notlar" })] },
+  uygulamalar: uygulamalar([uygulama("notlar")], { altyapi: { podman: "5.4.2", calisiyor: true, imaj: 3, kullanilmayan_imaj: 1, birim: 3, ag: 3 } }),
   onarim: repairState(),
   ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048 },
   islemler: { items: AUDIT },
@@ -507,10 +504,12 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     await audit.locator("tbody tr").first().waitFor();
     assert.deepEqual(await audit.getByTestId("audit-line").allInnerTexts(), [
       "Denetim ve onarım başlatıldı", "WireGuard durduruldu", "wg0/telefon eklendi", "wg0/telefon için keepalive 25 sn", "wg0/telefon kapatıldı",
-      "wg0 ağı açıldı", "İmaj indirme istendi: docker.io/library/redis:7.4", "Yeni klasör: Filmler", "Konsol parolası değiştirildi — başarısız",
+      "wg0 ağı açıldı", "İmaj indirme istendi: docker.io/library/redis:7.4", "Uygulama kaldırma istendi: notlar (veri: sakla)", "Yeni klasör: Filmler",
+      "Konsol parolası değiştirildi — başarısız",
       "Ayarlar uygulandı", "Sunucunun yeniden başlatılması istendi (5 sn)", "Klasör paylaşımı kaydedildi"]);
     assert.deepEqual(await audit.locator('td[data-label="Tür"]').allInnerTexts(),
-      ["Konsol", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "Uygulamalar", "Dosyalar", "Konsol", "Ayarlar", "Konsol", "Paylaşımlar"]);
+      ["Konsol", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "WireGuard", "Uygulamalar", "Uygulamalar", "Dosyalar", "Konsol", "Ayarlar", "Konsol",
+        "Paylaşımlar"]);
     assert.deepEqual(await audit.locator('tr[data-tur="wireguard"]').evaluateAll((rows) => rows.map((r) => r.dataset.eylem)),
       ["wireguard-durdur", "wireguard-ekle", "wireguard-keepalive", "wireguard-peer-durum", "wireguard-ag-durum"]);
     const failed = audit.locator('tr[data-eylem="parola-degis"]');
@@ -520,7 +519,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     const chips = audit.getByRole("group", { name: "Türe göre süz" }).locator(".filter-chip");
     // The fixed kinds in their own order, whatever order the lines come in.
     assert.deepEqual((await chips.allInnerTexts()).map((t) => t.replace(/\s+/g, " ")),
-      ["Tümü 12", "Konsol 3", "Ayarlar 1", "Paylaşımlar 1", "WireGuard 5", "Dosyalar 1", "Uygulamalar 1"]);
+      ["Tümü 13", "Konsol 3", "Ayarlar 1", "Paylaşımlar 1", "WireGuard 5", "Dosyalar 1", "Uygulamalar 2"]);
     await chips.filter({ hasText: "WireGuard" }).click();
     await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("tur") === "wireguard");
     assert.equal(await chips.filter({ hasText: "WireGuard" }).getAttribute("aria-pressed"), "true");
@@ -542,7 +541,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.equal(await chips.filter({ hasText: "Dosyalar" }).getAttribute("aria-pressed"), "true");
     await audit.getByRole("button", { name: "Süzgeci temizle" }).click();
     await page.waitForURL((u) => u.hash === "#/sistem?sekme=gunluk");
-    assert.equal(await audit.getByTestId("audit-line").count(), 12);
+    assert.equal(await audit.getByTestId("audit-line").count(), 13);
     await page.context().close();
 
     // ================= the internet channel: locks, the account with the current password, sign-out

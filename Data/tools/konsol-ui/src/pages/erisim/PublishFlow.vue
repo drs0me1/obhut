@@ -1,10 +1,10 @@
 <!-- The Yayınla flow (DD-258 goal 2): one sheet, four decisions. Ne (a candidate from GET
      /api/konsol/yayinlar, or another port on this server), Kim (the Tailscale name; the internet name with who
-     guards it), Ad (a container's tailnet name and port, the HTTPS name and the DNS record to create) and Plan
+     guards it), Ad (a container's tailnet name, the HTTPS name and the DNS record to create) and Plan
      (POST …/yayinlar/plan, or …/ayarlar/plan for a new manual address: the steps, the settings plan, warnings
-     and what blocks it). "Uygula" runs the steps in order: a container step's request goes unchanged to
-     …/konteynerler/islem and its job is followed to its end; the settings step's to …/ayarlar/uygula (the
-     certificate wait takes up to a minute). The shell holds it, so any page opens it with ?yayinla=<id>
+     and what blocks it). A container is published from a port it already listens on at 127.0.0.1 (DD-271
+     phase 3). "Uygula" sends the settings step's request to …/ayarlar/uygula (the certificate wait takes up to
+     a minute). The shell holds it, so any page opens it with ?yayinla=<id>
      ("sec" chooses first, "yeni" is another port); closing removes the parameter. Both names off unpublishes. -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
@@ -17,10 +17,9 @@ import PlanReview from "../../components/ui/PlanReview.vue";
 import StatusPill from "../../components/ui/StatusPill.vue";
 import Switch from "../../components/ui/Switch.vue";
 import type { Tone } from "../../components/ui/types";
-import { applySettings, planPublication, planSettings, readPublications, startContainerJob } from "../../api/erisim";
+import { applySettings, planPublication, planSettings, readPublications } from "../../api/erisim";
 import { CANDIDATE_KIND, LOCAL_RE, cleanHost, defaultLocal, hostProblem } from "../../access";
-import { refreshApps, setPending, settingsChanged } from "../../live";
-import { waitForJob } from "../../jobs";
+import { setPending, settingsChanged } from "../../live";
 import { address } from "../../links";
 import { updateQuery } from "../../query";
 import type { AyarIstegi, AyarPlani, PlanUyarisi, YayinAdayi, YayinAdimi, YayinIstegi, YayinPlani, Yayinlar } from "../../api/sema";
@@ -57,7 +56,6 @@ const internet = ref(false);
 const domain = ref("");
 const name = ref("");
 const local = ref("");
-const innerPort = ref("");
 const manualPort = ref("");
 const typed = ref(false);
 
@@ -138,11 +136,6 @@ const isPanel = computed(() => candidate.value?.tur === "konsol");
 const alan = computed(() => list.value?.alan ?? "");
 /** A container without a publication gets its names here; so does another port. */
 const needsNames = computed(() => isNew.value || Boolean(candidate.value && !candidate.value.servis));
-/** A container without a loopback port: the port its application listens on inside. */
-const needsInner = computed(() => {
-  const c = candidate.value;
-  return Boolean(c && !c.servis && c.konteyner && !c.konteyner.yerel_portlar.length);
-});
 
 // A new choice starts from its current state.
 watch(choice, () => {
@@ -162,7 +155,6 @@ watch(choice, () => {
   domain.value = c.alan_adi;
   name.value = c.ad;
   local.value = c.yerel_ad ? (c.yerel_ad.split(".")[0] ?? "") : defaultLocal(c.ad);
-  innerPort.value = c.konteyner?.onerilen_port ? String(c.konteyner.onerilen_port) : "";
 });
 
 const host = computed(() => cleanHost(domain.value));
@@ -191,7 +183,7 @@ const validPort = (text: string) => {
 };
 
 const errors = computed(() => {
-  const out = { choice: "", port: "", name: "", local: "", inner: "", domain: "" };
+  const out = { choice: "", port: "", name: "", local: "", domain: "" };
   if (!choice.value) out.choice = "Yayımlanacak olanı seçin.";
   if (isNew.value && !validPort(manualPort.value)) out.port = "Bu sunucuda dinleyen portu yazın (1–65535).";
   if (needsNames.value) {
@@ -200,7 +192,6 @@ const errors = computed(() => {
     if (!LOCAL_RE.test(l)) out.local = "Küçük harfle başlamalı; yalnız küçük harf, rakam ve tire (en çok 31).";
     else if (list.value?.adaylar.some((c) => c.id !== choice.value && c.yerel_ad === `${l}.${alan.value}`)) out.local = `${l}.${alan.value} adı zaten kullanılıyor.`;
   }
-  if (needsInner.value && !validPort(innerPort.value)) out.inner = "Uygulamanın konteyner içinde dinlediği portu yazın (ör. 8080).";
   if (internet.value) {
     out.domain = hostProblem(domain.value);
     if (!out.domain && list.value?.adaylar.some((c) => c.id !== choice.value && c.internet && c.alan_adi === host.value)) {
@@ -212,7 +203,7 @@ const errors = computed(() => {
 const stepValid = (n: Step) => {
   const e = errors.value;
   if (n === 1) return !e.choice && !e.port && (isNew.value || Boolean(candidate.value?.kullanilabilir));
-  if (n === 3) return !e.name && !e.local && !e.inner && !e.domain;
+  if (n === 3) return !e.name && !e.local && !e.domain;
   return true;
 };
 
@@ -242,7 +233,6 @@ function request(): YayinIstegi | null {
     if (name.value.trim() !== c.ad) r.ad = name.value.trim();
     const l = local.value.trim().toLowerCase();
     if (l !== defaultLocal(c.ad)) r.yerel = l;
-    if (needsInner.value && portOf(innerPort.value) !== c.konteyner?.onerilen_port) r.konteyner_portu = portOf(innerPort.value);
   }
   if (konsolWord.value && typed.value) r.onay = "onayla";
   return r;
@@ -309,7 +299,7 @@ const planWarnings = computed<PlanUyarisi[]>(() => yplan.value?.uyarilar ?? (isN
 const applicable = computed(() =>
   !planning.value && !planError.value && Boolean(settingsPlan.value?.uygulanabilir) && !engel.value && steps.value.length > 0 && (!konsolWord.value || typed.value));
 
-// ---- applying the steps in order
+// ---- applying the steps in order (each a settings change)
 const RUN_TONE: Record<RunState, Tone> = { bekliyor: "neutral", suruyor: "accent", tamam: "ok", hata: "danger" };
 const RUN_TEXT: Record<RunState, string> = { bekliyor: "Bekliyor", suruyor: "Sürüyor…", tamam: "Tamam", hata: "Başarısız" };
 
@@ -318,28 +308,17 @@ async function apply(): Promise<void> {
   const todo = steps.value.map((s) => ({ ...s, istek: JSON.parse(JSON.stringify(s.istek)) as Record<string, unknown> }));
   run.value = { steps: todo.map((s) => ({ title: s.baslik, detail: s.aciklama, state: "bekliyor", note: "" })), done: false, error: "" };
   const current = run.value;
-  let containerDone = false;
   for (const [i, s] of todo.entries()) {
     const view = current.steps[i] as RunStep;
     view.state = "suruyor";
     try {
-      if (s.tur === "konteyner") {
-        view.note = "Konteyner yeniden oluşturuluyor…";
-        const job = await startContainerJob(s.istek);
-        const end = await waitForJob("konteyner", job.id, (j) => {
-          if (j.adim) view.note = j.adim;
-        });
-        if (end.durum === "hata") throw new Error(end.adim ? `Konteyner işlemi başarısız: ${end.adim}` : "Konteyner işlemi başarısız oldu.");
-        containerDone = true;
-      } else {
-        elapsed.value = 0;
-        clearInterval(clock);
-        clock = window.setInterval(() => (elapsed.value += 1), 1000);
-        view.note = internet.value ? "Ad açılıyor; internet adı için sertifika bekleniyor (en çok 1 dakika)…" : "Uygulanıyor…";
-        const result = await applySettings(s.istek as AyarIstegi);
-        if (result.pending) setPending(result.pending);
-        clearInterval(clock);
-      }
+      elapsed.value = 0;
+      clearInterval(clock);
+      clock = window.setInterval(() => (elapsed.value += 1), 1000);
+      view.note = internet.value ? "Ad açılıyor; internet adı için sertifika bekleniyor (en çok 1 dakika)…" : "Uygulanıyor…";
+      const result = await applySettings(s.istek as AyarIstegi);
+      if (result.pending) setPending(result.pending);
+      clearInterval(clock);
       view.state = "tamam";
       view.note = "";
     } catch (err) {
@@ -347,18 +326,14 @@ async function apply(): Promise<void> {
       const message = err instanceof Error ? err.message : String(err);
       view.state = "hata";
       view.note = message;
-      current.error = containerDone && s.tur === "ayar"
-        ? `Ad açılmadı: ${message} Konteyner artık yalnız bu sunucuda dinleyen bir portta da dinliyor; bu zararsızdır.`
-        : message;
+      current.error = message;
       current.done = true;
       settingsChanged();
-      void refreshApps();
       return;
     }
   }
   current.done = true;
   settingsChanged();
-  void refreshApps();
 }
 
 const success = computed(() => Boolean(run.value?.done && !run.value.error));
@@ -465,16 +440,6 @@ const LEVEL_ICON: Record<PlanUyarisi["seviye"], "info" | "alert" | "xcircle"> = 
           <input :id="id" v-model="local" class="input" type="text" maxlength="31" autocapitalize="none" autocomplete="off" spellcheck="false"
             :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-testid="flow-local" />
         </Field>
-        <Field
-          v-if="needsInner"
-          v-slot="{ id, describedby, invalid }"
-          label="Uygulamanın konteynerdeki portu"
-          hint="Konteynere yalnız bu sunucuda (127.0.0.1) dinleyen bir port eklenir; konteyner yeniden oluşturulur."
-          :error="tried ? errors.inner : ''"
-        >
-          <input :id="id" v-model="innerPort" class="input" type="text" inputmode="numeric" maxlength="5" autocomplete="off" placeholder="8080"
-            :aria-describedby="describedby" :aria-invalid="invalid || undefined" data-testid="flow-inner" />
-        </Field>
       </template>
       <dl v-else class="facts">
         <dt>Tailscale adı</dt>
@@ -543,7 +508,7 @@ const LEVEL_ICON: Record<PlanUyarisi["seviye"], "info" | "alert" | "xcircle"> = 
               </div>
               <p class="meter-note">{{ s.aciklama }}</p>
               <p v-if="run?.steps[i]?.note" class="cell-note" :class="{ 'warn-text': run.steps[i]!.state === 'hata' }">
-                {{ run.steps[i]!.note }}<template v-if="run.steps[i]!.state === 'suruyor' && s.tur === 'ayar'"> {{ elapsed }} sn</template>
+                {{ run.steps[i]!.note }}<template v-if="run.steps[i]!.state === 'suruyor'"> {{ elapsed }} sn</template>
               </p>
             </li>
           </ol>

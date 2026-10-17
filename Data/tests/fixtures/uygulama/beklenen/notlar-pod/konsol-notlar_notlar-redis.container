@@ -1,0 +1,31 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: notlar uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması notlar: notlar-redis
+After=network-online.target master-firewall.service
+Wants=network-online.target master-firewall.service
+
+[Container]
+ContainerName=notlar_notlar-redis
+Image=docker.io/library/redis@sha256:5fa6f138e7eebfda68efec140886351f2a1e9844a6f3bb9ee460c411e6ae1d32
+Pull=never
+Pod=konsol-notlar.pod
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=notlar
+LogDriver=journald
+User=999:999
+DropCapability=all
+NoNewPrivileges=true
+EnvironmentFile="/etc/master-stack/containers/uygulamalar/notlar/env/notlar-redis.env"
+Volume=/var/lib/master-stack/uygulamalar/notlar/notlar_redis:/data:rw,U
+Exec=redis-server --save 60 1
+
+[Service]
+Restart=always
+RestartSec=10s
+TimeoutStartSec=180
+TimeoutStopSec=75
+UMask=0077
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_network.py" --state "/etc/master-stack/state.env" --check
+
+[Install]
+WantedBy=multi-user.target

@@ -1,14 +1,18 @@
-// The audit log's words (GET /api/konsol/islemler, DD-196): the root backend's own actions, WireGuard's
-// ("wireguard-<verb>", DD-271) and the file backend's ("dosya"). WireGuard's lines are templates over the
+// The audit log's words (GET /api/konsol/islemler, DD-196): the root backend's own actions, the
+// applications' ("uygulama-<verb>"), WireGuard's ("wireguard-<verb>", DD-271) and the file backend's ("dosya"). WireGuard's lines are templates over the
 // detail ({detail} is the whole detail, {0}, {1} … its words).
 import type { KayitSatiri } from "../../api/sema";
 
-/** The root backend's container operations (JOB_CONTAINER_ACTIONS in master-panel). */
+/** Gelişmiş's Podman resource jobs ("konteyner-<action>", JOB_CONTAINER_ACTIONS in master-panel). */
 const CONTAINER: Record<string, string> = {
-  create: "Konteyner oluşturma", save: "Konteyner ayar kaydı", start: "Konteyner başlatma", stop: "Konteyner durdurma",
-  restart: "Konteyner yeniden başlatma", remove: "Konteyner kaldırma", adopt: "Konteyner sahiplenme", "image-pull": "İmaj indirme",
-  "image-remove": "İmaj silme", "image-update": "İmaj güncelleme", "volume-create": "Birim oluşturma", "volume-remove": "Birim silme",
+  "image-pull": "İmaj indirme", "image-remove": "İmaj silme", "volume-create": "Birim oluşturma", "volume-remove": "Birim silme",
   "network-create": "Ağ oluşturma", "network-remove": "Ağ silme",
+};
+
+/** The applications' jobs ("uygulama-<verb>", DD-271 phase 3); the detail names the application. */
+const APP: Record<string, string> = {
+  kur: "Uygulama kurulumu", baslat: "Uygulama başlatma", durdur: "Uygulama durdurma", "yeniden-baslat": "Uygulama yeniden başlatma",
+  guncelle: "Uygulama imaj güncellemesi", tanim: "Uygulama tanım değişikliği", kaldir: "Uygulama kaldırma", taslak: "Uygulama taslağı",
 };
 
 /** WireGuard's lines (master_wireguard's audit verbs), as its page has always worded them. */
@@ -65,7 +69,7 @@ const LABELS: Record<Kind, string> = {
 export const KIND_ORDER: readonly Kind[] = ["konsol", "ayar", "paylasim", "wireguard", "dosya", "uygulama"];
 
 export function kindOf(e: KayitSatiri): Kind {
-  if (e.action.startsWith("konteyner-")) return "uygulama";
+  if (e.action.startsWith("konteyner-") || e.action.startsWith("uygulama-")) return "uygulama";
   if (e.source !== "panel") return "dosya";
   if (e.action.startsWith("ayar-")) return "ayar";
   if (e.action.startsWith("paylasim-")) return "paylasim";
@@ -87,6 +91,9 @@ export function lineOf(e: KayitSatiri): string {
   } else if (e.action.startsWith("konteyner-")) {
     const action = e.action.slice("konteyner-".length);
     text = `${CONTAINER[action] ?? action} istendi: ${e.detail}`;
+  } else if (e.action.startsWith("uygulama-")) {
+    const verb = e.action.slice("uygulama-".length);
+    text = `${APP[verb] ?? verb} istendi: ${e.detail}`;
   } else text = `${e.action} ${e.detail}`;
   return e.ok ? text : `${text} — başarısız`;
 }

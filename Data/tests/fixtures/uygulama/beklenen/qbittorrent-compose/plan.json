@@ -1,0 +1,38 @@
+{
+  "environment": {
+    "qbittorrent": "PUID=1000\nPGID=1000\nTZ=Etc/UTC\nWEBUI_PORT=8080\nTORRENTING_PORT=6881\n"
+  },
+  "folders": [
+    "/var/lib/master-stack/uygulamalar/aktarim/appdata"
+  ],
+  "binds": {
+    "qbittorrent": [
+      "/srv/downloads"
+    ]
+  },
+  "start": [
+    "konsol-aktarim_qbittorrent.service"
+  ],
+  "stop": [
+    "konsol-aktarim_qbittorrent.service"
+  ],
+  "containers": {
+    "qbittorrent": "aktarim_qbittorrent"
+  },
+  "network": {
+    "name": "ksl-aktarim",
+    "interface": "kslf093d712a5",
+    "unit": "konsol-aktarim-network.service"
+  },
+  "pod": null,
+  "publications": [
+    {
+      "service": "qbittorrent",
+      "port": 8080,
+      "protocol": "tcp",
+      "host_ip": "127.0.0.1",
+      "host_port": 62100
+    }
+  ],
+  "needs_podman5": []
+}

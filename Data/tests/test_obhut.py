@@ -43,11 +43,12 @@ def run(argv, konsol, root=True):
     return code, out.getvalue(), err.getvalue()
 
 
+# GET /api/konsol/uygulamalar items (DD-271, phase 3): applications by name with their services.
 APPS = {"items": [
-    {"id": "konteyner:medya", "ad": "medya", "konteyner": "medya", "durum": "calisiyor",
-     "eylemler": ["durdur", "yeniden-baslat", "kaldir"], "revizyon": "r1"},
-    {"id": "konteyner:notlar", "ad": "notlar", "konteyner": "notlar", "durum": "durduruldu",
-     "eylemler": ["baslat", "kaldir"], "revizyon": None}]}
+    {"ad": "medya", "durum": "calisiyor", "servisler": [{"ad": "web", "durum": "calisiyor"}, {"ad": "db", "durum": "calisiyor"}],
+     "eylemler": ["durdur", "yeniden-baslat", "guncelle"], "revizyon": "a" * 32},
+    {"ad": "notlar", "durum": "durduruldu", "servisler": [{"ad": "app", "durum": "durduruldu"}],
+     "eylemler": ["baslat"], "revizyon": "b" * 32}]}
 PUBS = {"revizyon": "v1", "adaylar": [
     {"id": "panel", "ad": "Konsol", "servis": "panel", "tailscale": True, "internet": True, "alan_adi": "konsol.example.org"},
     {"id": "konteyner:belgeler", "ad": "belgeler", "servis": "elle-belgeler", "tailscale": True, "internet": False, "alan_adi": ""},
@@ -67,7 +68,7 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(code, 0)
         for text in ("Obhut 1.2.0 (yapı v2-252) · sunucu", "Konsol: http://panel.ev (Tailscale)",
                      "Adresler: Tailscale 100.64.0.2 · internet 203.0.113.10", "Yeni sürüm var: 1.3.0 (sudo obhut guncelle)",
-                     "Sağlık: dikkat", "  ! Disk: %91 dolu", "konteyner:medya", "sudo obhut geri-al"):
+                     "Sağlık: dikkat", "  ! Disk: %91 dolu", "medya", "sudo obhut geri-al"):
             self.assertIn(text, out)
         self.assertNotIn("Servisler:", out)
         code, out, _ = run(["durum", "--json"], konsol)
@@ -91,18 +92,22 @@ class CommandTests(unittest.TestCase):
     def test_applications_start_and_stop_with_their_revision(self):
         konsol = FakeKonsol({"/api/konsol/uygulamalar": APPS})
         code, out, _ = run(["uygulama", "liste"], konsol)
-        self.assertIn("konteyner:notlar", out)
-        # An application is named by its id or its container's name.
+        self.assertIn("medya", out)
+        self.assertIn("web calisiyor, db calisiyor", out)
+        # An application is named by its name; the action goes to its own route with the revision shown.
         self.assertEqual(run(["uygulama", "durdur", "medya"], konsol)[0], 0)
-        self.assertEqual(run(["uygulama", "baslat", "konteyner:notlar"], konsol)[0], 0)
-        self.assertEqual(konsol.posts, [("/api/konsol/uygulamalar/islem", {"id": "konteyner:medya", "eylem": "durdur", "revizyon": "r1"}),
-                                        ("/api/konsol/uygulamalar/islem", {"id": "konteyner:notlar", "eylem": "baslat"})])
+        self.assertEqual(run(["uygulama", "baslat", "notlar"], konsol)[0], 0)
+        self.assertEqual(run(["uygulama", "yeniden-baslat", "medya"], konsol)[0], 0)
+        self.assertEqual(konsol.posts, [("/api/konsol/uygulamalar/medya/islem", {"eylem": "durdur", "revizyon": "a" * 32}),
+                                        ("/api/konsol/uygulamalar/notlar/islem", {"eylem": "baslat", "revizyon": "b" * 32}),
+                                        ("/api/konsol/uygulamalar/medya/islem", {"eylem": "yeniden-baslat", "revizyon": "a" * 32})])
+        self.assertEqual(run(["uygulama", "durdur", "medya_web"], konsol)[0], 1, "a container's name is not an application")
         code, _, err = run(["uygulama", "baslat", "medya"], konsol)
         self.assertEqual(code, 1)
         self.assertIn("medya şu an başlatılamaz (durum: calisiyor).", err)
         self.assertEqual(run(["uygulama", "durdur", "yok"], konsol)[0], 1)
         self.assertEqual(run(["uygulama", "durdur"], konsol)[0], 2)
-        self.assertEqual(len(konsol.posts), 2)
+        self.assertEqual(len(konsol.posts), 3)
 
     def test_internet_names_close_and_the_tailnet_name_stays(self):
         konsol = FakeKonsol({"/api/konsol/yayinlar": PUBS})

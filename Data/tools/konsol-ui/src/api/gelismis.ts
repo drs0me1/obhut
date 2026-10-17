@@ -3,7 +3,7 @@
 // shapes come from sema.ts (generated from panel/master_api.py); every reply is checked before a page shows
 // it, a list item without its expected fields is left out, and a collection that could not be read is
 // never shown as an empty one.
-import { YOLLAR, type Gelismis, type KonteynerIsi, type KonteynerListesi, type YapilandirmaDosyasi } from "./sema";
+import { YOLLAR, type Gelismis, type KonteynerIsi, type KonteynerIstegi, type KonteynerListesi, type YapilandirmaDosyasi } from "./sema";
 import { getJson, postJson } from "./http";
 import { isObject, isText, shaped } from "./konsol";
 
@@ -148,13 +148,15 @@ export async function readResources(): Promise<Resources> {
   };
 }
 
-export type ResourceJob =
+/** One of Gelişmiş's six resource actions, in the route table's typed shape (KonteynerIstegi). */
+export type ResourceJob = KonteynerIstegi & (
   | { action: "image-pull"; image: string }
   | { action: "image-remove"; image: string }
   | { action: "volume-create"; name: string }
   | { action: "volume-remove"; name: string }
   | { action: "network-create"; name: string; subnet: string; internal: boolean }
-  | { action: "network-remove"; name: string };
+  | { action: "network-remove"; name: string }
+);
 
 /** Starts a resource job (202 {id, action, name, state}); its end arrives in the activity list. */
 export async function startResourceJob(request: ResourceJob): Promise<KonteynerIsi & { id: string }> {

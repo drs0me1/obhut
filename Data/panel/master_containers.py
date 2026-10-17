@@ -2,11 +2,12 @@
 """Read-only Podman mapper (DD-208), reused by the DD-211 container manager.
 
 Podman is part of the base (Konsol's container runtime). The root backend calls this module
-for GET /api/konsol/konteynerler/{liste,ayrinti,gunluk}; everything comes from `podman` itself
-(ps, inspect, images, system df, logs) run inside the backend's sandbox, which is enough for
+for GET /api/konsol/konteynerler/{liste,ayrinti}; everything comes from `podman` itself
+(ps, inspect, images, system df) run inside the backend's sandbox, which is enough for
 reading, and, for a container on the host network, from /proc (the sockets it listens on, DD-215).
-Nothing here starts, stops or removes a container: that belongs to the application that owns it. Environment variables are never returned (they may hold passwords).
-DD-251: log lines are returned as the runtime gives them, with no masking or other filter (only blank lines go).
+Nothing here starts, stops or removes a container: that belongs to the application that owns it.
+Environment variables are never returned (they may hold passwords). An application's log is its
+units' journal (master_container_manager, DD-251).
 """
 import ipaddress
 import json
@@ -15,8 +16,7 @@ import re
 import sys
 import time
 
-NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
-TAILS = (100, 200, 500, 1000)
+NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 LABEL_KEYS = {"version": "org.opencontainers.image.version", "source": "org.opencontainers.image.source", "title": "org.opencontainers.image.title"}
 
 
@@ -270,6 +270,7 @@ class Containers:
         ok, rows, message = self.podman("ps", "-a", "--format", "json")
         if not ok:
             return False, [], message
+        import master_generator as table  # the labels' one home
         result = []
         for c in rows or []:
             if not isinstance(c, dict):
@@ -277,13 +278,17 @@ class Containers:
             names = c.get("Names") or []
             name = names[0] if isinstance(names, list) and names else str(c.get("Id", ""))[:12]
             labels = c.get("Labels") or {}
+            if not isinstance(labels, dict):
+                labels = {}
             networks = c.get("Networks") or []
             result.append({
                 "id": str(c.get("Id", ""))[:12], "name": name, "image": c.get("Image", ""), "state": c.get("State") or "unknown",
                 "status": c.get("Status", ""), "created": epoch(c.get("Created")), "started": epoch(c.get("StartedAt")),
                 "exit_code": c.get("ExitCode", 0) if isinstance(c.get("ExitCode"), int) else 0,
                 "restarts": c.get("Restarts", 0) if isinstance(c.get("Restarts"), int) else 0,
-                "unit": labels.get("PODMAN_SYSTEMD_UNIT", "") if isinstance(labels, dict) else "",
+                "unit": labels.get("PODMAN_SYSTEMD_UNIT", ""),
+                # The application a container belongs to, by its labels (a display hint; the worker proves ownership).
+                "uygulama": str(labels.get(table.APP_LABEL) or "") if labels.get(table.MANAGED_LABEL) == table.MANAGED_VALUE else "",
                 "network": ", ".join(networks) if networks else "host" if (c.get("Namespaces") or {}).get("Net", "") == "host" or not networks else "",
                 "ports": ps_ports(c.get("Ports")), "mounts": len(c.get("Mounts") or []),
             })
@@ -351,11 +356,3 @@ class Containers:
             "labels": {k: str(labels.get(v, "")) if isinstance(labels, dict) else "" for k, v in LABEL_KEYS.items()},
             "command": " ".join(str(x) for x in (config.get("Cmd") or [])),
         }
-
-    def gunluk(self, name, tail):
-        tail = int(tail) if str(tail).isdigit() and int(tail) in TAILS else 200
-        ok, text, message = self.podman("logs", "--timestamps", "--tail", str(tail), name, timeout=30)
-        if not ok:
-            raise ContainerError(404 if "no such" in message.lower() else 502, "Konteyner bulunamadı" if "no such" in message.lower() else "Günlük okunamadı: %s" % message)
-        lines = [l for l in (text or "").splitlines() if l.strip()]
-        return {"name": name, "lines": lines[-tail:], "truncated": len(lines) >= tail}

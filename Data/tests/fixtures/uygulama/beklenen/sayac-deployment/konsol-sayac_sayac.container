@@ -1,0 +1,38 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: sayac uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması sayac: sayac
+After=network-online.target master-firewall.service
+Wants=network-online.target master-firewall.service
+
+[Container]
+ContainerName=sayac_sayac
+Image=ghcr.io/example/sayac@sha256:0bdae35752a150d768da6663c4cffe6bc8d6079e9a19e950a9ea427a298966e7
+Pull=never
+Network=konsol-sayac.network
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=sayac
+LogDriver=journald
+DropCapability=NET_BIND_SERVICE SETFCAP SYS_CHROOT
+EnvironmentFile="/etc/master-stack/containers/uygulamalar/sayac/env/sayac.env"
+Secret=obhut_sayac_9316fd78,type=env,target=COUNTER_TOKEN
+PublishPort=127.0.0.1:62100:9000/tcp
+Volume=/var/lib/master-stack/uygulamalar/sayac/sayac-data:/data:rw
+Tmpfs=/tmp
+HealthCmd=["CMD-SHELL", "curl -f http://localhost:9000/healthz || exit 1"]
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=10s
+HealthRetries=3
+WorkingDir=/data
+PodmanArgs=--network-alias=sayac
+
+[Service]
+Restart=always
+RestartSec=10s
+TimeoutStartSec=180
+TimeoutStopSec=75
+UMask=0077
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_network.py" --state "/etc/master-stack/state.env" --check
+
+[Install]
+WantedBy=multi-user.target

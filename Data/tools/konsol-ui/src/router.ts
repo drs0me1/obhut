@@ -1,6 +1,6 @@
 // Hash routes (#/genel …), so Caddy needs no rewrite. The six sections with their tabs in the query
-// (#/erisim?sekme=adresler, #/dosyalar?sekme=paylasimlar) and an application's page
-// (#/uygulamalar/konteyner:notlar). Any other address opens Genel Bakış.
+// (#/erisim?sekme=adresler, #/dosyalar?sekme=paylasimlar) and an application's page by its name
+// (#/uygulamalar/notlar). Any other address opens Genel Bakış.
 import type { Component } from "vue";
 import { createRouter, createWebHashHistory } from "vue-router";
 import OverviewPage from "./pages/OverviewPage.vue";
@@ -33,7 +33,7 @@ export const router = createRouter({
   routes: [
     { path: "/", redirect: "/genel" },
     ...SECTIONS.map((s) => ({ path: "/" + s.id, name: s.id, component: PAGES[s.id], meta: { section: s.id } })),
-    { path: "/uygulamalar/:id", name: "uygulama", component: AppPage, meta: { section: "uygulamalar" } },
+    { path: "/uygulamalar/:ad", name: "uygulama", component: AppPage, meta: { section: "uygulamalar" } },
     { path: "/:rest(.*)*", redirect: "/genel" },
   ],
   // A new page starts at the top; a changed view of the same page (a tab, a filter) keeps the scroll.
@@ -41,4 +41,4 @@ export const router = createRouter({
 });
 
 /** The address of an application's page. */
-export const appRoute = (id: string) => ({ name: "uygulama", params: { id } }) as const;
+export const appRoute = (ad: string) => ({ name: "uygulama", params: { ad } }) as const;

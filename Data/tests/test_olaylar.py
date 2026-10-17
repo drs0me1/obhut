@@ -111,21 +111,20 @@ class JobsTests(Fixture):
         master_api.check(master_api.ref("Islemler"), result)
         return result["items"]
 
-    def test_container_operations_from_the_dispatch_records(self):
+    def test_application_and_resource_jobs_from_the_dispatch_records(self):
         now = int(time.time())
         self.p.containers.jobs.update({
             "a" * 32: {"id": "a" * 32, "action": "image-pull", "name": "docker.io/library/nginx:alpine", "state": "running",
                        "step": "İndiriliyor", "updated_at": now - 5},
-            "b" * 32: {"id": "b" * 32, "action": "restart", "name": "notlar", "state": "done", "updated_at": now - 10},
-            "c" * 32: {"id": "c" * 32, "action": "remove", "name": "eski", "state": "failed", "error": "Konteyner kaldırılamadı.",
+            "b" * 32: {"id": "b" * 32, "action": "uygulama-yeniden-baslat", "name": "notlar", "state": "done", "updated_at": now - 10},
+            "c" * 32: {"id": "c" * 32, "action": "uygulama-kaldir", "name": "eski", "state": "failed", "error": "Kaldırma başarısız.",
                        "updated_at": now - 20},
-            "d" * 32: {"id": "d" * 32, "action": "start", "name": "dun", "state": "done", "updated_at": now - 3600}})
+            "d" * 32: {"id": "d" * 32, "action": "uygulama-baslat", "name": "dun", "state": "done", "updated_at": now - 3600}})
         items = self.jobs(now=now)
-        self.assertEqual([(i["ad"], i["durum"], i["adim"], i["bitis"]) for i in items], [
-            ("eski · Kaldırma", "hata", "Konteyner kaldırılamadı.", now - 20),
-            ("notlar · Yeniden başlatma", "tamam", "", now - 10),
-            ("docker.io/library/nginx:alpine · İmaj indirme", "calisiyor", "İndiriliyor", None)])
-        self.assertEqual({i["tur"] for i in items}, {"konteyner"})
+        self.assertEqual([(i["tur"], i["ad"], i["durum"], i["adim"], i["bitis"]) for i in items], [
+            ("uygulama", "eski · Kaldırma", "hata", "Kaldırma başarısız.", now - 20),
+            ("uygulama", "notlar · Yeniden başlatma", "tamam", "", now - 10),
+            ("konteyner", "docker.io/library/nginx:alpine · İmaj indirme", "calisiyor", "İndiriliyor", None)])
         self.assertEqual([i["durum"] for i in self.jobs(now=now + panel.JOB_KEEP_SECONDS)], ["calisiyor"],
                          "a finished operation is dropped in time; a running one stays")
 

@@ -50,13 +50,14 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import master_api
+import master_applications
 import master_auth
 import master_containers
+import master_container_config
 import master_container_manager
 import master_erisim
 import master_inspector
 import master_olaylar
-import master_uygulamalar
 import master_yayin
 import master_settings
 import master_shares
@@ -64,8 +65,6 @@ import master_publications
 import master_update
 import master_wireguard
 
-# DD-261: an application of the Uygulamalar view: one of Konsol's containers (DD-271, phase 1).
-APP_ID_RE = re.compile(r"^konteyner:[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 SAMPLE_SECONDS = float(os.environ.get("PANEL_SAMPLE_SECONDS", "10"))
 MAX_BODY = 65536
 # A request body must arrive within this time in all, not only between two packets: a body sent a
@@ -86,11 +85,15 @@ STREAM_RETRY_MS = 3000
 STREAM_LIMIT = 4
 # The activity drawer keeps a finished operation this long.
 JOB_KEEP_SECONDS = 120
-JOB_CONTAINER_ACTIONS = {"create": "Oluşturma", "save": "Ayar kaydı", "start": "Başlatma", "stop": "Durdurma",
-                         "restart": "Yeniden başlatma", "remove": "Kaldırma", "adopt": "Sahiplenme",
-                         "image-pull": "İmaj indirme", "image-remove": "İmaj silme", "image-update": "İmaj güncelleme",
+JOB_CONTAINER_ACTIONS = {"image-pull": "İmaj indirme", "image-remove": "İmaj silme",
                          "volume-create": "Birim oluşturma", "volume-remove": "Birim silme",
-                         "network-create": "Ağ oluşturma", "network-remove": "Ağ silme"}
+                         "network-create": "Ağ oluşturma", "network-remove": "Ağ silme",
+                         "uygulama-kur": "Kurulum", "uygulama-baslat": "Başlatma", "uygulama-durdur": "Durdurma",
+                         "uygulama-yeniden-baslat": "Yeniden başlatma", "uygulama-guncelle": "İmaj güncelleme",
+                         "uygulama-tanim": "Tanım değişikliği", "uygulama-kaldir": "Kaldırma",
+                         "uygulama-taslak": "Taslak (imajdan)"}
+# An application's errors: the broker's and the records'.
+APP_ERRORS = (master_containers.ContainerError, master_container_config.ContainerConfigError)
 # Sistem → Günlük: iki arka ucun günlük satırları; journalctl her istekte çalışmaz.
 ACTIONS_CACHE_SECONDS = 15
 # DD-182: Sağlık kartı. Salt okunur; sekme açıkken 30 sn'de bir hesaplanır.
@@ -1428,39 +1431,25 @@ class Panel:
         env = read_env(self.args.state)
         listing = self.yayinlar()
         manager = master_settings.Manager(self.args.state)
-        used = set(master_publications.reserved_ports(env))
-        for c in listing["adaylar"]:
-            port = master_yayin.upstream_port(c.get("hedef"))
-            if port:
-                used.add(port)
-            for p in ((c.get("konteyner") or {}).get("yerel_portlar") or []) + ((c.get("konteyner") or {}).get("diger_portlar") or []):
-                used.add(p["host_port"])
+        return master_yayin.plan(env, data, listing["adaylar"], lambda request: manager.plan(request, client=client, kanal=kanal))
 
-        def detail(name):
+    def uygulamalar(self, fresh=False):
+        """GET /api/konsol/uygulamalar: every application from its record with its live state (DD-271,
+        phase 3). ?yenile asks the registries again first (DD-214, at most once a minute)."""
+        if fresh:
             try:
-                return self.containers.view().ayrinti(name)
-            except master_containers.ContainerError as err:
-                raise master_settings.SettingsError(str(err)) from err
-        return master_yayin.plan(env, data, listing["adaylar"],
-                                 lambda request: manager.plan(request, client=client, kanal=kanal), detail,
-                                 lambda: master_yayin.free_port(env, used))
-
-    def uygulamalar(self, erisim=None):
-        """GET /api/konsol/uygulamalar (DD-261): Konsol's containers with how each is reached (the Erişim
-        view). A source that fails adds an error line."""
-        env = read_env(self.args.state)
-        errors = []
-        containers = None
-        if env.get("KONTEYNER_STATE_DIR"):
-            try:
-                containers = self.containers.view().liste()
-            except master_containers.ContainerError as err:
-                errors.append(str(err))
-        erisim = erisim if erisim is not None else self.erisim()
-        errors += [e for e in erisim.get("hatalar", []) if e not in errors]
-        if containers is not None:
+                self.containers.updates(force=True)
+            except (master_containers.ContainerError, OSError, ValueError, KeyError):
+                pass  # the check keeps its own error; the list still answers
+        try:
+            answer = self.containers.view().applications()
+        except master_containers.ContainerError as err:
+            answer = {"read_at": int(time.time()), "items": [], "kaynaklar": [],
+                      "altyapi": {"podman": "", "calisiyor": False, "imaj": 0, "kullanilmayan_imaj": 0, "birim": 0, "ag": 0},
+                      "hatalar": [str(err)]}
+        if answer["items"]:
             self.update_check_soon()
-        return master_uygulamalar.build(containers, erisim, time.time(), errors)
+        return answer
 
     def update_check_soon(self):
         """DD-261: the read model shows image updates from the cached check (DD-214). A cache older than its
@@ -1481,52 +1470,29 @@ class Panel:
         except (master_containers.ContainerError, OSError, ValueError, KeyError):
             pass  # the check keeps its own error; the next listing after a minute tries again
 
-    def uygulama_ayrinti(self, sid):
-        """GET /api/konsol/uygulamalar/ayrinti: one application with its container, mounts and access."""
-        if not APP_ID_RE.match(sid or ""):
-            raise ApiError(400, "Uygulama kimliği geçersiz.")
-        erisim = self.erisim()
-        listing = self.uygulamalar(erisim)
-        item = next((i for i in listing["items"] if i["id"] == sid), None)
-        if item is None:
-            raise ApiError(404, "Uygulama bulunamadı.")
-        try:
-            row = self.containers.view().ayrinti(item["konteyner"])
-        except master_containers.ContainerError as err:
-            raise ApiError(err.status, str(err))
-        box = {"imaj": str(row.get("image") or ""), "ag": str(row.get("network") or ""), "kullanici": str(row.get("user") or ""),
-               "baslangic": row.get("started") if isinstance(row.get("started"), int) else None,
-               "saglik": str(row.get("health") or ""), "yeniden_baslama": int(row.get("restarts") or 0),
-               "portlar": [{"host_ip": str(p.get("host_ip", "")), "host_port": p["host_port"], "container_port": p["container_port"],
-                            "protocol": str(p.get("protocol", "tcp")), "scope": str(p.get("scope", ""))}
-                           for p in row.get("ports") or [] if isinstance(p, dict)],
-               "baglamalar": [{"tur": str(m.get("type", "")), "kaynak": str(m.get("source", "")), "hedef": str(m.get("destination", "")),
-                               "yazilabilir": bool(m.get("rw")), "ad": str(m.get("name") or "")}
-                              for m in row.get("mounts") or [] if isinstance(m, dict)]}
-        access = next((r for r in erisim["hizmetler"] if r["id"] == item["id"]), None)
-        return {"uygulama": item, "konteyner": box, "erisim": access}
-
     def depolama(self):
-        """GET /api/konsol/depolama (DD-267): who uses which server folder — each application's bind mounts
-        under the user area (its container's inspect) and each folder share. Read-only; Dosyalar joins it
-        with the files backend's folders. A source that fails adds an error line."""
+        """GET /api/konsol/depolama (DD-267, K7): who uses which server folder — each application's /srv
+        mounts (its record) and each folder share. Read-only; Dosyalar joins it with the files backend's
+        folders. A source that fails adds an error line."""
         env = read_env(self.args.state)
         root = os.path.realpath(env.get("SERVER_ROOT", "") or "/srv")
-        inside = lambda path: isinstance(path, str) and (path == root or path.startswith(root + "/"))
         users, errors = [], []
-        listing = self.uygulamalar()
-        view = None
-        for item in listing["items"]:
+        if env.get("UYGULAMA_STATE_DIR"):
             try:
-                view = view or self.containers.view()
-                row = view.ayrinti(item["konteyner"])
-            except master_containers.ContainerError as err:
-                errors.append("%s: %s" % (item["ad"], err))
-                continue
-            for m in row.get("mounts") or []:
-                if isinstance(m, dict) and m.get("type") == "bind" and inside(m.get("source")):
-                    users.append({"yol": m["source"], "id": item["id"], "ad": item["ad"], "tur": item["tur"],
-                                  "hedef": str(m.get("destination") or ""), "yazilabilir": bool(m.get("rw"))})
+                records = master_applications.Records(env)
+                for app in records.names():
+                    try:
+                        definition = records.load(app)["definition"]
+                    except master_container_config.ContainerConfigError as err:
+                        errors.append("%s: %s" % (app, err))
+                        continue
+                    for svc in definition["services"]:
+                        for m in svc.get("mounts", []):
+                            if m.get("to") == "srv":
+                                users.append({"yol": m["path"], "id": app, "ad": app, "tur": "uygulama",
+                                              "hedef": "%s: %s" % (svc["name"], m["target"]), "yazilabilir": not m.get("read_only")})
+            except master_container_config.ContainerConfigError as err:
+                errors.append(str(err))
         try:
             data = master_shares.Manager(self.args.state).read()
             for share in data["items"]:
@@ -1536,18 +1502,8 @@ class Panel:
                               "yazilabilir": writable})
         except (master_shares.ShareError, OSError, ValueError, KeyError):
             errors.append("Paylaşım kaydı okunamadı.")
-        users.sort(key=lambda u: (u["yol"], u["ad"]))
-        return {"read_at": int(time.time()), "kok": root, "kullananlar": users, "hatalar": errors + listing["hatalar"]}
-
-    def uygulama_gunlugu(self, sid, lines):
-        """GET /api/konsol/uygulamalar/gunluk: a container's journal or podman log."""
-        if not APP_ID_RE.match(sid or ""):
-            raise ApiError(400, "Uygulama kimliği geçersiz.")
-        try:
-            value = self.containers.view().gunluk(sid.partition(":")[2], lines)
-        except master_containers.ContainerError as err:
-            raise ApiError(err.status, str(err))
-        return {"satirlar": [str(l) for l in value.get("lines", [])], "kesik": bool(value.get("truncated"))}
+        users.sort(key=lambda u: (u["yol"], u["ad"], u["hedef"]))
+        return {"read_at": int(time.time()), "kok": root, "kullananlar": users, "hatalar": errors}
 
     def pending(self):
         """The settings change waiting for confirmation or rollback (the page's banner)."""
@@ -1572,7 +1528,8 @@ class Panel:
             done = job.get("state") != "running"
             if done and now - int(job.get("updated_at") or 0) > JOB_KEEP_SECONDS:
                 continue
-            items.append({"tur": "konteyner", "id": str(job["id"]),
+            items.append({"tur": "uygulama" if str(job.get("action", "")).startswith("uygulama-") else "konteyner",
+                          "id": str(job["id"]),
                           "ad": "%s · %s" % (job.get("name", ""), JOB_CONTAINER_ACTIONS.get(job.get("action"), job.get("action", ""))),
                           "durum": "calisiyor" if not done else "hata" if job.get("state") == "failed" else "tamam",
                           "adim": str((job.get("error") if done else job.get("step")) or ""),
@@ -1964,10 +1921,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def api_konteyner_ayrintisi(self, query):
         self.container_read(lambda: self.container_view().ayrinti(master_containers.name_of(query.get("ad", [""])[0])))
 
-    def api_konteyner_guncellemeleri(self, query):
-        # DD-214: image update status from registry manifests; cached, ?yenile=1 asks again.
-        self.container_read(lambda: self.panel.containers.updates(force="yenile" in query))
-
     def api_konteyner_isi(self, query):
         self.container_read(lambda: self.panel.containers.operation(query.get("id", [""])[0]))
 
@@ -2061,37 +2014,145 @@ class Handler(http.server.BaseHTTPRequestHandler):
         view = self.panel.settings(fresh="yenile" in query)
         self.json(200, {"read_at": view["read_at"], "caddy": view["web"], "dnsmasq": view["dns"]})
 
-    def api_uygulamalar(self, query):
-        self.json(200, self.panel.uygulamalar())
-
-    def api_uygulama_ayrinti(self, query):
+    # DD-271 (phase 3): applications. Reads come from the records with their live state; every write is a job
+    # of the container broker (the request on the worker's standard input only) and an audit line
+    # uygulama-<verb> naming the application. Secret values are checked here and never kept or echoed.
+    def app_call(self, call, status=200):
         try:
-            self.json(200, self.panel.uygulama_ayrinti(query.get("id", [""])[0]))
-        except ApiError as err:
-            self.error(err.code, err.message)
+            self.json(status, call())
+        except APP_ERRORS as err:
+            self.error(err.status, str(err))
 
-    def api_uygulama_gunlugu(self, query):
-        try:
-            self.json(200, self.panel.uygulama_gunlugu(query.get("id", [""])[0], query.get("satir", ["200"])[0]))
-        except ApiError as err:
-            self.error(err.code, err.message)
+    def app_view(self):
+        return self.panel.containers.view()
 
-    def api_uygulama_islemi(self, user, data):
-        """One entry for an application's lifecycle (DD-261): the container broker (DD-211, DD-214)."""
-        sid, eylem = data["id"], data["eylem"]
+    def app_job(self, user, action, app, request, reply, detail=None):
         try:
-            if not APP_ID_RE.match(sid):
-                raise ApiError(404, "Uygulama bulunamadı.")
-            action = {"baslat": "start", "durdur": "stop", "yeniden-baslat": "restart", "kaldir": "remove",
-                      "guncelle": "image-update"}[eylem]
-            result = self.panel.containers.submit({"action": action, "name": sid.partition(":")[2],
-                                                   "revision": data.get("revizyon", "")})
-            self.audit(user, "konteyner-" + result["action"], result["name"], True)
-            self.json(202, {"id": sid, "eylem": eylem, "is": result.get("id")})
-        except ApiError as err:
-            self.error(err.code, err.message)
+            job = self.panel.containers.submit_app(action, app, request)
         except master_containers.ContainerError as err:
             self.error(err.status, str(err))
+            return
+        self.audit(user, action, detail or app, True)
+        self.json(self.route.status, dict(reply, **{"is": job["id"]}))
+
+    def app_revision(self, app, revision):
+        """The application's record, refused (409) when the page showed another revision."""
+        record = self.app_view().record(app)
+        if revision != record["places"]["revision"]:
+            raise master_containers.ContainerError(409, "Uygulama değişmiş; sayfayı yenileyip yeniden deneyin.")
+        return record
+
+    def api_uygulamalar(self, query):
+        self.json(200, self.panel.uygulamalar(fresh="yenile" in query))
+
+    def api_uygulama(self, query):
+        self.app_call(lambda: self.app_view().application(self.params["app"]))
+
+    def api_uygulama_gunlugu(self, query):
+        self.app_call(lambda: self.app_view().journal(self.params["app"], query.get("servis", [""])[0],
+                                                      query.get("satir", ["200"])[0]))
+
+    def api_uygulama_kaynak(self, user, data):
+        """K2's drafts: an https address (fetched here, every address checked public) and a standalone container
+        answer with the text; an image is a job (it pulls). Nothing is installed."""
+        tur = data["tur"]
+        try:
+            if tur == "imaj":
+                reference = master_applications.image_ref(data["imaj"])
+                self.app_job(user, "uygulama-taslak", reference, {"imaj": reference}, {}, "imaj " + reference)
+                return
+            if tur == "adres":
+                text = master_applications.fetch(data["adres"], read_env(self.panel.args.state))
+                detail = "adres " + (urllib.parse.urlsplit(data["adres"]).hostname or "")
+            else:
+                text = self.app_view().container_draft(data["konteyner"])
+                detail = "konteyner " + data["konteyner"]
+        except APP_ERRORS as err:
+            self.error(err.status, str(err))
+            return
+        self.audit(user, "uygulama-taslak", detail, True)
+        self.json(200, {"metin": text, "kaynak": dict(data)})
+
+    def api_uygulama_kur(self, user, data):
+        """Checks the file and the answers here first (a refusal never reaches the worker); the worker checks
+        them again before anything is written."""
+        try:
+            text = master_applications.checked_text(data["metin"])
+            source = master_applications.request_source(data["kaynak"])
+            inspection = master_inspector.inspect(text)
+            if inspection["refusals"] or inspection["format"] is None:
+                raise master_containers.ContainerError(400, "Dosyada kurulumu durduran satırlar var; önce denetimdekileri giderin.")
+            definition, _values, errors = master_inspector.check(inspection, data["yanitlar"])
+            if errors:
+                raise master_containers.ContainerError(400, "Yanıtlar geçersiz; önce denetleyin: %s" % ", ".join(sorted(errors)[:5]))
+            app = definition["name"]
+            env = read_env(self.panel.args.state)
+            if master_applications.Records(env).exists(app):
+                raise master_containers.ContainerError(409, "Bu adla bir uygulama zaten var.")
+        except APP_ERRORS as err:
+            self.error(err.status, str(err))
+            return
+        self.app_job(user, "uygulama-kur", app, {"metin": text, "yanitlar": data["yanitlar"], "kaynak": source},
+                     {"eylem": "kur", "ad": app})
+
+    def api_uygulama_islemi(self, user, data):
+        app = self.params["app"]
+        try:
+            self.app_revision(app, data["revizyon"])
+        except APP_ERRORS as err:
+            self.error(err.status, str(err))
+            return
+        self.app_job(user, "uygulama-" + data["eylem"], app, {"revizyon": data["revizyon"]}, {"eylem": data["eylem"], "ad": app})
+
+    def api_uygulama_tanim(self, user, data):
+        """Tanım (K3): with plan, what the edit changes (nothing written); without, the same check and a job."""
+        app = self.params["app"]
+        try:
+            self.app_revision(app, data["revizyon"])
+            plan = self.app_view().definition_plan(app, data["metin"], data["yanitlar"])
+        except APP_ERRORS as err:
+            self.error(err.status, str(err))
+            return
+        if data["plan"]:
+            self.json(200, plan)
+            return
+        if "fark" not in plan:
+            first = sorted((plan.get("hatalar") or {}).items())[:3]
+            self.error(400, "Tanım uygulanamaz; önce planı denetleyin%s" % (": " + "; ".join("%s: %s" % kv for kv in first) if first
+                                                                          else ": dosyada durduran satırlar var."))
+            return
+        self.app_job(user, "uygulama-tanim", app, {"metin": data["metin"], "yanitlar": data["yanitlar"],
+                                                   "revizyon": data["revizyon"]}, {"eylem": "tanim", "ad": app})
+
+    def api_uygulama_yenile(self, user, data):
+        """An address source fetched again and inspected; the stored answers and the new questions come back."""
+        app = self.params["app"]
+        try:
+            record = self.app_view().record(app)
+            if record["source"]["tur"] != "adres":
+                raise master_containers.ContainerError(409, "Yalnız bir adresten eklenen uygulama kaynağından yenilenir.")
+            text = master_applications.fetch(record["source"]["adres"], read_env(self.panel.args.state))
+        except APP_ERRORS as err:
+            self.error(err.status, str(err))
+            return
+        inspection = master_inspector.inspect(text)
+        self.json(200, {"metin": text, "yanitlar": record["answers"],
+                        "yeni_sorular": master_applications.new_questions(inspection, record["answers"])})
+
+    def api_uygulama_kaldir(self, user, data):
+        app = self.params["app"]
+        if data["veri"] == "sil" and data.get("onay") != app:
+            self.error(400, "Verileri silmek için uygulamanın adını yazın.")
+            return
+        try:
+            self.app_revision(app, data["revizyon"])
+        except APP_ERRORS as err:
+            self.error(err.status, str(err))
+            return
+        request = {"veri": data["veri"], "revizyon": data["revizyon"]}
+        if "onay" in data:
+            request["onay"] = data["onay"]
+        self.app_job(user, "uygulama-kaldir", app, request, {"eylem": "kaldir", "ad": app}, "%s (veri: %s)" % (app, data["veri"]))
 
     def api_uygulama_denetle(self, user, data):
         """DD-271 (phase 2): the inspector's dry run. Nothing is written, run or fetched; the secret values

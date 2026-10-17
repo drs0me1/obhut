@@ -282,7 +282,7 @@
     "/api/konsol/uygulamalar": {
       "get": {
         "operationId": "uygulamalar",
-        "summary": "Uygulamalar: Konsol'un konteynerleri (DD-261)",
+        "summary": "Uygulamalar: kayıtlarından, her servisin canlı durumuyla; uygulamaya alınabilecek konteynerler; ?yenile imaj güncellemelerini yeniden sorar (en çok dakikada bir)",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -293,6 +293,14 @@
               "enum": [
                 "1"
               ]
+            }
+          },
+          {
+            "name": "yenile",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -320,10 +328,10 @@
         }
       }
     },
-    "/api/konsol/uygulamalar/ayrinti": {
+    "/api/konsol/uygulamalar/{app}": {
       "get": {
-        "operationId": "uygulama_ayrinti",
-        "summary": "Bir uygulamanın konteyneri, bağlı klasörleri ve erişimi",
+        "operationId": "uygulama",
+        "summary": "Bir uygulama: servisleri, portları, klasörleri, gizli değerlerin adları, uyarılar, kaynağı, dosyası ve yanıtları (gizli değer yok), birimleri",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -337,11 +345,12 @@
             }
           },
           {
-            "name": "id",
-            "in": "query",
+            "name": "app",
+            "in": "path",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,29}$"
             }
           }
         ],
@@ -369,10 +378,10 @@
         }
       }
     },
-    "/api/konsol/uygulamalar/gunluk": {
+    "/api/konsol/uygulamalar/{app}/gunluk": {
       "get": {
         "operationId": "uygulama_gunlugu",
-        "summary": "Bir uygulamanın günlüğü (son satırlar)",
+        "summary": "Bir servisin günlüğü: biriminin journal'ı, son satırlar",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -386,9 +395,18 @@
             }
           },
           {
-            "name": "id",
-            "in": "query",
+            "name": "app",
+            "in": "path",
             "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,29}$"
+            }
+          },
+          {
+            "name": "servis",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -426,10 +444,71 @@
         }
       }
     },
-    "/api/konsol/uygulamalar/islem": {
+    "/api/konsol/uygulamalar/kaynak": {
       "post": {
-        "operationId": "uygulama_islemi",
-        "summary": "Bir uygulamayı başlat, durdur, yeniden başlat, güncelle ya da kaldır; ilerleme olay akışında (islemler)",
+        "operationId": "uygulama_kaynak",
+        "summary": "Taslak dosya: bir https adresinden ya da bir konteynerden hemen, bir imajdan iş olarak (indirir); hiçbir şey kurulmaz",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KaynakYaniti"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KaynakIstegi"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/uygulamalar/kur": {
+      "post": {
+        "operationId": "uygulama_kur",
+        "summary": "Uygulamayı dosyasından ve yanıtlardan kurar; iş arka planda, ilerleme olay akışında",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -449,7 +528,77 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UygulamaIslemiBasladi"
+                  "$ref": "#/components/schemas/UygulamaIsi"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KurIstegi"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/uygulamalar/{app}/islem": {
+      "post": {
+        "operationId": "uygulama_islemi",
+        "summary": "Başlat, durdur, yeniden başlat ya da imajları güncelle (DD-214); iş arka planda",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "app",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,29}$"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UygulamaIsi"
                 }
               }
             }
@@ -481,6 +630,216 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/UygulamaIslemi"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/uygulamalar/{app}/tanim": {
+      "post": {
+        "operationId": "uygulama_tanim",
+        "summary": "Tanım: plan istenirse yalnız farklar (hiçbir şey yazılmaz), istenmezse iş olarak uygular",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "app",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,29}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TanimYaniti"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TanimIstegi"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/uygulamalar/{app}/yenile": {
+      "post": {
+        "operationId": "uygulama_yenile",
+        "summary": "Adres kaynağını yeniden indirip denetler; saklı yanıtlar ve yeni sorular döner, hiçbir şey yazılmaz",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "app",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,29}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Yenileme"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Bos"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/uygulamalar/{app}/kaldir": {
+      "post": {
+        "operationId": "uygulama_kaldir",
+        "summary": "Uygulamayı kaldırır; veriler kalır (silmek için adı yazılır), imajlar kalır",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "app",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,29}$"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UygulamaIsi"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KaldirIstegi"
               }
             }
           }
@@ -1289,7 +1648,7 @@
     "/api/konsol/konteynerler/islem": {
       "post": {
         "operationId": "konteyner_islemi",
-        "summary": "Konteyner işlemi (DD-211); iş arka planda sürer, ilerleme olay akışında",
+        "summary": "Gelişmiş'in Podman kaynak işi: imaj, birim ya da ağ (DD-211); iş arka planda sürer, ilerleme olay akışında",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -1348,7 +1707,7 @@
       },
       "get": {
         "operationId": "konteyner_isi",
-        "summary": "Bir konteyner işinin durumu",
+        "summary": "Bir işin durumu ve sonucu (kaynak ve uygulama işleri; isteği taşımaz)",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -1438,7 +1797,7 @@
     "/api/konsol/konteynerler/ayrinti": {
       "get": {
         "operationId": "konteyner_ayrintisi",
-        "summary": "Bir konteynerin ayrıntısı ve düzenlenebilir tanımı",
+        "summary": "Bir konteynerin ayrıntısı (salt okunur)",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -1467,55 +1826,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/KonteynerAyrintisi"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Host, köken ya da X-Konsol denetimi",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/konsol/konteynerler/guncellemeler": {
-      "get": {
-        "operationId": "konteyner_guncellemeleri",
-        "summary": "İmaj güncelleme durumu (DD-214); ?yenile en çok dakikada bir yeniden sorar",
-        "parameters": [
-          {
-            "name": "X-Konsol",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          },
-          {
-            "name": "yenile",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Başarılı",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/KonteynerGuncellemeleri"
                 }
               }
             }
@@ -3432,6 +3742,7 @@
           "tur": {
             "type": "string",
             "enum": [
+              "uygulama",
               "konteyner",
               "guncelleme",
               "onarim"
@@ -3768,387 +4079,6 @@
         ],
         "additionalProperties": false
       },
-      "UygulamaHucresi": {
-        "type": "object",
-        "properties": {
-          "durum": {
-            "$ref": "#/components/schemas/ErisimDurumu"
-          },
-          "adresler": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "uyari": {
-            "type": "string"
-          },
-          "not": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "durum",
-          "adresler",
-          "uyari",
-          "not"
-        ],
-        "additionalProperties": false
-      },
-      "Uygulama": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "ad": {
-            "type": "string"
-          },
-          "tur": {
-            "type": "string",
-            "enum": [
-              "konteyner"
-            ]
-          },
-          "aciklama": {
-            "type": "string"
-          },
-          "konteyner": {
-            "type": "string"
-          },
-          "durum": {
-            "type": "string",
-            "enum": [
-              "calisiyor",
-              "durduruldu",
-              "islemde",
-              "hata",
-              "bilinmiyor"
-            ]
-          },
-          "tailscale": {
-            "$ref": "#/components/schemas/UygulamaHucresi"
-          },
-          "internet": {
-            "$ref": "#/components/schemas/UygulamaHucresi"
-          },
-          "kaynak": {
-            "type": "object",
-            "properties": {
-              "cpu": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "bellek": {
-                "anyOf": [
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            },
-            "required": [
-              "cpu",
-              "bellek"
-            ],
-            "additionalProperties": false
-          },
-          "guncelleme": {
-            "type": "string",
-            "enum": [
-              "guncel",
-              "yeni",
-              "denetlenemedi",
-              "bilinmiyor",
-              "sabit"
-            ]
-          },
-          "adres": {
-            "type": "object",
-            "properties": {
-              "tailscale": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "internet": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            },
-            "required": [
-              "tailscale",
-              "internet"
-            ],
-            "additionalProperties": false
-          },
-          "eylemler": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "baslat",
-                "durdur",
-                "yeniden-baslat",
-                "kaldir",
-                "guncelle"
-              ]
-            }
-          },
-          "revizyon": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "id",
-          "ad",
-          "tur",
-          "aciklama",
-          "konteyner",
-          "durum",
-          "tailscale",
-          "internet",
-          "kaynak",
-          "guncelleme",
-          "adres",
-          "eylemler",
-          "revizyon"
-        ],
-        "additionalProperties": false
-      },
-      "UygulamaAyrinti": {
-        "type": "object",
-        "properties": {
-          "uygulama": {
-            "$ref": "#/components/schemas/Uygulama"
-          },
-          "konteyner": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "imaj": {
-                    "type": "string"
-                  },
-                  "ag": {
-                    "type": "string"
-                  },
-                  "kullanici": {
-                    "type": "string"
-                  },
-                  "baslangic": {
-                    "anyOf": [
-                      {
-                        "type": "integer"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "saglik": {
-                    "type": "string"
-                  },
-                  "yeniden_baslama": {
-                    "type": "integer"
-                  },
-                  "portlar": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "host_ip": {
-                          "type": "string"
-                        },
-                        "host_port": {
-                          "type": "integer"
-                        },
-                        "container_port": {
-                          "type": "integer"
-                        },
-                        "protocol": {
-                          "type": "string"
-                        },
-                        "scope": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "host_ip",
-                        "host_port",
-                        "container_port",
-                        "protocol",
-                        "scope"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "baglamalar": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "tur": {
-                          "type": "string"
-                        },
-                        "kaynak": {
-                          "type": "string"
-                        },
-                        "hedef": {
-                          "type": "string"
-                        },
-                        "yazilabilir": {
-                          "type": "boolean"
-                        },
-                        "ad": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "tur",
-                        "kaynak",
-                        "hedef",
-                        "yazilabilir",
-                        "ad"
-                      ],
-                      "additionalProperties": false
-                    }
-                  }
-                },
-                "required": [
-                  "imaj",
-                  "ag",
-                  "kullanici",
-                  "baslangic",
-                  "saglik",
-                  "yeniden_baslama",
-                  "portlar",
-                  "baglamalar"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "erisim": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Hizmet"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "uygulama",
-          "konteyner",
-          "erisim"
-        ],
-        "additionalProperties": false
-      },
-      "UygulamaGunlugu": {
-        "type": "object",
-        "properties": {
-          "satirlar": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "kesik": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "satirlar",
-          "kesik"
-        ],
-        "additionalProperties": false
-      },
-      "UygulamaIslemi": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "eylem": {
-            "type": "string",
-            "enum": [
-              "baslat",
-              "durdur",
-              "yeniden-baslat",
-              "guncelle",
-              "kaldir"
-            ]
-          },
-          "revizyon": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "eylem"
-        ],
-        "additionalProperties": false
-      },
-      "UygulamaIslemiBasladi": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "eylem": {
-            "type": "string"
-          },
-          "is": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "id",
-          "eylem",
-          "is"
-        ],
-        "additionalProperties": false
-      },
       "Ag": {
         "type": "object",
         "properties": {
@@ -4331,65 +4261,6 @@
         },
         "required": [
           "kip"
-        ],
-        "additionalProperties": false
-      },
-      "Uygulamalar": {
-        "type": "object",
-        "properties": {
-          "read_at": {
-            "type": "integer"
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Uygulama"
-            }
-          },
-          "altyapi": {
-            "type": "object",
-            "properties": {
-              "podman": {
-                "type": "string"
-              },
-              "calisiyor": {
-                "type": "boolean"
-              },
-              "imaj": {
-                "type": "integer"
-              },
-              "kullanilmayan_imaj": {
-                "type": "integer"
-              },
-              "birim": {
-                "type": "integer"
-              },
-              "ag": {
-                "type": "integer"
-              }
-            },
-            "required": [
-              "podman",
-              "calisiyor",
-              "imaj",
-              "kullanilmayan_imaj",
-              "birim",
-              "ag"
-            ],
-            "additionalProperties": false
-          },
-          "hatalar": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "read_at",
-          "items",
-          "altyapi",
-          "hatalar"
         ],
         "additionalProperties": false
       },
@@ -5470,8 +5341,18 @@
                   "kaynak": {
                     "type": "string",
                     "enum": [
-                      "konsol",
+                      "uygulama",
                       "dis"
+                    ]
+                  },
+                  "uygulama": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
                     ]
                   },
                   "calisiyor": {
@@ -5518,29 +5399,15 @@
                       ],
                       "additionalProperties": false
                     }
-                  },
-                  "port_eklenebilir": {
-                    "type": "boolean"
-                  },
-                  "onerilen_port": {
-                    "anyOf": [
-                      {
-                        "type": "integer"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
                   }
                 },
                 "required": [
                   "ad",
                   "kaynak",
+                  "uygulama",
                   "calisiyor",
                   "yerel_portlar",
-                  "diger_portlar",
-                  "port_eklenebilir",
-                  "onerilen_port"
+                  "diger_portlar"
                 ],
                 "additionalProperties": false
               },
@@ -5630,9 +5497,6 @@
           "yerel": {
             "type": "string"
           },
-          "konteyner_portu": {
-            "type": "integer"
-          },
           "onay": {
             "type": "string"
           }
@@ -5652,7 +5516,6 @@
           "tur": {
             "type": "string",
             "enum": [
-              "konteyner",
               "ayar"
             ]
           },
@@ -5750,7 +5613,15 @@
         "type": "object",
         "properties": {
           "action": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "image-pull",
+              "image-remove",
+              "volume-create",
+              "volume-remove",
+              "network-create",
+              "network-remove"
+            ]
           },
           "name": {
             "type": "string"
@@ -5758,25 +5629,17 @@
           "image": {
             "type": "string"
           },
-          "revision": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "subnet": {
+            "type": "string"
           },
-          "config": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
+          "internal": {
+            "type": "boolean"
           }
         },
-        "required": [],
-        "additionalProperties": true
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
       },
       "KonteynerIsi": {
         "type": "object",
@@ -5817,25 +5680,6 @@
           },
           "scope": {
             "type": "string"
-          }
-        },
-        "required": [],
-        "additionalProperties": true
-      },
-      "KonteynerGuncellemesi": {
-        "type": "object",
-        "properties": {
-          "state": {
-            "type": "string"
-          },
-          "channel": {
-            "type": "string"
-          },
-          "error": {
-            "type": "string"
-          },
-          "checked_at": {
-            "type": "integer"
           }
         },
         "required": [],
@@ -5906,14 +5750,11 @@
           "source": {
             "type": "string",
             "enum": [
-              "konsol",
+              "uygulama",
               "external"
             ]
           },
-          "management_id": {
-            "type": "string"
-          },
-          "revision": {
+          "uygulama": {
             "anyOf": [
               {
                 "type": "string"
@@ -5922,15 +5763,6 @@
                 "type": "null"
               }
             ]
-          },
-          "actions": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "restricted_reason": {
-            "type": "string"
           },
           "cpu_percent": {
             "anyOf": [
@@ -5990,16 +5822,6 @@
                   ],
                   "additionalProperties": false
                 }
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "update": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/KonteynerGuncellemesi"
               },
               {
                 "type": "null"
@@ -6204,22 +6026,6 @@
           "image": {
             "type": "string"
           },
-          "revision": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "actions": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
           "mounts": {
             "type": "array",
             "items": {
@@ -6245,27 +6051,6 @@
               "additionalProperties": true
             }
           },
-          "config": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "editable": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "protected_mounts": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "effective_autostart": {
-            "type": "boolean"
-          },
           "user": {
             "type": "string"
           },
@@ -6275,29 +6060,6 @@
         },
         "required": [],
         "additionalProperties": true
-      },
-      "KonteynerGuncellemeleri": {
-        "type": "object",
-        "properties": {
-          "checked_at": {
-            "type": "integer"
-          },
-          "items": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": true
-          },
-          "cached": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "checked_at",
-          "items",
-          "cached"
-        ],
-        "additionalProperties": false
       },
       "Oturum": {
         "type": "object",
@@ -6767,7 +6529,7 @@
                 "tur": {
                   "type": "string",
                   "enum": [
-                    "konteyner",
+                    "uygulama",
                     "paylasim"
                   ]
                 },
@@ -9005,11 +8767,33 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "keep": {
+                  "type": "boolean"
                 }
               },
               "required": [
                 "name",
                 "services"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "service": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "service",
+                "text"
               ],
               "additionalProperties": false
             }
@@ -9020,7 +8804,8 @@
           "format",
           "pod",
           "services",
-          "secrets"
+          "secrets",
+          "warnings"
         ],
         "additionalProperties": false
       },
@@ -9059,6 +8844,1192 @@
         },
         "required": [
           "inceleme"
+        ],
+        "additionalProperties": false
+      },
+      "UygulamaDurumu": {
+        "type": "string",
+        "enum": [
+          "calisiyor",
+          "durduruldu",
+          "kismen",
+          "hata",
+          "islemde"
+        ]
+      },
+      "GuncellemeDurumu": {
+        "type": "string",
+        "enum": [
+          "guncel",
+          "yeni",
+          "denetlenemedi",
+          "bilinmiyor",
+          "sabit"
+        ]
+      },
+      "KaynakTuru": {
+        "type": "string",
+        "enum": [
+          "dosya",
+          "adres",
+          "imaj",
+          "konteyner"
+        ]
+      },
+      "UygulamaServisi": {
+        "type": "object",
+        "properties": {
+          "ad": {
+            "type": "string"
+          },
+          "durum": {
+            "$ref": "#/components/schemas/UygulamaDurumu"
+          },
+          "imaj": {
+            "type": "string"
+          },
+          "guncelleme": {
+            "$ref": "#/components/schemas/GuncellemeDurumu"
+          }
+        },
+        "required": [
+          "ad",
+          "durum",
+          "imaj",
+          "guncelleme"
+        ],
+        "additionalProperties": false
+      },
+      "Uygulama": {
+        "type": "object",
+        "properties": {
+          "ad": {
+            "type": "string"
+          },
+          "durum": {
+            "$ref": "#/components/schemas/UygulamaDurumu"
+          },
+          "bicim": {
+            "type": "string",
+            "enum": [
+              "compose",
+              "kubernetes"
+            ]
+          },
+          "servisler": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UygulamaServisi"
+            }
+          },
+          "kaynak": {
+            "type": "object",
+            "properties": {
+              "cpu": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "bellek": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "cpu",
+              "bellek"
+            ],
+            "additionalProperties": false
+          },
+          "guncelleme": {
+            "$ref": "#/components/schemas/GuncellemeDurumu"
+          },
+          "eylemler": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "baslat",
+                "durdur",
+                "yeniden-baslat",
+                "guncelle"
+              ]
+            }
+          },
+          "revizyon": {
+            "type": "string"
+          },
+          "is": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "koken": {
+            "$ref": "#/components/schemas/KaynakTuru"
+          },
+          "durduruldu": {
+            "type": "boolean"
+          },
+          "uyari": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ad",
+          "durum",
+          "bicim",
+          "servisler",
+          "kaynak",
+          "guncelleme",
+          "eylemler",
+          "revizyon",
+          "is",
+          "koken",
+          "durduruldu",
+          "uyari"
+        ],
+        "additionalProperties": false
+      },
+      "UygulamaKaynagi": {
+        "type": "object",
+        "properties": {
+          "ad": {
+            "type": "string"
+          },
+          "imaj": {
+            "type": "string"
+          },
+          "durum": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ad",
+          "imaj",
+          "durum"
+        ],
+        "additionalProperties": false
+      },
+      "Uygulamalar": {
+        "type": "object",
+        "properties": {
+          "read_at": {
+            "type": "integer"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Uygulama"
+            }
+          },
+          "kaynaklar": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UygulamaKaynagi"
+            }
+          },
+          "altyapi": {
+            "type": "object",
+            "properties": {
+              "podman": {
+                "type": "string"
+              },
+              "calisiyor": {
+                "type": "boolean"
+              },
+              "imaj": {
+                "type": "integer"
+              },
+              "kullanilmayan_imaj": {
+                "type": "integer"
+              },
+              "birim": {
+                "type": "integer"
+              },
+              "ag": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "podman",
+              "calisiyor",
+              "imaj",
+              "kullanilmayan_imaj",
+              "birim",
+              "ag"
+            ],
+            "additionalProperties": false
+          },
+          "hatalar": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "read_at",
+          "items",
+          "kaynaklar",
+          "altyapi",
+          "hatalar"
+        ],
+        "additionalProperties": false
+      },
+      "YanitSakli": {
+        "type": "object",
+        "properties": {
+          "set": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "set"
+        ],
+        "additionalProperties": false
+      },
+      "KayitliYanitlar": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "answers": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Yanit"
+                },
+                {
+                  "$ref": "#/components/schemas/YanitSakli"
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "name",
+          "answers"
+        ],
+        "additionalProperties": false
+      },
+      "UygulamaPortu": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "integer"
+          },
+          "protokol": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp"
+            ]
+          },
+          "kullanim": {
+            "type": "string",
+            "enum": [
+              "caddy",
+              "raw"
+            ]
+          },
+          "tailscale_adi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "yerel_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "port",
+          "protokol",
+          "kullanim",
+          "tailscale_adi",
+          "yerel_port"
+        ],
+        "additionalProperties": false
+      },
+      "UygulamaBaglamasi": {
+        "type": "object",
+        "properties": {
+          "hedef": {
+            "type": "string"
+          },
+          "tur": {
+            "type": "string",
+            "enum": [
+              "app",
+              "srv",
+              "tmpfs"
+            ]
+          },
+          "yol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "salt_okunur": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hedef",
+          "tur",
+          "yol",
+          "salt_okunur"
+        ],
+        "additionalProperties": false
+      },
+      "UygulamaServisAyrintisi": {
+        "type": "object",
+        "properties": {
+          "ad": {
+            "type": "string"
+          },
+          "durum": {
+            "$ref": "#/components/schemas/UygulamaDurumu"
+          },
+          "baslangic": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "root"
+            ]
+          },
+          "kullanici": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "imaj": {
+            "type": "string"
+          },
+          "ozet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kanal": {
+            "type": "string"
+          },
+          "guncelleme": {
+            "$ref": "#/components/schemas/GuncellemeDurumu"
+          },
+          "konteyner": {
+            "type": "string"
+          },
+          "birim": {
+            "type": "string"
+          },
+          "calisma": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "saglik": {
+            "type": "string"
+          },
+          "yeniden_baslama": {
+            "type": "integer"
+          },
+          "portlar": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UygulamaPortu"
+            }
+          },
+          "baglamalar": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UygulamaBaglamasi"
+            }
+          },
+          "gizliler": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "ad",
+          "durum",
+          "baslangic",
+          "kullanici",
+          "imaj",
+          "ozet",
+          "kanal",
+          "guncelleme",
+          "konteyner",
+          "birim",
+          "calisma",
+          "saglik",
+          "yeniden_baslama",
+          "portlar",
+          "baglamalar",
+          "gizliler"
+        ],
+        "additionalProperties": false
+      },
+      "UygulamaUyarisi": {
+        "type": "object",
+        "properties": {
+          "servis": {
+            "type": "string"
+          },
+          "metin": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "servis",
+          "metin"
+        ],
+        "additionalProperties": false
+      },
+      "UygulamaAyrinti": {
+        "type": "object",
+        "properties": {
+          "uygulama": {
+            "$ref": "#/components/schemas/Uygulama"
+          },
+          "servisler": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UygulamaServisAyrintisi"
+            }
+          },
+          "gizliler": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ad": {
+                  "type": "string"
+                },
+                "servisler": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "ad",
+                "servisler"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "uyarilar": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UygulamaUyarisi"
+            }
+          },
+          "koken": {
+            "type": "object",
+            "properties": {
+              "tur": {
+                "$ref": "#/components/schemas/KaynakTuru"
+              },
+              "adres": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "imaj": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "konteyner": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "alindi": {
+                "type": "integer"
+              },
+              "sha256": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tur",
+              "adres",
+              "imaj",
+              "konteyner",
+              "alindi",
+              "sha256"
+            ],
+            "additionalProperties": false
+          },
+          "metin": {
+            "type": "string"
+          },
+          "yanitlar": {
+            "$ref": "#/components/schemas/KayitliYanitlar"
+          },
+          "birimler": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "veri": {
+            "type": "string"
+          },
+          "ag": {
+            "type": "string"
+          },
+          "pod": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "uygulama",
+          "servisler",
+          "gizliler",
+          "uyarilar",
+          "koken",
+          "metin",
+          "yanitlar",
+          "birimler",
+          "veri",
+          "ag",
+          "pod"
+        ],
+        "additionalProperties": false
+      },
+      "UygulamaGunlugu": {
+        "type": "object",
+        "properties": {
+          "satirlar": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kesik": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "satirlar",
+          "kesik"
+        ],
+        "additionalProperties": false
+      },
+      "KaynakDosya": {
+        "type": "object",
+        "properties": {
+          "tur": {
+            "type": "string",
+            "enum": [
+              "dosya"
+            ]
+          }
+        },
+        "required": [
+          "tur"
+        ],
+        "additionalProperties": false
+      },
+      "KaynakAdres": {
+        "type": "object",
+        "properties": {
+          "tur": {
+            "type": "string",
+            "enum": [
+              "adres"
+            ]
+          },
+          "adres": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tur",
+          "adres"
+        ],
+        "additionalProperties": false
+      },
+      "KaynakImaj": {
+        "type": "object",
+        "properties": {
+          "tur": {
+            "type": "string",
+            "enum": [
+              "imaj"
+            ]
+          },
+          "imaj": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tur",
+          "imaj"
+        ],
+        "additionalProperties": false
+      },
+      "KaynakKonteyner": {
+        "type": "object",
+        "properties": {
+          "tur": {
+            "type": "string",
+            "enum": [
+              "konteyner"
+            ]
+          },
+          "konteyner": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tur",
+          "konteyner"
+        ],
+        "additionalProperties": false
+      },
+      "KaynakIstegi": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/KaynakAdres"
+          },
+          {
+            "$ref": "#/components/schemas/KaynakImaj"
+          },
+          {
+            "$ref": "#/components/schemas/KaynakKonteyner"
+          }
+        ]
+      },
+      "Taslak": {
+        "type": "object",
+        "properties": {
+          "metin": {
+            "type": "string"
+          },
+          "kaynak": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KaynakAdres"
+              },
+              {
+                "$ref": "#/components/schemas/KaynakImaj"
+              },
+              {
+                "$ref": "#/components/schemas/KaynakKonteyner"
+              }
+            ]
+          }
+        },
+        "required": [
+          "metin",
+          "kaynak"
+        ],
+        "additionalProperties": false
+      },
+      "TaslakIsi": {
+        "type": "object",
+        "properties": {
+          "is": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "is"
+        ],
+        "additionalProperties": false
+      },
+      "KaynakYaniti": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/Taslak"
+          },
+          {
+            "$ref": "#/components/schemas/TaslakIsi"
+          }
+        ]
+      },
+      "KurIstegi": {
+        "type": "object",
+        "properties": {
+          "metin": {
+            "type": "string"
+          },
+          "yanitlar": {
+            "$ref": "#/components/schemas/Yanitlar"
+          },
+          "kaynak": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KaynakDosya"
+              },
+              {
+                "$ref": "#/components/schemas/KaynakAdres"
+              },
+              {
+                "$ref": "#/components/schemas/KaynakImaj"
+              },
+              {
+                "$ref": "#/components/schemas/KaynakKonteyner"
+              }
+            ]
+          }
+        },
+        "required": [
+          "metin",
+          "yanitlar",
+          "kaynak"
+        ],
+        "additionalProperties": false
+      },
+      "UygulamaIsi": {
+        "type": "object",
+        "properties": {
+          "is": {
+            "type": "string"
+          },
+          "eylem": {
+            "type": "string"
+          },
+          "ad": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "is",
+          "eylem",
+          "ad"
+        ],
+        "additionalProperties": false
+      },
+      "UygulamaIslemi": {
+        "type": "object",
+        "properties": {
+          "eylem": {
+            "type": "string",
+            "enum": [
+              "baslat",
+              "durdur",
+              "yeniden-baslat",
+              "guncelle"
+            ]
+          },
+          "revizyon": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "eylem",
+          "revizyon"
+        ],
+        "additionalProperties": false
+      },
+      "YanitSakla": {
+        "type": "object",
+        "properties": {
+          "keep": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "keep"
+        ],
+        "additionalProperties": false
+      },
+      "TanimYanitlari": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "answers": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Yanit"
+                },
+                {
+                  "$ref": "#/components/schemas/YanitSakla"
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "name",
+          "answers"
+        ],
+        "additionalProperties": false
+      },
+      "TanimIstegi": {
+        "type": "object",
+        "properties": {
+          "metin": {
+            "type": "string"
+          },
+          "yanitlar": {
+            "$ref": "#/components/schemas/TanimYanitlari"
+          },
+          "plan": {
+            "type": "boolean"
+          },
+          "revizyon": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "metin",
+          "yanitlar",
+          "plan",
+          "revizyon"
+        ],
+        "additionalProperties": false
+      },
+      "TanimFarki": {
+        "type": "object",
+        "properties": {
+          "birimler": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ad": {
+                  "type": "string"
+                },
+                "degisim": {
+                  "type": "string",
+                  "enum": [
+                    "eklenir",
+                    "kaldirilir",
+                    "degisir"
+                  ]
+                }
+              },
+              "required": [
+                "ad",
+                "degisim"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "ortam": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "portlar": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "anahtar": {
+                  "type": "string"
+                },
+                "degisim": {
+                  "type": "string",
+                  "enum": [
+                    "eklenir",
+                    "kaldirilir",
+                    "kalir"
+                  ]
+                },
+                "yerel_port": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "anahtar",
+                "degisim",
+                "yerel_port"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "klasorler": {
+            "type": "object",
+            "properties": {
+              "eklenen": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "birakilan": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "eklenen",
+              "birakilan"
+            ],
+            "additionalProperties": false
+          },
+          "gizliler": {
+            "type": "object",
+            "properties": {
+              "yeni": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "yenilenen": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "korunan": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kaldirilan": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "yeni",
+              "yenilenen",
+              "korunan",
+              "kaldirilan"
+            ],
+            "additionalProperties": false
+          },
+          "baslangic": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "servis": {
+                  "type": "string"
+                },
+                "once": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "direct",
+                        "root"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "sonra": {
+                  "type": "string",
+                  "enum": [
+                    "direct",
+                    "root"
+                  ]
+                }
+              },
+              "required": [
+                "servis",
+                "once",
+                "sonra"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "uyarilar": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UygulamaUyarisi"
+            }
+          },
+          "yeniden_baslar": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "birimler",
+          "ortam",
+          "portlar",
+          "klasorler",
+          "gizliler",
+          "baslangic",
+          "uyarilar",
+          "yeniden_baslar"
+        ],
+        "additionalProperties": false
+      },
+      "TanimPlani": {
+        "type": "object",
+        "properties": {
+          "inceleme": {
+            "$ref": "#/components/schemas/Inceleme"
+          },
+          "hatalar": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "fark": {
+            "$ref": "#/components/schemas/TanimFarki"
+          }
+        },
+        "required": [
+          "inceleme"
+        ],
+        "additionalProperties": false
+      },
+      "TanimYaniti": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/TanimPlani"
+          },
+          {
+            "$ref": "#/components/schemas/UygulamaIsi"
+          }
+        ]
+      },
+      "Yenileme": {
+        "type": "object",
+        "properties": {
+          "metin": {
+            "type": "string"
+          },
+          "yanitlar": {
+            "$ref": "#/components/schemas/KayitliYanitlar"
+          },
+          "yeni_sorular": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "metin",
+          "yanitlar",
+          "yeni_sorular"
+        ],
+        "additionalProperties": false
+      },
+      "KaldirIstegi": {
+        "type": "object",
+        "properties": {
+          "veri": {
+            "type": "string",
+            "enum": [
+              "sakla",
+              "sil"
+            ]
+          },
+          "onay": {
+            "type": "string"
+          },
+          "revizyon": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "veri",
+          "revizyon"
         ],
         "additionalProperties": false
       }

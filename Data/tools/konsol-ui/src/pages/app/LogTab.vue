@@ -1,5 +1,6 @@
-<!-- An application's Günlük: its last lines (GET /api/konsol/uygulamalar/gunluk: a container's unit journal
-     or podman log), as many as chosen (?satir=100|200|500|1000, 200 when absent),
+<!-- An application's Günlük: one service's last lines (GET /api/konsol/uygulamalar/{app}/gunluk: the journal
+     of its unit), the service chosen when there are several (?servis=, the first when absent), as many lines
+     as chosen (?satir=100|200|500|1000, 200 when absent),
      "Yenile", and "Canlı" (?canli=1), which reads them again every 5 s while it is on and the tab is
      visible. The search (?ara=) keeps the matching lines, matched with Turkish case rules, and marks each
      match. The view stays at the newest line unless the reader scrolled up. The log is shown as written: an application's own secrets in it are visible too. -->
@@ -11,14 +12,15 @@ import Switch from "../../components/ui/Switch.vue";
 import { readAppLog } from "../../api/konsol";
 import { useQueryFlag, useQueryParam } from "../../query";
 import { clock, fold } from "../../format";
-import type { Uygulama, UygulamaGunlugu } from "../../api/sema";
+import type { UygulamaGunlugu } from "../../api/sema";
 
 const TAILS = ["100", "200", "500", "1000"] as const;
 type Tail = (typeof TAILS)[number];
-const props = defineProps<{ app: Uygulama }>();
+const props = defineProps<{ app: string; services: string[] }>();
 
 const liveOn = useQueryFlag("canli");
 const tail = useQueryParam<Tail>("satir", TAILS, "200");
+const service = useQueryParam<string>("servis", () => props.services, () => props.services[0] ?? "");
 const searchParam = useQueryParam<string>("ara", null, "");
 const search = ref(searchParam.value);
 watch(searchParam, (value) => {
@@ -41,7 +43,7 @@ async function load(): Promise<void> {
   const el = box.value;
   const atEnd = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 24;
   try {
-    const value = await readAppLog(props.app.id, Number(tail.value));
+    const value = await readAppLog(props.app, service.value, Number(tail.value));
     if (mine !== seq) return;
     log.value = value;
     error.value = "";
@@ -75,13 +77,14 @@ watch(
   { immediate: true },
 );
 
-// Another application in the same page, or another number of lines: read again (a read under way is dropped).
+// Another application or service in the same page, or another number of lines: read again (a read under way
+// is dropped).
 watch(
-  () => [props.app.id, tail.value],
-  ([id], [before]) => {
+  () => [props.app, service.value, tail.value],
+  ([app, svc], [beforeApp, beforeSvc]) => {
     seq += 1;
     loading.value = false;
-    if (id !== before) log.value = null;
+    if (app !== beforeApp || svc !== beforeSvc) log.value = null;
     error.value = "";
     void load();
   },
@@ -144,6 +147,12 @@ const matchText = computed(() => (needle.value && log.value ? `${shown.value.len
       <Switch v-model="liveOn" label="Canlı" data-testid="live-switch" />
       <span class="meter-note" data-testid="log-read">{{ readAt ? `Son okuma ${clock(readAt)}` : loading ? "Okunuyor…" : "" }}</span>
       <button type="button" class="btn btn-secondary btn-sm" :disabled="loading" @click="load"><Icon name="refresh" :size="16" />Yenile</button>
+    </div>
+    <div v-if="services.length > 1" class="choice-chips" role="radiogroup" aria-label="Servis" data-testid="log-service">
+      <label v-for="s in services" :key="s" class="choice-chip">
+        <input v-model="service" type="radio" name="gunluk-servis" :value="s" />
+        <span>{{ s }}</span>
+      </label>
     </div>
     <div class="log-tools">
       <div class="search-box log-search">

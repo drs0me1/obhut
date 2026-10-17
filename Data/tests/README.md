@@ -59,13 +59,13 @@ px (the viewport is restored; the phone menu, which a wider window closes, is me
 only):
 
 ```bash
-KONSOL_DUZEN=tara KONSOL_DUZEN_ATLA='paket-ayarlar' KONSOL_DUZEN_CIKTI=/tmp/duzen.jsonl \
-  PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulama-ekle-ui.cjs
+KONSOL_DUZEN=tara KONSOL_DUZEN_CIKTI=/tmp/duzen.jsonl \
+  PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulamalar-ui.cjs
 ```
 
 Before a screenshot the harness waits for every finite animation, not only Vue's transition classes (a
-sheet's own slide outlasts them). `KONSOL_DUZEN_ATLA` leaves a state out of the sweep that a resize changes (the account card hides a revealed
-password when the tab hides, which Playwright's resize triggers); `KONSOL_DUZEN=0` turns the audit off.
+sheet's own slide outlasts them). `KONSOL_DUZEN_ATLA` (a pattern of screenshot names) leaves a state out of the
+sweep that a resize changes; `KONSOL_DUZEN=0` turns the audit off.
 Ellipses and long tokens wrapping in their box (addresses, digests) are counted, not reported. The first
 sweep (2026-10-16, v2-254) measured the suites' 393 states at their own width and again at seven widths
 (2,882 measurements), and the live Konsol on the test host: 43 states (every section and tab, the add,
@@ -87,7 +87,7 @@ a manual address joining its container, WireGuard closed for every service, warn
 WebDAV, a container port straight on the WAN, an unknown publication address, a publication that is on
 but failing, Tailscale disconnected, certificate expiry), operator rules, unreadable sources as error
 lines; then the route on a temporary Unix socket and its gates. `test_container_manager.py` checks
-`Inventory.reach()` (one `podman ps`, stopped definitions with their configured ports).
+`Inventory.reach()` (one `podman ps`; an application's container names its application, DD-271 phase 3).
 `test_olaylar.py` drives the producer with a fake clock (changed topics only, a failing topic logged
 once, a slow topic in its own thread, the per-channel limit, the producer stopping when idle), the
 activity drawer's operations (App Store progress through to "bitti"/"hata", container records, the
@@ -133,16 +133,10 @@ committed build matches its sources without Node.
 
 ## Redesign phase 2: Uygulamalar (v2-245, DD-261)
 
-`test_uygulamalar.py` feeds `master_uygulamalar.build()` the backend's own shapes (the package list, the
-container inventory, the Erişim view) and checks each answer against the `Uygulamalar` schema: every
-application in one list, a package with its container, access cells and update state, a Konsol
-container with its manual address, states and running operations, an image that can move but was not
-checked (`bilinmiyor`, not `sabit`), the built-ins and unreadable sources. Then the route on a temporary
-Unix socket and its gates, a container application's detail and log, the one action entry (packages to
-the engine, containers and image updates to the worker with the revision, built-ins refused), the
-repair route, and the background update check (at most once a minute, only for a stale cache, a failure
-kept in its thread). `test_api.py` also checks each route's status and request body in the OpenAPI
-description.
+Since DD-271 phase 3 (below, "Applications") the list comes from the application records;
+`master_uygulamalar.py` is gone. `test_uygulamalar.py` keeps the background update check (at most once a
+minute, only for a stale cache, a failure kept in its thread) and the repair route. `test_api.py` also
+checks each route's status and request body in the OpenAPI description.
 
 ## New interface phase 2: Genel Bakış, Uygulamalar and the application page (v2-245, DD-261)
 
@@ -151,28 +145,39 @@ description.
 the production CSP, the held-open event stream, fixture replies for `/api/*` (a `handlers` table answers
 by method, path and query before the plain fixtures; every request is logged with its parsed POST body),
 `newHttpsPage()` for a page whose origin is `https://` (Playwright answers every request, no TLS), the
-console/CSP/page-error collector and the build check (digest, licence banner). `yeni-ui.cjs` uses it
-unchanged in substance; since phase 2 its fixtures read `/api/konsol/uygulamalar` instead of `moduller`
-(the sidebar count and the palette's applications come from there) and it no longer expects placeholders
-on Genel Bakış and Uygulamalar.
+console/CSP/page-error collector and the build check (digest, licence banner). Since DD-271 phase 3 it also
+exports `fixtures`: builders of the application shapes (`uygulama`, `servis`, `uygulamalar`, `ayrinti` for
+the detail) with neutral `registry.example` images, which every suite's fixtures use. `yeni-ui.cjs` uses it
+unchanged in substance; its fixtures read `/api/konsol/uygulamalar` (the sidebar count and the palette's
+applications come from there).
 
-`yeni-uygulamalar-ui.cjs` drives the phase 2 pages on `KONSOL_URL` (default `http://127.0.0.1:8769`):
-Genel Bakış with problems first (each health check with "Denetle ve onar": a confirmation, then
-`POST /api/konsol/onarim` with exactly `{"kip":"onar"}`, a refused start shown in the dialog, the running
-and ended repair through `islemler`; each Erişim warning with "Düzelt"), the calm state, the locked repair
-on the internet channel with its reason, application cards without Files, "Aç" in a new tab (the internet
-name on an HTTPS origin), resources, the network card (read every 5 s only while the page is shown and the
-tab visible) and the server card; the palette opening an application's page; Uygulamalar with its summary,
-filter chips and counts (Dikkat: a failed state, an access warning or a newer image), a Turkish-aware
-search, the view in the address across a reload, empty states, the add panel, the infrastructure card and
-read errors, keyboard order and a visible focus ring; an application's page with its trail, tabs (arrow
-keys, Home/End, `?sekme=`), Erişim with "Teknik ayrıntı" in the address (`teknik=1`), Depolama, Ayarlar,
-Günlük with "Yenile" and the "Canlı" switch (`canli=1`, every 5 s while on); the exact
-`POST /api/konsol/uygulamalar/islem` bodies of every action (no `revizyon` when it is null, `veri` with
-Kaldır), the dialogs' focus trap, Esc and focus return, the typed `onayla`, error replies in the backend's
-words, jobs in the activity drawer whose end reads the page again, a removed application, built-ins, a
-package without a Konsol page and an unknown id; 1440, 390 and 320 px in both themes with no style
-attribute and no horizontal scroll. Screenshots go to a fresh temporary directory, printed at the end.
+`yeni-uygulamalar-ui.cjs` drives these pages on `KONSOL_URL` (default `http://127.0.0.1:8769`), since DD-271
+phase 3 on the application routes (`/api/konsol/uygulamalar` and `…/uygulamalar/{app}` with its `gunluk`,
+`islem` and `kaldir`): Genel Bakış with problems first (each health check with "Denetle ve onar": a
+confirmation, then `POST /api/konsol/onarim` with exactly `{"kip":"onar"}`, a refused start shown in the
+dialog, the running and ended repair through `islemler`; each Erişim warning with "Düzelt"), the calm state,
+the locked repair on the internet channel with its reason, the applications with their state, format,
+services, warnings and newer images, resources, the network card (read every 5 s only while the page is
+shown and the tab visible) and the server card; a clean server's empty states ("Henüz uygulama yok." and
+that adding from a Compose or Kubernetes file comes with the new screens, pointing nowhere else); the
+palette opening an application's page (by name or a service's name); Uygulamalar with its summary, state and
+warning pills, services, resources and version, filter chips and counts (Dikkat: a failed or partly running
+application, a warning or a newer image), a search by name, service or image with Turkish case rules, the
+view in the address across a reload, empty filters, the infrastructure card and read errors, keyboard order
+and a visible focus ring; an application's page with its trail, the definition's warnings above the tabs,
+tabs (arrow keys, Home/End, `?sekme=`): Özet (each service's state, start mode, user, image, digest,
+version, health, restarts, start, container and unit; a failing health check with the way to its log),
+Portlar (each container port with its use: an address on its 127.0.0.1 pool port, a raw port closed),
+Depolama (each mount with its path on this server, the data folder), Tanım (the source, the file exactly as
+given, the answers with a secret only as set, the secrets by name, the units; read-only) and Günlük per
+service (`servis=`, "Yenile", an error, the "Canlı" switch `canli=1`, every 5 s while on); the exact
+`…/islem` bodies (`{eylem, revizyon}`, only the actions the backend's `eylemler` offers) and `…/kaldir`
+bodies (keeping the data by default; deleting it only after the application's name is typed, Turkish case
+rules, the request carrying the name itself), the dialogs' focus trap, Esc and focus return, error replies in
+the backend's words, jobs (`tur: "uygulama"`) in the activity drawer whose end reads the page again, a failed
+job's reason, an image update's result from the job's record, a finished removal leading back to the list, a
+busy application, a stopped Kubernetes one and an unknown name; 1440, 390 and 320 px in both themes with no
+style attribute and no horizontal scroll. Screenshots go to a fresh temporary directory, printed at the end.
 
 ```bash
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulamalar-ui.cjs
@@ -182,7 +187,7 @@ PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulamalar-u
 
 Two suites drive the committed build through `yeni-harness.cjs`, which since phase 3 also answers a reply
 with `contentType` as it is (a PNG, a text file) and takes `h.dynamic` handlers for paths with variable
-parts (a package's `/api/uygulama/<id>/…` routes).
+parts (an application's `/api/konsol/uygulamalar/<app>/…` routes, WireGuard's networks).
 
 `yeni-erisim-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8771`): Erişim → Genel (warnings first, each
 "Düzelt" by its `duzelt`: the Yayınla flow on Adresler, the application's page or the Tailscale tab; the
@@ -193,15 +198,15 @@ with Konsol's own locked; a DNS draft → `POST /api/konsol/ayarlar/plan` → `�
 body; a refused plan and "Yeniden denetle"; the local domain with its 300 s window, confirmed only from
 `http://panel.<new>`, rolled back from the banner; removing a manual address with `{web: {service, sil: true}}`),
 the Yayınla flow (a package's internet name with the DNS record and the certificate wait; the Konsol row,
-planned only after the typed word, sent as `onay`; a container without a loopback port: the plan's
-container request unchanged to `…/konteynerler/islem`, the job's end through a pushed `islemler` event, then
-the settings request unchanged; a failing second step and a failing job; another port as a new manual
-address through `ayarlar/plan`; an `engel` and "Yeniden denetle"; both names off; a stopped package; an
+planned only after the typed word, sent as `onay`; an application's address port named from its 127.0.0.1
+pool port through the settings request alone (DD-271 phase 3: no container step), a failing settings step
+and "Yeniden denetle"; containers without a loopback port offered but not usable; another port as a new
+manual address through `ayarlar/plan`; an `engel` and "Yeniden denetle"; both names off; a stopped package; an
 unknown target), Güvenlik duvarı (the catalogue merged with the rules, listeners, locked rows, a baseline
 switch and a new `u_…` rule with its checks, IPv6, the network tabs, the technical rules with counters, plan
 → apply → the 60 s banner → Onayla and Geri al, a plan that cannot be applied), a stuck rollback (retry,
-typed discard), a refused confirmation, the internet channel's message (`newHttpsPage`), an application
-page's Erişim tab opening the flow in place, the palette, and 1440/390/320 px in both themes.
+typed discard), a refused confirmation, the internet channel's message (`newHttpsPage`), a warning's
+"Düzelt" leading to an application's page by its name, the palette, and 1440/390/320 px in both themes.
 
 `yeni-wireguard-ui.cjs` (default `http://127.0.0.1:8772`) feeds a fixture of the WireGuard package's own API
 that changes as the page asks: networks as tabs (`ag=`), on at once and off after a question, devices with
@@ -214,8 +219,7 @@ read every 10 s only while the tab is shown and the browser tab visible.
 
 `yeni-ui.cjs` and `yeni-uygulamalar-ui.cjs` changed only where phase 3 meant them to: Erişim is no longer a
 placeholder, the palette's current-interface views no longer list Caddy, Dnsmasq and the firewall, the
-pending banner confirms and rolls back itself, and "Düzelt" and an application's "Erişimi düzenle" lead to
-the new views.
+pending banner confirms and rolls back itself, and "Düzelt" leads to the new views.
 
 ```bash
 PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-erisim-ui.cjs
@@ -225,9 +229,11 @@ PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-wireguard-ui.
 The backend (DD-265): `test_settings.py` checks the plan of firewall, DNS, domain and publication
 changes (before/after, restarts, the confirmation window, a plan refused like `apply`, nothing written,
 `uygulanabilir` false from the internet channel and for a rule that would cut the caller off);
-`test_publications.py` the plan of one publication row; `test_yayin.py` the candidates (packages, Konsol and
-foreign containers, a container joined to its manual address, the reasons an internet name is blocked),
-`free_port`, the one- and two-step plans, `engel` and the routes through the real handler;
+`test_publications.py` the plan of one publication row; `test_yayin.py` the candidates (Konsol, an
+application's containers and foreign ones, a container joined to its manual address or offered from its
+127.0.0.1 port, the reasons an internet name is blocked), the one-step plan (DD-271 phase 3: the step that
+added a loopback port to a container is gone), `engel` and the routes through the real handler, where the
+container route takes only Gelişmiş's resource jobs;
 `test_erisim.py` the warnings' row ids and `duzelt` and the Tailscale summary; `test_wg_settings.py` a
 network's new name through the package's API and its rejected names. Bats checks the routes in the table,
 `master-wg net-settings` renaming a network without touching keys, profiles or services (and refusing bad
@@ -277,46 +283,6 @@ handler (the account state, the audit log, the repair log as plain text, the fol
 configuration, the Podman reads, a package's account with and without `parola=1`, `kur` with its form,
 a body of another shape refused); `test_container_worker.py` checks that a job waits for a held install
 lock and refuses after the wait.
-
-## New interface phase 4a: adding applications and their settings (DD-258)
-
-`yeni-uygulama-ekle-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8774`) drives Uygulamalar' add flows
-and the application page's container views through `yeni-harness.cjs`, with every request body compared
-exactly and every job's end pushed as an `islemler` event. Uygulamalar: the add card (catalogue links,
-the number of adoptable containers, no links to the old interface's App Store or Podman) and Altyapı
-(unhealthy, update-available and storage counts from `GET /api/konsol/konteynerler/liste`, links to
-Gelişmiş's Podman lists). Katalogdan (`?ekle=katalog&paket=<id>`): only packages not installed, a
-package's own words, its install form drawn from the `konsol.json` declaration (the declared default, an
-unrendered `__X__` default treated as none, required, pattern, length, the repeated password, the folder
-picker with free space, entering a folder, Esc closing only the picker), a refusal keeping the draft, an
-older finished job of the same package not counted as this install's end, the progress line, the
-application's page on success, a package without a form and a failed job. Bir imajdan (`?ekle=imaj`):
-the checks of every field (image, name, ports with scope and the internet acknowledgement, duplicates,
-volumes and server folders, the writable-bind account rule, environment with secrets, command, limits),
-the review with internet ports called out and "Oluşturunca başlat", a refusal, a failed job keeping the
-draft and the new application's page. Var olanı yönetime al (`?ekle=sahiplen&ad=<name>`): only foreign
-containers with the server's reasons, the preview job and its record, every scope chosen again, the
-account rule, the typed word, the exact adoption request, unsupported options blocking and a failed
-preview. The application page: a Konsol container's Özet (source, unit, ID, tag, update state with
-channel and time, `?yenile=1`, limits, command, environment without secret values, how it starts), the
-ports by scope and a host container's listening sockets, Depolama, Günlük (`?satir=`, `?ara=` with marked
-matches and Turkish case rules), Güncelle and İmajı güncelle with their results, the definition editor
-(the draft surviving tab switches and reads, the field-by-field diff and consequences, a stale revision
-with "Güncel tanımı yükle", the save with a kept secret, a failed job, start after saving a stopped one,
-the leave guard), adopting from the page, an App Store adapter (checks, picker, diff, save), the
-package's settings form (no password read, only changed fields, a blank password kept, a refusal), the
-first-login account (the password fetched only on request, shown for 30 s with Playwright's clock, hidden
-with the browser tab, copied without being shown), a package without settings, the palette's add
-entries, and 1440/390/320 px in both themes with no horizontal scroll or overflowing card.
-
-`yeni-ui.cjs` and `yeni-uygulamalar-ui.cjs` changed only where phase 4a meant them to: Uygulamalar reads
-Podman's counts, the add card and Altyapı lead to the new flows and Gelişmiş, an application page reads
-its container's detail, a container offers "İmajı güncelle", and Ayarlar holds the settings instead of a
-link to the old interface.
-
-```bash
-PLAYWRIGHT_MODULE="$(npm root -g)/playwright" node Data/tests/yeni-uygulama-ekle-ui.cjs
-```
 
 ## New interface phase 4b: Dosyalar (DD-258, DD-267)
 
@@ -410,23 +376,11 @@ adapted with Caddy 2.10 (the `{args[0]}` placeholder needs Caddy ≥ 2.7; Debian
 
 ## Files account for writable folders (v2-205, DD-227)
 
-`test_container_worker.py` checks:
-- the Files-account render (`User`/`Group`, `DropCapability=all`, `--umask=0002`);
-- the refusal of the image account with a writable folder before any Podman call, while read-only
-  folders and volumes are allowed;
-- the defaults: new definitions get the Files account, a value is preserved when omitted, and older
-  definitions render as before;
-- that invalid ids fail closed with 503;
-- that `ready()` proves the account and the empty capability sets, printed as `null` (Podman 5.4.2)
-  or `[]`, and fails closed when a field is missing (mutations that skip the check, accept a missing
-  field or reject `null` turn it red);
-- the adoption mapping.
-
-The fake runtime reflects the Quadlet's account lines and prints a fully dropped capability set as
-`null`, as Podman 5.4.2 does. `yeni-uygulama-ekle-ui.cjs` checks the account rule on create, in
-adoption and in the definition editor.
-
-The live worker fixture owns its writable folder by the downloads account, as `/srv` is.
+Since DD-271 phase 3 a container starts as A4 answers it. `test_generator.py` checks the direct start's
+lines (`User=`, `DropCapability=all`, `NoNewPrivileges=true`, `--umask=0002` for the Files account with a
+writable `/srv` folder) and the root start's. `test_container_worker.py` checks that an install's ready check
+proves a direct start: its user and empty capability sets (the fake runtime prints a dropped set as `null`,
+as Podman 5.4.2 does); a container that comes up as another user is rolled back.
 
 ## Pinned bind sources (v2-204, DD-226)
 
@@ -441,10 +395,10 @@ The live worker fixture owns its writable folder by the downloads account, as `/
 - a stale anchor is released first;
 - the helper loads no package code and takes no lock.
 
-`test_container_worker.py` checks the generated lines: guard check first, then `bagla`, the anchor in
+`test_generator.py` checks the generated lines: guard check first, then `bagla`, the anchor in
 `Volume=`, `RequiresMountsFor` with the real path, and `ExecStopPost` only with binds.
-`containers-worker-linux.py` copies the helper, gives its fixture an anchor directory, and refuses
-to delete its scratch tree while an anchor is still mounted.
+`test_container_worker.py` checks that an install walks every `/srv` folder with the same rules before any
+write (a missing, hidden or linked folder, or `/srv` itself, stops it).
 
 ## Private package state (v2-203, DD-225)
 
@@ -468,18 +422,14 @@ It also checks that a missing, empty or invalid list fails closed with 503, and 
 detects a deleted or swapped egress rule. The live namespace suite `containers-network-linux.py`
 adds echo servers next to the host and probes from the container namespace. 192.0.2.2 and
 198.51.100.2 are reachable. The tailnet, WireGuard, 192.168, 169.254 and IPv6 peers are not.
-Tailscale-scope and WAN publication replies still pass. `containers-worker-linux.py` gives its
-fixture the same list.
 
 ## Container start precondition (v2-201, DD-223)
 
-`test_container_worker.py` checks the generated Konsol Quadlet: `Wants=` and `After=` on
-`master-firewall.service`, no `Requires=`, `BindsTo=` or `PartOf=`, one `ExecStartPre` that ends
-in `--check`, `RestartSec=10s`, and no check for a container without a network.
+`test_generator.py` checks an application's units: `Wants=` and `After=` on `master-firewall.service`, no
+`Requires=` on it, the `ExecStartPre` that ends in `--check`, `RestartSec=10s`.
 `test_container_network.py` checks that `check()` names a missing guard table and still reports
-other read errors as before. It also checks that a loopback-only port change leaves the policy
-unchanged, which is what lets qBittorrent's interface-port restart pass its start check. A Bats
-catalogue rule applies the same unit lines to every package that declares its own bridge.
+other read errors as before, and that a loopback publication adds no rule (so a pool port change leaves
+the policy as it was).
 
 ## Pending package changes across a failed run (v2-200, DD-222)
 
@@ -502,21 +452,19 @@ python3 -m unittest discover -s tests -p 'test_container*.py'
 ```
 
 Use Python 3.11 or newer (nrm uses 3.13); macOS's system Python 3.9 does not parse
-the nanosecond RFC3339 timestamps returned by the runtime. The suites cover merged
-inventory/stopped definitions, real Podman JSON shapes, API gates, private results,
-stale revisions, recreate/rollback, explicit adoption, volume/network boundaries,
-package port overrides, bridge DNS INPUT permissions, ownership-aware listener
-conflicts and the existing tailnet event's bounded refresh job.
-The browser suites (`yeni-uygulamalar-ui.cjs`, `yeni-uygulama-ekle-ui.cjs`, and `yeni-sistem-ui.cjs` for
-Gelişmiş → Podman) exercise the build with mocked API state; they do not prove Podman, firewall or server
+the nanosecond RFC3339 timestamps returned by the runtime. The suites cover the inventory, real Podman
+JSON shapes, API gates, private job records, Gelişmiş's volume/network/image boundaries (an image or
+network an application uses is never removed), bridge DNS INPUT permissions and the applications' lifecycle
+(below, "Applications").
+The browser suites (`yeni-uygulamalar-ui.cjs`, and `yeni-sistem-ui.cjs` for Gelişmiş → Podman) exercise the build with mocked API state; they do not prove Podman, firewall or server
 mutations.
 
 `containers-network-linux.py` requires Linux/root and is run inside a disposable
-network namespace (`unshare --net --fork`). It tests actual TCP/UDP packet paths,
-scope revocation, direct/IPv6 ingress and preservation of foreign nftables tables.
-`containers-worker-linux.py` requires a disposable rootful Podman/systemd host with
-the project firewall already active. It creates only uniquely named test resources
-and cleans them up; it checks real Quadlet execution and lifecycle behavior.
+network namespace (`unshare --net --fork`). It tests actual TCP/UDP packet paths for an application
+record's bridge (its 127.0.0.1 publication answers, a DNAT from the tailnet or the WAN finds no permit),
+direct/IPv6 ingress, the record's removal and preservation of foreign nftables tables. The single-container
+worker suite (`containers-worker-linux.py`) is gone with that model; an application's real Podman and
+Quadlet lifecycle is the phase's live check on the test host.
 Do not run live fixtures concurrently with installation or another nrm test.
 Installation/reboot persistence and the actual application/browser journey remain
 separate acceptance checks; record exact runs and untested platforms in the change's DD entry
@@ -544,7 +492,7 @@ with the typed word; `giris-ui.cjs` the Tailscale/internet label.
 
 v2-168: `test_resources.py` checks the module listing's `urls` for qBittorrent
 (tailnet name always; the public name only while that publication is active or
-`null`); `yeni-uygulamalar-ui.cjs` checks "Aç" on an `https://` origin (the internet name).
+`null`).
 
 v2-177 (DD-203, store phase 3): the shared share fixture (`test_share_manager_networks.
 torrent_package`) renders the torrent package folder — manifest with `PAKET_KLASORLER`,
@@ -568,8 +516,7 @@ stopped-state preservation, the narrow drop-in and its rollback, the CLI) and it
 module through a fake context and through the real dispatcher (gates, the package-folder
 rule for worker scripts, the private stdin run, the `torrent:ayar` audit line; since DD-269 `/ayar`
 is the only write and `/hesap`, `/dizin` answer 404);
-the package's settings form on the application's Ayarlar tab is `yeni-uygulama-ekle-ui.cjs`'s (the
-package's own page went in DD-267); `test_backend_hardening.py` points the profile-reader checks at
+`test_backend_hardening.py` points the profile-reader checks at
 `ayar.read_conf`; `settings-linux.py` runs the worker's functions against real
 qBittorrent; Bats checks the status view, the private worker run and that the shell
 and the settings page name no application.
@@ -637,8 +584,7 @@ WireGuard refuses a form). `common.bats` runs the real engine and hook against t
 no install without a seed or with a readable one (no image pulled), the form's account and folder in the
 profile at the first start, the seed gone afterwards, a kept profile's preferences preserved with a
 library-folder drop-in, failed installs restoring the previous profile and drop-in, and the backend's
-worker-then-engine order. `yeni-uygulama-ekle-ui.cjs` drives the catalogue's install form and the
-settings form (phase 4a above); `yeni-uygulamalar-ui.cjs` the launch in a new tab and the actions.
+worker-then-engine order.
 
 ## Peer port editor (v2-199, DD-221)
 
@@ -651,8 +597,7 @@ before the app starts again.
 Refused before any service action: a non-integer, out-of-range or interface-equal port, another
 service's port (base `*_PORT`, a saved definition's UDP port), a port the WAN probe finds taken, a
 Quadlet whose WAN lines or `TORRENTING_PORT` do not match, and an unknown config key. The probe
-itself refuses a held TCP and UDP port. `yeni-uygulama-ekle-ui.cjs` edits it in the adapter card on the
-application's Ayarlar tab (checks, the diff, the save). `common.bats` pins the guard-before-start order and the allowlist.
+itself refuses a held TCP and UDP port. `common.bats` pins the guard-before-start order and the allowlist.
 
 ## Data removal keeps Konsol's choices (v2-198, DD-220)
 
@@ -675,8 +620,6 @@ before stopping anything; `test_torrent_api.py` checks that the install writes `
 the bridge in the detail. `common.bats` drives the engine with fake podman: the bridge is created
 once with the guard's interface name and the package label, removed with the package, and an
 unexpected publication stops the install; it also pins the three `PublishPort` lines.
-`yeni-uygulama-ekle-ui.cjs` shows the ports by scope and a host container's listening sockets on the
-application page.
 
 ## Listening ports (v2-194, DD-215)
 
@@ -685,22 +628,21 @@ processes' sockets count (TCP LISTEN, unconnected bound UDP; peer connections, c
 and link-local binds, and the host's own listeners left out), IPv4-mapped and IPv6 addresses, child
 cgroups, the root cgroup never widening to the host, unknown as `None` and never an empty list, the
 address kinds (the server's own WAN address wins over the CGNAT range), and the manager reading only
-running host-network rows with the installer's WAN/Tailscale addresses. `yeni-uygulama-ekle-ui.cjs`
-shows a host container's listening sockets on its application page.
+running host-network rows with the installer's WAN/Tailscale addresses.
 
 ## Image update check (v2-193, DD-214)
 
 `test_container_updates.py` covers `update_status()` (index by host platform digest, single
 manifest by config digest, pinned/unreachable/missing answers, manifests only), the manager's
-cached status (TTL, one forced check a minute, cache emptied after a successful image change,
-no pull target to the browser), `image-update` only for packages with a channel and an adapter,
-and the GET-only route behind the gates. `test_torrent_api.py` `ImageUpdateTests` drives the
+cached status per application and service (DD-271 phase 3: a service whose file pins a digest is `sabit`
+and never asks; TTL, one forced check a minute, cache emptied after a successful application job, no pull
+target to the browser) and `GET /api/konsol/uygulamalar?yenile=1` asking again; the per-container route
+is gone. `test_torrent_api.py` `ImageUpdateTests` drives the
 qBittorrent adapter: no-op when current, exact-digest pull after validation, patched Quadlet and
 manifest lines plus the override (port choice kept), restart/UI/ImageName checks, full rollback on
 a failed restart or a wrong image, a stopped app, and refusals that change nothing.
-`yeni-uygulama-ekle-ui.cjs` checks the update state with its channel and time, "Güncellemeleri denetle"
-(`?yenile=1`) and "Güncelle"/"İmajı güncelle" with their results; `yeni-uygulamalar-ui.cjs` the update
-state in the list. `common.bats` pins the manifest-only check, the adapter order, the channel
+`yeni-uygulamalar-ui.cjs` checks the update state in the list and on the application page and "Güncelle"
+with its result. `common.bats` pins the manifest-only check, the adapter order, the channel
 keys and the absence of any automatic update.
 
 ## Podman in the base and qBittorrent in Podman (v2-186, DD-208, DD-209)
@@ -708,11 +650,11 @@ keys and the absence of any automatic update.
 `test_containers.py` drives `panel/master_containers.py` with canned `podman` JSON: the list
 (containers, host network, ps ports, images, storage size), a calm answer when podman is
 missing or fails, `inspect` mapping (sorted mounts, port bindings, three labels, health, never
-the environment), unfiltered log lines (DD-251) with a bounded tail, name and path
-gates and RFC 3339 parsing; a route test runs the real backend handler on a Unix socket (shared
+the environment), name and path gates and RFC 3339 parsing (an application's log is its units' journal,
+`test_container_manager.py`); a route test runs the real backend handler on a Unix socket (shared
 gates, 400/404 answers, no write route: POST → 404, no podman write verb).
-The browser side of the container manager is `yeni-uygulama-ekle-ui.cjs` (create, adopt, the definition
-editor) and `yeni-sistem-ui.cjs` (Gelişmiş → Podman's images, volumes and networks).
+The browser side of the container manager is `yeni-uygulamalar-ui.cjs` (an application's page and its
+jobs) and `yeni-sistem-ui.cjs` (Gelişmiş → Podman's images, volumes and networks).
 `common.bats` pins the stage-1/7 Podman install and check (no daemon units), the base view's
 files and routes, the engine's quadlet slot and digest-only image (`docker|compose` stay banned,
 no `/etc/containers` literal in the engine), the qBittorrent quadlet (its own bridge
@@ -1305,4 +1247,70 @@ the CSP, the open paths before a session, and where `obhut` is installed and how
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s Data/tests -p 'test_obhut.py'
+```
+
+## Rebuild phase 3: the generator (DD-271)
+
+`test_generator.py` renders every acceptance fixture the inspector accepts (`tests/fixtures/uygulama/*.yaml`,
+with the answers fixed in the test) and compares the units and the rest of the plan (`plan.json`) with the
+golden files in `tests/fixtures/uygulama/beklenen/<fixture>/`; any difference, or a file missing or left
+over, fails. After a deliberate change, rewrite them and review the diff before committing:
+
+```bash
+python3.13 -I tests/test_generator.py --yaz
+```
+
+The focused tests check the names, both start modes, `U` only on the application folders of direct
+services, DD-226 anchors only for `/srv`, aliases, the pod layout, the start order and `Notify=healthy`,
+what needs Podman 5, that no secret value reaches the plan, and the quoting against models of the parsers the
+units meet (Quadlet's word splitting, systemd's `$`/`%` handling, Podman's env-file reader and its
+`--health-cmd` reading, all as of v4.9.3 and v5.4.2). Every key a unit uses is checked against Quadlet
+4.9.3's supported set (`.pod` and `Pod=` against 5.0's). `test_inspector.py` covers `{"keep": true}`, the
+root-start `/srv` warning and the line breaks an env file cannot carry.
+
+```bash
+python3.13 -m unittest discover -s tests -p 'test_generator.py'
+```
+
+## Rebuild phase 3: applications (DD-271)
+
+`app_fixtures.py` holds what the application suites share: a neutral two-service Compose file (an address
+port, a secret, a folder each, a `/srv` folder and a `service_healthy` wait), its answers, a state.env for a
+temporary root and a complete record written through `master_applications`. Images are
+`registry.example`'s.
+
+`test_applications.py` covers `master_applications`: the record (private files, read back whole, the
+environment files at the generator's path, a snapshot put back exactly, anything not private, linked or
+invalid failing closed), stored answers that never hold a secret value or a keep, the request's source,
+images read as Docker reads them and pinned by digest, the loopback pool (kept for the same key across
+edits, free of other applications, Yayınla's rows, the base's ports and listeners; a raw port gets none),
+the guard's input, the read model's states, the YAML emitter (every value back through the reader and the
+inspector, `$` never read as a variable), both drafts (an image's ports and volumes only; a container's
+differences, its secret-looking variables empty, refused settings written so the inspector says why) and
+the address fetch against a fake resolver and connection (every local, private, CGNAT, tailnet, mapped,
+NAT64, 6to4, Teredo, multicast or unspecified address refused before any request, the connection to the
+checked address with no second lookup, three checked redirects, size, text, status, compression and time).
+
+`test_container_worker.py` drives the worker with fake Podman, systemctl and Quadlet and a guard that reads
+the records: an install (record, guard, folders, one pull per image, secrets on Podman's standard input,
+env files, Quadlet dry run, units, start in order, the ready check), every refusal before any write, Podman
+4.9 refusing a health wait and a multi-container pod, a failure at every step taken back in reverse
+(including the guard, a container that is unhealthy or comes up as another user, and kept data left alone),
+a failed rollback saying so; taking a standalone container over (its volume copied once into a new folder,
+removed only after the application is ready, started again on a failure); start, stop, restart, update, an
+edit that keeps one secret and renews another (the old one removed only after the new units run) and its
+rollback, a dropped service, removal keeping or deleting the data and run again after an interruption; the
+image draft; Gelişmiş's resources an application uses; one run per operation id and a record without the
+request. After every action it checks that no secret value is in an argument, a file, a record or a reply.
+`test_container_manager.py` covers the read model from the records with live state (per service, summed
+resources, actions, a running job), the standalone sources, the detail with no secret value, a service's
+journal, an unreadable record as an error line, the edit plan (nothing written), and the broker (no request
+kept, one job per application, 2 MiB of standard input for an application job and 64 KiB for any other).
+`test_uygulamalar.py` runs every application route through the real handler: the shapes, the revision
+checks, the install and edit checked before a job, the audit lines `uygulama-<verb>` and no secret value in
+a reply or an audit line. `test_container_network.py` checks the guard's new input, `test_obhut.py` the
+`obhut uygulama` commands on the new routes.
+
+```bash
+cd tests && python3.13 -m unittest test_applications test_container_worker test_container_manager test_uygulamalar test_container_network
 ```

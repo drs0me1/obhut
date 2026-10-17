@@ -82,6 +82,15 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(status, "bad")
         self.assertIn("example.service", detail)
 
+    def test_a_failed_application_unit_is_listed_like_any_failed_unit(self):
+        # DD-271 (phase 3): an application's units are ordinary units; a stopped application's are inactive, not failed.
+        self.failed = (0, "konsol-notlar_web.service loaded failed failed Konsol uygulaması notlar: web\n")
+        status, detail = self.units()
+        self.assertEqual(status, "bad")
+        self.assertIn("konsol-notlar_web.service", detail)
+        self.assertFalse([u for argv, _ in self.calls if argv[:2] == ["systemctl", "show"] for u in argv if u.startswith("konsol-")],
+                         "only the base's own units are required to run")
+
     def test_nonzero_missing_malformed_and_timeout_probes_never_pass(self):
         for response in ((1, ""), (None, ""), (0, ""), (0, "Id=caddy.service\nActiveState=active\n")):
             with self.subTest(response=response):

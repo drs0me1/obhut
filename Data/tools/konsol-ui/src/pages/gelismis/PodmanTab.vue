@@ -4,8 +4,8 @@
      internal, who uses it, Konsol's or the system's). Only what nothing uses can be removed (the system's
      networks never), after the typed word. Every
      change is a job (POST …/islem → 202); its end arrives in the activity list, and the list is read again.
-     A collection that could not be read says so instead of looking empty. The containers themselves are in
-     Uygulamalar. The forms open over the page (?yeni=imaj|birim|ag). -->
+     A collection that could not be read says so instead of looking empty. The applications and their
+     containers are in Uygulamalar. The forms open over the page (?yeni=imaj|birim|ag). -->
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import { RouterLink } from "vue-router";
@@ -309,7 +309,7 @@ async function submitForm(): Promise<void> {
         <p v-else class="notice notice-danger" role="alert" data-testid="podman-runtime-error">
           <Icon name="xcircle" class="notice-icon" /><span>{{ list.runtime.error || "Podman yanıt vermedi." }}</span>
         </p>
-        <p class="meter-note">Konteynerler <RouterLink to="/uygulamalar">Uygulamalar</RouterLink>'dadır; burada imajlar, birimler ve ağlar yönetilir.</p>
+        <p class="meter-note">Uygulamalar ve servisleri <RouterLink to="/uygulamalar">Uygulamalar</RouterLink>'dadır; burada imajlar, birimler ve ağlar yönetilir.</p>
       </template>
       <p v-else-if="!listError" class="meter-note" role="status">Okunuyor…</p>
     </section>

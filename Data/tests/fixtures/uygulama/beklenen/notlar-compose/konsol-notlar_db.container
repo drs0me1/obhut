@@ -1,0 +1,35 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: notlar uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması notlar: db
+After=network-online.target master-firewall.service
+Wants=network-online.target master-firewall.service
+
+[Container]
+ContainerName=notlar_db
+Image=docker.io/library/postgres@sha256:7bdc25d1694ef984782a16f6f1710c1c6bc83ba7a131b515baf532bea021d011
+Pull=never
+Network=konsol-notlar.network
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=notlar
+LogDriver=journald
+DropCapability=NET_BIND_SERVICE SETFCAP SYS_CHROOT
+EnvironmentFile="/etc/master-stack/containers/uygulamalar/notlar/env/db.env"
+Secret=obhut_notlar_c764202a,type=env,target=POSTGRES_PASSWORD
+Volume=/var/lib/master-stack/uygulamalar/notlar/db-data:/var/lib/postgresql/data:rw
+Tmpfs=/run/postgresql
+HealthCmd=["CMD-SHELL", "pg_isready -U notlar"]
+HealthInterval=10s
+Notify=healthy
+PodmanArgs=--network-alias=db
+PodmanArgs=--stop-timeout=90
+
+[Service]
+Restart=always
+RestartSec=10s
+TimeoutStartSec=300
+TimeoutStopSec=105
+UMask=0077
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_network.py" --state "/etc/master-stack/state.env" --check
+
+[Install]
+WantedBy=multi-user.target

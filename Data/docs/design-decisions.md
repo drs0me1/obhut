@@ -17,6 +17,110 @@ Konsol's old interface was removed in DD-267 (v2-250). Live entries written
 before it still name its places (Ayarlar → Caddy, Ayarlar → Sistem, App Store,
 the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 
+### DD-274: The rebuild's phase 3: generating and running applications (v2-257)
+
+- **Scope (`rebuild.md` phase 3):** an application is installed from its own Compose or Kubernetes file and
+  the operator's answers, and then started, stopped, restarted, updated, edited, refreshed from its address
+  and removed. The routes are in place; Konsol's add flow and editor are phase 5, access rows phase 4.
+- **The generator (`panel/master_generator.py`):** pure; the checked definition plus the engine's
+  allocations (pinned images, pool ports, Podman secret names, stopped) become every unit file, the
+  environment files, the folders, the `/srv` binds, the start and stop order and the publications.
+  - Names: application names have no `_`, so `_` joins application and service and two applications can
+    never make the same name: container `<app>_<service>`, unit `konsol-<app>_<service>.container`,
+    network `konsol-<app>.network` (`ksl-<app>`, interface `ksl` + 10 hex of its name's SHA-256), pod
+    `konsol-<app>.pod` (`<app>`, infra `<app>__infra`), secret `obhut_<app>_<8 hex>`. Every object carries
+    `io.master-stack.managed=uygulama` and `io.master-stack.uygulama=<app>`; files may not set
+    `io.master-stack.*` labels. `ownership()` knows the class `uygulama`.
+  - Units keep the proven lines of the old renderer: the firewall ordering without `Requires=` and the
+    guard check in `ExecStartPre` (DD-223), the bind anchors (DD-226), `Pull=never`, journald, `UMask=0077`.
+  - Every key is in Podman 4.9's Quadlet (checked against `quadlet.go` of v4.9.3); what came later goes
+    through `PodmanArgs=` with values the generator validated (`--entrypoint` as JSON, `--network-alias`,
+    `--stop-signal`, `--stop-timeout`, `--cpus`, `--memory`, `--ulimit`, `--umask`, the network's
+    `--interface-name`, the pod's `--infra-name` and `--label`). Only a Kubernetes Pod with more than one
+    container (`.pod`) and a Compose `condition: service_healthy` (`Notify=healthy` on the dependency,
+    `TimeoutStartSec=300`) need Podman 5: on Podman 4.9 (Ubuntu 24.04) the install is refused before any
+    write with "… Podman 5 gerekir; bu sunucuda 4.9". A Kubernetes file with one container needs no pod.
+  - Health checks: `CMD` and `CMD-SHELL` as Podman's JSON forms, `NONE` → `none`, the file's timings;
+    no health check in the file keeps the image's own. Values Quadlet or an env file cannot carry
+    (line breaks, NUL, a bare `;`) are refused, by the inspector where the operator can fix them.
+- **Start modes (A4):** direct: `User=` the file's user or the Files account, `DropCapability=all`,
+  `NoNewPrivileges=true`, proven after the start (user, empty capability sets); root: Podman's default set
+  minus `SETFCAP`, `SYS_CHROOT` and, when no container port is below 1024, `NET_BIND_SERVICE`, plus the
+  file's `cap_add`. The live check met the consequence: a file that declares 8080 while its image listens
+  on 80 stops at once; the job names the service and its journal and leaves nothing behind.
+- **Folders (A5) and DD-226:** `/srv` sub-folders through the bind anchors (the anchor key is the container
+  name; the name limit is now 128); application data under `UYGULAMA_VERI_DIR/<app>/<folder>` (0700 root;
+  a direct service mounts its folders with Podman's `U`, so they become its user's; an existing sub-folder
+  keeps the owner its container gave it, as an image's start-up chowns it). The inspector refuses `/srv`
+  itself and every path the anchors would refuse at start (hidden, `..`, characters outside
+  `A-Za-z0-9 ._-`). Bind sources are still pinned at every start.
+- **DD-227 amended (the operator's decision, 2026-10-17):** a container that starts as root may have a
+  writable `/srv` folder. DD-227 rejected this path; the operator chose "İzin ver, açıkça uyar": the
+  definition carries a warning for each such service ("Bu konteyner root olarak başlıyor; kendi
+  kullanıcısına geçmezse /srv'ye Dosyalar hesabının açamayacağı dosyalar yazabilir."), shown by the
+  inspector, the edit plan and the application page. A direct start as a user other than the Files account
+  with a writable `/srv` folder gets the same kind of warning. A direct start as the Files account keeps
+  DD-227's `--umask=0002`.
+- **Secrets:** each value becomes a Podman secret created on standard input; the record maps the
+  inspector's logical names to them. An edit may keep a value (`{"keep": true}`, only when the application
+  has it); a renewed value is a new secret, the old one is removed only after the new units are ready.
+  Live: the database password reached the container and no file, journal line or reply.
+- **Ports:** an address answer gets a loopback pool port (`YAYIN_PORT_ILK`–`YAYIN_PORT_SON`, free of every
+  other use), kept across edits; its Caddy row is phase 4. A raw port publishes nothing yet (A2). The
+  container guard reads the application records: each bridge gets its own return rule; any publication
+  other than `127.0.0.1` fails closed in this phase.
+- **Records and lifecycle (`panel/master_applications.py`, the worker):** `UYGULAMA_STATE_DIR/<app>/`
+  (`kaynak.yaml`, `kaynak.json`, `yanitlar.json` without secret values, `tanim.json`, `yerler.json`,
+  `env/`), all 0600 root. Every write is a job of the one broker (`systemd-run`, the request on standard
+  input only, never in the job record) with an audit line `uygulama-<verb>`. Install checks everything
+  before its first write (the file again on the server, free names, `/srv` folders, pool ports, a
+  preliminary render, Podman 5), then writes, pulls and pins, creates secrets, runs Quadlet's dry run,
+  starts in order and waits until each unit is active, each container is its own and healthy (300 s);
+  any failure takes back everything the job made. The wait stops at once when systemd restarts a unit
+  that exited, naming its journal. Stop removes `[Install]`; update pulls the same tags and changes
+  nothing when no digest moved; edit has a dry run (units, environment, ports, folders, secrets, start
+  modes, warnings) and restarts the application; remove keeps the data unless the application's name is
+  typed for `sil`; images stay for Gelişmiş's cleanup.
+- **Draft sources (K2):** an `https` address (every resolved address must be public, the connection goes
+  to the checked address, at most three redirects, 256 KiB, 10 s); an image name (a job: pull, then a
+  Compose draft with the image's exposed ports and volumes only); a standalone container (a Compose
+  draft from `podman inspect`: secret-looking variables are left empty, refused settings are written as
+  they are so the inspector shows them). Taking over a container copies its named volumes into the new
+  folders and removes the old container (never its volumes) only when the application is ready.
+- **Routes:** `GET /api/konsol/uygulamalar[/{app}[/gunluk]]`, `POST …/uygulamalar/kaynak`, `…/kur`,
+  `…/{app}/islem`, `…/{app}/tanim`, `…/{app}/yenile`, `…/{app}/kaldir`, typed in the route table.
+- **Removed:** single-container definitions and everything that served them (store, validation, renderer,
+  create, save, adoption and its import, the container start/stop/remove of unmanaged containers, the
+  definitions' Tailscale address refresh, `KONTEYNER_NETWORK`, `GET /api/konsol/konteynerler/guncellemeler`,
+  Yayınla's step that added a loopback port to a container, `master_uygulamalar.py`), and in Konsol the
+  add flows, the definition editor and the container settings tab. Gelişmiş keeps its Podman resource
+  actions until phase 5.
+- **Found live and fixed:** the base installs `catatonit` (Podman builds a pod's pause image with it, and
+  `init: true` needs it); a job read while the worker had only reserved its record answered "kayıt
+  okunamadı" instead of "running"; a container that exited between `exists` and `inspect` failed the wait
+  with a tool error.
+- **Limits for later phases:** an edit restarts every service of the application; the address is shown as
+  given (with its query); Ubuntu 24.04 is not live-verified for applications; `contract.md`,
+  `architecture.md` and `design/container-manager-api.md` still describe removed routes (phase 6).
+- **Tests:** the generator 35 (golden unit files for every accepted fixture; every Quadlet key checked
+  against Podman 4.9's set; no secret value in any plan), the inspector 30, the records, pool and drafts
+  19, the worker 31 (every install step's rollback, a restarted or vanished container, takeover, edit,
+  remove; no secret value in any argv, file, record or reply), the manager 20, the routes 11, the guard 12;
+  Python 797 with only the eight known macOS failures; `bats` 178/178; the seven browser suites and the
+  sign-in suite pass with the layout audit.
+- **Live check (test host, Debian 13, Podman 5.4.2, 2026-10-17):** installed through the routes: nginx
+  from a file with a read-only `/srv` folder (served on its pool port), a busybox site started directly
+  as the Files account (its folder became the account's, no capabilities), PostgreSQL with a secret and
+  a dependant waiting for `service_healthy` (reached it as `db`), a two-container Kubernetes Pod (shared
+  `localhost`), a Pod fetched from an `https` address and refreshed from it (the changed port came back as
+  a new question), a draft from an image name, and a standalone Redis container taken over with its data.
+  Start, stop (no `[Install]`, unit inactive), restart, update (no new digest: nothing changed), an edit
+  keeping the secret and one renewing it (new Podman secret, old removed), removal keeping the data and
+  removal deleting it after the typed name; private, loopback and CGNAT addresses and `http` refused for
+  drafts. After a reboot every application came back. A re-run of the installer left the running
+  applications alone. Konsol's list, Genel Bakış and every tab of four applications read clean at 390 and
+  1440 px.
+
 ### DD-273: The rebuild's phase 2: reading and inspecting application files (v2-256)
 
 - **Scope (`rebuild.md` phase 2):** pure functions and one dry-run route; nothing is written on the
@@ -1352,6 +1456,10 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Amended by DD-267 (v2-250):** the account choice ("Çalıştıran hesap") is in the new interface's
   container forms: creating from an image, adoption and the definition editor on the application's
   Ayarlar tab (DD-266).
+- **Amended by DD-274 (v2-257, the rebuild):** applications replace definitions; their start mode is the
+  operator's answer per container (A4). A root start may have a writable `/srv` folder, with a warning in
+  the inspector, the edit plan and the application page: the operator chose this over the rejected
+  acknowledgement path (2026-10-17). A direct start as the Files account keeps `--umask=0002`.
 
 ### DD-226: A Konsol container's bind sources are pinned at every start (v2-204)
 
@@ -1388,6 +1496,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
   - Existing Konsol containers get the new unit when saved, started from Konsol or re-rendered for
     Tailscale; there is no migration code.
 - **Reverse direction:** a root container planting files in `/srv` is DD-227's subject.
+- **Amended by DD-274 (v2-257, the rebuild):** the anchor key is the application's container name
+  (`<app>_<service>`, at most 128 characters); application data folders under `UYGULAMA_VERI_DIR` are root's
+  own and bound directly. The inspector refuses a `/srv` answer the anchors would refuse at start.
 
 ### DD-225: Packages' private state is hidden from the uid-1000 data units (v2-203)
 

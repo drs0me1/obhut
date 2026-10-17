@@ -1,9 +1,9 @@
 <!-- The share's folder (phase 4b, DD-267): the chosen folder in a read-only field and "Klasör seç", which
      opens a panel under it with the user area's folders (the files backend, GET /api/list?path=&dirs=1;
      hidden ones are never listed), the ones already shared marked. "İçine gir" goes down, "Bir üst" back,
-     "Seç" or "Bu klasörü seç" take a folder; the top of the user area itself cannot be shared. The same
-     markup as the base's FolderPicker (Esc closes the panel, not the sheet around it, also from "Klasör
-     seç"), but over paths relative to the user area, as a share keeps them. -->
+     "Seç" or "Bu klasörü seç" take a folder; the top of the user area itself cannot be shared. Esc closes
+     the panel, not the sheet around it, also from "Klasör seç"; paths are relative to the user area, as a
+     share keeps them. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, useId } from "vue";
 import { Icon } from "../../../components/icons";
