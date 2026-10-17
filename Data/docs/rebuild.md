@@ -350,7 +350,7 @@ each application's live rate comes from its own bridge's counters (the operator'
       for tests: `master-panel --state-env`, `--allow-host` in both backends, the `PANEL_ACTIVE_WINDOW`
       and `PANEL_SAMPLE_SECONDS` environment variables, the hidden `--state` of `obhut` and `--kaynak` of
       `master-onar`: each one is removed or moved behind the test harness
-- [ ] The test host reset by the operator (S4); install from the branch on the clean system;
+- [x] The test host reset by the operator (S4); install from the branch on the clean system;
       applications the operator chooses added from their own published files; every flow of the
       prototype done live
 - [ ] On `main`, a last 1.x release that turns the update offer into the clean-install notice (4.6)

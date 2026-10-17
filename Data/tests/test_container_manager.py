@@ -232,7 +232,8 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(fark['ortam'], ['web'])
         self.assertEqual([u['ad'] for u in fark['birimler']], ['konsol-notlar_db.container'], 'the start mode changes its unit')
         self.assertEqual(fark['gizliler'], {'yeni': [], 'yenilenen': [], 'korunan': ['notlar-db-password'], 'kaldirilan': []})
-        self.assertEqual(fark['baslangic'][1], {'servis': 'db', 'once': 'root', 'sonra': 'direct'})
+        self.assertEqual(fark['baslangic'], [{'servis': 'db', 'once': 'root', 'sonra': 'direct'}],
+                         'only the service whose start mode changes; web keeps its own')
         self.assertEqual(fark['portlar'], [{'anahtar': 'web:8080/tcp', 'degisim': 'kalir', 'yerel_port': 62100}])
         self.assertTrue(fark['yeniden_baslar'])
         # How a port that stays is reached changes in Erişim: an answer that is not its row is refused by question.

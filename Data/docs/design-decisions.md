@@ -67,6 +67,19 @@ longer applies and which entry replaced it.
     six sections).
 - **Tests:** Python 881 with only the eight known macOS failures; `bats` 187/187; the eight Konsol suites and the
   sign-in suite with the layout audit.
+- **The clean-server test (v2-262, 2026-10-18):** the operator reset the test host to Debian 13; the branch was
+  installed from GitHub with `kur.sh` and `KUR_REF=yeni-yapi` (domain asked once, Tailscale joined through the
+  login link, generation 2, no failed unit). Gezgin was added through the real Konsol by uploading the
+  project's own `compose.yaml` (the operator's local copy of the published file; the repository is private,
+  so the address source could not fetch it): its web port as an address, its WebDAV port raw and closed, two
+  application folders, `/srv/media` writable, started directly as 1000:1000 with no capabilities; its page
+  answered. Then through the interface: the WebDAV port opened to Tailscale and the web address given a
+  Tailscale port (each 60 s, confirmed from the banner; both answered, the WAN stayed closed); WireGuard turned
+  on by adding a network (confirmed) and a test device added with its QR; Tanım's difference planned; a local
+  DNS record added and removed (at once). After a reboot every one of them answered again with no failed unit;
+  28 screen states read clean at 390 and 1440 px in both themes. One fix came out of it: an edit's plan listed
+  every service's start mode as a change ("Değişir" for direct → direct); it now lists only real changes, so
+  an unchanged definition plans nothing.
 
 ### DD-276: The rebuild's phase 5: Konsol (v2-259)
 

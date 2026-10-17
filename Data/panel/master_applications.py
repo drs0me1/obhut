@@ -1316,7 +1316,9 @@ def difference(record, definition, old_plan, new_plan, ports, rows, version=None
     return {"birimler": units, "ortam": environment, "portlar": port_rows,
             "klasorler": {"eklenen": sorted(new_folders - old_folders), "birakilan": sorted(old_folders - new_folders)},
             "gizliler": {k: sorted(v) for k, v in secrets.items()},
-            "baslangic": [{"servis": s["name"], "once": before.get(s["name"]), "sonra": s["start"]} for s in definition["services"]],
+            # Only the services whose start mode changes, or which are new: an unchanged one is not a change.
+            "baslangic": [{"servis": s["name"], "once": before.get(s["name"]), "sonra": s["start"]} for s in definition["services"]
+                          if before.get(s["name"]) != s["start"]],
             "uyarilar": warnings, "yeniden_baslar": bool(units or environment) and not places["stopped"]}
 
 

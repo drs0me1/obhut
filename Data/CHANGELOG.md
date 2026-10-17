@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### 2026-10-18 — Documents, sweep and fixes before the clean-server test (v2-261, branch `yeni-yapi`)
+### 2026-10-18 — Documents, sweep and the clean-server test (v2-261, v2-262, branch `yeni-yapi`)
 
 - The documents describe the new generation only (DD-278): the contract, the architecture, the folder-share
   guide, README, OKUBENI and the test guide; old interface documents and superseded decisions are archived.
@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Opening an internet name for an application says that only the application's own login guards it; a
   password written in a Compose file is pointed out on its line (it is not used, but it stays in the file).
 - The installed programs no longer carry options that only tests used.
+- An application's Tanım plan lists a start mode only when it really changes; an unchanged definition plans
+  nothing (found on the clean-server test, v2-262).
 
 ### 2026-10-17 — Konsol's new screens (v2-259, branch `yeni-yapi`)
 
