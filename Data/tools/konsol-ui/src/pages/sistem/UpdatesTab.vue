@@ -2,7 +2,9 @@
      the state (güncel, yeni sürüm, denetlenemedi), "Yeniden denetle" (GET ?yenile=1, past the server's
      cache) and "Güncelle", which says what happens before it asks the server (tailnet only). The run is
      followed in the activity list (the "guncelleme" job) and the update read: when it ends well the
-     installer has replaced Konsol's own files, so the page reloads itself; a failure is shown here. -->
+     installer has replaced Konsol's own files, so the page reloads itself; a failure is shown here.
+     DD-277: when GitHub's build is of another generation (`yeni_nesil`), the server's notice stands where
+     "Güncelle" would: that generation installs only on a clean operating system and is never an update. -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Icon } from "../../components/icons";
@@ -41,13 +43,17 @@ const offered = (r: Guncelleme) => r.son_surum || shortVersion(r.son);
 async function recheck(): Promise<void> {
   note.value = "";
   const r = await load(true);
-  if (r) note.value = r.hata ? `Sürüm denetlenemedi: ${r.hata}` : r.yeni ? `Yeni sürüm var: ${offered(r)}` : `Sürüm güncel: ${installed(r)}`;
+  if (!r) return;
+  if (r.hata) note.value = `Sürüm denetlenemedi: ${r.hata}`;
+  else if (r.yeni_nesil) note.value = "Obhut'un yeni bir nesli çıktı; temiz kurulum gerektirir.";
+  else note.value = r.yeni ? `Yeni sürüm var: ${offered(r)}` : `Sürüm güncel: ${installed(r)}`;
 }
 
 const state = computed<{ text: string; tone: Tone } | null>(() => {
   const r = g.value;
   if (!r) return null;
   if (r.hata) return { text: "Denetlenemedi", tone: "warning" };
+  if (r.yeni_nesil) return { text: "Yeni nesil çıktı", tone: "accent" };
   return r.yeni ? { text: "Yeni sürüm var", tone: "accent" } : { text: "Güncel", tone: "ok" };
 });
 
@@ -161,6 +167,9 @@ onBeforeUnmount(() => {
       </dl>
       <p v-if="g.hata" class="notice notice-warning" role="note" data-testid="update-error">
         <Icon name="alert" class="notice-icon" /><span>Sürüm denetlenemedi: {{ g.hata }}</span>
+      </p>
+      <p v-if="g.yeni_nesil && !g.hata" class="notice" role="note" data-testid="update-generation">
+        <Icon name="info" class="notice-icon" /><span>{{ g.yeni_nesil.metin }}</span>
       </p>
       <p v-if="g.is.durum === 'hata' && g.is.mesaj && !failure" class="notice notice-warning" role="note" data-testid="update-last-failure">
         <Icon name="alert" class="notice-icon" /><span>Son deneme başarısız: {{ g.is.mesaj }}</span>

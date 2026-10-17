@@ -1,10 +1,12 @@
 """DD-233: Konsol's update button backend: the GitHub version check (pinned commit, cache, failure
 back-off, forced re-check gap), the comparison with the installed version, the unit's job state
-and stage, the start rules, the systemd-run call and the Tailscale-only start route.
+and stage, the start rules, the systemd-run call and the Tailscale-only start route. DD-277: the
+remote generation (another one is a clean install, never an update) and master-guncelle's refusal.
 Temporary directories, a fake fetcher and fake systemd tools only; no network, no host changes."""
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import types
@@ -20,8 +22,8 @@ OLD, NEW, SHA = "2026.08.06-v2-211", "2026.08.06-v2-212", "0123456789abcdef01234
 
 
 class Fetcher:
-    def __init__(self, sha=SHA, version=NEW, surum=None):
-        self.sha, self.version, self.surum, self.calls, self.fail = sha, version, surum, [], None
+    def __init__(self, sha=SHA, version=NEW, surum=None, nesil=None):
+        self.sha, self.version, self.surum, self.nesil, self.calls, self.fail = sha, version, surum, nesil, [], None
 
     def __call__(self, url, accept):
         self.calls.append((url, accept))
@@ -30,7 +32,8 @@ class Fetcher:
         if url.startswith("https://api.github.com/"):
             return self.sha + "\n"
         text = '#!/usr/bin/env bash\nset -Eeuo pipefail\n\nV2_VERSION="%s"\n' % self.version
-        return text + ('# yorum\nOBHUT_SURUM="%s"\n' % self.surum if self.surum is not None else "")
+        text += '# yorum\nOBHUT_SURUM="%s"\n' % self.surum if self.surum is not None else ""
+        return text + ('OBHUT_NESIL="%s"\n' % self.nesil if self.nesil is not None else "")
 
 
 class Clock:
@@ -84,6 +87,57 @@ class CheckTests(unittest.TestCase):
                 self.assertEqual(mu.Updates(Fetcher(surum=bad), Clock()).status(dict(self.env, OBHUT_SURUM=bad), False)
                                  ["kurulu_surum"], "")
                 self.assertIsNone(mu.Updates(Fetcher(surum=bad), Clock()).status(self.env, False)["son_surum"])
+
+    def test_a_commit_without_a_generation_is_generation_one_and_offered_as_before(self):
+        # DD-277: every 1.x commit lacks OBHUT_NESIL; an explicit "1" is the same line.
+        for nesil in (None, "1"):
+            with self.subTest(nesil=nesil):
+                u = mu.Updates(Fetcher(nesil=nesil), Clock())
+                info = u.status(self.env, False)
+                self.assertEqual((info["yeni"], info["yeni_nesil"], info["hata"]), (True, None, ""))
+                self.assertEqual(u.check_start(self.env, {"surum": NEW, "commit": SHA}, False, ""), (SHA, NEW))
+
+    def test_another_generation_is_a_clean_install_never_an_update(self):
+        # DD-277: a newer build of generation 2 is shown, not offered, and the start route refuses it.
+        u = mu.Updates(Fetcher(version="2026.08.06-v2-300", surum="2.0.0", nesil="2"), Clock())
+        info = u.status(self.env, False)
+        self.assertEqual((info["son"], info["son_surum"], info["commit"], info["yeni"], info["hata"]),
+                         ("2026.08.06-v2-300", "2.0.0", SHA, False, ""))
+        self.assertEqual(info["yeni_nesil"], {"nesil": 2, "metin": mu.YENI_NESIL_METNI})
+        for word in ("yeni bir nesli", "temiz bir işletim sistemine", "güncelleme olarak gelmez", "hiçbir şey değişmez",
+                     "yedekleyin", "kur.sh"):
+            self.assertIn(word, mu.YENI_NESIL_METNI)
+        with self.assertRaises(mu.UpdateError) as err:
+            u.check_start(self.env, {"surum": "2026.08.06-v2-300", "commit": SHA}, False, "")
+        self.assertEqual((err.exception.status, str(err.exception)), (409, mu.YENI_NESIL_METNI))
+        # Even an older build number of another generation is reported, not compared.
+        u = mu.Updates(Fetcher(version=OLD, nesil="3"), Clock())
+        self.assertEqual(u.status(env_for(self.root, NEW), False)["yeni_nesil"]["nesil"], 3)
+
+    def test_another_generation_is_reported_whatever_its_build_number_looks_like(self):
+        # A later generation may number its builds differently; it still needs a clean install.
+        for version in ("3.0.0", "2026.08.06-v3-1"):
+            with self.subTest(version=version):
+                info = mu.Updates(Fetcher(version=version, nesil="2"), Clock()).status(self.env, False)
+                self.assertEqual((info["son"], info["yeni"], info["hata"], info["yeni_nesil"]["nesil"]), (None, False, "", 2))
+        # The same line with such a number is still a failed read.
+        info = mu.Updates(Fetcher(version="3.0.0"), Clock()).status(self.env, False)
+        self.assertEqual((info["yeni"], info["yeni_nesil"]), (False, None))
+        self.assertIn("GitHub", info["hata"])
+
+    def test_a_malformed_generation_line_counts_as_absent(self):
+        # Read exactly as the generation-2 module reads it; master-guncelle refuses such a target itself.
+        for line in ('OBHUT_NESIL=2', 'OBHUT_NESIL="0"', 'OBHUT_NESIL="2" # x', ' OBHUT_NESIL="2"', 'OBHUT_NESIL="1234"'):
+            with self.subTest(line=line):
+                fetch = Fetcher()
+                fetch_text = fetch.__call__
+
+                def fetcher(url, accept, fetch_text=fetch_text, line=line):
+                    out = fetch_text(url, accept)
+                    return out if url.startswith("https://api.github.com/") else out + line + "\n"
+
+                info = mu.Updates(fetcher, Clock()).status(self.env, False)
+                self.assertEqual((info["yeni"], info["yeni_nesil"]), (True, None))
 
     def test_same_or_older_or_unknown_installed_version_is_not_offered_blindly(self):
         for installed, expected in [(NEW, False), ("2026.08.06-v2-213", False), ("test", False), (OLD, True)]:
@@ -171,6 +225,66 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(self.u.check_start(self.env, offer, False, ""), (SHA, NEW))
         with self.assertRaises(mu.UpdateError):
             self.u.check_start(env_for(self.root, NEW), offer, False, "")
+
+
+class UpdaterGenerationTests(unittest.TestCase):
+    """DD-277: master-guncelle reads the target's install.sh before its kur.sh and refuses another
+    generation. A fake `id` stands in for root; the downloads are file:// URLs (KUR_KURULUM_URL,
+    KUR_BETIK_URL), so nothing reaches the network or the host."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        fake_id = self.bin / "id"
+        fake_id.write_text('#!/bin/sh\n[ "$1" = "-u" ] && { echo 0; exit 0; }\nexec /usr/bin/id "$@"\n')
+        fake_id.chmod(0o755)
+        self.status, self.log, self.ran = self.root / "log" / "guncelleme.durum", self.root / "log" / "guncelleme.log", self.root / "ran"
+        self.state = self.root / "state.env"
+        self.state.write_text("GUNCELLEME_REPO=drs0me1/obhut\nGUNCELLEME_DURUM_FILE=%s\nGUNCELLEME_LOG_FILE=%s\n" % (self.status, self.log))
+        (self.root / "kur.sh").write_text('touch "%s"\necho "ref=$KUR_REF surum=$KUR_GUNCELLE"\n' % self.ran)
+
+    def run_tool(self, install_text):
+        install = self.root / "install.sh"
+        if install_text is None:
+            install.unlink(missing_ok=True)
+        else:
+            install.write_text(install_text)
+        env = dict(os.environ, PATH="%s:%s" % (self.bin, os.environ["PATH"]), STATE_FILE=str(self.state),
+                   KUR_KURULUM_URL="file://%s" % install, KUR_BETIK_URL="file://%s" % (self.root / "kur.sh"))
+        proc = subprocess.run(["bash", str(ROOT / "scripts" / "master-guncelle"), "uygula", SHA, NEW], env=env,
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+        state = dict(line.split("=", 1) for line in self.status.read_text().splitlines())
+        return proc.returncode, state
+
+    def test_generation_one_targets_run_their_kur_sh(self):
+        for text in ('V2_VERSION="%s"\n' % NEW, 'V2_VERSION="%s"\nOBHUT_NESIL="1"\n' % NEW):
+            with self.subTest(text=text):
+                self.ran.unlink(missing_ok=True)
+                rc, state = self.run_tool(text)
+                self.assertEqual((rc, state["durum"]), (0, "tamam"))
+                self.assertTrue(self.ran.exists())
+                self.assertIn("ref=%s surum=%s" % (SHA, NEW), self.log.read_text())
+
+    def test_another_generation_stops_before_kur_sh(self):
+        for line in ('OBHUT_NESIL="2"', 'OBHUT_NESIL=2', 'OBHUT_NESIL="1" # x', 'OBHUT_NESIL="10"', '  OBHUT_NESIL="2"',
+                     'OBHUT_NESIL="1"\nOBHUT_NESIL="2"'):
+            with self.subTest(line=line):
+                rc, state = self.run_tool('V2_VERSION="%s"\n%s\n' % (NEW, line))
+                self.assertNotEqual(rc, 0)
+                self.assertFalse(self.ran.exists(), "kur.sh never ran")
+                self.assertEqual((state["durum"], state["hedef"], state["commit"]), ("hata", NEW, SHA))
+                self.assertTrue(state["mesaj"].startswith("Hedef sürüm Obhut'un yeni neslinden; yalnız temiz bir işletim sistemine kurulur"))
+                self.assertTrue(state["mesaj"].endswith("Bu sunucuda hiçbir şey değişmedi."))
+
+    def test_an_unreadable_target_is_refused_too(self):
+        rc, state = self.run_tool(None)
+        self.assertNotEqual(rc, 0)
+        self.assertFalse(self.ran.exists())
+        self.assertEqual(state["durum"], "hata")
+        self.assertEqual(state["mesaj"], "Hedef sürümün kurulum betiği indirilemedi; bu sunucuda hiçbir şey değişmedi.")
 
 
 class PanelStartTests(unittest.TestCase):

@@ -32,6 +32,10 @@ const REPORT = { durum: "tamam", kip: "onar", kaynak: "terminal", baslangic: NOW
 const repairState = (o = {}) => ({ calisiyor: false, kurulu: true, baslatilabilir: true, rapor: JSON.parse(JSON.stringify(REPORT)), ...o });
 const update = (o = {}) => ({ kurulu: "2026.08.06-v2-248", kurulu_surum: "1.1.0", son: "2026.10.12-v2-252", son_surum: "1.2.0", commit: "abcdef1" + "0".repeat(33),
   yeni: true, denetlendi: NOW - 3600, hata: "", is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true, ...o });
+// The backend's notice for another generation (master_update.YENI_NESIL_METNI, DD-277).
+const GENERATION = "Obhut'un yeni bir nesli çıktı. Yeni nesil yalnız temiz bir işletim sistemine kurulur; bu sunucuya güncelleme " +
+  "olarak gelmez. Bu sunucuda hiçbir şey değişmez: kurulu sürüm olduğu gibi çalışmayı sürdürür. Yeni nesle geçmek için gerekenleri " +
+  "yedekleyin, ardından temiz bir işletim sistemine kur.sh ile kurun.";
 const LOG72 = Array.from({ length: 80 }, (_, i) => `2026-10-13T0${Math.floor(i / 20)}:${String(i % 60).padStart(2, "0")}:00+03:00 master-onar[9${i}]: adım ${i + 1} tamam`).join("\n") + "\n";
 const LOG7 = "2026-10-07T03:10:00+03:00 refresh-tailnet-config[401]: adres değişmedi\n2026-10-08T03:12:00+03:00 master-onar[402]: güvenlik duvarı denetlendi\n";
 
@@ -380,6 +384,30 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.equal(await page.getByTestId("update-last-failure").innerText(), "Son deneme başarısız: imza doğrulanamadı");
     assert.equal(await page.getByTestId("update-start").count(), 0, "nothing to update to");
     await page.context().close();
+    // DD-277: GitHub's build is of another generation: the server's notice stands where "Güncelle" would.
+    const startsBefore = posts("guncelleme").length;
+    for (const [colorScheme, width, height, mobile] of [["light", 1440, 900, false], ["light", 390, 844, true], ["dark", 390, 844, true], ["light", 320, 640, true]]) {
+      data.guncelleme = update({ son: "2026.11.02-v2-300", son_surum: "2.0.0", yeni: false, yeni_nesil: { nesil: 2, metin: GENERATION } });
+      page = await newPage({ colorScheme, viewport: { width, height }, ...(mobile ? { isMobile: true, hasTouch: true, reducedMotion: "reduce" } : {}) });
+      await page.goto(url("#/sistem?sekme=guncellemeler"));
+      await page.getByTestId("update-state").filter({ hasText: "Yeni nesil çıktı" }).waitFor();
+      assert.equal(await page.getByTestId("update-generation").innerText(), GENERATION);
+      assert.deepEqual(await page.getByTestId("update-facts").locator("dd").allInnerTexts(), ["1.1.0 yapı 2026.08.06-v2-248",
+        "2.0.0 yapı 2026.11.02-v2-300 · abcdef1", `${dateTime(NOW - 3600)} (60 dakika önce)`]);
+      assert.equal(await page.getByTestId("update-start").count(), 0, "another generation is never an update");
+      assert.equal(await page.getByTestId("update-error").count(), 0, "the check did not fail");
+      if (!mobile) {
+        assert.equal(await page.getByTestId("version").innerText(), "Obhut 1.1.0 · yeni nesil çıktı");
+        await page.getByTestId("update-check").click();
+        await page.getByTestId("update-note").filter({ hasText: "Obhut'un yeni bir nesli çıktı; temiz kurulum gerektirir." }).waitFor();
+        assert.equal(await page.getByTestId("update-start").count(), 0);
+      }
+      await noStyles(page, `${width} ${colorScheme} yeni nesil`);
+      assert(await noHorizontalScroll(page), `${width} ${colorScheme} yeni nesil`);
+      await shot(page, `${width}-${colorScheme}-guncelleme-yeni-nesil.png`, true);
+      await page.context().close();
+    }
+    assert.equal(posts("guncelleme").length, startsBefore, "nothing was started for another generation");
     data.guncelleme = update();
 
     // ================= Hesap on the tailnet: create the account, change the password, no sign-out
@@ -907,7 +935,8 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
       "repair report with its source and steps, Denetle at once, Onar after a confirmation, a refusal, the report read every 2 s while a run " +
       "goes on, its end through islemler, the repair log as plain text in a sheet: 72 h / 1 week in the address, newest line, copy, a failed " +
       "read, an empty log), Güncellemeler (versions and builds, Yeniden denetle with ?yenile=1, the confirmation's words, a refusal, the run's " +
-      "stage through islemler, an earlier run ignored, the reload after success, a failed run without reload, a failed check), Hesap (create " +
+      "stage through islemler, an earlier run ignored, the reload after success, a failed run without reload, a failed check, another " +
+      "generation's clean-install notice instead of Güncelle), Hesap (create " +
       "on the tailnet with master_auth's rules, a refusal, the tailnet password without the current one, the internet password with it, a " +
       "wrong current password shown on the form, an ended session's 401 to sign-in, the leave guard), Sunucu (facts, the reboot's typed word, " +
       "a refusal, the wait, the server going away and coming back, the reload), Görünüm, Günlük (newest first, the packages' templates, " +

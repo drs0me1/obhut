@@ -133,6 +133,10 @@ the ones agreed on 2026-08-05:
     of a failure. No automatic update and no rollback; the previous code is in Git.
     Since **DD-260** a release also names itself with `OBHUT_SURUM` (semantic version, e.g. `1.0.0`):
     Konsol shows it, and Güncellemeler and its confirmation name the offered release by it.
+    Since **DD-277** (1.2.0) the 1.x line is generation 1: when the offered commit's `install.sh`
+    carries another `OBHUT_NESIL` (absent = 1), nothing is offered; Güncellemeler shows that the new
+    generation installs only on a clean operating system, the start is refused, and `master-guncelle`
+    refuses such a target (or an unreadable `install.sh`) before it fetches `kur.sh`.
     Only the build number (`v2-<n>`) decides what is offered.
   - Every run, re-runs included, performs `full-upgrade`; there is no question.
 - **Nothing from the operator's workstation reaches the server (DD-143, DD-228).**

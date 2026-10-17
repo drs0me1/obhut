@@ -3840,6 +3840,29 @@
           "yeni": {
             "type": "boolean"
           },
+          "yeni_nesil": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "nesil": {
+                    "type": "integer"
+                  },
+                  "metin": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "nesil",
+                  "metin"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "denetlendi": {
             "anyOf": [
               {
@@ -3867,6 +3890,7 @@
           "son_surum",
           "commit",
           "yeni",
+          "yeni_nesil",
           "denetlendi",
           "hata",
           "is",

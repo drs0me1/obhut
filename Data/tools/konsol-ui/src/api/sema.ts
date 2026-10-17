@@ -325,6 +325,10 @@ export interface Guncelleme {
   son_surum: string | null;
   commit: string | null;
   yeni: boolean;
+  yeni_nesil: {
+    nesil: number;
+    metin: string;
+  } | null;
   denetlendi: number | null;
   hata: string;
   is: GuncellemeIsi;

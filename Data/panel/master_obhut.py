@@ -148,7 +148,9 @@ def cmd_durum(konsol, args):
     lines = ["Obhut %s (yapı %s) · %s" % (res.get("surum") or "?", res.get("version") or "?", res.get("host") or "?"),
              "Konsol: http://panel.%s (Tailscale)" % (res.get("domain") or "?"),
              "Adresler: Tailscale %s · internet %s" % (net.get("tailscale") or "yok", net.get("wan") or "yok")]
-    if update.get("yeni"):
+    if update.get("yeni_nesil"):
+        lines.append("Obhut'un yeni bir nesli çıktı; yalnız temiz bir işletim sistemine kurulur (ayrıntı: sudo obhut guncelle)")
+    elif update.get("yeni"):
         lines.append("Yeni sürüm var: %s (sudo obhut guncelle)" % (update.get("son_surum") or update.get("son")))
     word = {"ok": "sorunsuz", "warn": "dikkat", "bad": "sorun var"}
     lines.append("Sağlık: %s" % word.get(health.get("status"), health.get("status")))
@@ -181,6 +183,10 @@ def cmd_guncelle(konsol, args):
     job = update.get("is") or {}
     if job.get("durum") == "calisiyor":
         print("Güncelleme zaten sürüyor: %s" % (job.get("asama") or ""))
+        return 0
+    if update.get("yeni_nesil"):
+        # DD-277: another generation is a clean install, never an update; the backend refuses it too.
+        print(update["yeni_nesil"].get("metin") or "Obhut'un yeni bir nesli çıktı; yalnız temiz bir işletim sistemine kurulur.")
         return 0
     if not update.get("son") or not update.get("commit"):
         raise ObhutError(update.get("hata") or "En son sürüm okunamadı; ağ bağlantısını denetleyin.")

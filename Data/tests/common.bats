@@ -1476,6 +1476,9 @@ EOF
     printf 'GUNCELLEME_REPO=drs0me1/obhut\nGUNCELLEME_DURUM_FILE=%s\nGUNCELLEME_LOG_FILE=%s\n' \
         "$TMP/log/guncelleme.durum" "$TMP/log/guncelleme.log" >"$TMP/state.env"
     printf 'echo "ref=$KUR_REF surum=$KUR_GUNCELLE"\necho "[10:00:00] Aşama 3/7 — servisler"\n' >"$TMP/ok.sh"
+    # The target's install.sh: without OBHUT_NESIL it is generation 1, like this line (DD-277).
+    printf '#!/usr/bin/env bash\nV2_VERSION="2026.08.06-v2-212"\n' >"$TMP/install.sh"
+    export KUR_KURULUM_URL="file://$TMP/install.sh"
     run env STATE_FILE="$TMP/state.env" KUR_BETIK_URL="file://$TMP/ok.sh" bash "$tool" uygula "$sha" 2026.08.06-v2-212
     [ "$status" -eq 0 ]
     grep -qx 'durum=tamam' "$TMP/log/guncelleme.durum"
@@ -1493,6 +1496,20 @@ EOF
     run env STATE_FILE="$TMP/state.env" KUR_BETIK_URL="file://$TMP/inhibit.sh" bash "$tool" uygula "$sha" 2026.08.06-v2-212
     [ "$status" -ne 0 ]
     grep -qx 'mesaj=apt-update: 3 deneme başarısız (son kod 100)' "$TMP/log/guncelleme.durum"
+    # DD-277: a target of another generation stops before its kur.sh is fetched.
+    printf 'touch "%s/ran"\n' "$TMP" >"$TMP/marker.sh"
+    printf '#!/usr/bin/env bash\nV2_VERSION="2026.08.06-v2-300"\nOBHUT_NESIL="2"\n' >"$TMP/install.sh"
+    run env STATE_FILE="$TMP/state.env" KUR_BETIK_URL="file://$TMP/marker.sh" bash "$tool" uygula "$sha" 2026.08.06-v2-300
+    [ "$status" -ne 0 ]
+    [ ! -e "$TMP/ran" ]
+    grep -qx 'durum=hata' "$TMP/log/guncelleme.durum"
+    grep -q "^mesaj=Hedef sürüm Obhut'un yeni neslinden; .*Bu sunucuda hiçbir şey değişmedi\.$" "$TMP/log/guncelleme.durum"
+    run env STATE_FILE="$TMP/state.env" KUR_KURULUM_URL="file://$TMP/yok.sh" KUR_BETIK_URL="file://$TMP/marker.sh" \
+        bash "$tool" uygula "$sha" 2026.08.06-v2-300
+    [ "$status" -ne 0 ]
+    [ ! -e "$TMP/ran" ]
+    grep -q '^mesaj=Hedef sürümün kurulum betiği indirilemedi' "$TMP/log/guncelleme.durum"
+    unset KUR_KURULUM_URL
     # Malformed requests never write a result.
     rm -f "$TMP/log/guncelleme.durum"
     for args in "uygula main 2026.08.06-v2-212" "uygula $sha v2-212" "kur $sha 2026.08.06-v2-212" "uygula $sha"; do

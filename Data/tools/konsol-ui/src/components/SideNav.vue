@@ -72,6 +72,7 @@ const update = computed<{ text: string; fresh: boolean } | null>(() => {
   const g = live.guncelleme;
   if (!g) return null;
   if (g.hata) return { text: "denetlenemedi", fresh: false };
+  if (g.yeni_nesil) return { text: "yeni nesil çıktı", fresh: true }; // DD-277: a clean install, not an update
   return g.yeni === true ? { text: "yeni sürüm var", fresh: true } : { text: "güncel", fresh: false };
 });
 

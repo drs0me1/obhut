@@ -5,10 +5,10 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-254"
+V2_VERSION="2026.08.06-v2-260"
 # DD-260: insanların gördüğü sürüm (anlamlı sürümleme; yalnız bir yayında değişir, vX.Y.Z etiketlenir).
 # V2_VERSION yapı numarasıdır: Konsol güncelleme önerirken sunucular onu karşılaştırır.
-OBHUT_SURUM="1.1.0"
+OBHUT_SURUM="1.2.0"
 V2_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=common.sh

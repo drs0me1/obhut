@@ -146,6 +146,23 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(run(["guncelle", "--evet"], newer)[0], 0)
         self.assertEqual(newer.posts, [("/api/konsol/guncelleme", {"surum": "v2-253", "commit": "b" * 40})])
 
+    def test_a_new_generation_is_shown_and_never_started(self):
+        # DD-277: the backend's notice instead of an offer; nothing is posted.
+        notice = {"nesil": 2, "metin": "Obhut'un yeni bir nesli çıktı. Yeni nesil yalnız temiz bir işletim sistemine kurulur."}
+        konsol = FakeKonsol({"/api/konsol/guncelleme?yenile=1": {"kurulu": "v2-260", "son": "v2-300", "commit": "c" * 40,
+                                                                  "yeni": False, "yeni_nesil": notice, "is": {"durum": "yok"}}})
+        code, out, _ = run(["guncelle", "--evet"], konsol)
+        self.assertEqual((code, konsol.posts, out.strip()), (0, [], notice["metin"]))
+        status = FakeKonsol({
+            "/api/konsol/kaynaklar": {"surum": "1.2.0", "version": "v2-260", "host": "sunucu", "domain": "ev", "net": {}},
+            "/api/konsol/saglik": {"status": "ok", "checks": []}, "/api/konsol/uygulamalar": {"items": []},
+            "/api/konsol/bekleyen": {"bekleyen": None},
+            "/api/konsol/guncelleme": {"kurulu": "v2-260", "son": "v2-300", "yeni": False, "yeni_nesil": notice}})
+        code, out, _ = run(["durum"], status)
+        self.assertEqual(code, 0)
+        self.assertIn("Obhut'un yeni bir nesli çıktı; yalnız temiz bir işletim sistemine kurulur (ayrıntı: sudo obhut guncelle)", out)
+        self.assertNotIn("Yeni sürüm var", out)
+
     def test_only_root_runs_it(self):
         konsol = FakeKonsol({})
         code, _, err = run(["durum"], konsol, root=False)

@@ -4,10 +4,14 @@
 # O commit'teki kur.sh'ı indirir ve güncelleme kipinde çalıştırır (KUR_REF=<commit>,
 # KUR_GUNCELLE=<sürüm>): kod atomik yerleşir, install.sh terminalsiz yeniden koşar. Sonuç
 # GUNCELLEME_DURUM_FILE'a, çıktı GUNCELLEME_LOG_FILE'a (ve birimin günlüğüne) yazılır.
+# DD-277: bu, 1.x hattıdır (nesil 1). Hedef commit'in install.sh'ı başka bir nesil taşıyorsa
+# (OBHUT_NESIL; satırı olmayan nesil 1'dir) kur.sh hiç indirilmeden durulur: yeni nesil yalnız temiz
+# bir işletim sistemine kurulur. Konsol bunu zaten önermez; burası ikinci kapıdır.
 set -Eeuo pipefail
 umask 077
 
 STATE_FILE="${STATE_FILE:-/etc/master-stack/state.env}"
+NESIL=1
 
 state_get() {
     local line
@@ -46,7 +50,15 @@ trap 'rm -rf -- "$tmp"' EXIT
 rc=0
 {
     echo "==> $repo@$commit ($version) indiriliyor"
-    # KUR_BETIK_URL yalnız testler içindir.
+    # KUR_KURULUM_URL ve KUR_BETIK_URL yalnız testler içindir.
+    curl -fsSL --proto '=https,file' --retry 3 --max-time 60 -o "$tmp/install.sh" \
+        "${KUR_KURULUM_URL:-https://raw.githubusercontent.com/$repo/$commit/Data/install.sh}" ||
+        fail "Hedef sürümün kurulum betiği indirilemedi; bu sunucuda hiçbir şey değişmedi."
+    # Satırı olmayan nesil 1'dir; tam olarak OBHUT_NESIL="1" olmayan her OBHUT_NESIL ataması başka
+    # bir nesil sayılır.
+    others="$(grep -E '^[[:space:]]*OBHUT_NESIL=' "$tmp/install.sh" | grep -vxF "OBHUT_NESIL=\"$NESIL\"" || true)"
+    [[ -z "$others" ]] ||
+        fail "Hedef sürüm Obhut'un yeni neslinden; yalnız temiz bir işletim sistemine kurulur, bu sunucuya güncelleme olarak gelmez. Bu sunucuda hiçbir şey değişmedi."
     curl -fsSL --proto '=https,file' --retry 3 --max-time 120 -o "$tmp/kur.sh" \
         "${KUR_BETIK_URL:-https://raw.githubusercontent.com/$repo/$commit/kur.sh}" &&
         KUR_REF="$commit" KUR_GUNCELLE="$version" bash "$tmp/kur.sh"

@@ -17,6 +17,37 @@ Konsol's old interface was removed in DD-267 (v2-250). Live entries written
 before it still name its places (Ayarlar → Caddy, Ayarlar → Sistem, App Store,
 the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 
+### DD-277: The last 1.x release points to the clean-install generation (v2-260, 1.2.0)
+
+- **Request:** the rebuild on the branch `yeni-yapi` (DD-271, plan `rebuild.md` on that branch) is a new
+  generation that installs only on a clean operating system (its decision S3). Its §4.6: on the 1.x line, a
+  last release teaches the old Konsol to show that the new generation needs a clean install instead of an
+  update. 1.2.0 is that release. DD-271 to DD-276 are the rebuild's entries on `yeni-yapi`; this entry takes
+  the next number free on both lines, and the build number skips v2-255 to v2-259, which that branch uses.
+- **Generation 1:** the 1.x line is generation 1 and writes no generation line of its own. Konsol's check
+  (`master_update.py`) reads `OBHUT_NESIL` from the newest commit's `Data/install.sh` the way the
+  generation-2 module reads it (`^OBHUT_NESIL="([1-9][0-9]{0,2})"$`; a commit without the line is
+  generation 1, as every 1.x commit is).
+- **Another generation:** `GET /api/konsol/guncelleme` answers `yeni: false`, `hata: ""` and
+  `yeni_nesil: {nesil, metin}` (null otherwise); `metin` is the notice: a new generation of Obhut is out,
+  it installs only on a clean operating system and never comes to this server as an update, nothing
+  changes here, and moving means backing up what is needed and installing on a clean system with `kur.sh`.
+  `POST /api/konsol/guncelleme` refuses with the same text (409). Sistem → Güncellemeler shows the notice
+  where "Güncelle" was, with the state "Yeni nesil çıktı" and the newest build in "En yeni"; the sidebar
+  and Genel Bakış say "yeni nesil çıktı" beside the version; `sudo obhut durum` and `sudo obhut guncelle`
+  print it and start nothing. Another generation is reported even when its build number is not in the
+  `YYYY.MM.DD-v2-<n>` format, so a later change of numbering cannot turn the notice into a failed check.
+- **Second gate:** `master-guncelle` downloads the target commit's `Data/install.sh` before its `kur.sh`
+  and stops when any `OBHUT_NESIL=` assignment in it is not exactly `OBHUT_NESIL="1"`, or when the file
+  cannot be read (fail closed). It writes only its own result and log files, so the reason shows as the
+  last attempt's failure in Güncellemeler; the installer checkout and the system are untouched.
+- **Hosts before 1.2.0** do not know the generation and would offer the new generation as an ordinary
+  update; the new generation's stage-0 gate stops them (S3), so nothing is half-installed either way.
+- **Rejected:** comparing build numbers alone (a newer generation would be offered and fail at its own
+  gate); reporting it in `hata`, as the generation-2 module does for its own check (this interface would
+  say "Sürüm denetlenemedi" for a check that worked); hiding the newer generation (the operator would not
+  learn that 1.x gets no further releases); migrating 1.x hosts (K1 of the rebuild: none).
+
 ### DD-270: Konsol's layout is measured on every screenshot of its browser suites (v2-254)
 
 - **Request (user, 2026-10-16):** "Webui arayüzü tara ve şablonların sınırlarını koruduğunu taşma silinme
@@ -1111,6 +1142,9 @@ the Podman page, Ana Menü, the Files window); DD-267 says where each went.
 - **Amended by DD-267 (v2-250):** the button is in Sistem → Güncellemeler (DD-266), which follows the
   run in the activity list and reloads the page when it ends well; the check, the pin and the unattended
   re-run are unchanged.
+- **Amended by DD-277 (v2-260):** the check also reads the newest commit's generation (`OBHUT_NESIL`,
+  absent = 1); another generation is shown as a clean-install notice instead of an offer, the start refuses
+  it, and `master-guncelle` refuses a target of another generation before it fetches `kur.sh`.
 
 ### DD-229: Overview controls, WireGuard as a whole, and a host closed to containers (v2-207)
 

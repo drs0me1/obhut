@@ -1253,6 +1253,16 @@ back-off, forced-check gap, malformed answers), the job state/stage, the start r
 `yeni-sistem-ui.cjs` checks Sistem → Güncellemeler (the confirmation, the stage, a failure, the reload,
 the internet lock) with fixtured APIs.
 
+Another generation (v2-260, DD-277): `test_update.py` reads `OBHUT_NESIL` from the offered commit's
+`install.sh` (absent or `"1"` offered as before; `"2"` reported as `yeni_nesil` with the notice, never
+offered, the start refused with the same text, even when its build number is not `v2-<n>`; malformed lines
+count as absent) and runs `master-guncelle` with a fake `id` and `file://` downloads (`KUR_KURULUM_URL`,
+`KUR_BETIK_URL`): a target of another generation, any `OBHUT_NESIL=` line that is not exactly `"1"`, or an
+unreadable `install.sh` stops before `kur.sh` runs and is recorded as the failure. The root-only Bats test
+checks the same. `test_obhut.py` checks `sudo obhut durum|guncelle` with the notice, `yeni-sistem-ui.cjs`
+the notice instead of "Güncelle" at 1440/390/320 (light, and dark at 390) with the layout audit, and
+`yeni-uygulamalar-ui.cjs` "yeni nesil çıktı" beside the version on Genel Bakış and in the sidebar.
+
 ## New interface phase 4b: Paylaşımlar and the old addresses (DD-258, DD-267)
 
 `yeni-paylasim-ui.cjs` (`KONSOL_URL`, default `http://127.0.0.1:8776`) drives Dosyalar → Paylaşımlar

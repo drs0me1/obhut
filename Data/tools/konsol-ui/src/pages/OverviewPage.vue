@@ -199,6 +199,7 @@ const update = computed(() => {
   const g = live.guncelleme;
   if (!g) return "";
   if (g.hata) return "denetlenemedi";
+  if (g.yeni_nesil) return "yeni nesil çıktı"; // DD-277: a clean install, not an update
   return g.yeni ? "yeni sürüm var" : "güncel";
 });
 
@@ -361,7 +362,7 @@ watch(() => live.offset, () => (now.value = serverNow()));
           <dt>İnternet adresi</dt>
           <dd class="mono">{{ server.wan }}</dd>
           <dt>Obhut</dt>
-          <dd data-testid="obhut">{{ version }}<template v-if="update"> · <span :class="{ fresh: update === 'yeni sürüm var' }">{{ update }}</span></template></dd>
+          <dd data-testid="obhut">{{ version }}<template v-if="update"> · <span :class="{ fresh: update === 'yeni sürüm var' || update === 'yeni nesil çıktı' }">{{ update }}</span></template></dd>
         </dl>
       </Card>
     </div>

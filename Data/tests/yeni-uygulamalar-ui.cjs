@@ -281,6 +281,17 @@ async function noStyles(page, where) {
     assert.equal(await page.locator(".desktop-tools .chip").innerText(), "Her şey yolunda");
     await shot(page, "1440-light-genel-sakin.png");
     await page.context().close();
+    // DD-277: GitHub's build is of another generation: "yeni nesil çıktı" beside the version, never "yeni sürüm var".
+    const current = data.guncelleme;
+    data.guncelleme = { ...current, son: "2026.11.02-v2-300", son_surum: "2.0.0", yeni_nesil: { nesil: 2, metin: "Obhut'un yeni bir nesli çıktı." } };
+    page = await newPage();
+    await page.goto(url("#/genel"));
+    await page.getByTestId("obhut").filter({ hasText: "1.0.0 · yeni nesil çıktı" }).waitFor();
+    assert.equal(await page.getByTestId("obhut").locator(".fresh").innerText(), "yeni nesil çıktı");
+    assert.equal(await page.getByTestId("version").innerText(), "Obhut 1.0.0 · yeni nesil çıktı");
+    assert.equal(await page.getByTestId("version").locator(".side-fresh").count(), 1);
+    await page.context().close();
+    data.guncelleme = current;
 
     // ================= repair locked (internet channel): the fix is shown, disabled, with the reason
     data.saglik = { status: "bad", read_at: 1791844900, checks: [BAD_CHECK, ...OK_CHECKS] };

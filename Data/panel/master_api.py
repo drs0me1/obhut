@@ -135,8 +135,9 @@ SCHEMAS = {
     "Moduller": obj({"items": arr(ref("Modul"))}),
     "GuncellemeIsi": obj({"durum": enum("yok", "calisiyor", "tamam", "hata"), "hedef": STR, "mesaj": STR,
                           "bitis": null(INT), "asama": STR}),
+    # DD-277: `yeni_nesil` when GitHub's build is of another generation (a clean install, never an update).
     "Guncelleme": obj({"kurulu": STR, "kurulu_surum": STR, "son": null(STR), "son_surum": null(STR), "commit": null(STR),
-                       "yeni": BOOL, "denetlendi": null(INT),
+                       "yeni": BOOL, "yeni_nesil": null(obj({"nesil": INT, "metin": STR})), "denetlendi": null(INT),
                        "hata": STR, "is": ref("GuncellemeIsi"), "baslatilabilir": BOOL}),
     "Erisim": obj({
         "read_at": INT, "alan": STR,

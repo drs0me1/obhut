@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-17
+
+The last release of the 1.x line. Konsol's redesign is complete: Erişim with Yayınla, Sistem, Gelişmiş and
+adding applications, then Konsol at `/` with Dosyalar and Paylaşımlar while the old interface goes;
+Gezgin's WebDAV shares on the tailnet; Konsol as an app on the home screen and `sudo obhut` over SSH; the
+leftovers of the old interface removed and the layout measured on every test screenshot. Konsol also
+learns that a new generation of Obhut needs a clean install and is never offered as an update. The
+entries below are the builds that make up 1.2.0. The build numbers v2-255 to v2-259 belong to the new
+generation's branch, so this release is v2-260; servers compare build numbers, so a server on 1.1.0 or
+on any of these builds sees it as newer.
+
+### 2026-10-17 — Release 1.2.0: a new generation needs a clean install (v2-260)
+
+- Konsol's update check reads the generation of the newest build on GitHub (`OBHUT_NESIL` in its
+  `install.sh`; a build without it is generation 1, as every 1.x build is). When the newest build is of
+  another generation, Sistem → Güncellemeler shows "Yeni nesil çıktı" and, where "Güncelle" was, a notice:
+  the new generation installs only on a clean operating system and does not come to this server as an
+  update; nothing changes here; to move, back up what you need and install it on a clean system with
+  `kur.sh`. The sidebar and Genel Bakış say "yeni nesil çıktı" beside the version, and `sudo obhut durum`
+  and `sudo obhut guncelle` print the same and start nothing (DD-277).
+- `GET /api/konsol/guncelleme` gains `yeni_nesil` (`{nesil, metin}`, or null); its POST refuses another
+  generation with the same text.
+- `master-guncelle`, the update's own unit, reads the target's `install.sh` before it downloads `kur.sh`
+  and stops when that build is of another generation or cannot be read. Nothing on the server changes,
+  and Güncellemeler shows the reason as the last attempt's failure.
+- The release is named 1.2.0 in Konsol and the installer.
+
 ### 2026-10-16 — Long addresses stay in their column on a phone (v2-254)
 
 - On a phone, the cards of Erişim → Güvenlik duvarı (listeners), an application's port card and Gelişmiş →
@@ -1888,6 +1915,7 @@ builds that make up 1.0.0; earlier builds are in
 
 Older entries (v2-144 and earlier) are archived verbatim in [`docs/archive/CHANGELOG-before-v2-145.md`](docs/archive/CHANGELOG-before-v2-145.md).
 
-[Unreleased]: https://github.com/drs0me1/obhut/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/drs0me1/obhut/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/drs0me1/obhut/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/drs0me1/obhut/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/drs0me1/obhut/releases/tag/v1.0.0

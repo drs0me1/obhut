@@ -12,7 +12,8 @@ Kurulum sunucuda tek satırla başlar (v2-206, DD-228). Sunucuya kendiniz SSH il
   Yeniden kurulum: aynı satırı yeniden çalıştırın.
   Güncelleme (v2-212, DD-233): GitHub'da yeni sürüm olunca Sistem → Güncellemeler'de "Güncelle"
   belirir; onaylayınca sunucu o sürümü indirip kurulumu kendisi yeniden çalıştırır, bitince sayfa
-  yenilenir. Yalnız Tailscale adresinden başlatılır.
+  yenilenir. Yalnız Tailscale adresinden başlatılır. Obhut'un yeni nesli (DD-277) güncelleme olarak
+  gelmez: Güncellemeler bunu söyler; yeni nesil yalnız temiz bir işletim sistemine kur.sh ile kurulur.
 
 Repo kökünde:
   kur.sh                     sunucuda çalışan kurulum başlatıcısı (yukarıdaki satır)
