@@ -20,15 +20,14 @@ const assert = require("node:assert/strict");
 // ---- fixtures: documentation values only (RFC 5737/6598 addresses, example names); shapes as in api/sema.ts
 const NOW = 1791845000;
 const DAY = 86400;
-const VPN_NOTE = "WireGuard cihazları yalnız internete çıkar; bu sunucudaki hizmetlere ulaşamaz.";
 const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
 const { uygulama, uygulamalar, ayrinti } = require("./yeni-harness.cjs").fixtures;
-const row = (id, ad, tur, cells, ayrinti = [], aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, servis: null, anahtar: null, calisiyor: true,
-  yerel: cell("yok"), tailscale: cell("yok"), wireguard: cell("kapali", [], VPN_NOTE), internet: cell("yok"), satir: null, web: null, ayrinti, ...cells });
+const row = (id, ad, tur, cells, aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, servis: null, anahtar: null, calisiyor: true,
+  yerel: cell("yok"), tailscale: cell("yok"), wireguard: cell("kapali"), internet: cell("yok"), satir: null, web: null, ...cells });
 // An application port's row: id uygulama:<app>:<service>:<port>/<proto>, its stored row (satir) and its key.
-function appRow(id, satir, cells, ayrintilar = []) {
+function appRow(id, satir, cells) {
   const [, app, service, port] = id.split(":");
-  return row(id, `${app} · ${service}`, "uygulama", { uygulama: app, servis: service, anahtar: `${service}:${port}`, satir, ...cells }, ayrintilar,
+  return row(id, `${app} · ${service}`, "uygulama", { uygulama: app, servis: service, anahtar: `${service}:${port}`, satir, ...cells },
     `${port} · ${satir.tur === "adres" ? "Adres" : "Ham port"}`);
 }
 const NOTLAR = "uygulama:notlar:web:8080/tcp";
@@ -50,22 +49,21 @@ const WARNINGS = [
 const NOTLAR_ROW = { tur: "adres", ad: "notlar", tailscale_portu: 8443, internet: "notlar.example.org" };
 function rows(o = {}) {
   return [
-    row("panel", "Konsol", "konsol", { tailscale: cell("acik", ["panel.ev"], "Giriş istemez; cihazı Tailscale doğrular."), internet: cell("kapali"),
-      web: { tail: true, enabled: false, domain: "" } }, [], "Yönetim paneli"),
+    row("panel", "Konsol", "konsol", { tailscale: cell("acik", ["panel.ev"]), internet: cell("kapali"),
+      web: { tail: true, enabled: false, domain: "" } }, "Yönetim paneli"),
     appRow(NOTLAR, o.notlar ?? NOTLAR_ROW, { yerel: cell("acik", ["127.0.0.1:62001"]), tailscale: cell("acik", [`${(o.notlar ?? NOTLAR_ROW).ad}.ev`, "100.64.0.2:8443"]),
-      internet: cell("acik", ["notlar.example.org"]) }, [{ baslik: "Konteyner portu", deger: "8080/tcp" }, { baslik: "DNS", deger: "notlar.ev → 100.64.0.2" },
-      { baslik: "Caddy", deger: "notlar.example.org → 127.0.0.1:62001" }]),
+      internet: cell("acik", ["notlar.example.org"]) }),
     appRow(MEDYA, { tur: "ham", kapsam: "internet", port: 8096 }, { yerel: cell("kapali"), tailscale: cell("kapali"),
-      internet: cell("acik", ["203.0.113.10:8096/tcp"], "Ham port", "Şifreleme ve giriş uygulamanın kendisinde.") }),
+      internet: cell("acik", ["203.0.113.10:8096/tcp"], "", "Şifreleme ve giriş uygulamanın kendisinde.") }),
     appRow(MEDYA_UDP, { tur: "ham", kapsam: "kapali", port: 1900 }, { yerel: cell("kapali"), tailscale: cell("kapali"), internet: cell("kapali") }),
     appRow(KUTU, { tur: "ham", kapsam: "kapali", port: 9000 }, { yerel: cell("kapali"), tailscale: cell("kapali"), internet: cell("kapali") }),
-    row("konteyner:dis", "dis", "konteyner", { yerel: cell("acik", ["127.0.0.1:5000/tcp"]), tailscale: cell("kapali"), internet: cell("kapali") }, [],
+    row("konteyner:dis", "dis", "konteyner", { yerel: cell("acik", ["127.0.0.1:5000/tcp"]), tailscale: cell("kapali"), internet: cell("kapali") },
       "Konteyner · Konsol dışında yönetiliyor"),
-    row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev", "100.64.0.2:61010"], "2 klasör"),
-      internet: cell("acik", ["http://203.0.113.10:61010"], "1 klasör", "Şifresiz HTTP"), web: { tail: true, enabled: false, domain: "" } },
-    [{ baslik: "Klasör · Filmler", deger: "Tailscale açık · İnternet açık" }], "WebDAV · 2 klasör"),
-    row("sistem:ssh", "SSH", "sistem", { tailscale: cell("acik", ["22/tcp"]), internet: cell("acik", ["203.0.113.10:22/tcp"]) }, [], "Uzak kabuk"),
-    row("vpn:wg0", "WireGuard wg0", "vpn", { wireguard: cell("yok"), tailscale: cell("acik", ["61001/udp"]), internet: cell("acik", ["203.0.113.10:61001/udp"]) }, [], "Ana ağ"),
+    row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev", "100.64.0.2:61010"]),
+      internet: cell("acik", ["http://203.0.113.10:61010"], "", "Şifresiz HTTP"), web: { tail: true, enabled: false, domain: "" } }, "WebDAV · 2 klasör"),
+    row("sistem:ssh", "SSH", "sistem", { tailscale: cell("acik", ["22/tcp"]), internet: cell("acik", ["203.0.113.10:22/tcp"]) }, "Uzak kabuk"),
+    row("vpn:wg0", "WireGuard wg0", "vpn", { wireguard: cell("yok"), tailscale: cell("acik", ["61001/udp"]), internet: cell("acik", ["203.0.113.10:61001/udp"]) }, "Ana ağ"),
+    row("kural:u_yazici", "Yazıcı", "kural", { tailscale: cell("kapali", ["631/tcp · yalnız 100.64.0.9"]), wireguard: cell("yok"), internet: cell("yok") }, "Engelleme kuralı · IPv4"),
   ];
 }
 const ROWS = rows();
@@ -79,7 +77,7 @@ function erisim(o = {}) {
         { ad: "SSH", port: 22, proto: "tcp", aileler: [4, 6], kaynak: "temel" },
         { ad: "WireGuard wg0", port: 61001, proto: "udp", aileler: [4], kaynak: "temel" },
         { ad: "Oyun", port: 27015, proto: "udp", aileler: [4], kaynak: "kural" }] },
-      wireguard: { kurulu: true, durduruldu: false, not: VPN_NOTE, aglar: [{ arayuz: "wg0", ad: "Ana ağ", etkin: true, port: 61001 }] },
+      wireguard: { kurulu: true, durduruldu: false, aglar: [{ arayuz: "wg0", ad: "Ana ağ", etkin: true, port: 61001 }] },
       sertifikalar: [{ ad: "notlar.example.org", hizmet: NOTLAR, durum: "gecerli", bitis: NOW + 10 * DAY }],
     },
     ...o,
@@ -317,37 +315,39 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
       Math.round(c.querySelector(".summary-link").getBoundingClientRect().bottom)]));
     assert.equal(new Set(feet.map((f) => f[0])).size, 1, "equal heights");
     assert.equal(new Set(feet.map((f) => f[1])).size, 1, "the links on one line");
-    // The matrix in plain words; an access row links to its sheet.
+    // The matrix: each cell the addresses and ports it is reached on, or its state in one word; no sentence in the
+    // table. A warning or a fault is the cell's colour. An access row's name links to its sheet.
     const matrix = page.getByTestId("matrix");
     assert.deepEqual(await matrix.locator("thead th").allInnerTexts(), ["Hizmet", "Bu sunucu", "Tailscale", "WireGuard", "İnternet"]);
     assert.deepEqual(await matrix.locator("tbody tr[data-hizmet]").evaluateAll((trs) => trs.map((t) => t.dataset.hizmet)), ROWS.map((r) => r.id));
+    const cellsOf = (id) => matrix.locator(`tr[data-hizmet="${id}"] .matrix-cell`).evaluateAll((tds) => tds.map((td) =>
+      [td.querySelector(".reach").className.match(/reach-(ok|warning|danger|accent|neutral)/)[1],
+        ...[...td.querySelectorAll(".reach-lines > span:not(.sr-only)")].map((s) => s.textContent)]));
+    assert.deepEqual(await cellsOf(NOTLAR), [["ok", "127.0.0.1:62001"], ["ok", "notlar.ev", "100.64.0.2:8443"], ["neutral", "Kapalı"], ["ok", "notlar.example.org"]]);
+    assert.deepEqual(await cellsOf("panel"), [["neutral", "—"], ["ok", "panel.ev"], ["neutral", "Kapalı"], ["neutral", "Kapalı"]]);
+    assert.deepEqual(await cellsOf(MEDYA), [["neutral", "Kapalı"], ["neutral", "Kapalı"], ["neutral", "Kapalı"], ["warning", "203.0.113.10:8096/tcp"]],
+      "a raw port on the internet is a warning's colour");
+    assert.deepEqual(await cellsOf("paylasim"), [["neutral", "—"], ["ok", "paylas.ev", "100.64.0.2:61010"], ["neutral", "Kapalı"], ["warning", "http://203.0.113.10:61010"]]);
+    assert.deepEqual(await cellsOf("kural:u_yazici"), [["neutral", "—"], ["neutral", "631/tcp · yalnız 100.64.0.9"], ["neutral", "—"], ["neutral", "—"]],
+      "a blocking rule keeps its port");
+    const heard = (id) => matrix.locator(`tr[data-hizmet="${id}"] [data-hucre="internet"]`).evaluate((td) => td.textContent.replace(/\s+/g, " ").trim());
+    assert.equal(await heard(NOTLAR), "Açık: notlar.example.org", "a screen reader hears the state before the address");
+    assert.equal(await heard(MEDYA), "Açık, uyarı: 203.0.113.10:8096/tcp", "and a warning, which the eye sees as a colour");
+    const text = await matrix.innerText();
+    for (const words of ["Giriş istemez", "uygulamanın kendisinde", "Şifresiz HTTP", "yalnız internete çıkar", "klasör ·", "Adresler'de değiştir"])
+      assert(!text.includes(words), `no sentence in the table: ${words}`);
+    assert.equal(await matrix.locator(".matrix-cell [title], .pill, .cell-note").count(), 0, "a cell holds its addresses only");
+    assert.equal(await page.getByRole("switch", { name: "Teknik ayrıntı" }).count(), 0, "no technical switch: the addresses are always there");
+    assert.equal(await page.getByTestId("vpn-note").count(), 0);
     const notlar = matrix.locator(`tr[data-hizmet="${NOTLAR}"]`);
-    assert.deepEqual(await notlar.locator(".matrix-cell .pill").allInnerTexts(), ["Açık", "Açık", "Kapalı", "Açık"]);
     assert.equal(await notlar.locator(".cell-sub").innerText(), "8080/tcp · Adres");
     assert.equal(await matrix.locator(`tr[data-hizmet="${MEDYA}"] .cell-sub`).innerText(), "8096/tcp · Ham port");
     assert.deepEqual(await matrix.getByTestId("row-link").evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
       ["#/erisim?sekme=adresler&satir=panel", ...[NOTLAR, MEDYA, MEDYA_UDP, KUTU].map((id) => `#/erisim?sekme=adresler&satir=${enc(id)}`), "#/erisim?sekme=adresler&satir=paylasim"],
       "Konsol, every application port and Paylaşımlar link to their row; a container of no application has none");
-    assert.equal(await notlar.locator('[data-hucre="wireguard"] .cell-note').count(), 0, "the VPN note is said once, under the table");
-    assert.equal(await notlar.locator(".cell-addr").count(), 0, "addresses only with Teknik ayrıntı");
-    const shares = matrix.locator('tr[data-hizmet="paylasim"] [data-hucre="internet"]');
-    assert.match(await shares.locator(".pill").getAttribute("class"), /pill-warning/);
-    assert.equal(await shares.locator(".warn-text").innerText(), "Şifresiz HTTP");
     await noStyles(page, "erisim genel");
     assert(await noHorizontalScroll(page));
     await shot(page, "1440-light-erisim-genel.png", true);
-    // Teknik ayrıntı: addresses and the technical lines, kept in the address.
-    await matrix.getByRole("switch", { name: "Teknik ayrıntı" }).click();
-    await page.waitForURL((u) => u.hash === "#/erisim?teknik=1");
-    assert.equal(await notlar.locator('[data-hucre="internet"] .cell-addr').innerText(), "notlar.example.org");
-    assert.equal(await matrix.locator('tr[data-hizmet="paylasim"] [data-hucre="tailscale"] .cell-addr').innerText(), "paylas.ev · 100.64.0.2:61010");
-    assert.deepEqual(await matrix.locator(`[data-ayrinti="${NOTLAR}"] dd`).allInnerTexts(),
-      ["8080/tcp", "notlar.ev → 100.64.0.2", "notlar.example.org → 127.0.0.1:62001"]);
-    await page.reload();
-    await matrix.locator('[data-ayrinti="paylasim"]').waitFor();
-    assert.equal(await matrix.getByRole("switch", { name: "Teknik ayrıntı" }).getAttribute("aria-checked"), "true", "from the address");
-    await shot(page, "1440-light-erisim-teknik.png", true);
-    assert.equal(await page.getByTestId("vpn-note").innerText(), "WireGuard: " + VPN_NOTE, "the VPN note once, not in every row");
 
     // A row's link opens its sheet on Adresler; closing it removes the row from the address.
     await matrix.locator(`tr[data-hizmet="${MEDYA}"]`).getByTestId("row-link").click();
@@ -391,7 +391,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     data.erisim = erisim({ uyarilar: [{ seviye: "bad", hizmet: "", metin: "Tailscale bağlı değil; Konsol'a ve tailnet adlarına öbür cihazlardan ulaşılamaz.",
       duzelt: { bolum: "tailscale", hedef: "" } }] });
     data.erisim.ozet.tailscale = { ...data.erisim.ozet.tailscale, durum: "bagli-degil", anahtar_bitis: null, cikis_dugumu: false };
-    data.erisim.ozet.wireguard = { kurulu: false, durduruldu: true, not: "", aglar: [] };
+    data.erisim.ozet.wireguard = { kurulu: false, durduruldu: true, aglar: [] };
     page = await newPage();
     await page.goto(url("#/genel"));
     const overviewFix = page.locator('.problem[data-kind="erisim"]').getByRole("link", { name: "Erişim'de incele" });
@@ -1267,7 +1267,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
 
     assert.equal(count("yayinlar") + count("yayinlar/plan"), 0, "nothing asks for the removed Yayınla routes");
     assert.deepEqual(h.errors, []);
-    console.log("PASS: Konsol Erişim under the production CSP — Genel (summaries, the matrix in plain words with Teknik ayrıntı in the address and " +
+    console.log("PASS: Konsol Erişim under the production CSP — Genel (summaries, the matrix with each cell's addresses and ports and no sentence, " +
       "each access row's link, an unreadable Erişim), Genel Bakış' links by duzelt (an access row's sheet, the application, Tailscale) and the chip, " +
       "Tailscale (device, addresses, client, key expiry warning, exit node, admin console link, disconnected), Adresler (addresses with their " +
       "Tailscale name, Tailscale port, internet name and state; raw ports with their scope; Adres aç from the tab bar with another port chosen in " +

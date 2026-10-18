@@ -24,7 +24,7 @@ const NOTLAR_UDP = "uygulama:notlar:web:9000/udp";
 const NOTLAR_ROW = { tur: "adres", ad: "notlar", tailscale_portu: null, internet: "" };
 const accessRow = (id, satir) => ({ id, ad: "notlar · web", tur: "uygulama", aciklama: "", uygulama: "notlar", servis: "web", anahtar: id.split(":").slice(2).join(":"),
   calisiyor: true, yerel: accessCell("kapali"), tailscale: accessCell("acik", ["notlar.ev"]), wireguard: accessCell("kapali"), internet: accessCell("kapali"),
-  satir, web: null, ayrinti: [] });
+  satir, web: null });
 
 // The file every source ends in (a pasted Compose file with each kind of question).
 const ORNEK_FILE = [
@@ -160,7 +160,7 @@ const data = {
   etkinlik: { items: [] },
   erisim: { read_at: 1791845000, alan: "ev", revizyon: "rev-1", hizmetler: [accessRow(NOTLAR_WEB, NOTLAR_ROW)], hatalar: [], uyarilar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "sunucu", surum: "1.80.0", adresler: ["100.64.0.2"], cikis_dugumu: true },
-      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
+      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, aglar: [] }, sertifikalar: [] } },
   uygulamalar: uygulamalar(apps(), { kaynaklar: [{ ad: "eski-redis", imaj: "registry.example/redis:7", durum: "running" }] }),
 };
 

@@ -914,6 +914,12 @@ longer applies and which entry replaced it.
 - **Partly retired by DD-275 (v2-258, the rebuild):** Yayınla and `/api/konsol/yayinlar` are gone; every
   access change is a row's settings plan. The plan itself (DD-156's dry run) stays, and so do
   `/guvenlik-duvari`, `/adlar`, Erişim's warnings with their fix target and the WireGuard network's name.
+- **Amended in v2-269:** Genel's matrix shows each cell's addresses and ports, or its state in one word, with
+  its state (or a warning: a raw port on the internet, unencrypted WebDAV) as a colour; the technical detail with
+  its `teknik` address key, the WireGuard note under the table and the explanatory sentences in the cells are
+  gone (the operator asked for the addresses and ports without explanations). The read model's rows no longer
+  carry `ayrinti`, `ozet.wireguard` has no `not`, and a cell's `not` is set only when it is `hata`, the reason
+  that also becomes the warning; an operator rule's row says "İzin kuralı" or "Engelleme kuralı".
 
 ### DD-263: Container CPU and memory come from cgroup files, not `podman stats` (v2-246)
 

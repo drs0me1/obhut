@@ -61,7 +61,7 @@ const data = {
   etkinlik: { items: [] },
   erisim: { read_at: NOW, alan: "ev", hizmetler: [], uyarilar: [], hatalar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null }, internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
-      wireguard: { kurulu: false, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
+      wireguard: { kurulu: false, durduruldu: false, aglar: [] }, sertifikalar: [] } },
   uygulamalar: uygulamalar(APPS),
   paylasim: SHARES,
   depolama: STORAGE,

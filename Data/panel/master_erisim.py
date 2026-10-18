@@ -15,7 +15,8 @@ A source that cannot be read adds a line to "hatalar"; the other rows stay.
 
 Each service row has four cells (yerel, tailscale, wireguard, internet). A cell's "durum" is
 acik (reachable), kismen (only some ports), kapali (closed), yok (does not apply) or hata (switched
-on but not working; "not" says why).
+on but not working; "not" says why, and is empty otherwise). "adresler" are the addresses and ports;
+"uyari" is a short risk of an open cell (a raw port on the internet, unencrypted WebDAV).
 
 DD-265: a warning names the row it is about by the row's id ("panel", "paylasim",
 "uygulama:<app>:<service>:<port>/<proto>", "konteyner:x"; "" when it is about no row) and where it is
@@ -29,15 +30,10 @@ import datetime
 import master_generator
 
 CERT_WARN_DAYS = 14
-VPN_NOTE = "WireGuard cihazları yalnız internete çıkar; bu sunucudaki hizmetlere ulaşamaz."
 
 
 def cell(durum="yok", adresler=(), note="", uyari=""):
     return {"durum": durum, "adresler": list(adresler), "not": note, "uyari": uyari}
-
-
-def day(epoch):
-    return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%d.%m.%Y")
 
 
 def number(value, default=0):
@@ -48,18 +44,17 @@ def number(value, default=0):
     return value if 0 < value < 65536 else default
 
 
-def open_cell(target, address, partial=False, note=""):
+def open_cell(target, address, partial=False):
     """Adds a reachable address to a cell; a closed or not-applicable cell opens."""
     if address and address not in target["adresler"]:
         target["adresler"].append(address)
     if target["durum"] in ("yok", "kapali"):
         target["durum"] = "kismen" if partial else "acik"
-        target["not"] = note
 
 
-def close_cell(target, note=""):
+def close_cell(target):
     if target["durum"] == "yok":
-        target["durum"], target["not"] = "kapali", note
+        target["durum"] = "kapali"
 
 
 def port_groups(ports):
@@ -88,7 +83,7 @@ def service(sid, ad, tur, aciklama, wireguard, uygulama=None, calisiyor=None):
     return {"id": sid, "ad": ad, "tur": tur, "aciklama": aciklama, "uygulama": uygulama, "servis": None, "anahtar": None,
             "calisiyor": calisiyor, "yerel": cell(), "tailscale": cell(),
             "wireguard": dict(wireguard, adresler=list(wireguard["adresler"])), "internet": cell(), "satir": None,
-            "web": None, "ayrinti": []}
+            "web": None}
 
 
 def closed(row):
@@ -98,31 +93,19 @@ def closed(row):
     return row
 
 
-def detail(row, baslik, deger):
-    item = {"baslik": baslik, "deger": deger}
-    if item not in row["ayrinti"]:
-        row["ayrinti"].append(item)
-
-
-def publish(row, pub, env, upstream=""):
+def publish(row, pub):
     """A fixed row's publication (its Tailscale name and its HTTPS name) on its service row."""
     row["web"] = {"tail": bool(pub.get("tail")), "enabled": bool(pub.get("enabled")), "domain": str(pub.get("domain") or "")}
-    ts = env.get("TAILSCALE_IPV4", "")
     if pub.get("tail"):
         open_cell(row["tailscale"], pub.get("local", ""))
-        detail(row, "DNS", "%s → %s" % (pub.get("local", ""), ts) if ts else pub.get("local", ""))
     else:
-        close_cell(row["tailscale"], "Tailscale adı kapalı.")
+        close_cell(row["tailscale"])
     if not pub.get("enabled"):
         close_cell(row["internet"])
         return
     domain = pub.get("domain") or ""
     if pub.get("status") == "ready":
         open_cell(row["internet"], domain)
-        if upstream:
-            detail(row, "Caddy", "%s → %s" % (domain, upstream))
-        if isinstance(pub.get("expires"), (int, float)) and not isinstance(pub.get("expires"), bool):
-            detail(row, "Sertifika", "%s tarihine kadar" % day(pub["expires"]))
         return
     target = row["internet"]
     if domain and domain not in target["adresler"]:
@@ -140,8 +123,6 @@ def internet_name(row, pub, name):
     target = row["internet"]
     if pub.get("status") == "ready":
         open_cell(target, name)
-        if isinstance(pub.get("expires"), (int, float)) and not isinstance(pub.get("expires"), bool):
-            detail(row, "Sertifika", "%s tarihine kadar" % day(pub["expires"]))
         return
     if name not in target["adresler"]:
         target["adresler"].append(name)
@@ -159,25 +140,21 @@ def app_row(env, item, pubs, running, wireguard, warnings):
                   "%d/%s · %s" % (item["port"], proto, "Adres" if access["tur"] == "adres" else "Ham port"),
                   wireguard, item["uygulama"], running)
     row.update(servis=item["servis"], anahtar=item["anahtar"], satir=copy.deepcopy(access))
-    detail(row, "Konteyner portu", "%d/%s" % (item["port"], proto))
     ts, wan = env.get("TAILSCALE_IPV4", ""), env.get("WAN_IPV4", "")
     if access["tur"] == "adres":
         open_cell(row["yerel"], "127.0.0.1:%d" % item["yerel_port"] if item.get("yerel_port") else "")
         name = "%s.%s" % (access["ad"], env.get("LOCAL_DOMAIN", ""))
         open_cell(row["tailscale"], name)
-        detail(row, "DNS", "%s → %s" % (name, ts) if ts else name)
         if access["tailscale_portu"] is not None:
             open_cell(row["tailscale"], "%s:%d" % (ts, access["tailscale_portu"]) if ts else "%d/tcp" % access["tailscale_portu"])
         if access["internet"]:
             internet_name(row, pubs.get(item["id"]) or {}, access["internet"])
-            if item.get("yerel_port"):
-                detail(row, "Caddy", "%s → 127.0.0.1:%d" % (access["internet"], item["yerel_port"]))
         return closed(row)
     text = "%d/%s" % (access["port"], proto)
     if access["kapsam"] == "tailscale":
-        open_cell(row["tailscale"], "%s:%s" % (ts, text) if ts else text, note="Ham port")
+        open_cell(row["tailscale"], "%s:%s" % (ts, text) if ts else text)
     elif access["kapsam"] == "internet":
-        open_cell(row["internet"], "%s:%s" % (wan, text) if wan else text, note="Ham port")
+        open_cell(row["internet"], "%s:%s" % (wan, text) if wan else text)
         row["internet"]["uyari"] = "Şifreleme ve giriş uygulamanın kendisinde."
         warnings.append(warning("warn", row["id"], "%s: %s doğrudan internete açık; şifreleme ve giriş uygulamanın kendisinde."
                                 % (row["ad"], text), "adresler", row["id"]))
@@ -191,7 +168,6 @@ def add_container(row, item, env, warnings):
     fix = (None, "")
     for group in port_groups(item.get("ports")):
         text = port_text(group, env)
-        detail(row, "Konteyner portu", text)
         if group["scope"] == "local":
             open_cell(row["yerel"], text)
         elif group["scope"] == "tailscale":
@@ -217,30 +193,22 @@ def share_row(env, pub, shares, wireguard, warnings):
     row["aciklama"] = "WebDAV · %d klasör" % len(items)
     active = {scope: [i for i in items if ((i.get("connections") or {}).get(scope) or {}).get("active")]
               for scope in ("tailscale", "wan")}
-    for item in items:
-        conns = item.get("connections") or {}
-        state = ["%s %s" % (name, "açık" if (conns.get(scope) or {}).get("active") else "kapalı")
-                 for scope, name in (("tailscale", "Tailscale"), ("wan", "İnternet"))]
-        detail(row, "Klasör · %s" % item.get("name", ""), " · ".join(state))
     if active["tailscale"]:
         origin = shares.get("host", "")
-        row["tailscale"] = cell("acik", [a for a in ("paylas." + env.get("LOCAL_DOMAIN", ""), origin) if a],
-                                "%d klasör" % len(active["tailscale"]))
+        row["tailscale"] = cell("acik", [a for a in ("paylas." + env.get("LOCAL_DOMAIN", ""), origin) if a])
     else:
-        reason = ("Erişim → Adresler bölümünde Tailscale erişimi kapalı." if not shares.get("tail_enabled") else
-                  "Tailscale'den paylaşılan klasör yok.")
-        row["tailscale"] = cell("kapali", (), reason)
+        row["tailscale"] = cell("kapali")
     wan = shares.get("wan") or {}
     if active["wan"]:
         origin = str((active["wan"][0]["connections"]["wan"].get("url") or "")).split("/s/")[0]
         if wan.get("mode") == "https":
-            row["internet"] = cell("acik", [origin], "%d klasör" % len(active["wan"]))
+            row["internet"] = cell("acik", [origin])
         else:
-            row["internet"] = cell("acik", [origin], "%d klasör" % len(active["wan"]), "Şifresiz HTTP")
+            row["internet"] = cell("acik", [origin], uyari="Şifresiz HTTP")
             warnings.append(warning("warn", "paylasim", "İnternetten gelen WebDAV bağlantıları şifresiz; kullanıcı adı ve parola ağda "
                                     "okunabilir. Bir HTTPS adı tanımlayınca bağlantı şifrelenir.", "adresler", "paylasim"))
     else:
-        row["internet"] = cell("kapali", (), "" if wan.get("available") else str(wan.get("reason") or ""))
+        row["internet"] = cell("kapali")
     return row
 
 
@@ -301,16 +269,14 @@ def build(env, settings, shares, containers, tailscale, networks, wg_stopped, no
     rules = [r for r in ((manage.get("config") or {}).get("firewall") or [])
              if isinstance(r, dict) and r.get("scope") in ("wan", "tail") and isinstance(r.get("port"), int)]
     networks = [n for n in networks or [] if isinstance(n, dict) and n.get("iface")]
-    wireguard = cell("kapali", (), VPN_NOTE) if networks else cell()
+    wireguard = cell("kapali") if networks else cell()
     domain, wan4 = env.get("LOCAL_DOMAIN", ""), env.get("WAN_IPV4", "")
     warnings, out = [], []
 
     panel = service("panel", "Konsol", "konsol", "Yönetim paneli", wireguard, calisiyor=True)
-    panel["tailscale"] = cell("acik", ["panel." + domain], "Giriş istemez; cihazı Tailscale doğrular.")
+    panel["tailscale"] = cell("acik", ["panel." + domain])
     pub = pubs.get("panel") or {"service": "panel", "tail": True, "enabled": False, "local": "panel." + domain}
-    publish(panel, pub, env)
-    if panel["internet"]["durum"] == "acik":
-        panel["internet"]["not"] = "Konsol hesabıyla giriş ister."
+    publish(panel, pub)
     out.append(panel)
 
     items = []
@@ -357,15 +323,14 @@ def build(env, settings, shares, containers, tailscale, networks, wg_stopped, no
             row["tailscale"] = cell("acik", ["%d/udp" % port])
             row["internet"] = cell("acik", ["%s:%d/udp" % (wan4, port) if wan4 else "%d/udp" % port])
         else:
-            row["tailscale"] = cell("kapali", (), "Ağ kapalı.")
-            row["internet"] = cell("kapali", (), "Ağ kapalı.")
+            row["tailscale"] = cell("kapali")
+            row["internet"] = cell("kapali")
         out.append(row)
     for rule in rules:
         row = service("kural:" + str(rule.get("id", "")), str(rule.get("name") or "Kural"), "kural",
-                      "Güvenlik duvarı kuralı · IPv%s" % rule.get("family"), cell())
+                      "%s · IPv%s" % ("İzin kuralı" if rule.get("allow") else "Engelleme kuralı", rule.get("family")), cell())
         text = "%d/%s" % (rule["port"], rule.get("proto", "")) + (" · yalnız %s" % rule["source"] if rule.get("source") else "")
-        row["internet" if rule["scope"] == "wan" else "tailscale"] = cell(
-            "acik" if rule.get("allow") else "kapali", [text], "İzin kuralı" if rule.get("allow") else "Engelleme kuralı")
+        row["internet" if rule["scope"] == "wan" else "tailscale"] = cell("acik" if rule.get("allow") else "kapali", [text])
         out.append(row)
 
     addresses = {r["id"] for r in out if r["tur"] in ("konsol", "paylasim", "uygulama")}
@@ -402,7 +367,7 @@ def build(env, settings, shares, containers, tailscale, networks, wg_stopped, no
         "ozet": {
             "tailscale": summary,
             "internet": {"ipv4": wan4, "ipv6": env.get("WAN_IPV6", ""), "acik": internet_ports(settings, rules)},
-            "wireguard": {"kurulu": bool(networks), "durduruldu": bool(wg_stopped), "not": VPN_NOTE if networks else "",
+            "wireguard": {"kurulu": bool(networks), "durduruldu": bool(wg_stopped),
                           "aglar": [{"arayuz": n["iface"], "ad": str(n.get("label") or ""),
                                      "etkin": bool(n.get("active")), "port": number(n.get("port"))} for n in networks]},
             "sertifikalar": certificates,

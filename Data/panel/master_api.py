@@ -95,7 +95,6 @@ SCHEMAS = {
         "yerel": ref("ErisimHucresi"), "tailscale": ref("ErisimHucresi"), "wireguard": ref("ErisimHucresi"),
         "internet": ref("ErisimHucresi"), "satir": null(ref("ErisimSatiri")),
         "web": null(obj({"tail": BOOL, "enabled": BOOL, "domain": STR})),
-        "ayrinti": arr(obj({"baslik": STR, "deger": STR})),
     }),
     # DD-265: the row a warning is about (its id; "" when none) and where it is fixed: adresler (Erişim → Adresler;
     # hedef the row id), uygulama (an application's page; hedef its name), tailscale.
@@ -130,7 +129,7 @@ SCHEMAS = {
                              "acik": arr(obj({"ad": STR, "port": INT, "proto": STR, "aileler": arr(INT),
                                               "kaynak": enum("temel", "kural")}))}),
             # kurulu: WireGuard has a network; durduruldu: it is stopped as a whole (its networks are then not listed).
-            "wireguard": obj({"kurulu": BOOL, "durduruldu": BOOL, "not": STR,
+            "wireguard": obj({"kurulu": BOOL, "durduruldu": BOOL,
                               "aglar": arr(obj({"arayuz": STR, "ad": STR, "etkin": BOOL, "port": INT}))}),
             "sertifikalar": arr(obj({"ad": STR, "hizmet": STR, "durum": enum("gecerli", "hazir-degil"), "bitis": null(INT)})),
         }),

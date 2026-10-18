@@ -3540,25 +3540,6 @@
                 "type": "null"
               }
             ]
-          },
-          "ayrinti": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "baslik": {
-                  "type": "string"
-                },
-                "deger": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "baslik",
-                "deger"
-              ],
-              "additionalProperties": false
-            }
           }
         },
         "required": [
@@ -3575,8 +3556,7 @@
           "wireguard",
           "internet",
           "satir",
-          "web",
-          "ayrinti"
+          "web"
         ],
         "additionalProperties": false
       },
@@ -4131,9 +4111,6 @@
                   "durduruldu": {
                     "type": "boolean"
                   },
-                  "not": {
-                    "type": "string"
-                  },
                   "aglar": {
                     "type": "array",
                     "items": {
@@ -4165,7 +4142,6 @@
                 "required": [
                   "kurulu",
                   "durduruldu",
-                  "not",
                   "aglar"
                 ],
                 "additionalProperties": false

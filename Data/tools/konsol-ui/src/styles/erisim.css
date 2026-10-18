@@ -79,48 +79,89 @@ a.lock-link:hover {
   min-width: 160px;
 }
 
-.matrix-value {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
+/* A service's name leads to its row in Adresler. */
+.matrix-name {
+  display: block;
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+a.matrix-name:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+/* A cell: a dot in its state's colour and the addresses it is reached on there, one per line. */
+.reach {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
 }
 
-.cell-addr {
-  font-size: 12px;
+.reach-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  transform: translateY(-1px);
+}
+
+.reach-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.matrix-detail td {
-  padding-top: 0;
-  background: var(--surface-muted);
+.reach-lines .mono {
+  font-size: 12.5px;
 }
 
-.matrix-detail .facts {
-  padding: 10px 12px;
+.reach-neutral .reach-lines {
+  color: var(--muted);
 }
 
-.data-table tbody tr:has(+ .matrix-detail) > * {
-  border-bottom: 0;
+.reach-ok .reach-dot {
+  background: var(--ok);
+}
+
+.reach-warning .reach-dot {
+  background: var(--warn);
+}
+
+.reach-danger .reach-dot {
+  background: var(--danger);
+}
+
+.reach-danger .reach-lines {
+  color: var(--danger-ink);
+}
+
+.reach-accent .reach-dot {
+  background: var(--accent);
+}
+
+.reach-none .reach-dot {
+  visibility: hidden;
 }
 
 @container (max-width: 760px) {
   .matrix .col-main {
     min-width: 0;
   }
-
-  .data-table tbody tr:has(+ .matrix-detail) {
-    border-bottom: 0;
-  }
-
-  .matrix-detail td {
-    grid-column: 1 / -1;
-    border-radius: var(--r-md);
-  }
 }
 
 /* ---- Adresler */
+.cell-addr {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .sw-cell {
   display: flex;
   flex-direction: column;

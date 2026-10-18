@@ -35,6 +35,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Erişim → Genel: the four summary cards share one layout (their state at the top, short one-line rows, a link to
   the tab with the details at the foot) and are as tall as each other. The İnternet card shows only the server's
   addresses; how many ports are open is its state, and which ones are in Güvenlik duvarı.
+- Erişim → Genel: "Hizmetler ve erişim" shows in each cell the addresses and ports a service is reached on there,
+  one per line, or that it is closed; the colour of its dot is its state (a raw port on the internet or WebDAV
+  without encryption is amber). The explanatory sentences, the "Teknik ayrıntı" switch and its detail rows and the
+  WireGuard note under the table are gone; a firewall rule's row says whether it allows or blocks, and a blocking
+  rule shows its port. The service's name leads to its row in Adresler.
 
 ## [2.0.0] — 2026-10-18
 

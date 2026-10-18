@@ -1,29 +1,24 @@
 <!-- Erişim → Genel (rebuild phase 5): four summaries in one template (SummaryCard: the state, at most three
      one-line rows, the tab where the details are): Tailscale (its addresses, the key's end), the internet (its
      addresses only; how many ports are open is its state, what they are is Güvenlik duvarı's), WireGuard (its
-     networks), the certificates (each name with its end). Then every service with its four cells in plain words. "Teknik ayrıntı" (?teknik=1) adds
-     the addresses and the technical lines. A table on wide screens, cards on narrow ones. An access row (Konsol,
-     Paylaşımlar, each application port) links to its sheet in Adresler, where it changes; Paylaşımlar' row also
-     leads to Dosyalar → Paylaşımlar for each folder's connections. Warnings are Genel Bakış' Dikkat; here a
-     cell says what is wrong. -->
+     networks), the certificates (each name with its end). Then every service with its four cells: the addresses and
+     ports it is reached on there, or that it is closed; a warning (a raw port open on the internet, unencrypted
+     WebDAV) or a fault is the cell's colour, never a sentence in the table: the words are Genel Bakış' Dikkat. A
+     service's name leads to its row in Adresler. A table on wide screens, cards on narrow ones. -->
 <script setup lang="ts">
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
 import SummaryCard, { type SummaryRow } from "../../components/ui/SummaryCard.vue";
 import EmptyState from "../../components/ui/EmptyState.vue";
-import StatusPill from "../../components/ui/StatusPill.vue";
-import Switch from "../../components/ui/Switch.vue";
 import type { Tone } from "../../components/ui/types";
 import { Icon } from "../../components/icons";
 import { CELL_TEXT, CELL_TONE } from "../../apps";
 import { isAccessRow } from "../../access";
-import { accessRoute, filesRoute } from "../../sections";
+import { accessRoute } from "../../sections";
 import { live, serverNow } from "../../live";
-import { useQueryFlag } from "../../query";
 import { UNKNOWN, date, dayMonth, daysUntil } from "../../format";
 import type { ErisimHucresi, Hizmet } from "../../api/sema";
 
-const technical = useQueryFlag("teknik");
 const e = computed(() => live.erisim);
 
 const COLUMNS: readonly { key: "yerel" | "tailscale" | "wireguard" | "internet"; title: string }[] = [
@@ -33,11 +28,15 @@ const COLUMNS: readonly { key: "yerel" | "tailscale" | "wireguard" | "internet";
   { key: "internet", title: "İnternet" },
 ];
 
-// WireGuard's note is the same for every service (VPN networks lead only to the internet): said once.
-const vpnNote = computed(() => e.value?.ozet.wireguard.not ?? "");
-const noteOf = (key: string, c: ErisimHucresi) => (key === "wireguard" && c.not === vpnNote.value ? "" : c.not);
+/** A cell's colour: a warning (a raw port open on the internet, unencrypted WebDAV) over its state. */
 const cellTone = (c: ErisimHucresi): Tone => (c.uyari ? "warning" : CELL_TONE[c.durum] ?? "neutral");
-const cellText = (c: ErisimHucresi) => CELL_TEXT[c.durum] ?? UNKNOWN;
+/** Whether a cell shows addresses: the addresses and ports it is reached on (or that a blocking rule closes). */
+const addressed = (c: ErisimHucresi): boolean => c.durum !== "yok" && c.adresler.length > 0;
+/** What a cell shows: its addresses and ports when it has them, else its state's word ("—" when it does not apply). */
+const cellLines = (c: ErisimHucresi): string[] => (addressed(c) ? c.adresler : [CELL_TEXT[c.durum] ?? UNKNOWN]);
+/** An address in pieces a narrow card may break between: after its scheme, before its port and its protocol, never
+ *  inside a number. */
+const pieces = (line: string): string[] => line.replace("://", "://\n").split(/\n|(?=:\d|\/(?:tcp|udp))/);
 const KIND: Record<Hizmet["tur"], string> = {
   konsol: "Konsol", uygulama: "Uygulama portu", konteyner: "Konteyner", paylasim: "Paylaşım", sistem: "Sistem", vpn: "VPN ağı", kural: "Kural",
 };
@@ -138,10 +137,7 @@ const certState = computed<{ text: string; tone: Tone; dot?: boolean }>(() => {
       </div>
 
       <section class="card matrix-card" aria-labelledby="matris-baslik" data-testid="matrix">
-        <div class="card-head">
-          <h2 id="matris-baslik" class="card-title">Hizmetler ve erişim</h2>
-          <Switch v-model="technical" label="Teknik ayrıntı" />
-        </div>
+        <h2 id="matris-baslik" class="card-title">Hizmetler ve erişim</h2>
         <div class="table-wrap">
           <table class="data-table matrix">
             <thead>
@@ -151,38 +147,27 @@ const certState = computed<{ text: string; tone: Tone; dot?: boolean }>(() => {
               </tr>
             </thead>
             <tbody>
-              <template v-for="h in e.hizmetler" :key="h.id">
-                <tr :data-hizmet="h.id">
-                  <th scope="row" class="col-main">
-                    <strong>{{ h.ad }}</strong>
-                    <span class="cell-sub">{{ h.aciklama || KIND[h.tur] }}</span>
-                    <RouterLink v-if="isAccessRow(h)" :to="accessRoute('adresler', h.id)" class="cell-note" data-testid="row-link">Adresler'de değiştir</RouterLink>
-                    <RouterLink v-if="h.tur === 'paylasim'" :to="filesRoute('paylasimlar')" class="cell-note" data-testid="share-folders">Klasörler: Dosyalar → Paylaşımlar</RouterLink>
-                  </th>
-                  <td v-for="c in COLUMNS" :key="c.key" :data-label="c.title" :data-hucre="c.key" class="matrix-cell">
-                    <span class="matrix-value">
-                      <StatusPill :tone="cellTone(h[c.key])">{{ cellText(h[c.key]) }}</StatusPill>
-                      <span v-if="h[c.key].uyari" class="warn-text">{{ h[c.key].uyari }}</span>
-                      <span v-if="noteOf(c.key, h[c.key])" class="cell-note">{{ noteOf(c.key, h[c.key]) }}</span>
-                      <span v-if="technical && h[c.key].adresler.length" class="mono cell-addr">{{ h[c.key].adresler.join(" · ") }}</span>
+              <tr v-for="h in e.hizmetler" :key="h.id" :data-hizmet="h.id">
+                <th scope="row" class="col-main">
+                  <RouterLink v-if="isAccessRow(h)" :to="accessRoute('adresler', h.id)" class="matrix-name" data-testid="row-link">{{ h.ad }}</RouterLink>
+                  <strong v-else class="matrix-name">{{ h.ad }}</strong>
+                  <span class="cell-sub">{{ h.aciklama || KIND[h.tur] }}</span>
+                </th>
+                <td v-for="c in COLUMNS" :key="c.key" :data-label="c.title" :data-hucre="c.key" :data-durum="h[c.key].durum" class="matrix-cell">
+                  <span class="reach" :class="['reach-' + cellTone(h[c.key]), { 'reach-none': h[c.key].durum === 'yok' }]">
+                    <span class="reach-dot" aria-hidden="true"></span>
+                    <span class="reach-lines">
+                      <span v-if="addressed(h[c.key])" class="sr-only">{{ CELL_TEXT[h[c.key].durum] }}{{ h[c.key].uyari ? ", uyarı" : "" }}: </span>
+                      <span v-for="(line, i) in cellLines(h[c.key])" :key="i" :class="{ mono: addressed(h[c.key]) }"
+                        ><template v-for="(part, j) in pieces(line)" :key="j"><wbr v-if="j" />{{ part }}</template></span
+                      >
                     </span>
-                  </td>
-                </tr>
-                <tr v-if="technical && h.ayrinti.length" class="matrix-detail" :data-ayrinti="h.id">
-                  <td colspan="5">
-                    <dl class="facts mono">
-                      <template v-for="(line, i) in h.ayrinti" :key="i">
-                        <dt>{{ line.baslik }}</dt>
-                        <dd>{{ line.deger }}</dd>
-                      </template>
-                    </dl>
-                  </td>
-                </tr>
-              </template>
+                  </span>
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
-        <p v-if="vpnNote" class="meter-note" data-testid="vpn-note">WireGuard: {{ vpnNote }}</p>
       </section>
     </template>
     <section v-else class="card" aria-label="Erişim">

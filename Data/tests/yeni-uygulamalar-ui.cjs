@@ -9,7 +9,6 @@ const assert = require("node:assert/strict");
 const { uygulama, servis, uygulamalar, ayrinti, soru, inceleme } = require("./yeni-harness.cjs").fixtures;
 
 // ---- fixtures: documentation values only (RFC 5737 addresses, registry.example images); shapes as in api/sema.ts
-const VPN_NOTE = "WireGuard cihazları yalnız internete çıkar; bu sunucudaki hizmetlere ulaşamaz.";
 const OK_CHECKS = [
   { id: "tailscale", name: "Tailscale", status: "ok", detail: "çalışıyor" },
   { id: "caddy", name: "Caddy", status: "ok", detail: "çalışıyor" },
@@ -24,7 +23,7 @@ const NOTLAR_ROW = { tur: "adres", ad: "notlar", tailscale_portu: 8443, internet
 const accessCell = (durum, adresler = []) => ({ durum, adresler, not: "", uyari: "" });
 const row = (app, service, key, satir, o = {}) => ({ id: `uygulama:${app}:${service}:${key}`, ad: `${app} · ${service}`, tur: "uygulama",
   aciklama: key, uygulama: app, servis: service, anahtar: `${service}:${key}`, calisiyor: true, yerel: accessCell("kapali"),
-  tailscale: accessCell("kapali"), wireguard: accessCell("kapali"), internet: accessCell("kapali"), satir, web: null, ayrinti: [], ...o });
+  tailscale: accessCell("kapali"), wireguard: accessCell("kapali"), internet: accessCell("kapali"), satir, web: null, ...o });
 const ACCESS_ROWS = [
   row("notlar", "web", "8080/tcp", NOTLAR_ROW, { yerel: accessCell("acik", ["127.0.0.1:62001"]), tailscale: accessCell("acik", ["notlar.ev", "100.64.0.2:8443"]),
     internet: accessCell("acik", ["notlar.example.org"]) }),
@@ -147,7 +146,7 @@ const data = {
   etkinlik: { items: [] },
   erisim: { read_at: 1791845000, alan: "ev", revizyon: "rev-1", hizmetler: ACCESS_ROWS, hatalar: [], uyarilar: [WARNING],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "sunucu", surum: "1.80.0", adresler: ["100.64.0.2"], cikis_dugumu: true },
-      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: VPN_NOTE, aglar: [] }, sertifikalar: [] } },
+      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, aglar: [] }, sertifikalar: [] } },
   uygulamalar: uygulamalar(apps()),
   // Erişim → Adresler (a port's link leads there): the local names, read with the rows.
   adlar: { revizyon: "rev-1", alan: "ev", hatalar: [], adlar: [{ ad: "notlar.ev", aile: 4, hedef: "tailscale", kaynak: "uygulama", satir: NOTLAR_WEB }], kayitlar: [], yonlendirme: false, sunucular: [] },

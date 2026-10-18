@@ -117,10 +117,6 @@ export interface Hizmet {
     enabled: boolean;
     domain: string;
   } | null;
-  ayrinti: {
-    baslik: string;
-    deger: string;
-  }[];
 }
 
 export interface Uyari {
@@ -230,7 +226,6 @@ export interface Erisim {
     wireguard: {
       kurulu: boolean;
       durduruldu: boolean;
-      not: string;
       aglar: {
         arayuz: string;
         ad: string;

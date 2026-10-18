@@ -20,6 +20,7 @@ import master_erisim  # noqa: E402
 
 panel = test_resources.panel
 NOW = 1767225600  # 2026-01-01
+CLOSED = {"durum": "kapali", "adresler": [], "not": "", "uyari": ""}
 ENV = {"LOCAL_DOMAIN": "ev", "TAILSCALE_IPV4": "100.64.0.2", "TAILSCALE_IPV6": "fd7a:115c:a1e0::2",
        "WAN_IPV4": "203.0.113.10", "WAN_IPV6": "2001:db8::10", "SSH_PUBLIC_PORT": "22", "DNS_PORT": "53"}
 
@@ -153,10 +154,7 @@ class ReadModelTests(unittest.TestCase):
                          ("uygulama", "notlar", "web", "web:8080/tcp", True, None))
         self.assertEqual(web["satir"], ROWS[0]["satir"])
         self.assertEqual((web["ad"], web["aciklama"]), ("notlar · web", "8080/tcp · Adres"))
-        details = [(d["baslik"], d["deger"]) for d in web["ayrinti"]]
-        self.assertIn(("Caddy", "notlar.example.org → 127.0.0.1:62100"), details)
-        self.assertIn(("DNS", "notlar.ev → 100.64.0.2"), details)
-        self.assertIn(("Sertifika", "01.04.2026 tarihine kadar"), details)
+        self.assertNotIn("ayrinti", web, "a row carries its cells only: the addresses are in them")
 
     def test_raw_ports_open_only_their_scope(self):
         result = self.build()
@@ -189,10 +187,10 @@ class ReadModelTests(unittest.TestCase):
         shares["items"][0]["connections"]["wan"].update(enabled=True, active=True)
         result = self.build(shares=shares)
         row = self.row(result, "paylasim")
-        self.assertEqual(row["internet"], {"durum": "acik", "adresler": ["http://203.0.113.10:61010"], "not": "1 klasör",
+        self.assertEqual(row["internet"], {"durum": "acik", "adresler": ["http://203.0.113.10:61010"], "not": "",
                                            "uyari": "Şifresiz HTTP"})
         self.assertEqual(row["tailscale"], {"durum": "acik", "adresler": ["paylas.ev", "http://100.64.0.2:61010"],
-                                            "not": "1 klasör", "uyari": ""})
+                                            "not": "", "uyari": ""})
         self.assertEqual((row["aciklama"], row["web"]), ("WebDAV · 2 klasör", {"tail": True, "enabled": True, "domain": ""}))
         self.assertEqual([w["hizmet"] for w in result["uyarilar"]], ["paylasim"])
         self.assertIn("şifresiz", result["uyarilar"][0]["metin"])
@@ -203,16 +201,13 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual(self.row(result, "paylasim")["internet"]["adresler"], ["https://dav.example.org"])
         self.assertEqual(result["uyarilar"], [])
 
-    def test_closed_shares_say_why(self):
+    def test_closed_shares_are_closed_cells(self):
         shares = copy.deepcopy(SHARES)
         shares["items"][0]["connections"]["tailscale"]["active"] = False
         shares["wan"] = {"available": False, "mode": "off", "reason": "İnternet paylaşımı kapalı."}
         row = self.row(self.build(shares=shares), "paylasim")
-        self.assertEqual((row["tailscale"]["durum"], row["tailscale"]["not"]), ("kapali", "Tailscale'den paylaşılan klasör yok."))
-        self.assertEqual((row["internet"]["durum"], row["internet"]["not"]), ("kapali", "İnternet paylaşımı kapalı."))
+        self.assertEqual((row["tailscale"], row["internet"]), (CLOSED, CLOSED), "a closed cell carries no explanation")
         self.assertTrue(row["calisiyor"], "the share service is part of the base")
-        shares["tail_enabled"] = False
-        self.assertIn("Tailscale erişimi kapalı", self.row(self.build(shares=shares), "paylasim")["tailscale"]["not"])
 
     def test_wireguard_devices_reach_no_service(self):
         result = self.build()
@@ -222,18 +217,18 @@ class ReadModelTests(unittest.TestCase):
         vpn = self.row(result, "vpn:wg0")
         self.assertEqual((vpn["ad"], vpn["aciklama"], vpn["internet"]["adresler"], vpn["tailscale"]["adresler"]),
                          ("WireGuard wg0", "home", ["203.0.113.10:61001/udp"], ["61001/udp"]))
-        self.assertEqual(result["ozet"]["wireguard"], {"kurulu": True, "durduruldu": False, "not": master_erisim.VPN_NOTE, "aglar": [
+        self.assertEqual(result["ozet"]["wireguard"], {"kurulu": True, "durduruldu": False, "aglar": [
             {"arayuz": "wg0", "ad": "home", "etkin": True, "port": 61001}]})
         off = copy.deepcopy(NETWORKS)
         off[0]["active"] = False
         self.assertEqual(self.states(self.row(self.build(networks=off), "vpn:wg0")), ("yok", "kapali", "yok", "kapali"))
         without = self.build(networks=[])
         self.assertTrue(all(r["wireguard"]["durum"] == "yok" for r in without["hizmetler"]))
-        self.assertEqual(without["ozet"]["wireguard"], {"kurulu": False, "durduruldu": False, "not": "", "aglar": []})
+        self.assertEqual(without["ozet"]["wireguard"], {"kurulu": False, "durduruldu": False, "aglar": []})
         # DD-229: a stopped WireGuard lists no network; the summary says it is stopped.
         stopped = self.build(networks=[], wg_stopped=True)
         self.assertFalse([r for r in stopped["hizmetler"] if r["tur"] == "vpn"])
-        self.assertEqual(stopped["ozet"]["wireguard"], {"kurulu": False, "durduruldu": True, "not": "", "aglar": []})
+        self.assertEqual(stopped["ozet"]["wireguard"], {"kurulu": False, "durduruldu": True, "aglar": []})
 
     def test_an_external_containers_publications_warn_without_a_place(self):
         containers = copy.deepcopy(CONTAINERS)
@@ -274,7 +269,8 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual({c["ad"]: c["durum"] for c in result["ozet"]["sertifikalar"]},
                          {"notlar.example.org": "hazir-degil", "konsol.example.org": "hazir-degil"})
         settings["manage"]["publications"][0].update(status="ready", message="Sertifika doğrulandı.")
-        self.assertEqual(self.row(self.build(settings), "panel")["internet"]["not"], "Konsol hesabıyla giriş ister.")
+        self.assertEqual(self.row(self.build(settings), "panel")["internet"],
+                         {"durum": "acik", "adresler": ["konsol.example.org"], "not": "", "uyari": ""}, "an open cell: its address only")
 
     def test_tailscale_state_and_certificate_expiry(self):
         result = self.build(tailscale={"BackendState": "Stopped", "Self": {"Online": False}})
@@ -299,8 +295,9 @@ class ReadModelTests(unittest.TestCase):
             {"id": "r2", "name": "Yazıcı", "family": 4, "scope": "tail", "proto": "tcp", "port": 631, "source": "100.64.0.9", "allow": False}]
         result = self.build(settings)
         game, printer = self.row(result, "kural:r1"), self.row(result, "kural:r2")
-        self.assertEqual((game["internet"]["durum"], game["internet"]["adresler"], game["internet"]["not"]),
-                         ("acik", ["27015/udp"], "İzin kuralı"))
+        self.assertEqual((game["internet"]["durum"], game["internet"]["adresler"], game["aciklama"]),
+                         ("acik", ["27015/udp"], "İzin kuralı · IPv4"))
+        self.assertEqual(printer["aciklama"], "Engelleme kuralı · IPv4")
         self.assertEqual((printer["tailscale"]["durum"], printer["tailscale"]["adresler"]), ("kapali", ["631/tcp · yalnız 100.64.0.9"]))
         self.assertEqual(result["ozet"]["internet"]["acik"][-1], {"ad": "Oyun", "port": 27015, "proto": "udp", "aileler": [4], "kaynak": "kural"})
 

@@ -31,7 +31,7 @@ const data = {
   etkinlik: { items: [] },
   erisim: { read_at: 1791845000, alan: "ev", hizmetler: [], hatalar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null }, internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
-      wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] },
+      wireguard: { kurulu: true, durduruldu: false, aglar: [] }, sertifikalar: [] },
     uyarilar: [{ seviye: "warn", hizmet: "paylasim", metin: "Paylaşımlar internete şifresiz HTTP ile açık" }] },
 };
 let expectedFailures = [];  // URL fragments whose failed loads (401/404/502/503) are part of the scenario
@@ -316,7 +316,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       const enc = (id) => new URLSearchParams({ satir: id }).toString().slice("satir=".length);
       const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
       const row = (id, ad, tur, o = {}) => ({ id, ad, tur, aciklama: "", uygulama: null, servis: null, anahtar: null, calisiyor: true, yerel: cell("yok"),
-        tailscale: cell("kapali"), wireguard: cell("kapali"), internet: cell("kapali"), satir: null, web: null, ayrinti: [], ...o });
+        tailscale: cell("kapali"), wireguard: cell("kapali"), internet: cell("kapali"), satir: null, web: null, ...o });
       const appRow = (id, satir, o) => {
         const [, app, service, port] = id.split(":");
         return row(id, `${app} · ${service}`, "uygulama", { uygulama: app, servis: service, anahtar: `${service}:${port}`, satir, ...o });
@@ -331,14 +331,14 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
           row("panel", "Konsol", "konsol", { tailscale: cell("acik", ["panel.ev"]), web: { tail: true, enabled: false, domain: "" } }),
           appRow(NOTLAR, { tur: "adres", ad: "notlar", tailscale_portu: null, internet: "notlar.example.org" },
             { yerel: cell("acik"), tailscale: cell("acik", ["notlar.ev"]), internet: cell("acik", ["notlar.example.org"]) }),
-          appRow(MEDYA, { tur: "ham", kapsam: "internet", port: 8096 }, { internet: cell("acik", ["203.0.113.10:8096/tcp"], "Ham port", "Şifreleme ve giriş uygulamanın kendisinde.") }),
-          appRow(KUTU, { tur: "ham", kapsam: "tailscale", port: 9000 }, { tailscale: cell("acik", ["100.64.0.2:9000/udp"], "Ham port") }),
-          row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"]), internet: cell("acik", ["http://203.0.113.10:61010"], "1 klasör", "Şifresiz HTTP"),
+          appRow(MEDYA, { tur: "ham", kapsam: "internet", port: 8096 }, { internet: cell("acik", ["203.0.113.10:8096/tcp"], "", "Şifreleme ve giriş uygulamanın kendisinde.") }),
+          appRow(KUTU, { tur: "ham", kapsam: "tailscale", port: 9000 }, { tailscale: cell("acik", ["100.64.0.2:9000/udp"]) }),
+          row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"]), internet: cell("acik", ["http://203.0.113.10:61010"], "", "Şifresiz HTTP"),
             web: { tail: true, enabled: false, domain: "" } }),
           row("sistem:ssh", "SSH", "sistem", { tailscale: cell("acik"), internet: cell("acik", ["203.0.113.10:22/tcp"]) })],
         ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "sunucu", surum: "1.88.3", adresler: ["100.64.0.2"], cikis_dugumu: true },
           internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
-          wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [{ arayuz: "wg0", ad: "", etkin: true, port: 61001 }, { arayuz: "wg1", ad: "", etkin: false, port: 61002 }] },
+          wireguard: { kurulu: true, durduruldu: false, aglar: [{ arayuz: "wg0", ad: "", etkin: true, port: 61001 }, { arayuz: "wg1", ad: "", etkin: false, port: 61002 }] },
           sertifikalar: [{ ad: "notlar.example.org", hizmet: NOTLAR, durum: "gecerli", bitis: 1791845000 + 60 * 86400 }] },
         ...o });
       const apps = () => [
@@ -510,7 +510,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       // WebDAV's internet switch on with no name configured (as a fresh install has it) is not an internet name.
       data.erisim = erisim({ uyarilar: [], hizmetler: [...erisim().hizmetler.filter((h) => h.id === "panel"),
         row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"]), web: { tail: true, enabled: true, domain: "" } })],
-        ozet: { ...erisim().ozet, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } });
+        ozet: { ...erisim().ozet, wireguard: { kurulu: true, durduruldu: false, aglar: [] }, sertifikalar: [] } });
       data.uygulamalar = uygulamalar([uygulama("notlar")]);
       data.ag = { read_at: 1791845000, sampled_at: 1791845000, rx: 1024, tx: 2048, uygulamalar: [] };
       page = await newPage();

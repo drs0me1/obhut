@@ -164,7 +164,7 @@ const data = {
   etkinlik: { items: [] },
   erisim: { read_at: NOW, alan: "ev", hizmetler: [], uyarilar: [], hatalar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "", surum: "", adresler: [], cikis_dugumu: null },
-      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
+      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, aglar: [] }, sertifikalar: [] } },
   uygulamalar: uygulamalar([uygulama("notlar", { guncelleme: "yeni", servisler: [{ ad: "web", durum: "calisiyor", imaj: "registry.example/notlar:1", guncelleme: "yeni" }] })]),
   onarim: repairState(),
   ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048 },

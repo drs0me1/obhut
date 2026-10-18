@@ -52,11 +52,11 @@ function withConn(v, id, scope, patch) {
 const { uygulama, uygulamalar } = require("./yeni-harness.cjs").fixtures;
 const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
 const row = (id, ad, tur, cells, aciklama = "") => ({ id, ad, tur, aciklama, uygulama: null, servis: null, anahtar: null, calisiyor: true, yerel: cell("yok"),
-  tailscale: cell("yok"), wireguard: cell("kapali"), internet: cell("yok"), satir: null, web: { tail: true, enabled: false, domain: "" }, ayrinti: [], ...cells });
+  tailscale: cell("yok"), wireguard: cell("kapali"), internet: cell("yok"), satir: null, web: { tail: true, enabled: false, domain: "" }, ...cells });
 
 const ROWS = [
   row("panel", "Konsol", "konsol", { tailscale: cell("acik", ["panel.ev"]), internet: cell("kapali") }, "Yönetim paneli"),
-  row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"], "2 klasör"), internet: cell("acik", [WAN], "1 klasör", "Şifresiz HTTP") }, "WebDAV · 3 klasör"),
+  row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"]), internet: cell("acik", [WAN], "", "Şifresiz HTTP") }, "WebDAV · 3 klasör"),
 ];
 // One application, so the palette has its Uygulamalar group.
 const APPS = [uygulama("notlar")];
@@ -72,7 +72,7 @@ const data = {
   etkinlik: { items: [] },
   erisim: { read_at: NOW, alan: "ev", revizyon: "rev-1", hatalar: [], uyarilar: [], hizmetler: ROWS,
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "", surum: "", adresler: [], cikis_dugumu: null },
-      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, not: "", aglar: [] }, sertifikalar: [] } },
+      internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, aglar: [] }, sertifikalar: [] } },
   uygulamalar: uygulamalar(APPS),
   adlar: { revizyon: "rev-1", alan: "ev", hatalar: [], adlar: [{ ad: "panel.ev", aile: 4, hedef: "tailscale", kaynak: "base", satir: "panel" }],
     kayitlar: [], yonlendirme: false, sunucular: [] },
@@ -642,13 +642,9 @@ async function openShares(page, extra = "") {
     await page.keyboard.press("Escape");
     await page.context().close();
 
-    // ================= the ways here: Erişim's WebDAV rows, the palette
+    // ================= the ways here: Erişim's WebDAV row in Adresler, the palette
     shares = view();
     page = await newPage();
-    await page.goto(url("#/erisim"));
-    const matrixLink = page.getByTestId("matrix").locator('tr[data-hizmet="paylasim"]').getByTestId("share-folders");
-    await matrixLink.waitFor();
-    assert.equal(await matrixLink.getAttribute("href"), "#/dosyalar?sekme=paylasimlar");
     await page.goto(url("#/erisim?sekme=adresler"));
     const pubLink = page.getByTestId("access-rows").locator('tr[data-satir="paylasim"]').getByTestId("share-folders");
     await pubLink.waitFor();
@@ -736,7 +732,7 @@ async function openShares(page, extra = "") {
       "user area with /api/list, hidden folders left out, shared ones marked, the user name and password rules, show/hide, the generator, " +
       "copy, the acknowledgements, the whole body, a refusal keeping the form, the password gone after closing, an already shared folder), " +
       "the edit sheet (only changed fields, moving the folder, removal from it), deep links (?yeni=, ?paylasim=, an unknown share, a hidden " +
-      "folder), empty / full / unreadable, Erişim's WebDAV rows leading here, the palette without the old interface, " +
+      "folder), empty / full / unreadable, Erişim's WebDAV row in Adresler leading here, the palette without the old interface, " +
       "1440/390/320 in light and dark. Screenshots: " + h.shots);
   } finally {
     await h.stop();
