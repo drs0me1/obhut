@@ -20,7 +20,7 @@ import uuid
 import master_applications as apps
 import master_settings as settings
 import master_container_config as config
-from master_containers import NAME_RE, Containers, ContainerError, epoch, listening, name_of, update_status
+from master_containers import NAME_RE, Containers, ContainerError, epoch, listening, name_of, process_users, update_status
 
 APP_ACTIONS = frozenset(('uygulama-kur', 'uygulama-baslat', 'uygulama-durdur', 'uygulama-yeniden-baslat', 'uygulama-guncelle',
                          'uygulama-tanim', 'uygulama-kaldir', 'uygulama-taslak'))
@@ -387,11 +387,14 @@ class Inventory(Containers):
             raise app_error(err) from err
         live = self.live([(record, objects)])
         inspected = {c: self.inspect(c) for c in objects['containers'].values() if c in live['containers']}
+        # What each running container's processes run as (its cgroup's processes, /proc): read, never asked of Podman.
+        users = {c: process_users((raw.get('State') or {}).get('Pid')) for c, raw in inspected.items()
+                 if raw and (raw.get('State') or {}).get('Running')}
         # Its folders' sizes: the same cached measurement Dosyalar → Depolama shows (a bounded walk when stale).
         folder = str(apps.data_dir(self.env, app))
         size = self.service.sizes.measure([folder])[folder]
         return apps.detail(self.env, record, objects, live, self.service.busy(app), self.service.update_of(app), inspected,
-                           size, self.service.update_checked(app))
+                           size, self.service.update_checked(app), users)
 
     def journal(self, app, service, lines):
         """An application service's log: its unit's journal (DD-251), as written."""

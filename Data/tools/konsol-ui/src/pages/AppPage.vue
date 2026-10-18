@@ -74,6 +74,8 @@ const listItem = computed(() => live.uygulamalar?.items.find((a) => a.ad === nam
 const app = computed<Uygulama | null>(() => (missing.value ? null : (detail.value?.uygulama ?? listItem.value)));
 const state = computed(() => (app.value ? appState(app.value) : null));
 const warnings = computed(() => detail.value?.uyarilar ?? []);
+/** Every /srv warning settled by what the processes run as now: the card is a note, not a warning. */
+const settled = computed(() => warnings.value.length > 0 && warnings.value.every((w) => w.cozuldu));
 /** The live rate comes with the list, which is read more often than the detail. */
 const rate = computed(() => listItem.value?.ag ?? detail.value?.uygulama.ag ?? null);
 const opening = computed(() => (app.value ? openAddress(listItem.value ?? app.value) : ""));
@@ -303,12 +305,18 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <section v-if="warnings.length" class="notice notice-warning" aria-labelledby="uyg-uyari-baslik" data-testid="app-warnings">
-      <Icon name="alert" class="notice-icon" />
+    <section v-if="warnings.length" class="notice" :class="settled ? 'notice-ok' : 'notice-warning'" aria-labelledby="uyg-uyari-baslik"
+      data-testid="app-warnings" :data-durum="settled ? 'cozuldu' : 'uyari'">
+      <Icon :name="settled ? 'check' : 'alert'" class="notice-icon" />
       <div>
-        <h2 id="uyg-uyari-baslik" class="notice-title">{{ warnings.length === 1 ? "Bir uyarı" : `${warnings.length} uyarı` }}</h2>
+        <h2 id="uyg-uyari-baslik" class="notice-title">
+          {{ settled ? (warnings.length === 1 ? "Bir uyarı, şu an sorun değil" : `${warnings.length} uyarı, şu an sorun değil`) : warnings.length === 1 ? "Bir uyarı" : `${warnings.length} uyarı` }}
+        </h2>
         <ul class="notice-list">
-          <li v-for="(w, i) in warnings" :key="i" :data-servis="w.servis"><strong v-if="w.servis">{{ w.servis }}:</strong> {{ w.metin }}</li>
+          <li v-for="(w, i) in warnings" :key="i" :data-servis="w.servis">
+            <strong v-if="w.servis">{{ w.servis }}:</strong> {{ w.metin }}
+            <span v-if="w.simdi" class="warning-now" :class="w.cozuldu ? 'ok-text' : 'warn-text'" data-testid="warning-now">{{ w.simdi }}</span>
+          </li>
         </ul>
       </div>
     </section>

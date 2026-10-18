@@ -1177,11 +1177,43 @@ def mount_rows(env, app, svc, size=None):
     return rows
 
 
-def detail(env, record, objects, live, busy, updates, inspected, size=None, checked=None):
+def who(user):
+    """A process user as people read it: "abc (uid 1000)", "uid 911", "root"."""
+    if user["uid"] == 0:
+        return "root"
+    return "%s (uid %d)" % (user["ad"], user["uid"]) if user.get("ad") else "uid %d" % user["uid"]
+
+
+def warning_now(env, users):
+    """A /srv warning (a root start, or a direct start as another user) with what the service's processes run as
+    now: (sentence, resolved). Resolved: every process that is not root runs as the Files account, so what it
+    writes under /srv opens in Dosyalar. (None, False) while the service does not run or its processes cannot be
+    read."""
+    if not users:
+        return None, False
+    files = env.get("DOWNLOADS_UID", "")
+    files_uid = int(files) if files.isdigit() else None
+    own = [u for u in users if u["uid"] != 0]
+    roots = sum(u["surec"] for u in users if u["uid"] == 0)
+    if not own:
+        return ("Şu an bütün süreçleri root olarak çalışıyor: /srv'ye yazdıkları root'a ait olur ve Dosyalar hesabı "
+                "açamaz."), False
+    names = ", ".join(who(u) for u in own)
+    rest = " Başlatıcının %d süreci root olarak kalıyor." % roots if roots else ""
+    if files_uid is not None and all(u["uid"] == files_uid for u in own):
+        return ("Şu an uygulama %s olarak çalışıyor: Dosyalar hesabıyla aynı kullanıcı, /srv'ye yazdıkları Dosyalar'dan "
+                "açılır.%s" % (names, rest)), True
+    return ("Şu an uygulama %s olarak çalışıyor; Dosyalar hesabı%s bu dosyaları açamayabilir.%s"
+            % (names, " (uid %d)" % files_uid if files_uid is not None else "", rest)), False
+
+
+def detail(env, record, objects, live, busy, updates, inspected, size=None, checked=None, users=None):
     """GET /api/konsol/uygulamalar/{app}: the application with every service, its ports with their access rows,
     folders (an application folder with its size from size, the data folder's measurement), secrets by name only,
-    warnings, source, file, answers (no secret value, no port answer), units and when its image update was last
-    checked (checked)."""
+    warnings (a /srv warning with what its service's processes run as now), source, file, answers (no secret value,
+    no port answer), units and when its image update was last checked (checked). users: {container: what its
+    processes run as (master_containers.process_users)} for the running ones."""
+    users = users or {}
     item = summary(record, objects, live, busy, updates, known_domain(env))
     definition, places = record["definition"], record["places"]
     services = []
@@ -1208,12 +1240,18 @@ def detail(env, record, objects, live, busy, updates, inspected, size=None, chec
             "yeniden_baslama": info.get("RestartCount") if type(info.get("RestartCount")) is int else 0,
             "portlar": ports, "baglamalar": mount_rows(env, record["name"], svc, size),
             "gizliler": sorted({e["secret"] for e in svc.get("environment", []) if "secret" in e}),
+            "surecler": copy.deepcopy(users.get(container)),
         })
     source = record["source"]
+    warnings = []
+    for w in definition.get("warnings") or []:
+        service = w.get("service", "")
+        now, resolved = warning_now(env, users.get(objects["containers"].get(service))) if service in objects["containers"] else (None, False)
+        warnings.append({"servis": service, "metin": w.get("text", ""), "simdi": now, "cozuldu": resolved})
     return {
         "uygulama": item, "servisler": services,
         "gizliler": [{"ad": s["name"], "servisler": list(s.get("services") or [])} for s in definition["secrets"]],
-        "uyarilar": [{"servis": w.get("service", ""), "metin": w.get("text", "")} for w in definition.get("warnings") or []],
+        "uyarilar": warnings,
         "koken": {"tur": source["tur"], "adres": source.get("adres"), "imaj": source.get("imaj"),
                   "konteyner": source.get("konteyner"), "alindi": source["alindi"], "sha256": source["sha256"]},
         "metin": record["text"], "yanitlar": record["answers"], "birimler": list(objects["files"]),

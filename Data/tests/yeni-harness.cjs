@@ -298,7 +298,7 @@ const uygulamalar = (items, o = {}) => ({ read_at: 1791845000, items, kaynaklar:
 function ayrinti(item, o = {}, servisler = {}) {
   const svc = (s) => ({ ad: s.ad, durum: s.durum, baslangic: "direct", kullanici: null, imaj: s.imaj, ozet: null, kanal: s.imaj, guncelleme: s.guncelleme,
     konteyner: `${item.ad}_${s.ad}`, birim: `konsol-${item.ad}_${s.ad}.service`, calisma: null, saglik: "", yeniden_baslama: 0, portlar: [], baglamalar: [],
-    gizliler: [], ...(servisler[s.ad] || {}) });
+    gizliler: [], surecler: null, ...(servisler[s.ad] || {}) });
   return { uygulama: item, servisler: item.servisler.map(svc), gizliler: [], uyarilar: [],
     koken: { tur: item.koken, adres: null, imaj: null, konteyner: null, alindi: 1791700000, sha256: "0".repeat(64) },
     metin: "services:\n" + item.servisler.map((s) => `  ${s.ad}:\n    image: ${s.imaj}\n`).join(""), yanitlar: { name: item.ad, answers: {} },

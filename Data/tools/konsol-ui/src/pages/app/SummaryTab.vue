@@ -11,7 +11,7 @@ import { Icon } from "../../components/icons";
 import Card from "../../components/ui/Card.vue";
 import StatusPill from "../../components/ui/StatusPill.vue";
 import UsageBar from "../../components/ui/UsageBar.vue";
-import { FORMAT_TEXT, SOURCE_TEXT, appState, servicesText, shortImage, startText, updateText } from "../../apps";
+import { FORMAT_TEXT, SOURCE_TEXT, appState, runState, servicesText, shortImage, updateText, userText } from "../../apps";
 import { UNKNOWN, bytes, dateTime, percent, rate as rateOf, since } from "../../format";
 import { serverNow } from "../../live";
 import type { Uygulama, UygulamaAyrinti, UygulamaServisAyrintisi } from "../../api/sema";
@@ -107,11 +107,21 @@ const updateTone = computed(() => (props.app.guncelleme === "yeni" ? "accent" : 
             <span class="sev sev-accent" aria-hidden="true"><Icon name="box" :size="16" /></span>
             <strong class="service-name">{{ x.s.ad }}</strong>
             <StatusPill :tone="x.state.tone" :dot="x.s.durum === 'calisiyor'" data-testid="service-state">{{ x.state.text }}</StatusPill>
-            <StatusPill :tone="x.s.baslangic === 'direct' ? 'ok' : 'neutral'" data-testid="service-start">{{ startText(x.s.baslangic, x.s.kullanici) }}</StatusPill>
+            <StatusPill :tone="runState(x.s).tone" data-testid="service-start">{{ runState(x.s).text }}</StatusPill>
           </div>
           <dl class="facts service-facts">
             <dt>Kullanıcı</dt>
             <dd :class="{ mono: x.s.kullanici }" data-testid="service-user">{{ x.s.kullanici || "İmajın varsayılanı" }}</dd>
+            <dt>Süreçler</dt>
+            <dd data-testid="service-processes">
+              <template v-if="x.s.surecler">
+                <span v-for="u in x.s.surecler" :key="u.uid" class="process-line" :data-uid="u.uid">
+                  <span>{{ userText(u) }} · {{ u.surec }} süreç</span>
+                  <span v-if="u.komutlar.length" class="mono process-commands">{{ u.komutlar.join(", ") }}</span>
+                </span>
+              </template>
+              <span v-else class="muted">{{ x.s.durum === "calisiyor" ? "Okunamadı" : "Çalışmıyor" }}</span>
+            </dd>
             <dt>İmaj</dt>
             <dd class="mono wrap" data-testid="service-image">{{ x.s.imaj || UNKNOWN }}</dd>
             <dt>Özet</dt>

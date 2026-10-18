@@ -24,6 +24,30 @@ Konsol's single-container definitions and adoption, Yayınla and the manual
 phase 6; live entries that still mention them end with a note naming what no
 longer applies and which entry replaced it.
 
+### DD-282: An application's page says what its processes run as (v2-268)
+
+- **Why:** a root start with a writable `/srv` folder carries the inspector's warning that the container "may write
+  files the Files account cannot open unless it switches to its own user", and the service card said only "kendi
+  kullanıcısına geçebilir". Whether it did switch was not known; the operator asked to see it (2026-10-18).
+- **What is read:** for each running service, every process of the container's own cgroup (its init's
+  `/proc/<pid>/cgroup`, the subtree's `cgroup.procs`, as DD-215's listening sockets) with its effective user
+  (`/proc/<pid>/status`) and command name; one entry per user, the others before root, at most three command names
+  each. The name for a uid comes from the container's own `/etc/passwd`, opened through `/proc/<pid>/root` without
+  following a link inside the container (an image could point it at a host file). Rootful Podman without a user
+  namespace: the container's uid is the host's. Unknown stays unknown (`null`).
+- **Not `podman top`:** it joins the container's namespaces, which the backend's `RestrictNamespaces` forbids
+  (the same reason DD-263 reads cgroup files instead of `podman stats`); `/proc` is readable (no `ProtectProc`).
+- **The warning now:** each `/srv` warning (a root start, or a direct start as another user) carries a sentence
+  about the present: still root (files under `/srv` belong to root), switched to the Files account
+  (`DOWNLOADS_UID`: what it writes opens in Dosyalar; settled, the card turns into a note) or another uid (Dosyalar
+  may not open its files); the root processes left (an init) are counted. The warning itself and the list's count
+  stay as the definition gives them.
+- **The service card:** "Root başladı · abc olarak çalışıyor", "Root olarak çalışıyor" or the direct start, and a
+  "Süreçler" line per user with its commands; the definition's own wording (Tanım) says how it starts.
+- **Tests:** the reader on a fixture `/proc` and cgroup tree (a link in the container's `/etc` is not followed), the
+  warning's sentences, the detail reading only running containers by their own process; the page's pill, process
+  lines and both warning states at 1440, 390 and 320.
+
 ### DD-281: Removing an application leaves nothing behind unless asked (v2-266)
 
 - **Why:** the operator removed an application and found its data folder (kept by default, K9) and its image

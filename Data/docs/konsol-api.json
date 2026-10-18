@@ -8945,6 +8945,19 @@
             "items": {
               "type": "string"
             }
+          },
+          "surecler": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SurecKullanicisi"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -8963,7 +8976,42 @@
           "yeniden_baslama",
           "portlar",
           "baglamalar",
-          "gizliler"
+          "gizliler",
+          "surecler"
+        ],
+        "additionalProperties": false
+      },
+      "SurecKullanicisi": {
+        "type": "object",
+        "properties": {
+          "uid": {
+            "type": "integer"
+          },
+          "ad": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "surec": {
+            "type": "integer"
+          },
+          "komutlar": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "uid",
+          "ad",
+          "surec",
+          "komutlar"
         ],
         "additionalProperties": false
       },
@@ -8975,6 +9023,19 @@
           },
           "metin": {
             "type": "string"
+          },
+          "simdi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cozuldu": {
+            "type": "boolean"
           }
         },
         "required": [

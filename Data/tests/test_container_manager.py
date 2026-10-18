@@ -147,6 +147,17 @@ class ManagerTests(unittest.TestCase):
             self.s.view().application('yok')
         self.assertEqual(err.exception.status, 404)
 
+    def test_the_detail_says_what_each_running_service_runs_as(self):
+        self.running_app()
+        self.inspected['notlar_web']['State']['Pid'] = 4242
+        self.inspected['notlar_db']['State']['Running'] = False
+        seen = []
+        users = [{'uid': 1000, 'ad': 'abc', 'surec': 1, 'komutlar': ['app']}]
+        with patch.object(manager, 'process_users', side_effect=lambda pid: seen.append(pid) or users):
+            detail = self.s.view().application('notlar')
+        self.assertEqual(seen, [4242], 'only the running container is read, by its own process')
+        self.assertEqual([s['surecler'] for s in detail['servisler']], [users, None])
+
     def test_the_detail_gives_application_folders_their_measured_size_and_the_last_update_check(self):
         self.running_app()
         folder = Path(self.env['UYGULAMA_VERI_DIR']) / 'notlar' / 'uploads'

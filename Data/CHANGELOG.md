@@ -28,6 +28,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   networks; "WireGuard'ı kapat" stays at the right. No tab strip shows a stray scroll bar any more (a tab was drawn
   1 px into the strip's line, which made the strip scroll), in Erişim or anywhere else; the layout check of every
   Konsol screen now catches such a one-pixel overflow.
+- An application's page shows what each running service really runs as: "Root başladı · abc olarak çalışıyor" or
+  "Root olarak çalışıyor", with a line per user and its commands (DD-282). The /srv warning says what that means
+  now: when the application switched to the Files account its files open in Dosyalar and the warning turns into a
+  note; when it still runs as root it says so.
 - Erişim → Genel: the four summary cards share one layout (their state at the top, short one-line rows, a link to
   the tab with the details at the foot) and are as tall as each other. The İnternet card shows only the server's
   addresses; how many ports are open is its state, and which ones are in Güvenlik duvarı.

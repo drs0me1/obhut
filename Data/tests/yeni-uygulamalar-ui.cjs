@@ -33,6 +33,12 @@ const ACCESS_ROWS = [
   row("pano", "web", "3000/tcp", { tur: "adres", ad: "pano", tailscale_portu: null, internet: "" }, { tailscale: accessCell("acik", ["pano.ev"]) }),
 ];
 const ROOT_WARNING = "Bu konteyner root olarak başlıyor; kendi kullanıcısına geçmezse /srv'ye Dosyalar hesabının açamayacağı dosyalar yazabilir.";
+// What notlar's web runs as now: switched to the Files account (settled), or still root.
+const SWITCHED = [{ uid: 1000, ad: "abc", surec: 1, komutlar: ["web-server"] }, { uid: 0, ad: "root", surec: 3, komutlar: ["s6-svscan", "s6-supervise"] }];
+const NOW_SWITCHED = "Şu an uygulama abc (uid 1000) olarak çalışıyor: Dosyalar hesabıyla aynı kullanıcı, /srv'ye yazdıkları Dosyalar'dan açılır. " +
+  "Başlatıcının 3 süreci root olarak kalıyor.";
+const NOW_ROOT = "Şu an bütün süreçleri root olarak çalışıyor: /srv'ye yazdıkları root'a ait olur ve Dosyalar hesabı açamaz.";
+let notlarRoot = false;
 const D = (c) => c.repeat(64);
 const JOB = (n) => String(n).padStart(32, "0");
 
@@ -89,7 +95,7 @@ function details() {
     out.notlar = ayrinti(items.notlar, {
       guncelleme_denetlendi: 1791844400,
       gizliler: [{ ad: "notlar-db-password", servisler: ["web", "db"] }],
-      uyarilar: [{ servis: "web", metin: ROOT_WARNING }],
+      uyarilar: [{ servis: "web", metin: ROOT_WARNING, simdi: notlarRoot ? NOW_ROOT : NOW_SWITCHED, cozuldu: !notlarRoot }],
       koken: { tur: "dosya", adres: null, imaj: null, konteyner: null, alindi: 1791700000, sha256: D("e") },
       metin: NOTLAR_FILE,
       yanitlar: { name: "notlar", answers: {
@@ -98,12 +104,14 @@ function details() {
         "start:web": { mode: "root" }, "start:db": { mode: "direct" } } },
     }, {
       web: { baslangic: "root", ozet: "registry.example/notlar/web@sha256:" + D("a"), calisma: 1791800000, saglik: "healthy", yeniden_baslama: 2,
+        surecler: notlarRoot ? [SWITCHED[1]] : SWITCHED,
         portlar: [{ port: 8080, protokol: "tcp", id: NOTLAR_WEB, erisim: NOTLAR_ROW, kullanim: "caddy", tailscale_adi: "notlar", yerel_port: 62001 },
           { port: 9000, protokol: "udp", id: NOTLAR_UDP, erisim: { tur: "ham", kapsam: "tailscale", port: 9001 }, kullanim: "raw", tailscale_adi: null, yerel_port: null }],
         baglamalar: [{ hedef: "/data", tur: "app", yol: VERI + "notlar/veri", salt_okunur: false, boyut: 52428800 },
           { hedef: "/belgeler", tur: "srv", yol: "/srv/Belgeler", salt_okunur: true, boyut: null }, { hedef: "/tmp", tur: "tmpfs", yol: null, salt_okunur: false, boyut: null }],
         gizliler: ["notlar-db-password"] },
       db: { kullanici: "999:999", ozet: "registry.example/notlar/db@sha256:" + D("b"), calisma: 1791800100,
+        surecler: [{ uid: 999, ad: "postgres", surec: 2, komutlar: ["postgres"] }],
         baglamalar: [{ hedef: "/var/lib/db", tur: "app", yol: VERI + "notlar/db-veri", salt_okunur: false, boyut: null }], gizliler: ["notlar-db-password"] },
     });
   }
@@ -382,11 +390,13 @@ async function noStyles(page, where) {
     const actions = () => page.getByTestId("app-actions").locator("[data-eylem]").evaluateAll((els) => els.map((e) => e.dataset.eylem));
     assert.deepEqual(await actions(), ["ac", "yeniden-baslat", "durdur", "kaldir"], "Aç, the backend's eylemler, and Kaldır; Güncelle lives on Özet's update card");
     assert.equal(await page.getByTestId("app-actions").locator('[data-eylem="ac"]').getAttribute("href"), "http://notlar.ev");
-    // The warning, prominent above the tabs.
+    // The warning, prominent above the tabs, with what web runs as now: switched to the Files account, so settled.
     const warnings = page.getByTestId("app-warnings");
     await warnings.waitFor();
-    assert.equal(await warnings.getByRole("heading").innerText(), "Bir uyarı");
-    assert.equal(await warnings.locator('li[data-servis="web"]').innerText(), "web: " + ROOT_WARNING);
+    assert.equal(await warnings.getByRole("heading").innerText(), "Bir uyarı, şu an sorun değil");
+    assert.equal(await warnings.getAttribute("data-durum"), "cozuldu");
+    assert.match(await warnings.getAttribute("class"), /notice-ok/);
+    assert.equal(await warnings.locator('li[data-servis="web"]').innerText(), "web: " + ROOT_WARNING + "\n" + NOW_SWITCHED);
     // Özet.
     const tabs = page.getByRole("tablist", { name: "notlar bölümleri" }).getByRole("tab");
     assert.deepEqual(await tabs.allInnerTexts(), ["Özet", "Erişim", "Depolama", "Tanım", "Günlük"]);
@@ -409,8 +419,10 @@ async function noStyles(page, where) {
     const checkedAt = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }).format(new Date(1791844400 * 1000));
     assert.equal(await page.getByTestId("update-checked").innerText(), `${checkedAt} (10 dakika önce)`, "when the registries were last asked");
     assert.equal(await web.getByTestId("service-state").innerText(), "Çalışıyor");
-    assert.equal(await web.getByTestId("service-start").innerText(), "Root olarak · kendi kullanıcısına geçebilir");
+    assert.equal(await web.getByTestId("service-start").innerText(), "Root başladı · abc olarak çalışıyor");
     assert.equal(await web.getByTestId("service-user").innerText(), "İmajın varsayılanı");
+    assert.deepEqual(await web.getByTestId("service-processes").locator(".process-line").allInnerTexts(),
+      ["abc (uid 1000) · 1 süreç\nweb-server", "root · 3 süreç\ns6-svscan, s6-supervise"]);
     assert.equal(await web.getByTestId("service-image").innerText(), "registry.example/notlar/web:2.4");
     assert.equal(await web.getByTestId("service-digest").innerText(), "registry.example/notlar/web@sha256:aaaaaaaaaaaa…");
     assert.equal(await web.getByTestId("service-health").innerText(), "Sağlıklı");
@@ -418,12 +430,25 @@ async function noStyles(page, where) {
     assert.equal(await web.getByTestId("service-started").innerText(), dateTime(1791800000));
     assert.equal(await db.getByTestId("service-start").innerText(), "Doğrudan 999:999 · bütün yetkiler kapalı");
     assert.equal(await db.getByTestId("service-user").innerText(), "999:999");
+    assert.equal(await db.getByTestId("service-processes").innerText(), "postgres (uid 999) · 2 süreç\npostgres");
     assert.equal(await db.getByTestId("service-health").innerText(), "Denetim tanımlı değil");
     assert.match(await db.innerText(), /notlar_db/);
     assert.match(await db.innerText(), /konsol-notlar_db\.service/);
     assert.equal(await page.getByTestId("note-unhealthy").count(), 0);
     await noStyles(page, "uygulama");
     await shot(page, "1440-light-uygulama-ozet.png", true);
+    // Still root: the warning stays a warning and says so; the service says what it runs as.
+    notlarRoot = true;
+    await page.reload();
+    await warnings.filter({ hasText: NOW_ROOT }).waitFor();
+    assert.equal(await warnings.getByRole("heading").innerText(), "Bir uyarı");
+    assert.equal(await warnings.getAttribute("data-durum"), "uyari");
+    assert.match(await warnings.getByTestId("warning-now").getAttribute("class"), /warn-text/);
+    assert.equal(await web.getByTestId("service-start").innerText(), "Root olarak çalışıyor");
+    await shot(page, "1440-light-uygulama-root.png");
+    notlarRoot = false;
+    await page.reload();
+    await warnings.filter({ hasText: NOW_SWITCHED }).waitFor();
     // Arrow keys move and choose; the address follows.
     await tabs.first().focus();
     await page.keyboard.press("ArrowRight");
@@ -499,7 +524,7 @@ async function noStyles(page, where) {
     assert.equal(await answer("var:TZ"), "Europe/Istanbul");
     assert.equal(await answer("mount:web:/belgeler"), "/srv/Belgeler · salt okunur");
     assert.equal(await answer("mount:web:/data"), "Uygulamanın klasörü");
-    assert.equal(await answer("start:web"), "Root olarak · kendi kullanıcısına geçebilir");
+    assert.equal(await answer("start:web"), "Root olarak başlar · imaj isterse kendi kullanıcısına geçer");
     assert.equal(await answer("start:db"), "Doğrudan 999:999 · bütün yetkiler kapalı");
     assert.deepEqual(await page.getByTestId("answers").locator("dt").allInnerTexts(), ["8080/TCP · web", "9000/UDP · web", "Klasör /var/lib/db · db",
       "Klasör /belgeler · web", "Klasör /data · web", "db · nasıl başlasın?", "web · nasıl başlasın?", "Gizli değer ${DB_PASSWORD}", "Değişken ${TZ}"]);

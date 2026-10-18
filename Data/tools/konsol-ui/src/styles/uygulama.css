@@ -204,6 +204,28 @@
   font-size: 13.5px;
 }
 
+/* A service's processes: one block per user, its commands on their own line below. */
+.process-line {
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}
+
+.process-line + .process-line {
+  margin-top: 4px;
+}
+
+.process-commands {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* What an application's /srv warning means now (its processes' user), under the warning. */
+.warning-now {
+  display: block;
+  margin-top: 2px;
+}
+
 /* Tanım → Yanıtlar: a long question ("Klasör /var/lib/db · db") sits above its answer. */
 .facts.answer-facts {
   grid-template-columns: minmax(0, 1fr);

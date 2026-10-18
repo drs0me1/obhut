@@ -13,6 +13,7 @@ import ipaddress
 import json
 import os
 import re
+import stat
 import sys
 import time
 
@@ -155,6 +156,62 @@ def container_pids(pid, proc="/proc", cgroups="/sys/fs/cgroup", limit=512):
         if len(pids) >= limit:
             break
     return pids
+
+
+PASSWD_LIMIT = 256 * 1024
+USER_NAME_RE = re.compile(r"[a-z_][a-z0-9_.-]{0,31}\$?\Z")
+
+
+def passwd_names(pid, proc="/proc"):
+    """{uid: name} from a running container's own /etc/passwd, reached through /proc/<pid>/root without
+    following a link inside the container (one could point at a host file); {} when it cannot be read."""
+    names, root = {}, None
+    try:
+        root = os.open("%s/%d/root" % (proc, pid), os.O_RDONLY | os.O_DIRECTORY)
+        etc = os.open("etc", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
+        try:
+            fd = os.open("passwd", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=etc)
+        finally:
+            os.close(etc)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return {}
+            text = os.read(fd, PASSWD_LIMIT).decode("utf-8", "replace")
+        finally:
+            os.close(fd)
+    except OSError:
+        return {}
+    finally:
+        if root is not None:
+            os.close(root)
+    for line in text.splitlines():
+        parts = line.split(":")
+        if len(parts) >= 3 and parts[2].isdigit() and USER_NAME_RE.match(parts[0]):
+            names.setdefault(int(parts[2]), parts[0])
+    return names
+
+
+def process_users(pid, proc="/proc", cgroups="/sys/fs/cgroup"):
+    """Who a running container's processes run as (its init and its cgroup's): [{uid, ad, surec, komutlar}], one
+    entry per effective user, the others before root, each with the container's own name for it (null when its
+    /etc/passwd has none) and up to three command names. None when no process can be read: unknown, never an
+    empty list. The host and the container share user IDs (rootful Podman without a user namespace)."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return None
+    names, users = passwd_names(pid, proc), {}
+    for p in sorted(container_pids(pid, proc, cgroups)):
+        try:
+            with open("%s/%d/status" % (proc, p)) as f:
+                uid = next(int(line.split()[2]) for line in f if line.startswith("Uid:"))
+            with open("%s/%d/comm" % (proc, p)) as f:
+                command = "".join(ch for ch in f.read(64).strip() if ch.isprintable())[:32]
+        except (OSError, ValueError, IndexError, StopIteration):
+            continue
+        user = users.setdefault(uid, {"uid": uid, "ad": names.get(uid), "surec": 0, "komutlar": []})
+        user["surec"] += 1
+        if command and command not in user["komutlar"] and len(user["komutlar"]) < 3:
+            user["komutlar"].append(command)
+    return sorted(users.values(), key=lambda u: (u["uid"] == 0, u["uid"])) or None
 
 
 def listening(pid, wan=(), tailscale=(), proc="/proc", cgroups="/sys/fs/cgroup"):

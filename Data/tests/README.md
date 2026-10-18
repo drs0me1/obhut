@@ -116,7 +116,7 @@ PYTHONDONTWRITEBYTECODE=1 python3.13 -m unittest discover -s tests -p 'test_*.py
 python3.13 -m unittest discover -s tests -p 'test_share*.py'             # by pattern
 ```
 
-888 tests. Use Python 3.11 or newer with OpenSSL's scrypt: macOS's `/usr/bin/python3` (3.9) parses
+894 tests. Use Python 3.11 or newer with OpenSSL's scrypt: macOS's `/usr/bin/python3` (3.9) parses
 neither the runtime's nanosecond timestamps nor has scrypt; the test host runs 3.13. The suites use
 temporary folders, temporary Unix sockets, fake tools and documentation addresses only.
 
@@ -148,6 +148,7 @@ module constants (`TOOL_PATH`); the backends' arguments carry only their real op
 | `test_container_network.py`, `test_container_dns.py` | The container guard's nft policy (egress only to the internet in `VPN_BLOCK_DEST4` order, the host closed but bridge DNS, fail closed on a bad list), a raw row's ingress permit, health detecting a changed rule |
 | `test_container_binds.py` | Bind sources pinned at start: the bound folder is the walked one even when swapped for a link; links, hidden, outside and `..` sources refused; anchors released |
 | `test_containers.py`, `test_container_integration_edges.py`, `test_container_listening.py` | The read-only Podman mapper and its route, environment values never returned, a host-network container's listening sockets from `/proc` |
+| `test_container_users.py` | What a running application's processes run as (DD-282): one entry per user from the container's cgroup and `/proc`, names from its own `/etc/passwd` never through a link, unknown as `null`; the /srv warning's sentence (still root, switched to the Files account, another uid) |
 
 Fixtures: `fixtures/uygulama/*.yaml` (published-style files with named volumes and a placeholder host
 path, a web application with a database and a secret, a Pod and a Deployment as Podman writes them, a

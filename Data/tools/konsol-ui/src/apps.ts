@@ -4,7 +4,7 @@
 // Uygulamalar, the application page and the palette say the same thing. Erişim's cell words live here too
 // (CELL_TEXT, CELL_TONE).
 import type { Tone } from "./components/ui/types";
-import type { ErisimDurumu, Hizmet, KaynakTuru, Uygulama, UygulamaServisAyrintisi } from "./api/sema";
+import type { ErisimDurumu, Hizmet, KaynakTuru, SurecKullanicisi, Uygulama, UygulamaServisAyrintisi } from "./api/sema";
 import { UNKNOWN, bytes, percent, rate } from "./format";
 
 export type AppState = Uygulama["durum"];
@@ -60,9 +60,23 @@ export const SOURCE_TEXT: Record<KaynakTuru, string> = {
   konteyner: "Var olan konteynerden taslak",
 };
 
-/** How a service starts (A4). */
+/** How a service starts (A4): its definition, before anything runs. */
 export function startText(mode: UygulamaServisAyrintisi["baslangic"], user: string | null): string {
-  return mode === "direct" ? `Doğrudan${user ? ` ${user}` : ""} · bütün yetkiler kapalı` : "Root olarak · kendi kullanıcısına geçebilir";
+  return mode === "direct" ? `Doğrudan${user ? ` ${user}` : ""} · bütün yetkiler kapalı` : "Root olarak başlar · imaj isterse kendi kullanıcısına geçer";
+}
+
+/** A process user as people read it: "abc (uid 1000)", "uid 911", "root". */
+export const userText = (u: SurecKullanicisi): string => (u.uid === 0 ? "root" : u.ad ? `${u.ad} (uid ${u.uid})` : `uid ${u.uid}`);
+
+/** What a service runs as now (its processes' users), or how it starts while that is not known. */
+export function runState(s: UygulamaServisAyrintisi): { text: string; tone: Tone } {
+  if (s.baslangic === "direct") return { text: startText("direct", s.kullanici), tone: "ok" };
+  if (!s.surecler) return { text: "Root olarak başlar", tone: "neutral" };
+  const own = s.surecler.filter((u) => u.uid !== 0);
+  // The name alone here (its uid is in the service's process lines), so the pill stays short on a phone.
+  return own.length
+    ? { text: `Root başladı · ${own.map((u) => u.ad || `uid ${u.uid}`).join(", ")} olarak çalışıyor`, tone: "ok" }
+    : { text: "Root olarak çalışıyor", tone: "warning" };
 }
 
 export const servicesText = (n: number): string => `${n} servis`;

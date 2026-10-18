@@ -1283,11 +1283,21 @@ export interface UygulamaServisAyrintisi {
   portlar: UygulamaPortu[];
   baglamalar: UygulamaBaglamasi[];
   gizliler: string[];
+  surecler: SurecKullanicisi[] | null;
+}
+
+export interface SurecKullanicisi {
+  uid: number;
+  ad: string | null;
+  surec: number;
+  komutlar: string[];
 }
 
 export interface UygulamaUyarisi {
   servis: string;
   metin: string;
+  simdi?: string | null;
+  cozuldu?: boolean;
 }
 
 export interface UygulamaAyrinti {

@@ -436,8 +436,13 @@ SCHEMAS = {
         "ozet": null(STR), "kanal": STR, "guncelleme": ref("GuncellemeDurumu"), "konteyner": STR, "birim": STR,
         "calisma": null(INT), "saglik": STR, "yeniden_baslama": INT, "portlar": arr(ref("UygulamaPortu")),
         "baglamalar": arr(ref("UygulamaBaglamasi")), "gizliler": arr(STR),
+        # What the running service's processes run as (null while it does not run or they cannot be read).
+        "surecler": null(arr(ref("SurecKullanicisi"))),
     }),
-    "UygulamaUyarisi": obj({"servis": STR, "metin": STR}),
+    "SurecKullanicisi": obj({"uid": INT, "ad": null(STR), "surec": INT, "komutlar": arr(STR)}),
+    # simdi, cozuldu (an application's detail only): a /srv warning with what its service's processes run as now, and
+    # whether that settles it (every process that is not root runs as the Files account).
+    "UygulamaUyarisi": obj({"servis": STR, "metin": STR, "simdi": null(STR), "cozuldu": BOOL}, optional=("simdi", "cozuldu")),
     # guncelleme_denetlendi: when the cached image update check (DD-214) last asked the registries about this
     # application (null before its first check).
     "UygulamaAyrinti": obj({
