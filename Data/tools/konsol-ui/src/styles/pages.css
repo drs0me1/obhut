@@ -67,13 +67,13 @@
   gap: 16px;
 }
 
-.overview > .card,
-.overview-grid .card {
+.overview > .card {
   padding: 18px 20px;
   border-radius: var(--r-lg);
 }
 
 /* Dikkat: one line per problem with its link; or the calm state. */
+/* Uyarılar (ProblemsPage): the problems, each with its place, or the calm state. */
 .problems {
   display: flex;
   flex-direction: column;
@@ -218,122 +218,6 @@
   margin-top: auto;
 }
 
-/* Numbers with their words under them (Erişim özeti, the network rate). */
-.stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 28px;
-  margin: 0;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column-reverse;
-  gap: 2px;
-  min-width: 0;
-}
-
-.stat dt {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.stat dd {
-  margin: 0;
-  font-family: var(--font-head);
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1.15;
-  white-space: nowrap;
-}
-
-.access-summary {
-  gap: 14px;
-}
-
-.access-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.access-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 4px 12px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 600;
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-
-.access-chip-warning {
-  background: var(--warn-soft);
-  color: var(--warn-ink);
-}
-
-.access-chip-accent {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
-.access-chip:hover {
-  text-decoration: underline;
-}
-
-.overview-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
-  gap: 16px;
-}
-
-.net-apps {
-  display: flex;
-  flex-direction: column;
-  padding-top: 10px;
-  border-top: 1px solid var(--line-soft);
-  font-size: 13.5px;
-}
-
-.net-apps li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 14px;
-  padding: 4px 0;
-}
-
-.net-app-name {
-  flex: 1 1 100px;
-  min-width: 0;
-  font-weight: 600;
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-
-.net-app-name:hover {
-  text-decoration: underline;
-}
-
-.net-app-rate {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  white-space: nowrap;
-}
-
-.net-down {
-  margin-right: 4px;
-  color: var(--accent);
-}
-
-.net-up {
-  margin-right: 4px;
-  color: var(--warn);
-}
-
 /* A phone (the Mobil prototype): applications as two compact tiles per row, each a link to its page. */
 @media (max-width: 560px) {
   .app-grid {
@@ -387,8 +271,7 @@
     width: 100%;
   }
 
-  .overview > .card,
-  .overview-grid .card {
+  .overview > .card {
     padding: 16px;
   }
 }
@@ -559,7 +442,7 @@
    port's address, each with its cell's colour) beside its container port. One grid per cell, the header's labels
    in the same two columns, so the halves line up down the table whatever each entry's height. */
 .col-access {
-  min-width: 340px;
+  min-width: 330px;
 }
 
 .map-head,
@@ -852,8 +735,7 @@
   }
 
   .tab-grid,
-  .tab-grid-wide,
-  .overview-grid {
+  .tab-grid-wide {
     grid-template-columns: minmax(0, 1fr);
   }
 

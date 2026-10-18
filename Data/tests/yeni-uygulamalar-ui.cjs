@@ -53,10 +53,10 @@ function apps() {
     uygulama("notlar", { servisler: [servis("web", { imaj: "registry.example/notlar/web:2.4", guncelleme: "yeni" }),
       servis("db", { imaj: "registry.example/notlar/db:16", guncelleme: "guncel" })],
     kaynak: { cpu: 3.2, bellek: 220200960 }, guncelleme: "yeni", eylemler: ["durdur", "yeniden-baslat", "guncelle"], revizyon: "rev-notlar-7", uyari: 1,
-    ag: { indirme: 1258291, yukleme: 38912 }, adres: "http://notlar.ev" }),
+    ag: { indirme: 1258291, yukleme: 38912, toplam: { indirme: 1288490189, yukleme: 314572800 } }, adres: "http://notlar.ev" }),
     // Its file came from an address; its images have not been checked yet.
     uygulama("pano", { servisler: [servis("web", { imaj: "registry.example/pano:1", guncelleme: "bilinmiyor" })], guncelleme: "bilinmiyor",
-      eylemler: ["durdur", "yeniden-baslat", "guncelle"], koken: "adres", ag: { indirme: 0, yukleme: 512 }, adres: "http://pano.ev" }),
+      eylemler: ["durdur", "yeniden-baslat", "guncelle"], koken: "adres", ag: { indirme: 0, yukleme: 512, toplam: { indirme: 0, yukleme: 4096 } }, adres: "http://pano.ev" }),
     // A Kubernetes Pod from an image name, stopped, its image pinned by digest.
     uygulama("yedek", { durum: "durduruldu", bicim: "kubernetes", servisler: [servis("yedekle", { durum: "durduruldu", imaj: "registry.example/yedek@sha256:" + D("c") })],
       eylemler: ["baslat"], koken: "imaj", durduruldu: true }),
@@ -288,6 +288,7 @@ async function noStyles(page, where) {
     assert.equal(await tr("notlar").getByTestId("app-access").locator(".pill").count(), 0, "no chips, no 'Ham'");
     assert.equal(await tr("notlar").locator(".col-res").innerText(), "%3 · 210 MB");
     assert.equal(await tr("notlar").getByTestId("app-rate").innerText(), "↓ 1 MB/s · ↑ 38 KB/s", "its own bridge's live rate");
+    assert.equal(await tr("notlar").getByTestId("app-total").innerText(), "toplam ↓ 1,2 GB · ↑ 300 MB", "what passed through the bridge, under the rate");
     assert.equal(await tr("notlar").locator(".col-ver").count(), 0, "a newer image is the page's Özet and the Dikkat filter's");
     assert.equal(await page.locator(".app-table").innerText().then((s) => s.includes("Yeni imaj")), false);
     assert.equal(await tr("notlar").locator('[data-eylem="ac"]').getAttribute("href"), "http://notlar.ev", "Aç: its first address");
@@ -297,6 +298,7 @@ async function noStyles(page, where) {
     assert.deepEqual(await mapOf("pano"), [["uygulama:pano:web:3000/tcp", [["ok", "pano.ev"]], "→3000/tcp"]], "one service: the port alone");
     assert.equal(await tr("galeri").locator(".col-res").innerText(), "%1 · 50 MB");
     assert.equal(await tr("galeri").getByTestId("app-rate").innerText(), "—", "no rate while it has none");
+    assert.equal(await tr("galeri").getByTestId("app-total").count(), 0, "and no total");
     assert.equal(await tr("arsiv").locator(".col-state").innerText(), "İşlemde…");
     assert.equal(await tr("arsiv").getByTestId("app-access").innerText(), "Port yok", "no access row: no port");
     assert.equal(await tr("arsiv").locator('[data-eylem="ac"]').count(), 0, "no address, no Aç");
@@ -777,7 +779,7 @@ async function noStyles(page, where) {
     await page.goto(url("#/uygulamalar"));
     await page.locator('tr[data-uygulama="notlar"] [data-testid="app-rate"]').filter({ hasText: "↓ 1 MB/s · ↑ 38 KB/s" }).waitFor();
     const listReads = reads("/api/konsol/uygulamalar").length;
-    data.uygulamalar = uygulamalar(apps().map((a) => (a.ad === "notlar" ? { ...a, ag: { indirme: 3145728, yukleme: 2048 } } : a)));
+    data.uygulamalar = uygulamalar(apps().map((a) => (a.ad === "notlar" ? { ...a, ag: { indirme: 3145728, yukleme: 2048, toplam: { indirme: 1291635917, yukleme: 314574848 } } } : a)));
     await page.clock.runFor(10000);
     await page.locator('tr[data-uygulama="notlar"] [data-testid="app-rate"]').filter({ hasText: "↓ 3 MB/s · ↑ 2 KB/s" }).waitFor();
     assert(reads("/api/konsol/uygulamalar").length > listReads, "read again after 10 s");

@@ -24,6 +24,46 @@ Konsol's single-container definitions and adoption, Yayınla and the manual
 phase 6; live entries that still mention them end with a note naming what no
 longer applies and which entry replaced it.
 
+### DD-287: Genel Bakış is the applications; resources in the sidebar; no WAN rate, each application's totals instead (v2-275)
+
+- **Why:** the operator wanted the server card aligned with the sidebar's foot, the Kaynaklar meters beside it
+  in the sidebar, and the Ağ card gone, with the network data shown per application in Uygulamalar as a footnote
+  under the live rate (2026-10-19).
+- **What:** the sidebar's foot holds two cards: Kaynaklar (CPU, memory, disk, the same meters) and the server
+  (DD-286), pushed to the bottom (`margin-top: auto`; the phone's "Daha fazla" sheet shows the same). Genel Bakış
+  is the applications card alone. The WAN rate sampler of DD-206 and `GET /api/konsol/ag` are removed: nothing
+  read them any more (rebuild ground rule 2), and the bridge sampler that fed the list stays. Each application's
+  `ag` now carries `toplam`: the bridge's counters at the last reading that counted (what the host sent into the
+  bridge is what the application received), so the list's Ağ column says "toplam ↓ … · ↑ …" under the rate. The
+  counters are the host's view since the bridge came up: a restart that makes the bridge again starts them over.
+- **Tests:** the list's footnote and its absence without a rate; the totals from the counters; the sidebar's
+  cards at the foot; no network card and no `ag` reads.
+
+### DD-286: Genel Bakış: resources and the network first, no access summary, the server in the sidebar (v2-274)
+
+- **Why:** the operator found Erişim özeti technical for the first page (its counts and openings are Erişim's
+  own), wanted the server's facts beside the sidebar's connection line instead of a card, and the resource and
+  network cards above the applications (2026-10-19).
+- **What:** Genel Bakış is Kaynaklar and Ağ, then Uygulamalar. The sidebar's card (and the phone's "Daha fazla"
+  sheet, which shows the same sidebar) carries, under "Tailscale bağlı": Sistem, Açık kalma, the Tailscale and
+  internet IPv4 addresses, then the version line. `internetOpenings` went with the summary; `accessCounts`
+  stays for Erişim's head. Amends DD-267's Genel Bakış and DD-285's "no Dikkat card".
+- **Tests:** the cards' order, no summary, the sidebar's facts.
+
+### DD-285: Uyarılar is a page behind the top bar's count; Genel Bakış carries no Dikkat card (v2-273)
+
+- **Why:** the count beside the search is always in sight and Genel Bakış opened with a large Dikkat card
+  listing the same things; the operator wanted the card gone and the problems gathered on a page the count
+  opens, each still leading to where it is fixed (2026-10-19).
+- **What:** `#/uyarilar` (ProblemsPage, under Genel Bakış in the sidebar and the palette's pages) renders
+  problems.ts' one list as the card did: the most serious first, news (a newer image) last and not counted, each
+  with its link (Sistem → Sağlık, an access row's panel, a tab, an application), or the calm state with the
+  checks' count and time. The head's line says how many need attention and how much is news. The top bar's
+  count always opens this page, no longer the most serious problem's place: one click, one list, then the
+  choice; the page's "Geri" returns.
+- **Tests:** the page's list, order, links and calm state, the chip's address from any page, the sidebar's
+  current entry; the Erişim warnings' links from the page.
+
 ### DD-284: "Doğrudan port", the applications list's server → container mapping, one row per application in Genel (v2-271)
 
 - **Why:** the operator found "Ham" meaningless ("Ham 8092 · Tailscale" in Uygulamalar said nothing about what

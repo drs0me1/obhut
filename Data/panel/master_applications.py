@@ -1122,8 +1122,9 @@ def app_update(definition, updates):
 
 
 def summary(record, objects, live, busy, updates, domain=None):
-    """An application of the list: live state per service, resources summed, its bridge's rate (live["ag"], the
-    backend's sampler), its first address (domain: the local domain), update state, actions."""
+    """An application of the list: live state per service, resources summed, its bridge's rate and what passed
+    through it so far (live["ag"], the backend's sampler), its first address (domain: the local domain), update
+    state, actions."""
     definition, places = record["definition"], record["places"]
     services, states, cpu, memory = [], [], [], []
     for svc in definition["services"]:

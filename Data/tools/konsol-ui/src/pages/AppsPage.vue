@@ -2,7 +2,7 @@
      from its record with its live state: its name and where its file came from, its state and warnings, how each
      of its container ports is reached (Erişim's rows: the addresses and ports on this server, in their cells'
      colours, beside the container port, server → container), its resources, the live rate of its own bridge (read
-     again every 10 s while the page is shown), "Aç" (its first address, while it runs) and its page. A newer image
+     again every 10 s while the page is shown) with what passed through it since it came up under it, "Aç" (its first address, while it runs) and its page. A newer image
      is the application's page's (Özet) and the Dikkat filter's, not a column. The filter (?suzgec=) and the search
      (?ara=) are in the address. A table on wide screens, cards on narrow ones (a container query, so the sidebar's
      width counts). "Uygulama ekle" opens its full-window page (AddAppPage, #/uygulama-ekle). -->
@@ -14,7 +14,7 @@ import AppIcon from "../components/AppIcon.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import StatusPill from "../components/ui/StatusPill.vue";
 import { apps, live, refreshApps } from "../live";
-import { accessMap, addressPieces, appLine, appState, needsAttention, openAddress, rateText, resourceText, warningText } from "../apps";
+import { accessMap, addressPieces, appLine, appState, needsAttention, openAddress, rateText, resourceText, totalText, warningText } from "../apps";
 import { ADD_APP, appRoute } from "../router";
 import { usePageHead } from "../page";
 import { useQueryParam } from "../query";
@@ -64,6 +64,7 @@ const rows = computed(() => {
       access: access ? accessMap(access, app.ad, app.servisler.length) : null,
       resources: resourceText(app),
       rate: rateText(app),
+      total: totalText(app),
       open: openAddress(app),
     }));
 });
@@ -179,7 +180,12 @@ onBeforeUnmount(() => clearInterval(timer));
               <span v-else class="muted">{{ UNKNOWN }}</span>
             </td>
             <td class="col-res" :class="{ 'cell-empty': r.resources === UNKNOWN }" data-label="Kaynak">{{ r.resources }}</td>
-            <td class="col-net" :class="{ 'cell-empty': r.rate === UNKNOWN }" data-label="Ağ" data-testid="app-rate">{{ r.rate }}</td>
+            <td class="col-net" :class="{ 'cell-empty': r.rate === UNKNOWN }" data-label="Ağ">
+              <span class="cell-stack">
+                <span data-testid="app-rate">{{ r.rate }}</span>
+                <span v-if="r.total" class="cell-note" data-testid="app-total">{{ r.total }}</span>
+              </span>
+            </td>
             <td class="col-act">
               <span class="row-actions">
                 <a v-if="r.open" :href="r.open" class="btn btn-secondary btn-sm" target="_blank" rel="noopener noreferrer" :aria-label="`${r.app.ad} uygulamasını aç`" data-eylem="ac">

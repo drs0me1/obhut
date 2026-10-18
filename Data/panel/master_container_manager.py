@@ -620,7 +620,7 @@ class Inventory(Containers):
 
 class Service:
     def __init__(self, panel, rates=None):
-        """rates: {app: {"indirme", "yukleme"}} of the backend's bridge sampler (none without one)."""
+        """rates: {app: {"indirme", "yukleme", "toplam"}} of the backend's bridge sampler (none without one)."""
         self.panel = panel
         self.rates = rates or (lambda: {})
         self.sizes = apps.Sizes()

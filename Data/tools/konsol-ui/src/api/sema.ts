@@ -129,18 +129,6 @@ export interface Uyari {
   } | null;
 }
 
-export interface Ag {
-  read_at: number;
-  sampled_at: number | null;
-  rx: number | null;
-  tx: number | null;
-  uygulamalar: {
-    ad: string;
-    indirme: number;
-    yukleme: number;
-  }[];
-}
-
 export interface OnarimAdimi {
   id: string;
   ad: string;
@@ -1200,6 +1188,10 @@ export interface Uygulama {
   ag: {
     indirme: number;
     yukleme: number;
+    toplam: {
+      indirme: number;
+      yukleme: number;
+    };
   } | null;
   adres: string | null;
 }
@@ -1511,7 +1503,6 @@ export const YOLLAR = {
   uygulama_yenile: "/api/konsol/uygulamalar/{app}/yenile",
   uygulama_kaldir: "/api/konsol/uygulamalar/{app}/kaldir",
   uygulama_denetle: "/api/konsol/uygulamalar/denetle",
-  ag: "/api/konsol/ag",
   onarim: "/api/konsol/onarim",
   onarim_baslat: "/api/konsol/onarim",
   guncelleme: "/api/konsol/guncelleme",

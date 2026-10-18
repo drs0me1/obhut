@@ -12,7 +12,7 @@ import { SECTIONS, SECTION_TABS, accessRoute } from "../sections";
 import { apps, live } from "../live";
 import { FORMAT_TEXT } from "../apps";
 import { addressCandidates, isAccessRow, rowName, rowOwner } from "../access";
-import { ADD_APP, appRoute } from "../router";
+import { ADD_APP, PROBLEMS, appRoute } from "../router";
 import { THEMES, setTheme, theme, themeText, type ThemeChoice } from "../theme";
 import { closeSurface, openSurface, ui } from "../ui";
 import { fold } from "../format";
@@ -47,6 +47,7 @@ const items = computed<Item[]>(() => {
       list.push({ key: `${s.id}-${t.id}`, group: "Sayfalar", label: `${s.title} → ${t.label}`, hint: s.title, icon: s.icon, words: t.keywords, run: { kind: "route", to: t.to } });
     }
   }
+  list.push({ key: "sayfa-uyarilar", group: "Sayfalar", label: "Uyarılar", hint: "Sayfa", icon: "alert", words: "dikkat sorun uyarı konu sağlık haber", run: { kind: "route", to: PROBLEMS } });
   for (const app of apps.value ?? []) {
     list.push({
       key: "uygulama-" + app.ad,

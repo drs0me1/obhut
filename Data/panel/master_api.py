@@ -100,9 +100,6 @@ SCHEMAS = {
     # hedef the row id), uygulama (an application's page; hedef its name), tailscale.
     "Uyari": obj({"seviye": enum("warn", "bad"), "hizmet": STR, "metin": STR,
                   "duzelt": null(obj({"bolum": enum("adresler", "uygulama", "tailscale"), "hedef": STR}))}),
-    # The WAN rate and the busiest applications with traffic (each one's own bridge; busiest first, at most five).
-    "Ag": obj({"read_at": INT, "sampled_at": null(INT), "rx": null(INT), "tx": null(INT),
-               "uygulamalar": arr(obj({"ad": STR, "indirme": INT, "yukleme": INT}))}),
     "OnarimAdimi": obj({"id": STR, "ad": STR, "durum": enum("ok", "onarildi", "sorun", "hata", "atlandi", "calisiyor"),
                         "detay": STR}),
     "Onarim": obj({"calisiyor": BOOL, "kurulu": BOOL, "baslatilabilir": BOOL,
@@ -407,7 +404,7 @@ SCHEMAS = {
         "servisler": arr(ref("UygulamaServisi")), "kaynak": obj({"cpu": null(NUM), "bellek": null(INT)}),
         "guncelleme": ref("GuncellemeDurumu"), "eylemler": arr(enum("baslat", "durdur", "yeniden-baslat", "guncelle")),
         "revizyon": STR, "is": null(STR), "koken": ref("KaynakTuru"), "durduruldu": BOOL, "uyari": INT,
-        "ag": null(obj({"indirme": INT, "yukleme": INT})), "adres": null(STR),
+        "ag": null(obj({"indirme": INT, "yukleme": INT, "toplam": obj({"indirme": INT, "yukleme": INT})})), "adres": null(STR),
     }),
     # A standalone container an application can be made from (K2).
     "UygulamaKaynagi": obj({"ad": STR, "imaj": STR, "durum": STR}),
@@ -573,7 +570,6 @@ ROUTES = (
           "Bir Compose ya da Kubernetes dosyasını denetler; yanıtlar verilirse tanımı çıkarır. Hiçbir şey yazılmaz, "
           "çalıştırılmaz, indirilmez; gizli değerler yanıtta yer almaz", ref("Denetim"), request=ref("DenetimIstegi"),
           body_limit=1048576),
-    Route("GET", "/api/konsol/ag", "ag", "WAN'ın son hızı (DD-206)", ref("Ag")),
     Route("GET", "/api/konsol/onarim", "onarim", "Son denetim ve onarım raporu (DD-239)", ref("Onarim")),
     Route("POST", "/api/konsol/onarim", "onarim_baslat", "Denetimi ya da onarımı başlatır; yalnız Tailscale'den",
           ref("OnarimBasladi"), request=ref("OnarimIstegi"), status=202),

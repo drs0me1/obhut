@@ -57,6 +57,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Erişim → Genel: an application is one row whatever its ports; its ports are listed under its name and each cell
   gathers every port's addresses. An application with one port still leads to its row in Adresler; one with more
   leads to its own Erişim tab, where each port links to its row.
+- Genel Bakış is the applications only (DD-287): the Kaynaklar meters moved into the sidebar, in a card above the
+  server card, and both sit at the sidebar's foot. The Ağ card and its WAN rate are gone; each application's
+  network is its row in Uygulamalar, where a footnote under the live rate now says what passed through its bridge
+  since it came up ("toplam ↓ 1,2 GB · ↑ 300 MB"). Konsol no longer has a `/api/konsol/ag` route.
+- Genel Bakış is lighter (DD-286): Kaynaklar and Ağ come first, the applications under them; the Erişim özeti
+  card is gone (its counts and openings are Erişim's), and the Sunucu card moved into the sidebar's card under
+  "Tailscale bağlı": the system, how long it has been up, the Tailscale and internet addresses, the version.
+- Uyarılar, a page of its own behind the top bar's count (DD-285): every problem with the link to where it is
+  fixed, the most serious first, or "Her şey yolunda". Genel Bakış no longer carries the Dikkat card; the count
+  beside the search is the one place that says how many, Uyarılar the one place that lists them.
 - "Geri" and "Genel Bakış" buttons before every page's title (and before an application's trail), so any page
   reached through a link has a way back inside Konsol, also when it runs without a browser bar.
 

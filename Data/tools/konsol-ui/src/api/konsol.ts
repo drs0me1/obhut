@@ -1,12 +1,11 @@
 // The applications' reads and actions (DD-271): the list item, one application's detail, a service's log, the
-// lifecycle actions and the removal (each a job), a job's result and the network card; Uygulama ekle's draft
+// lifecycle actions and the removal (each a job) and a job's result; Uygulama ekle's draft
 // sources, the inspector's dry run, the install's plan and the install (a job); Tanım's plan, its apply (a job)
 // and the refresh from an address source. Paths and shapes come from sema.ts (generated from
 // panel/master_api.py); a reply without the expected shape is an error, so a page never shows half a value as if
 // it were whole. Secret values travel only in these requests' bodies; no reply carries one.
 import {
   YOLLAR,
-  type Ag,
   type Denetim,
   type DenetimIstegi,
   type Inceleme,
@@ -103,13 +102,6 @@ export async function readJob(id: string): Promise<KonteynerIsi & { result: Reco
   const v = shaped<KonteynerIsi>(await getJson(query(YOLLAR.konteyner_isi, { id })), (d) => isText(d.id) && isText(d.state));
   const line = (x: unknown): x is IsSatiri => isObject(x) && typeof x.t === "number" && isText(x.tur) && isText(x.ileti);
   return { ...v, result: isObject(v.result) ? v.result : null, gunluk: isList(v.gunluk) ? v.gunluk.filter(line) : [] };
-}
-
-/** The WAN rate and the busiest applications' rates (an item without a name or numbers is left out). */
-export async function readNetwork(): Promise<Ag> {
-  const v = shaped<Ag>(await getJson(YOLLAR.ag), (d) => "rx" in d && "tx" in d);
-  const rate = (n: unknown) => typeof n === "number" && Number.isFinite(n);
-  return { ...v, uygulamalar: isList(v.uygulamalar) ? v.uygulamalar.filter((a) => isObject(a) && isText(a.ad) && rate(a.indirme) && rate(a.yukleme)) : [] };
 }
 
 // ---- Uygulama ekle and Tanım (K2, K3)

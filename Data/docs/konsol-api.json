@@ -917,47 +917,6 @@
         }
       }
     },
-    "/api/konsol/ag": {
-      "get": {
-        "operationId": "ag",
-        "summary": "WAN'ın son hızı (DD-206)",
-        "parameters": [
-          {
-            "name": "X-Konsol",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Başarılı",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Ag"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Host, köken ya da X-Konsol denetimi",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Hata"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/konsol/onarim": {
       "get": {
         "operationId": "onarim",
@@ -3610,75 +3569,6 @@
           "hizmet",
           "metin",
           "duzelt"
-        ],
-        "additionalProperties": false
-      },
-      "Ag": {
-        "type": "object",
-        "properties": {
-          "read_at": {
-            "type": "integer"
-          },
-          "sampled_at": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "rx": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "tx": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "uygulamalar": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "ad": {
-                  "type": "string"
-                },
-                "indirme": {
-                  "type": "integer"
-                },
-                "yukleme": {
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "ad",
-                "indirme",
-                "yukleme"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": [
-          "read_at",
-          "sampled_at",
-          "rx",
-          "tx",
-          "uygulamalar"
         ],
         "additionalProperties": false
       },
@@ -8525,11 +8415,28 @@
                   },
                   "yukleme": {
                     "type": "integer"
+                  },
+                  "toplam": {
+                    "type": "object",
+                    "properties": {
+                      "indirme": {
+                        "type": "integer"
+                      },
+                      "yukleme": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "indirme",
+                      "yukleme"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
                   "indirme",
-                  "yukleme"
+                  "yukleme",
+                  "toplam"
                 ],
                 "additionalProperties": false
               },

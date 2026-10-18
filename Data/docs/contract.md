@@ -927,7 +927,8 @@ its countdown and Onayla/Geri al.
 
 | Section | Tabs and contents |
 |---|---|
-| Genel Bakış | Dikkat (problems, most serious first, each with its place), Uygulamalar, Erişim özeti, Kaynaklar, Ağ (WAN rate and the busiest applications' rates from their bridges), Sunucu |
+| Genel Bakış | Uygulamalar; the resources (CPU, memory, disk) and the server's facts (system, uptime, addresses, version) are the sidebar's two cards at its foot (**DD-286**, **DD-287**); each application's network rate and what passed through its bridge are its row in Uygulamalar |
+| Uyarılar | Behind the top bar's count (`#/uyarilar`, **DD-285**): every problem, most serious first, each with its place (Sistem → Sağlık, an access row, an application); news (a newer image) listed, not counted; or "Her şey yolunda" |
 | Uygulamalar | The list (state, each access row as server → container, resources, live rate; **DD-284**); "Uygulama ekle" (a full-window page of its own, `#/uygulama-ekle`: Kaynak, Denetçi with the file beside the questions, Plan, Kurulum with the job's log; leaving with something entered asks, **DD-279**); an application's page with Özet (actions, update card, what each running service's processes run as and a /srv warning settled or not by it, **DD-282**), Erişim (its rows, read-only, linking to Adresler), Depolama (folders with sizes), Tanım (the file and answers, the difference as a plan) and Günlük (its units' journal, 100–1000 lines, unfiltered, **DD-251**) |
 | Erişim | Genel, Adresler (Konsol, Paylaşımlar, every application row; "Adres aç"), Yerel adlar (the managed names read-only, records, forwarding, the local domain), Tailscale, WireGuard, Güvenlik duvarı (the operator's rules and the locked application rows) |
 | Dosyalar | Depolama (the disk, who uses which folder, Uygulama verileri with a bounded cached walk), Sunucu klasörleri, Çöp kutusu, Paylaşımlar, Sistem dosyaları (tailnet only) |

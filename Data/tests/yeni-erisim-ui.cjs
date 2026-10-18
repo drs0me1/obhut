@@ -138,7 +138,6 @@ const data = {
   uygulamalar: uygulamalar([uygulama("notlar"), uygulama("medya"), uygulama("kutu", { servisler: [{ ad: "app", durum: "calisiyor", imaj: "registry.example/app:1", guncelleme: "sabit" }] })]),
   adlar: names(),
   "guvenlik-duvari": firewall(),
-  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048 },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
 };
 
@@ -399,9 +398,9 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     data.erisim.ozet.tailscale = { ...data.erisim.ozet.tailscale, durum: "bagli-degil", anahtar_bitis: null, cikis_dugumu: false };
     data.erisim.ozet.wireguard = { kurulu: false, durduruldu: true, aglar: [] };
     page = await newPage();
-    await page.goto(url("#/genel"));
+    await page.goto(url("#/uyarilar"));
     const overviewFix = page.locator('.problem[data-kind="erisim"]').getByRole("link", { name: "Erişim'de incele" });
-    assert.equal(await overviewFix.getAttribute("href"), "#/erisim?sekme=tailscale", "Genel Bakış's link follows duzelt");
+    assert.equal(await overviewFix.getAttribute("href"), "#/erisim?sekme=tailscale", "Uyarılar' link follows duzelt");
     await overviewFix.click();
     await page.waitForURL((u) => u.hash === "#/erisim?sekme=tailscale");
     assert.equal(await page.getByTestId("ts-device").locator(".pill").innerText(), "Bağlı değil");
@@ -414,9 +413,9 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     assert.equal(await page.getByTestId("sum-wireguard").locator(".pill").innerText(), "Kapalı");
     await page.context().close();
     data.erisim = erisim();
-    // Genel Bakış: an access row's warning leads to its panel; an application's to its page.
+    // Uyarılar: an access row's warning leads to its panel; an application's to its page.
     page = await newPage();
-    await page.goto(url("#/genel"));
+    await page.goto(url("#/uyarilar"));
     const rowFix = page.locator('.problem[data-kind="erisim"] [data-eylem="duzelt"]');
     await rowFix.first().waitFor();
     assert.deepEqual(await rowFix.evaluateAll((as) => as.map((a) => [a.textContent.trim(), a.getAttribute("href")])), [
@@ -426,12 +425,12 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await rowFix.nth(1).click();
     await page.waitForURL((u) => u.hash === `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`);
     await rowSheet(page).getByTestId("row-form").waitFor();
-    await page.goto(url("#/genel"));
+    await page.goto(url("#/uyarilar"));
     await rowFix.nth(2).click();
     await page.waitForURL((u) => u.hash === "#/uygulamalar/medya");
     await page.locator("main h1").filter({ hasText: "medya" }).waitFor();
-    // The top bar's chip goes to the first problem (its row).
-    assert.equal(await page.locator(".desktop-tools .chip").getAttribute("href"), "#/erisim?sekme=adresler&satir=paylasim");
+    // The top bar's chip opens Uyarılar.
+    assert.equal(await page.locator(".desktop-tools .chip").getAttribute("href"), "#/uyarilar");
     await page.context().close();
     // Erişim that cannot be read (any failure, a 404 too) says so and waits for the server.
     h.status["/api/konsol/erisim"] = 404;

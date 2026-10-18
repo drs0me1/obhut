@@ -1,5 +1,5 @@
-// What needs the operator (rebuild phase 5): one list for Genel Bakış' Dikkat card and the top bar's chip, so
-// both say the same thing and lead to the same place. A failed or warning health check leads to Sistem →
+// What needs the operator (rebuild phase 5): one list for Uyarılar (the page the top bar's count opens) and the
+// count itself, so both say the same thing. A failed or warning health check leads to Sistem →
 // Sağlık (its repair is there), an Erişim warning to where its `duzelt` says (an access row's sheet, an
 // application, the Tailscale tab), an application that does not run fully to its page. A newer image of an
 // application is news, not a problem: it is listed (tone "accent") but not counted in the chip.
@@ -63,11 +63,10 @@ export const problemList = computed<Problem[]>(() => {
   return out.map((p, i) => [p, i] as const).sort((a, b) => RANK[a[0].tone] - RANK[b[0].tone] || a[1] - b[1]).map(([p]) => p);
 });
 
-/** The top bar's chip: how many problems (news left out), how serious, and where the most serious one is;
-    null while health is unknown. Nothing to fix leads to Sistem → Sağlık. */
+/** The top bar's chip: how many problems (news left out) and how serious; null while health is unknown. */
 export const problemSummary = computed(() => {
   if (!live.saglik) return null;
   const real = problemList.value.filter((p) => p.tone !== "accent");
   const level = real.some((p) => p.tone === "danger") ? "danger" : real.length ? "warning" : "ok";
-  return { count: real.length, level, to: real[0]?.to ?? systemRoute("saglik") } as const;
+  return { count: real.length, level } as const;
 });

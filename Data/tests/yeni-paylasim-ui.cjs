@@ -76,7 +76,6 @@ const data = {
   uygulamalar: uygulamalar(APPS),
   adlar: { revizyon: "rev-1", alan: "ev", hatalar: [], adlar: [{ ad: "panel.ev", aile: 4, hedef: "tailscale", kaynak: "base", satir: "panel" }],
     kayitlar: [], yonlendirme: false, sunucular: [] },
-  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048 },
   onarim: { calisiyor: false, kurulu: true, baslatilabilir: true, rapor: null },
   depolama: { read_at: NOW, kok: "/srv", kullananlar: [], hatalar: [] },
 };

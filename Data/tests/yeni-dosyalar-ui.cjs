@@ -63,8 +63,6 @@ const data = {
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null }, internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
       wireguard: { kurulu: false, durduruldu: false, aglar: [] }, sertifikalar: [] } },
   uygulamalar: uygulamalar(APPS),
-  // Genel Bakış (the head's "Genel Bakış" button leads there) reads the live rate too.
-  ag: { read_at: NOW, sampled_at: null, rx: null, tx: null, uygulamalar: [] },
   paylasim: SHARES,
   depolama: STORAGE,
 };

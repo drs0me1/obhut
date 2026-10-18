@@ -1,11 +1,10 @@
 /* Konsol's shell at / (DD-258, phase 1; DD-267) and Genel Bakış (rebuild phase 5): the committed build under
    Data/console/yeni with the real CSP from Data/templates/Caddyfile on every page response, fixture APIs, and the
    event stream served by the suite's own static server (yeni-harness.cjs) so that it can stay open and push
-   events. Genel Bakış: Dikkat with each problem's place (a health check → Sistem → Sağlık, an Erişim warning →
-   its row, an application → its page; a newer image listed, not counted), the calm state, the applications
-   (state, address, Aç, Ayrıntı), the access summary with a chip per opening to the internet, resources, the
-   network with the busiest applications (read every 5 s only while shown and visible), the server; the top
-   bar's chip goes where the most serious problem is. The frame (rebuild phase 5): the palette (sections, tabs,
+   events. Uyarılar (the top bar's count opens it): each problem's place (a health check → Sistem → Sağlık, an
+   Erişim warning → its row, an application → its page; a newer image listed, not counted), the calm state. Genel
+   Bakış: the applications (state, address, Aç, Ayrıntı); the resources and the server's facts in the sidebar's
+   cards at its foot. The frame (rebuild phase 5): the palette (sections, tabs,
    applications, access rows by name, "Uygulama ekle", "Adres aç", the theme), İşlemler (application and cleanup
    jobs, the pending change), the pending banner naming every timed change, and the top bar's theme button (A7: no
    Görünüm tab). Fails on any console error, CSP violation or page error. Never contacts a server.
@@ -24,7 +23,6 @@ const data = {
     { id: "tailscale", name: "Tailscale", status: "ok", detail: "çalışıyor" }] },
   // Two applications; the sidebar counts every item of the list.
   uygulamalar: uygulamalar([uygulama("notlar"), uygulama("medya")]),
-  ag: { read_at: 1791845000, sampled_at: 1791845000, rx: 1024, tx: 2048, uygulamalar: [] },
   guncelleme: { kurulu: "2026.08.06-v2-242", kurulu_surum: "1.0.0", son: "2026.08.06-v2-242", son_surum: "1.0.0", commit: "0".repeat(40), yeni: false, denetlendi: 1791845000, hata: "",
     is: { durum: "tamam", hedef: "", mesaj: "", bitis: 0, asama: "" }, baslatilabilir: true },
   bekleyen: { bekleyen: null },
@@ -86,12 +84,11 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     const chip = page.locator(".desktop-tools .chip");
     assert.equal(await chip.innerText(), "2 konu", "one health error and one Erişim warning");
     assert.match(await chip.getAttribute("class"), /chip-danger/);
-    assert.equal(await chip.getAttribute("href"), "#/sistem", "the most serious problem's place");
+    assert.equal(await chip.getAttribute("href"), "#/uyarilar", "the count opens Uyarılar");
     assert.equal(await page.getByTestId("tailscale").innerText(), "Tailscale bağlı");
     assert.match(await page.getByTestId("tailscale").getAttribute("class"), /is-ok/);
     assert.equal(await page.getByTestId("version").innerText(), "Obhut 1.0.0 · güncel");
-    // Genel Bakış starts with what needs attention (covered below).
-    assert.equal(await page.locator("#saglik-baslik").innerText(), "Dikkat · 2", "the same two topics as the chip");
+    assert.equal(await page.locator(".problem").count(), 0, "Genel Bakış carries no attention card: Uyarılar is the one list (covered below)");
     assert.equal(await page.locator(".pending").count(), 0);
     assert.equal(await page.getByRole("button", { name: "İşlemler", exact: true }).count(), 1);
     assert.deepEqual(await page.locator("body *").evaluateAll((els) => els.filter((e) => e.hasAttribute("style")).map((e) => e.tagName)), [], "no style attributes");
@@ -127,7 +124,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     await badge(page, "sistem").waitFor({ state: "detached" });
     await chip.filter({ hasText: /^1 konu$/ }).waitFor();
     assert.match(await chip.getAttribute("class"), /chip-warning/, "only Erişim's warning is left");
-    assert.equal(await chip.getAttribute("href"), "#/erisim", "a warning without its own place leads to Erişim");
+    assert.equal(await chip.getAttribute("href"), "#/uyarilar", "the count opens Uyarılar whatever is left");
     push("kaynaklar", { ...data.kaynaklar, domain: "ev2" });
     await page.locator(".brand-host").filter({ hasText: "sunucu · panel.ev2" }).waitFor();
     // Unknown events and comments are ignored; data split over several lines is joined.
@@ -309,9 +306,9 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert.equal(await page.evaluate(() => document.activeElement.id), "icerik");
     await page.context().close();
 
-    // ================= Genel Bakış: Dikkat with each problem's place, the applications, the access summary, the cards
+    // ================= Uyarılar (the top bar's count) with each problem's place; Genel Bakış: the cards above the applications
     {
-      const saved = { saglik: data.saglik, uygulamalar: data.uygulamalar, erisim: data.erisim, ag: data.ag };
+      const saved = { saglik: data.saglik, uygulamalar: data.uygulamalar, erisim: data.erisim };
       const NOTLAR = "uygulama:notlar:web:8080/tcp", MEDYA = "uygulama:medya:web:8096/tcp", KUTU = "uygulama:kutu:app:9000/udp";
       const enc = (id) => new URLSearchParams({ satir: id }).toString().slice("satir=".length);
       const cell = (durum, adresler = [], not = "", uyari = "") => ({ durum, adresler, not, uyari });
@@ -349,11 +346,12 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       data.saglik = { status: "bad", read_at: 1791844900, checks: [BAD, ...OK] };
       data.erisim = erisim();
       data.uygulamalar = uygulamalar(apps());
-      data.ag = { read_at: 1791845000, sampled_at: 1791845000, rx: 3145728, tx: 348160, uygulamalar: [{ ad: "medya", indirme: 2097152, yukleme: 20480 },
-        { ad: "notlar", indirme: 4096, yukleme: 1024 }] };
       page = await newPage();
-      await page.goto(new URL("/#/genel", base).href);
-      await page.locator("#saglik-baslik").filter({ hasText: "Dikkat · 6" }).waitFor();
+      await page.goto(new URL("/#/uyarilar", base).href);
+      assert.equal(await page.locator("main h1").innerText(), "Uyarılar");
+      await page.getByTestId("page-desc").filter({ hasText: "5 konu dikkat istiyor · 1 haber" }).waitFor();
+      assert.deepEqual(await page.locator('.sidebar .nav-item[aria-current="true"] .nav-label').allInnerTexts(), ["Genel Bakış"], "a page under Genel Bakış");
+      await page.locator("#uyari-baslik").filter({ hasText: "Dikkat · 6" }).waitFor();
       const problems = page.locator(".problem");
       await page.locator('.problem[data-kind="uygulama"]').first().waitFor();
       assert.deepEqual(await problems.evaluateAll((els) => els.map((e) => [e.dataset.kind, e.className.replace("problem problem-", "")])), [
@@ -372,6 +370,18 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       assert.equal(await page.getByRole("button", { name: "Denetle ve onar" }).count(), 0, "the repair is Sistem → Sağlık's");
       const topChip = page.locator(".desktop-tools .chip");
       assert.equal(await topChip.innerText(), "5 konu", "news is not counted");
+      assert(await noHorizontalScroll(page));
+      await shot(page, "1440-light-uyarilar.png", true);
+      // Each problem's link goes to its place; the chip comes back here from any page.
+      await problems.nth(1).locator('[data-eylem="duzelt"]').click();
+      await page.waitForURL((u) => u.hash === "#/uygulamalar/kutu");
+      await topChip.click();
+      await page.waitForURL((u) => u.hash === "#/uyarilar");
+      await page.locator("#uyari-baslik").filter({ hasText: "Dikkat · 6" }).waitFor();
+      // Genel Bakış: no attention card; resources and the network, then the applications.
+      await page.goto(new URL("/#/genel", base).href);
+      await page.locator(".app-card").first().waitFor();
+      assert.equal(await page.locator(".problem, #uyari-baslik").count(), 0, "the problems are Uyarılar', not a card here");
       // Applications: state, address, Aç for one that runs with an address, Ayrıntı.
       assert.deepEqual(await page.locator(".app-card").evaluateAll((els) => els.map((e) => e.dataset.uygulama)), ["notlar", "medya", "kutu", "yedek"]);
       assert.equal(await page.getByTestId("all-apps").innerText(), "Tümü (4)");
@@ -385,51 +395,35 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
         a.getAttribute("href"), a.getAttribute("target"), a.getAttribute("rel")])),
       [["notlar", "http://notlar.ev", "_blank", "noopener noreferrer"], ["medya", "http://medya.ev", "_blank", "noopener noreferrer"]], "a stopped one has nothing to open");
       assert.equal(await card("notlar").getByRole("link", { name: "notlar ayrıntıları" }).getAttribute("href"), "#/uygulamalar/notlar");
-      // The access summary: counts and a chip for whatever is open to the internet, each leading to its row.
-      const summary = page.getByTestId("access-summary");
-      assert.deepEqual(await summary.locator(".stat").evaluateAll((els) => els.map((e) => [e.querySelector("dt").textContent, e.querySelector("dd").textContent])), [
-        ["Tailscale adresi", "3"], ["internet adı", "1"], ["internete açık doğrudan port", "1"], ["Tailscale'de doğrudan port", "1"], ["WireGuard ağı açık", "1"]]);
-      assert.deepEqual(await summary.locator(".access-chip").evaluateAll((as) => as.map((a) => [a.textContent.trim(), a.getAttribute("href"), a.className.replace("access-chip ", "")])), [
-        ["notlar · notlar.example.org", `#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`, "access-chip-accent"],
-        ["medya · 8096/TCP doğrudan", `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`, "access-chip-warning"],
-        ["Paylaşımlar · http://203.0.113.10:61010", "#/erisim?sekme=adresler&satir=paylasim", "access-chip-warning"]], "SSH has no row: no chip");
-      assert.equal(await summary.getByRole("link", { name: "Erişim'e git" }).getAttribute("href"), "#/erisim");
-      // Resources, the network with the busiest applications, the server.
-      assert.equal(await page.getByTestId("cpu").innerText(), "%2");
-      assert.equal(await page.getByTestId("memory").innerText(), "668 MB / 7,7 GB");
-      assert.equal(await page.getByTestId("disk").innerText(), "11,8 GB / 233,5 GB");
-      await page.getByTestId("rx").filter({ hasText: "3 MB/s" }).waitFor();
-      assert.equal(await page.getByTestId("tx").innerText(), "340 KB/s");
-      assert.equal(await page.getByTestId("network").locator(".pill").innerText(), "Canlı");
-      const busiest = page.getByTestId("net-apps");
-      assert.deepEqual(await busiest.locator("li").evaluateAll((els) => els.map((e) => e.dataset.uygulama)), ["medya", "notlar"]);
-      assert.deepEqual(await busiest.locator('li[data-uygulama="medya"] .net-app-rate').evaluateAll((els) => els.map((e) => e.textContent)), ["↓İndirme 2 MB/s", "↑Yükleme 20 KB/s"]);
-      assert.equal(await busiest.getByRole("link", { name: "medya" }).getAttribute("href"), "#/uygulamalar/medya");
-      assert.deepEqual(await page.getByTestId("server").locator("dd").allInnerTexts(), ["Debian GNU/Linux 13 (trixie)", "5 gün", "100.64.0.2", "203.0.113.10", "1.0.0 · güncel"]);
+      // The page holds the applications only; the resources and the server's facts are the sidebar's cards at its foot.
+      assert.equal(await page.locator(".overview > .card").count(), 1, "the applications card alone");
+      assert.equal(await page.getByTestId("network").count(), 0, "no network card: each application's network is its row in Uygulamalar");
+      const side = page.locator(".sidebar");
+      assert.equal(await side.getByTestId("cpu").innerText(), "%2");
+      assert.equal(await side.getByTestId("memory").innerText(), "668 MB / 7,7 GB");
+      assert.equal(await side.getByTestId("disk").innerText(), "11,8 GB / 233,5 GB");
+      assert.deepEqual(await side.getByTestId("server").locator("dd").allInnerTexts(), ["Debian GNU/Linux 13 (trixie)", "5 gün", "100.64.0.2", "203.0.113.10"]);
+      const foot = await side.evaluate((el) => [el.getBoundingClientRect().bottom, el.querySelector('[data-testid="side-card"]').getBoundingClientRect().bottom]);
+      assert(foot[0] - foot[1] < 40 && foot[0] - foot[1] >= 0, "the cards sit at the sidebar's foot");
+      assert.equal(await page.getByTestId("access-summary").count(), 0, "no access summary: the counts are Erişim's");
       assert.deepEqual(await page.locator("body *").evaluateAll((els) => els.filter((e) => e.hasAttribute("style")).map((e) => e.tagName)), [], "no style attributes");
       assert(await noHorizontalScroll(page));
-      await shot(page, "1440-light-genel-dikkat.png", true);
-      // The chip goes where the most serious problem is.
-      await topChip.click();
-      await page.waitForURL((u) => u.hash === "#/sistem");
-      await page.goto(new URL("/#/genel", base).href);
-      await problems.nth(1).locator('[data-eylem="duzelt"]').click();
-      await page.waitForURL((u) => u.hash === "#/uygulamalar/kutu");
+      await shot(page, "1440-light-genel.png", true);
       await page.context().close();
-      // Without a health problem the chip leads to the failed application.
+      // Without a health problem the count drops; the chip still opens Uyarılar.
       data.saglik = { status: "ok", read_at: 1791844900, checks: [{ ...BAD, status: "ok" }, ...OK] };
       page = await newPage();
-      await page.goto(new URL("/#/genel", base).href);
-      await page.locator("#saglik-baslik").filter({ hasText: "Dikkat · 5" }).waitFor();
+      await page.goto(new URL("/#/uyarilar", base).href);
+      await page.locator("#uyari-baslik").filter({ hasText: "Dikkat · 5" }).waitFor();
       await page.locator(".desktop-tools .chip").filter({ hasText: "4 konu" }).waitFor();
-      assert.equal(await page.locator(".desktop-tools .chip").getAttribute("href"), "#/uygulamalar/kutu");
+      assert.equal(await page.locator(".desktop-tools .chip").getAttribute("href"), "#/uyarilar");
       await page.context().close();
 
       // The frame with access rows: the palette names each row (an address by its Tailscale name, a raw port by its
       // application and port) and opens its sheet; "Uygulama ekle" and "Adres aç" open their flows.
       page = await newPage();
       await page.goto(new URL("/#/genel", base).href);
-      await page.locator(".access-chip").first().waitFor();
+      await page.locator(".app-card").first().waitFor();
       await page.keyboard.press("Control+K");
       const pal = page.getByRole("dialog", { name: "Komut paleti" });
       const palInput = pal.getByRole("combobox");
@@ -512,58 +506,17 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
         row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"]), web: { tail: true, enabled: true, domain: "" } })],
         ozet: { ...erisim().ozet, wireguard: { kurulu: true, durduruldu: false, aglar: [] }, sertifikalar: [] } });
       data.uygulamalar = uygulamalar([uygulama("notlar")]);
-      data.ag = { read_at: 1791845000, sampled_at: 1791845000, rx: 1024, tx: 2048, uygulamalar: [] };
       page = await newPage();
-      await page.goto(new URL("/#/genel", base).href);
-      await page.locator("#saglik-baslik").filter({ hasText: "Her şey yolunda" }).waitFor();
+      await page.goto(new URL("/#/uyarilar", base).href);
+      await page.locator("#uyari-baslik").filter({ hasText: "Her şey yolunda" }).waitFor();
       await page.getByTestId("health-sub").filter({ hasText: "3 denetim sorunsuz · son denetim 1 dakika önce" }).waitFor();
+      await page.getByTestId("page-desc").filter({ hasText: "Dikkat isteyen konu yok" }).waitFor();
       assert.equal(await page.locator(".problem").count(), 0);
       assert.equal(await page.locator(".desktop-tools .chip").innerText(), "Her şey yolunda");
-      assert.equal(await page.locator(".desktop-tools .chip").getAttribute("href"), "#/sistem");
-      assert.equal(await page.getByTestId("nothing-open").innerText(), "İnternete açık hiçbir şey yok.");
-      assert.deepEqual(await page.getByTestId("access-summary").locator(".stat dd").allInnerTexts(), ["2", "0", "0", "0", "—"]);
-      assert.equal(await page.getByTestId("access-summary").locator('[data-stat="wireguard"] dt').innerText(), "WireGuard kapalı");
-      assert.equal(await page.getByTestId("net-apps").count(), 0, "no busy application");
-      await shot(page, "1440-light-genel-sakin.png");
-      await page.context().close();
-
-      // The network card reads every 5 s only while Genel Bakış is shown and the tab visible.
-      page = await newPage({}, { clock: true });
+      assert.equal(await page.locator(".desktop-tools .chip").getAttribute("href"), "#/uyarilar");
       await page.goto(new URL("/#/genel", base).href);
-      await page.getByTestId("rx").filter({ hasText: "1 KB/s" }).waitFor();
-      await page.waitForTimeout(100);
-      const n0 = count("ag");
-      await page.clock.runFor(5000);
-      await waitFor(() => count("ag") === n0 + 1, "a read after 5 s");
-      await page.clock.runFor(5000);
-      await waitFor(() => count("ag") === n0 + 2, "another after 10 s");
-      const visibility = (hidden) => page.evaluate((value) => {
-        Object.defineProperty(document, "hidden", { configurable: true, get: () => value });
-        document.dispatchEvent(new Event("visibilitychange"));
-      }, hidden);
-      await visibility(true);
-      await page.clock.runFor(15000);
-      await page.waitForTimeout(150);
-      assert.equal(count("ag"), n0 + 2, "no reads while the tab is hidden");
-      await visibility(false);
-      await waitFor(() => count("ag") === n0 + 3, "a read as soon as the tab is visible again");
-      // A failed read says so and is no longer live; the next one that answers clears it.
-      expectedFailures = ["/api/konsol/ag"];
-      status["/api/konsol/ag"] = 503;
-      await page.clock.runFor(5000);
-      await page.getByTestId("net-error").filter({ hasText: "Ağ bilgisi okunamadı." }).waitFor();
-      assert.equal(await page.getByTestId("network").locator(".pill").count(), 0, "not live while the reads fail");
-      delete status["/api/konsol/ag"];
-      await page.clock.runFor(5000);
-      await page.getByTestId("net-error").waitFor({ state: "detached" });
-      await page.getByTestId("network").locator(".pill").filter({ hasText: "Canlı" }).waitFor();
-      expectedFailures = [];
-      const n1 = count("ag");
-      await page.locator('.sidebar [data-nav="uygulamalar"]').click();
-      await page.waitForURL((u) => u.hash === "#/uygulamalar");
-      await page.clock.runFor(15000);
-      await page.waitForTimeout(150);
-      assert.equal(count("ag"), n1, "no reads on another page");
+      await page.locator(".app-card").first().waitFor();
+      await shot(page, "1440-light-genel-sakin.png");
       await page.context().close();
 
       // A clean server: no applications yet.
@@ -584,13 +537,13 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       for (const colorScheme of ["light", "dark"]) {
         page = await newPage({ colorScheme });
         await page.goto(new URL("/#/genel", base).href);
-        await page.locator(".access-chip").first().waitFor();
+        await page.locator(".app-card").first().waitFor();
         assert(await noHorizontalScroll(page));
         await shot(page, `1440-${colorScheme}-genel-tam.png`, true);
         await page.context().close();
         page = await newPage({ colorScheme, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
         await page.goto(new URL("/#/genel", base).href);
-        await page.locator(".access-chip").first().waitFor();
+        await page.locator(".app-card").first().waitFor();
         const tiles = await page.locator(".app-card").evaluateAll((els) => els.slice(0, 2).map((e) => Math.round(e.getBoundingClientRect().top)));
         assert.equal(tiles[0], tiles[1], "two tiles per row");
         assert(await noHorizontalScroll(page), "390 genel");
@@ -600,7 +553,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
         await tile.tap({ position: { x: tileBox.width - 14, y: 14 } });
         await page.waitForURL((u) => u.hash === "#/uygulamalar/kutu");
         await page.goto(new URL("/#/genel", base).href);
-        await page.locator(".access-chip").first().waitFor();
+        await page.locator(".app-card").first().waitFor();
         await page.setViewportSize({ width: 320, height: 640 });
         await page.waitForFunction(() => innerWidth === 320);
         await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -847,9 +800,9 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
 
     assert.deepEqual(errors, []);
     console.log("PASS: Konsol shell (build matches its sources, licence banner) under the production CSP — sidebar counts (Uygulamalar 2, Sistem 1 danger, Erişim 1 warning), problem chip, " +
-      "Tailscale and version card, Genel Bakış (Dikkat ordered with each problem's place and the chip following the most serious one, news " +
-      "not counted, the calm state, applications with their address, Aç and Ayrıntı, the access summary's counts and chips to their rows, the " +
-      "busiest applications, network reads every 5 s only while shown and visible, a failed read, no applications, phone tiles), event stream (X-Konsol fetch, multi-line data, unknown events, kapat → immediate reconnect), activity drawer " +
+      "Tailscale and version card, Uyarılar (ordered with each problem's place, the chip opening it, news not counted, the calm state), " +
+      "Genel Bakış (the applications with their address, Aç and Ayrıntı; the resources and the server's facts in the sidebar's cards at its foot, " +
+      "no network card, no applications, phone tiles), event stream (X-Konsol fetch, multi-line data, unknown events, kapat → immediate reconnect), activity drawer " +
       "(focus trap, Esc, focus return, finished job reloads the applications, the pending change named with its phase, a cleanup job's reason), " +
       "pending banner naming every timed change (an access row, WireGuard, the local domain, a fixed row, the firewall or names) with local " +
       "countdown and phases, palette (Ctrl+K/Meta+K, groups, İŞ/ıs/is, ↑↓, Enter to a page, access rows by name opening their panel, Uygulama " +

@@ -1,6 +1,5 @@
 <!-- The top bar's tools (DD-258): search (opens the command palette, ⌘K / Ctrl+K), the problem count that
-     leads to where the most serious problem is (problems.ts: an access row, a tab, an application, Sistem →
-     Sağlık), the running jobs (İşlemler) and the theme (A7: sistem → açık → koyu, its new choice announced). On a
+     opens Uyarılar (problems.ts: the one list, each with its place), the running jobs (İşlemler) and the theme (A7: sistem → açık → koyu, its new choice announced). On a
      phone the bar is compact: icons, the count, the theme and, only while a job runs, the activity button. -->
 <script setup lang="ts">
 import { computed, ref } from "vue";
@@ -8,7 +7,7 @@ import { RouterLink } from "vue-router";
 import { Icon } from "./icons";
 import { runningJobs } from "../live";
 import { problemSummary } from "../problems";
-import { systemRoute } from "../sections";
+import { PROBLEMS } from "../router";
 import { openSurface, ui } from "../ui";
 import { nextTheme, setTheme, theme, themeText } from "../theme";
 
@@ -19,9 +18,9 @@ const shortcut = isMac ? "⌘K" : "Ctrl K";
 
 const chip = computed(() => {
   const p = problemSummary.value;
-  if (!p) return { level: "unknown", text: "Durum —", short: "—", label: "Sunucunun durumu bilinmiyor", to: systemRoute("saglik") };
-  if (p.count === 0) return { level: "ok", text: "Her şey yolunda", short: "", label: "Her şey yolunda", to: p.to };
-  return { level: p.level, text: `${p.count} konu`, short: String(p.count), label: `${p.count} konu dikkat istiyor`, to: p.to };
+  if (!p) return { level: "unknown", text: "Durum —", short: "—", label: "Sunucunun durumu bilinmiyor" };
+  if (p.count === 0) return { level: "ok", text: "Her şey yolunda", short: "", label: "Her şey yolunda" };
+  return { level: p.level, text: `${p.count} konu`, short: String(p.count), label: `${p.count} konu dikkat istiyor` };
 });
 
 const running = computed(() => runningJobs.value.length);
@@ -64,7 +63,7 @@ function stepTheme(): void {
       <Icon name="search" />
     </button>
     <RouterLink
-      :to="chip.to"
+      :to="PROBLEMS"
       class="chip"
       :class="'chip-' + chip.level"
       :aria-label="props.compact ? chip.label : undefined"

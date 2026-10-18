@@ -127,14 +127,11 @@ PORT_ROWS = (
 CHANNEL_HEADER = "X-Konsol-Kanal"
 PUBLIC_CACHE_SECONDS = 5
 TAILNET_RANGES = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
-# DD-206: Genel bakış'ın ağ kartı. WAN arayüzünün bayt sayaçları dosyadan okunur (dış komut yok):
-# arka plan örnekleyicisi her SAMPLE_SECONDS'te, kart açıkken her istekte en çok NET_STEP_SECONDS
-# arayla hızı yeniden ölçer; NET_WINDOW_SECONDS saniyeden eski bir ölçüm gösterilmez.
+# Her uygulamanın hızı kendi köprüsünün bayt sayaçlarından okunur (dosyadan, dış komut yok; DD-206'nın yolu, DD-287):
+# arka plan örnekleyicisi her SAMPLE_SECONDS'te en çok NET_STEP_SECONDS arayla hızı yeniden ölçer;
+# NET_WINDOW_SECONDS saniyeden eski bir ölçüm gösterilmez. Sayaçların kendisi toplam geçen veridir.
 NET_STEP_SECONDS = 1.5
 NET_WINDOW_SECONDS = 120
-# The operator's decision (2026-10-17): each application's rate is read the same way from its own bridge's counters;
-# Genel Bakış' network card lists at most this many of the busiest.
-NET_APPS_LIMIT = 5
 SYS_NET = "/sys/class/net"
 # DD-261: at most one background image-update check (DD-214) a minute from the read model.
 UPDATE_KICK_SECONDS = 60
@@ -408,11 +405,8 @@ class Panel:
         self.attempts = master_auth.Attempts()
         self.public_cache = (-PUBLIC_CACHE_SECONDS, False)
         self.public_lock = threading.Lock()
-        # DD-206: WAN'ın son hız ölçümü.
+        # Per application (DD-287): {app: (interface, monotonic, rx, tx)} and {app: {"t", "indirme", "yukleme"}}.
         self.net_lock = threading.Lock()
-        self.net_prev = None
-        self.net_last = None
-        # Per application: {app: (interface, monotonic, rx, tx)} and {app: {"t", "indirme", "yukleme"}}.
         self.app_net_prev = {}
         self.app_net_last = {}
         self.containers = master_container_manager.Service(self, rates=self.app_rates)
@@ -657,12 +651,11 @@ class Panel:
         return REBOOT_DELAY_SECONDS
 
     def sample_resources_forever(self):
-        """Host resource sampling: the CPU, the WAN rate and each application's bridge rate."""
+        """Host resource sampling: the CPU and each application's bridge rate."""
         while True:
             try:
                 self.sample_system()
                 env = read_env(self.args.state)
-                self.net_sample(env)
                 self.app_net_sample(env)
             except Exception as err:
                 print("panel: sistem ölçülemedi (%s)" % err, flush=True)
@@ -691,39 +684,15 @@ class Panel:
         with self.sys_lock:
             self.cpu_sample = {"t": int(time.time()), "cpu": round(cpu, 1)}
 
-    # -- ağ (DD-206)
+    # -- ağ (DD-287: each application's bridge; the WAN rate of DD-206 went with Genel Bakış' network card)
     @staticmethod
     def net_counters(iface):
-        """WAN arayüzünün alınan ve gönderilen bayt sayaçları (çekirdeğin sysfs dosyalarından)."""
+        """Bir arayüzün alınan ve gönderilen bayt sayaçları (çekirdeğin sysfs dosyalarından)."""
         values = []
         for name in ("rx_bytes", "tx_bytes"):
             with open("%s/%s/statistics/%s" % (SYS_NET, iface, name), "rb") as fh:
                 values.append(int(fh.read(32).strip()))
         return values
-
-    def net_sample(self, env):
-        """Measures the WAN rate (bytes/s) again when at least NET_STEP_SECONDS passed since the last reading."""
-        iface = env.get("WAN_INTERFACE", "")
-        if not IFACE_RE.fullmatch(iface) or iface in (".", ".."):
-            return
-        try:
-            rx, tx = self.net_counters(iface)
-        except (OSError, ValueError):
-            return
-        mono = time.monotonic()
-        with self.net_lock:
-            prev = self.net_prev
-            if prev is not None and prev[0] == iface:
-                span = mono - prev[1]
-                if span < NET_STEP_SECONDS:
-                    return
-                # A baseline older than three background samples (a stalled sampler) gives no rate.
-                if span <= 3 * max(SAMPLE_SECONDS, NET_STEP_SECONDS):
-                    self.net_last = {"t": int(time.time()), "rx": int(max(0, rx - prev[2]) / span),
-                                     "tx": int(max(0, tx - prev[3]) / span)}
-            elif prev is not None:
-                self.net_last = None  # another interface: its rate does not belong here
-            self.net_prev = (iface, mono, rx, tx)
 
     def app_net_sample(self, env):
         """Each application's rate (bytes/s) from its own bridge, the interface master_generator.interface_name gives,
@@ -769,29 +738,17 @@ class Panel:
                 self.app_net_prev[app] = (iface, mono, rx, tx)
 
     def app_rates(self):
-        """{app: {"indirme", "yukleme"}}: the applications' last rates, none older than NET_WINDOW_SECONDS."""
+        """{app: {"indirme", "yukleme", "toplam"}}: the applications' last rates, none older than NET_WINDOW_SECONDS,
+        each with the bridge's counters so far ("toplam": what passed since the bridge came up, the host's view)."""
         now = int(time.time())
         with self.net_lock:
-            return {app: {"indirme": r["indirme"], "yukleme": r["yukleme"]} for app, r in self.app_net_last.items()
-                    if r["t"] >= now - NET_WINDOW_SECONDS}
-
-    def network(self):
-        """GET /api/konsol/ag: the WAN rate and the busiest applications with traffic (none older than
-        NET_WINDOW_SECONDS)."""
-        env = read_env(self.args.state)
-        self.net_sample(env)
-        self.app_net_sample(env)
-        now = int(time.time())
-        with self.net_lock:
-            last = self.net_last
-        if last and last["t"] < now - NET_WINDOW_SECONDS:
-            last = None
-        busiest = sorted(((r["indirme"] + r["yukleme"], app, r) for app, r in self.app_rates().items()
-                          if r["indirme"] + r["yukleme"] > 0), key=lambda item: (-item[0], item[1]))
-        return {"read_at": now, "sampled_at": last["t"] if last else None, "rx": last["rx"] if last else None,
-                "tx": last["tx"] if last else None,
-                "uygulamalar": [{"ad": app, "indirme": r["indirme"], "yukleme": r["yukleme"]}
-                                for _total, app, r in busiest[:NET_APPS_LIMIT]]}
+            out = {}
+            for app, r in self.app_net_last.items():
+                prev = self.app_net_prev.get(app)
+                if r["t"] < now - NET_WINDOW_SECONDS or prev is None:
+                    continue
+                out[app] = {"indirme": r["indirme"], "yukleme": r["yukleme"], "toplam": {"indirme": prev[3], "yukleme": prev[2]}}
+            return out
 
     def meminfo(self):
         info = {}
@@ -2320,9 +2277,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 reply["tanim"] = definition
         self.json(200, reply)
-
-    def api_ag(self, query):
-        self.json(200, self.panel.network())
 
     def api_onarim(self, query):
         info = self.panel.repair_info()

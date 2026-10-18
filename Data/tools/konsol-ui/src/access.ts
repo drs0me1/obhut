@@ -1,6 +1,5 @@
 // How Erişim (DD-258; access rows since rebuild phase 4) names things everywhere: where a warning's fix leads,
-// which rows are access rows and how many of them are open where (Erişim's head, Genel Bakış' Erişim özeti),
-// what is open to the internet, an access row in words, and the name rules the row sheet checks before it asks
+// which rows are access rows and how many of them are open where (Erişim's head), an access row in words, and the name rules the row sheet checks before it asks
 // the server (the server checks them again).
 import { accessRoute } from "./sections";
 import type { ErisimSatiri, Hizmet, Uyari } from "./api/sema";
@@ -67,23 +66,6 @@ export function rowName(h: Hizmet, domain: string): string {
   if (h.satir?.tur === "ham" && key) return `${rowOwner(h)} · ${key.port}/${key.protokol.toUpperCase()}`;
   const label = h.tur === "konsol" ? "panel" : h.tur === "paylasim" ? "paylas" : h.satir?.tur === "adres" ? h.satir.ad : "";
   return label && domain ? `${label}.${domain}` : rowOwner(h);
-}
-
-/** Everything open to the internet that has a row in Adresler, in words, with whether it deserves a warning (a raw
-    port, an unencrypted connection, a name whose certificate is not ready). */
-export function internetOpenings(rows: readonly Hizmet[]): { id: string; text: string; warn: boolean }[] {
-  const out: { id: string; text: string; warn: boolean }[] = [];
-  for (const h of rows) {
-    const c = h.internet;
-    if (!isAccessRow(h) || !["acik", "kismen", "hata"].includes(c.durum)) continue;
-    const key = portKey(h.anahtar ?? "");
-    let detail = c.adresler[0] ?? "internet";
-    if (h.satir?.tur === "ham" && key) detail = `${h.satir.port}/${key.protokol.toUpperCase()} doğrudan`;
-    else if (h.satir?.tur === "adres" && h.satir.internet) detail = h.satir.internet;
-    else if (h.web?.enabled && h.web.domain) detail = h.web.domain;
-    out.push({ id: h.id, text: `${rowOwner(h)} · ${detail}`, warn: c.durum === "hata" || Boolean(c.uyari) || h.satir?.tur === "ham" });
-  }
-  return out;
 }
 
 /** An application port's row key ("<service>:<port>/<proto>") as its parts; null when it is not one. */

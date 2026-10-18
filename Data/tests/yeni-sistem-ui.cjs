@@ -167,7 +167,6 @@ const data = {
       internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, aglar: [] }, sertifikalar: [] } },
   uygulamalar: uygulamalar([uygulama("notlar", { guncelleme: "yeni", servisler: [{ ad: "web", durum: "calisiyor", imaj: "registry.example/notlar:1", guncelleme: "yeni" }] })]),
   onarim: repairState(),
-  ag: { read_at: NOW, sampled_at: NOW, rx: 1024, tx: 2048 },
   islemler: { items: AUDIT },
   gelismis: ADVANCED,
   "konteynerler/liste": resources(),
@@ -910,9 +909,9 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     data["konteynerler/liste"] = resources();
     data["gelismis/temizlik"] = cleanupView();
 
-    // ================= the shell: Genel Bakış leads here, the palette knows the new tabs
+    // ================= the shell: Uyarılar leads here, the palette knows the new tabs
     page = await newPage();
-    await page.goto(url("#/genel"));
+    await page.goto(url("#/uyarilar"));
     assert.equal(await page.getByRole("link", { name: "Tüm denetimler" }).getAttribute("href"), "#/sistem");
     await page.getByRole("link", { name: "Tüm denetimler" }).click();
     await page.waitForURL((u) => u.hash === "#/sistem");

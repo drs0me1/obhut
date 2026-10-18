@@ -1,14 +1,17 @@
-<!-- The sidebar (DD-258): wordmark and server, the six sections with their counts, and the connection and
-     version card. The phone shows the same content in the "Daha fazla" sheet. An open session on the
+<!-- The sidebar (DD-258): wordmark and server, the six sections with their counts and, at the foot, the resources
+     card (the CPU, the memory, the disk of the user area, whose path Dosyalar → Depolama names; DD-287) and the server card (the Tailscale connection, the system, how long
+     it has been up, its Tailscale and internet addresses, the Obhut version; DD-286). The phone shows the same
+     content in the "Daha fazla" sheet. An open session on the
      internet channel adds "Çıkış yap" (DD-205: the tailnet address has no sign-in). -->
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { Icon } from "./icons";
 import Wordmark from "./Wordmark.vue";
+import UsageBar from "./ui/UsageBar.vue";
 import { SECTIONS, type SectionId } from "../sections";
 import { apps, checkLevel, health, live, type Level } from "../live";
-import { UNKNOWN, fold, shortVersion } from "../format";
+import { UNKNOWN, bytes, fold, percent, shortVersion, uptime } from "../format";
 import { canSignOut, leave, loadSession } from "../pages/sistem/session";
 
 const emit = defineEmits<{ navigate: [to: SectionId] }>();
@@ -64,6 +67,32 @@ const tailscale = computed<{ level: Level | "unknown"; text: string; detail: str
   return { level: "unknown", text: `Tailscale ${UNKNOWN}`, detail: "" };
 });
 
+// ---- resources (each value checked: an event may carry only part of the object)
+const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const cpu = computed(() => {
+  const v = live.kaynaklar?.cpu;
+  return num(v) ? v : null;
+});
+const cores = computed(() => (num(live.kaynaklar?.cores) ? `${live.kaynaklar.cores} çekirdek` : UNKNOWN));
+const memory = computed(() => {
+  const m = live.kaynaklar?.mem;
+  if (!m || !num(m.total) || !num(m.used) || m.total <= 0) return null;
+  return { text: `${bytes(m.used)} / ${bytes(m.total)}`, value: (100 * m.used) / m.total };
+});
+const disk = computed(() => {
+  const d = live.kaynaklar?.disk;
+  if (!d || !num(d.total) || !num(d.free) || d.total <= 0) return null;
+  const used = Math.max(0, d.total - d.free);
+  return { text: `${bytes(used)} / ${bytes(d.total)}`, value: (100 * used) / d.total };
+});
+
+/** The server's facts under the connection: the system, how long it has been up, its addresses. */
+const server = computed(() => {
+  const k = live.kaynaklar;
+  const text = (v: unknown) => (typeof v === "string" && v ? v : UNKNOWN);
+  return { os: text(k?.os), uptime: uptime(k?.uptime), tailscale: text(k?.net?.tailscale), wan: text(k?.net?.wan) };
+});
+
 // DD-260: the version people see ("1.0.0"); the build number ("v2-242") when the server names none.
 const version = computed(
   () => live.kaynaklar?.surum || live.guncelleme?.kurulu_surum || shortVersion(live.kaynaklar?.version || live.guncelleme?.kurulu),
@@ -107,10 +136,36 @@ onMounted(() => void loadSession());
         </li>
       </ul>
     </nav>
+    <div class="side-card side-meters" data-testid="side-resources">
+      <span class="side-card-title">Kaynaklar</span>
+      <div class="meter-row">
+        <div class="meter-line"><span>İşlemci</span><strong data-testid="cpu">{{ cpu === null ? UNKNOWN : percent(cpu) }}</strong></div>
+        <UsageBar :value="cpu" />
+        <span class="meter-note">{{ cores }}</span>
+      </div>
+      <div class="meter-row">
+        <div class="meter-line"><span>Bellek</span><strong data-testid="memory">{{ memory ? memory.text : UNKNOWN }}</strong></div>
+        <UsageBar :value="memory ? memory.value : null" />
+      </div>
+      <div class="meter-row">
+        <div class="meter-line"><span>Disk</span><strong data-testid="disk">{{ disk ? disk.text : UNKNOWN }}</strong></div>
+        <UsageBar :value="disk ? disk.value : null" />
+      </div>
+    </div>
     <div class="side-card" data-testid="side-card">
       <span class="side-ts" :class="'is-' + tailscale.level" :title="tailscale.detail || undefined" data-testid="tailscale">
         <span class="dot" aria-hidden="true"></span>{{ tailscale.text }}
       </span>
+      <dl class="side-facts" data-testid="server">
+        <dt>Sistem</dt>
+        <dd>{{ server.os }}</dd>
+        <dt>Açık kalma</dt>
+        <dd>{{ server.uptime }}</dd>
+        <dt>Tailscale</dt>
+        <dd class="mono">{{ server.tailscale }}</dd>
+        <dt>İnternet</dt>
+        <dd class="mono">{{ server.wan }}</dd>
+      </dl>
       <span data-testid="version">Obhut {{ version }}<template v-if="update"> · <span :class="{ 'side-fresh': update.fresh }">{{ update.text }}</span></template></span>
     </div>
     <button v-if="canSignOut" type="button" class="nav-item side-signout" data-testid="sign-out" @click="leave">

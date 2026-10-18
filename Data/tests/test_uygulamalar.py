@@ -251,10 +251,12 @@ class RouteTests(Fixture):
         self.assertEqual((answer["items"][0]["ag"], answer["items"][0]["adres"]), (None, "http://notlar.test"),
                          "no rate before the sampler measured one")
         self.p.app_net_last["notlar"] = {"t": int(time.time()), "indirme": 2048, "yukleme": 512}
+        self.p.app_net_prev["notlar"] = ("ksl-notlar", 0.0, 314572800, 1288490189)
+        rate = {"indirme": 2048, "yukleme": 512, "toplam": {"indirme": 1288490189, "yukleme": 314572800}}
         _, answer = self.call("uygulamalar", code=200)
-        self.assertEqual(answer["items"][0]["ag"], {"indirme": 2048, "yukleme": 512})
+        self.assertEqual(answer["items"][0]["ag"], rate, "the rate with the bridge's counters so far (DD-287)")
         _, detail = self.call("uygulama", "/api/konsol/uygulamalar/notlar", code=200)
-        self.assertEqual((detail["uygulama"]["ag"], detail["uygulama"]["adres"]), ({"indirme": 2048, "yukleme": 512}, "http://notlar.test"))
+        self.assertEqual((detail["uygulama"]["ag"], detail["uygulama"]["adres"]), (rate, "http://notlar.test"))
         # A raw port is no address.
         values = dict(self.values, STATE_FILE=str(self.state))
         rows = apps.Records(values).rows("notlar")

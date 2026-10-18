@@ -26,6 +26,11 @@
   gap: 22px;
 }
 
+/* The sidebar's content fills its height, so the two cards sit at the foot (DD-287). */
+.side {
+  min-height: 100%;
+}
+
 .brand {
   display: flex;
   flex-direction: column;
@@ -98,7 +103,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin: 6px 10px 0;
+  margin: -12px 10px 0;
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
@@ -156,6 +161,53 @@
   font-weight: 600;
 }
 
+/* The resources card at the foot (the server card follows it): compact meters. */
+.side-meters {
+  gap: 8px;
+  margin-top: auto;
+}
+
+.side-card-title {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.side-meters .meter-row {
+  gap: 4px;
+}
+
+.side-meters .meter-line {
+  font-size: 12.5px;
+}
+
+.side-meters .meter-note {
+  font-size: 12px;
+}
+
+/* The server's facts in the card: a label and its value on one line, the value wrapping under it when long. */
+.side-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 10px;
+  margin: 4px 0;
+  font-size: 12.5px;
+}
+
+.side-facts dt {
+  color: var(--muted);
+}
+
+.side-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.side-facts .mono {
+  font-size: 12px;
+}
+
 /* ---- page */
 .column {
   flex: 1 1 auto;
@@ -185,9 +237,11 @@
   margin-bottom: 24px;
 }
 
-/* "Geri" and "Genel Bakış", then the title (or the trail); on a narrow screen the title goes under them. */
+/* "Geri" and "Genel Bakış", then the title (or the trail); on a narrow screen the title goes under them. The
+   block takes the head's width before the tools, so a short title does not fold under the buttons. */
 .page-title {
   display: flex;
+  flex: 1 1 auto;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;

@@ -106,6 +106,11 @@ export function rateText(app: Pick<Uygulama, "ag">): string {
   return app.ag ? `↓ ${rate(app.ag.indirme)} · ↑ ${rate(app.ag.yukleme)}` : UNKNOWN;
 }
 
+/** What passed through the bridge since it came up (the list's footnote under the rate): "toplam ↓ 1,2 GB · ↑ 300 MB". */
+export function totalText(app: Pick<Uygulama, "ag">): string {
+  return app.ag ? `toplam ↓ ${bytes(app.ag.toplam.indirme)} · ↑ ${bytes(app.ag.toplam.yukleme)}` : "";
+}
+
 const ADDRESS_RE = /^https?:\/\/[^/\s]+/;
 
 /** The application's first address when it can be opened now (it runs, fully or in part); "" otherwise. */
