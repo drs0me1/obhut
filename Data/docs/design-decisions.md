@@ -48,10 +48,11 @@ longer applies and which entry replaced it.
   ports under the name, each cell every port's addresses with the state that matters most (a fault, else open),
   a warning from any of them. The name leads to the row in Adresler when there is one port, and to the
   application's own Erişim tab when there are more, since Adresler' panel is one row's.
-- **"Geri" and "Genel Bakış" in Dosyalar:** a page other sections link into asks the shell for them (`nav` in the
-  page head); "Geri" is the browser's back (the router keeps the page before in the history entry, so the button
-  is disabled on a direct open), "Genel Bakış" the section the sidebar's home icon names. Only Dosyalar asks: the
-  other sections are reached through the sidebar and the breadcrumb.
+- **"Geri" and "Genel Bakış" on every page:** the shell's page head starts with them, before the title or an
+  application's trail; "Geri" is the browser's back (the router keeps the page before in the history entry, so
+  the button is disabled on a direct open), "Genel Bakış" the section the sidebar's home icon names. First only
+  Dosyalar asked for them (a folder opened from an application's Depolama); the operator wanted them as the
+  standard of every window (v2-272).
 - **Tests:** the wording in every suite; the mapping's entries, colours and container ports, no chips and no
   update column; the merged rows, their ports line, links and cells; the way back from a folder.
 

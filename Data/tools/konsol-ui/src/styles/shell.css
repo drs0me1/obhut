@@ -185,11 +185,18 @@
   margin-bottom: 24px;
 }
 
+/* "Geri" and "Genel Bakış", then the title (or the trail); on a narrow screen the title goes under them. */
 .page-title {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
   min-width: 0;
+}
+
+.page-title > .trail,
+.page-title-text {
+  flex: 1 1 220px;
 }
 
 .page-title h1 {
@@ -199,13 +206,6 @@
 
 .page-title h1:focus {
   outline: none;
-}
-
-/* "Geri" and "Genel Bakış" before the title (Dosyalar). */
-.page-title-nav {
-  flex-direction: row;
-  align-items: center;
-  gap: 12px;
 }
 
 .page-nav {

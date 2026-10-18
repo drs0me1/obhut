@@ -259,6 +259,8 @@ async function noStyles(page, where) {
     await page.waitForURL((u) => u.hash === "#/uygulamalar/notlar");
     await page.locator("main h1").filter({ hasText: "notlar" }).waitFor();
     assert.equal(await page.evaluate(() => document.activeElement.tagName), "H1", "the application's heading has focus");
+    assert.equal(await page.getByTestId("page-back").isEnabled(), true, "Geri before the trail too: the head's buttons are on every page");
+    assert.equal(await page.getByTestId("page-home").getAttribute("href"), "#/genel");
     await page.context().close();
 
     // ================= Uygulamalar: summary, columns, the access mapping, rate, filters, search, all in the address

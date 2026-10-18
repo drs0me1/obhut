@@ -358,8 +358,8 @@ async function drop(page, files, type = "drop") {
     const tabs = page.getByRole("tablist", { name: "Dosyalar bölümleri" }).getByRole("tab");
     assert.deepEqual(await tabs.allInnerTexts(), ["Depolama", "Sunucu klasörleri", "Çöp kutusu", "Paylaşımlar", "Sistem dosyaları"]);
     assert.deepEqual(await page.locator('.sidebar .nav-item[aria-current="page"] .nav-label').allInnerTexts(), ["Dosyalar"]);
-    // The head's "Geri" and "Genel Bakış" before the title: a way back for a folder opened from elsewhere (an
-    // application's Depolama links here). Opened directly there is nothing to go back to.
+    // The head's "Geri" and "Genel Bakış" before every page's title: a way back for a folder opened from elsewhere
+    // (an application's Depolama links here). Opened directly there is nothing to go back to.
     assert.equal(await page.getByTestId("page-back").isDisabled(), true, "opened directly: no page before");
     assert.equal(await page.getByTestId("page-home").getAttribute("href"), "#/genel");
     await page.getByTestId("page-home").click();

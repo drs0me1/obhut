@@ -57,8 +57,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Erişim → Genel: an application is one row whatever its ports; its ports are listed under its name and each cell
   gathers every port's addresses. An application with one port still leads to its row in Adresler; one with more
   leads to its own Erişim tab, where each port links to its row.
-- Dosyalar: "Geri" and "Genel Bakış" buttons before the title, so a folder opened from an application's Depolama
-  (or any link into Dosyalar) has a way back inside Konsol, also when it runs without a browser bar.
+- "Geri" and "Genel Bakış" buttons before every page's title (and before an application's trail), so any page
+  reached through a link has a way back inside Konsol, also when it runs without a browser bar.
 
 ## [2.0.0] — 2026-10-18
 
