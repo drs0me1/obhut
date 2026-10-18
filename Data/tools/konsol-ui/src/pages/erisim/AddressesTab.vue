@@ -1,20 +1,21 @@
 <!-- Erişim → Adresler (rebuild phases 4 and 5): every access row from Erişim's read model, the one home of how a port
      is reached. "Adresler": Konsol, Paylaşımlar and each application port with an address (its Caddy row), with
-     its Tailscale name, Tailscale port, internet name and state. "Ham portlar": each application port without an
-     address, with its scope (Kapalı, Yalnız Tailscale, İnternet) and where it is reached. A switch or a scope
-     opens the row's sheet with that change made (AccessRowSheet: a closing goes straight to its plan, an opening
-     that needs a value asks for it first); "Ayrıntı" opens the sheet as it is and "Adres aç" gives a raw TCP port
-     a Tailscale name. The sheet is in the address (?satir=<row id>, ?kip=adres-ac), so Erişim's "Adres aç",
-     Genel Bakış, the matrix, the firewall's locked rows, an application's page and a locked local name open it. -->
+     its Tailscale name, Tailscale port, internet name and state. "Doğrudan portlar": each application port without an
+     address, with its scope (Kapalı, Yalnız Tailscale, İnternet) and where it is reached. A row's panel opens under
+     the row itself, one at a time (AccessRowPanel): a switch or a scope opens it with that change made (a closing
+     goes straight to its plan, an opening that needs a value asks for it first); "Ayrıntı" opens it as it is and
+     closes it again; "Adres aç" gives a raw TCP port a Tailscale name. The open panel is in the address
+     (?satir=<row id>, ?kip=adres-ac), so Erişim's "Adres aç", Genel Bakış, the matrix, the firewall's locked rows,
+     an application's page and a locked local name open it. While it applies, the table's controls wait. -->
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { Icon } from "../../components/icons";
 import EmptyState from "../../components/ui/EmptyState.vue";
 import StatusPill from "../../components/ui/StatusPill.vue";
 import Switch from "../../components/ui/Switch.vue";
 import type { Tone } from "../../components/ui/types";
-import AccessRowSheet, { type RowIntent, type RowMode, type RowOutcome } from "./AccessRowSheet.vue";
+import AccessRowPanel, { type RowIntent, type RowMode, type RowOutcome } from "./AccessRowPanel.vue";
 import { readNames } from "../../api/erisim";
 import { SCOPE_CHOICES, addressCandidates, isAccessRow, portKey, rowOwner } from "../../access";
 import { filesRoute } from "../../sections";
@@ -29,13 +30,16 @@ async function loadNames(): Promise<void> {
   try {
     names.value = await readNames();
   } catch {
-    // The server checks the names again; the sheet only cannot warn early.
+    // The server checks the names again; the panel only cannot warn early.
   }
 }
 onMounted(() => void loadNames());
 watch(() => live.ayarSurumu, () => void loadNames());
 
 const locked = computed(() => Boolean(live.bekleyen));
+/** An apply in the open panel: the table's controls wait until it ends. */
+const busy = ref(false);
+const hold = computed(() => locked.value || busy.value);
 const e = computed(() => live.erisim);
 const domain = computed(() => names.value?.alan || e.value?.alan || live.kaynaklar?.domain || "");
 const tailscaleV4 = computed(() => live.erisim?.ozet.tailscale.ipv4 || live.kaynaklar?.net?.tailscale || "");
@@ -90,13 +94,13 @@ const rawPort = (h: Hizmet) => {
   return `${h.satir.port !== k.port ? `${h.satir.port} → ` : ""}${k.port}/${k.protokol.toUpperCase()}`;
 };
 
-// ---- the sheet: ?satir=<row id> (a deep link opens it too) and ?kip=adres-ac
+// ---- the panel under its row: ?satir=<row id> (a deep link opens it too) and ?kip=adres-ac
 const satir = useQueryParam<string>("satir", null, "");
 const kip = useQueryParam<"" | "adres-ac">("kip", ["", "adres-ac"], "");
 const mode = computed<RowMode>(() => (kip.value === "adres-ac" ? "adres-ac" : "duzenle"));
 const intent = ref<RowIntent | null>(null);
-const sheetRow = computed(() => (satir.value ? accessRows.value.find((h) => h.id === satir.value) ?? null : null));
-const missingRow = computed(() => Boolean(satir.value && e.value && !sheetRow.value));
+const panelRow = computed(() => (satir.value ? accessRows.value.find((h) => h.id === satir.value) ?? null : null));
+const missingRow = computed(() => Boolean(satir.value && e.value && !panelRow.value));
 watch(satir, (id) => {
   if (!id) {
     kip.value = "";
@@ -105,19 +109,33 @@ watch(satir, (id) => {
 });
 
 function open(h: Hizmet, change: RowIntent | null = null, m: RowMode = "duzenle"): void {
-  if (locked.value) return;
+  if (hold.value) return;
   note.value = "";
   intent.value = change;
   kip.value = m === "adres-ac" ? "adres-ac" : "";
   satir.value = h.id;
 }
+/** Whether a row's panel is open in this mode ("Ayrıntı" or "Adres aç"). */
+const expanded = (h: Hizmet, m: RowMode = "duzenle") => satir.value === h.id && mode.value === m;
+/** "Ayrıntı" and "Adres aç" open the row's panel, or close it when it is open already. */
+function toggle(h: Hizmet, m: RowMode = "duzenle"): void {
+  if (expanded(h, m) && !intent.value) closeRow();
+  else open(h, null, m);
+}
 function pick(id: string): void {
   intent.value = null;
   satir.value = id;
 }
+/** Closing the panel gives the focus back to its row's "Ayrıntı". */
 function closeRow(): void {
+  const id = satir.value;
   satir.value = "";
+  busy.value = false;
+  void nextTick(() =>
+    document.querySelector<HTMLElement>(`[data-testid="addresses"] tr[data-satir="${CSS.escape(id)}"] [data-eylem="ayrinti"]`)?.focus(),
+  );
 }
+const PANEL_ID = "erisim-satir-paneli";
 
 const note = ref("");
 const OUTCOME: Record<RowOutcome, [string, string]> = {
@@ -127,8 +145,28 @@ const OUTCOME: Record<RowOutcome, [string, string]> = {
 };
 function rowApplied(result: AyarSonucu, outcome: RowOutcome): void {
   note.value = OUTCOME[outcome][result.pending ? 1 : 0];
-  satir.value = "";
+  closeRow();
 }
+const panelProps = computed(() => ({
+  row: panelRow.value,
+  mode: mode.value,
+  intent: intent.value,
+  rows: accessRows.value,
+  candidates: candidates.value,
+  names: names.value,
+  revision: e.value?.revizyon ?? "",
+  domain: domain.value,
+  wan: wanV4.value,
+  tailscaleIp: tailscaleV4.value,
+  locked: locked.value,
+}));
+const panelOn = {
+  close: closeRow,
+  mode: (m: RowMode) => (kip.value = m === "adres-ac" ? "adres-ac" : ""),
+  pick,
+  applied: rowApplied,
+  busy: (on: boolean) => (busy.value = on),
+};
 </script>
 
 <template>
@@ -165,7 +203,8 @@ function rowApplied(result: AyarSonucu, outcome: RowOutcome): void {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="h in addressRows" :key="h.id" :data-satir="h.id" :class="{ 'row-current': satir === h.id }">
+            <template v-for="h in addressRows" :key="h.id">
+            <tr :data-satir="h.id" :class="{ 'row-current': satir === h.id }">
               <th scope="row" class="col-main">
                 <strong>{{ rowOwner(h) }}</strong>
                 <span class="cell-sub">{{ subOf(h) }}</span>
@@ -174,7 +213,7 @@ function rowApplied(result: AyarSonucu, outcome: RowOutcome): void {
               <td data-label="Tailscale adı" data-hucre="tailscale">
                 <span class="sw-cell">
                   <span v-if="h.tur === 'konsol'" class="lock-line"><Icon name="lock" :size="14" />Hep açık</span>
-                  <Switch v-else :model-value="Boolean(tailName(h))" :label="`${rowOwner(h)} · Tailscale adı`" hide-label :disabled="locked"
+                  <Switch v-else :model-value="Boolean(tailName(h))" :label="`${rowOwner(h)} · Tailscale adı`" hide-label :disabled="hold"
                     @update:model-value="open(h, h.tur === 'paylasim' ? { kind: 'tail', on: $event } : { kind: 'kaldir' })" />
                   <span v-if="tailName(h)" class="mono cell-addr">{{ tailName(h) }}</span>
                 </span>
@@ -187,7 +226,7 @@ function rowApplied(result: AyarSonucu, outcome: RowOutcome): void {
                     <span v-if="shareTsPort(h)" class="mono cell-addr">{{ shareTsPort(h) }}</span>
                   </template>
                   <template v-else>
-                    <Switch :model-value="tsPortOf(h) !== null" :label="`${rowOwner(h)} · Tailscale portu`" hide-label :disabled="locked"
+                    <Switch :model-value="tsPortOf(h) !== null" :label="`${rowOwner(h)} · Tailscale portu`" hide-label :disabled="hold"
                       @update:model-value="open(h, { kind: 'ts-port', on: $event })" />
                     <span v-if="tsPortOf(h) !== null" class="mono cell-addr">{{ tailscaleV4 ? `${tailscaleV4}:${tsPortOf(h)}` : `${tsPortOf(h)}/tcp` }}</span>
                   </template>
@@ -195,7 +234,7 @@ function rowApplied(result: AyarSonucu, outcome: RowOutcome): void {
               </td>
               <td data-label="İnternet adı" data-hucre="internet">
                 <span class="sw-cell">
-                  <Switch :model-value="internetOn(h)" :label="`${rowOwner(h)} · İnternet adı`" hide-label :disabled="locked"
+                  <Switch :model-value="internetOn(h)" :label="`${rowOwner(h)} · İnternet adı`" hide-label :disabled="hold"
                     @update:model-value="open(h, { kind: 'internet', on: $event })" />
                   <span v-if="internetName(h)" class="mono cell-addr">{{ internetName(h) }}</span>
                 </span>
@@ -207,9 +246,16 @@ function rowApplied(result: AyarSonucu, outcome: RowOutcome): void {
                 </span>
               </td>
               <td class="col-act">
-                <button type="button" class="btn btn-secondary btn-sm" :disabled="locked" :aria-label="`${h.ad}: ayrıntı`" data-eylem="ayrinti" @click="open(h)">Ayrıntı</button>
+                <button type="button" class="btn btn-secondary btn-sm row-toggle" :disabled="hold" :aria-label="`${h.ad}: ayrıntı`" :aria-expanded="expanded(h)"
+                  :aria-controls="expanded(h) ? PANEL_ID : undefined" data-eylem="ayrinti" @click="toggle(h)">
+                  Ayrıntı<Icon name="chevron" :size="16" class="row-toggle-icon" />
+                </button>
               </td>
             </tr>
+            <tr v-if="satir === h.id" class="row-detail" :data-detay="h.id">
+              <td :id="PANEL_ID" colspan="6"><AccessRowPanel v-bind="panelProps" v-on="panelOn" /></td>
+            </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -223,7 +269,7 @@ function rowApplied(result: AyarSonucu, outcome: RowOutcome): void {
     <!-- raw ports -->
     <section class="card table-card" aria-labelledby="ham-baslik" data-testid="raw-rows">
       <div class="card-head">
-        <h2 id="ham-baslik" class="card-title">Ham portlar</h2>
+        <h2 id="ham-baslik" class="card-title">Doğrudan portlar</h2>
         <span class="meter-note">Caddy dışı · kapalı gelir</span>
       </div>
       <div v-if="rawRows.length" class="table-wrap">
@@ -238,7 +284,8 @@ function rowApplied(result: AyarSonucu, outcome: RowOutcome): void {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="h in rawRows" :key="h.id" :data-satir="h.id" :class="{ 'row-current': satir === h.id }">
+            <template v-for="h in rawRows" :key="h.id">
+            <tr :data-satir="h.id" :class="{ 'row-current': satir === h.id }">
               <th scope="row" class="col-main">
                 <strong>{{ rowOwner(h) }}</strong>
                 <span class="cell-sub">{{ h.servis }}</span>
@@ -254,7 +301,7 @@ function rowApplied(result: AyarSonucu, outcome: RowOutcome): void {
                     class="segment"
                     :class="{ 'segment-danger': s.id === 'internet' }"
                     :aria-checked="h.satir?.tur === 'ham' && h.satir.kapsam === s.id"
-                    :disabled="locked"
+                    :disabled="hold"
                     :data-kapsam="s.id"
                     @click="h.satir?.tur === 'ham' && h.satir.kapsam !== s.id && open(h, { kind: 'kapsam', kapsam: s.id })"
                   >
@@ -265,36 +312,27 @@ function rowApplied(result: AyarSonucu, outcome: RowOutcome): void {
               <td data-label="Adres"><span class="mono">{{ rawAddress(h) || "—" }}</span></td>
               <td class="col-act">
                 <span class="row-actions">
-                  <button type="button" class="btn btn-secondary btn-sm" :disabled="locked" :aria-label="`${h.ad}: ayrıntı`" data-eylem="ayrinti" @click="open(h)">Ayrıntı</button>
-                  <button v-if="keyOf(h)?.protokol === 'tcp'" type="button" class="btn btn-secondary btn-sm" :disabled="locked" :aria-label="`${h.ad}: adres aç`"
-                    data-eylem="adres-ac" @click="open(h, null, 'adres-ac')">
+                  <button type="button" class="btn btn-secondary btn-sm row-toggle" :disabled="hold" :aria-label="`${h.ad}: ayrıntı`" :aria-expanded="expanded(h)"
+                    :aria-controls="expanded(h) ? PANEL_ID : undefined" data-eylem="ayrinti" @click="toggle(h)">
+                    Ayrıntı<Icon name="chevron" :size="16" class="row-toggle-icon" />
+                  </button>
+                  <button v-if="keyOf(h)?.protokol === 'tcp'" type="button" class="btn btn-secondary btn-sm" :disabled="hold" :aria-label="`${h.ad}: adres aç`"
+                    :aria-expanded="expanded(h, 'adres-ac')" :aria-controls="expanded(h, 'adres-ac') ? PANEL_ID : undefined" data-eylem="adres-ac"
+                    @click="toggle(h, 'adres-ac')">
                     Adres aç
                   </button>
                 </span>
               </td>
             </tr>
+            <tr v-if="satir === h.id" class="row-detail" :data-detay="h.id">
+              <td :id="PANEL_ID" colspan="5"><AccessRowPanel v-bind="panelProps" v-on="panelOn" /></td>
+            </tr>
+            </template>
           </tbody>
         </table>
       </div>
-      <EmptyState v-else-if="e" title="Ham port yok" text="Uygulamaların bütün portlarının bir adresi var." icon="lock" />
+      <EmptyState v-else-if="e" title="Doğrudan port yok" text="Uygulamaların bütün portlarının bir adresi var." icon="lock" />
     </section>
 
-    <AccessRowSheet
-      :row="sheetRow"
-      :mode="mode"
-      :intent="intent"
-      :rows="accessRows"
-      :candidates="candidates"
-      :names="names"
-      :revision="e?.revizyon ?? ''"
-      :domain="domain"
-      :wan="wanV4"
-      :tailscale-ip="tailscaleV4"
-      :locked="locked"
-      @close="closeRow"
-      @mode="kip = $event === 'adres-ac' ? 'adres-ac' : ''"
-      @pick="pick"
-      @applied="rowApplied"
-    />
   </div>
 </template>

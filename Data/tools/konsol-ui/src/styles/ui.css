@@ -217,6 +217,64 @@
   color: var(--ink-2);
 }
 
+/* ---- a reached address with its state's dot (Erişim's services table, the applications list): the dot in the
+   cell's colour, the lines beside it; a neutral line is muted, a fault's line in the fault's colour. */
+.reach {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.reach-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  transform: translateY(-1px);
+}
+
+.reach-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.reach-lines .mono {
+  font-size: 12.5px;
+}
+
+.reach-neutral .reach-lines {
+  color: var(--muted);
+}
+
+.reach-ok .reach-dot {
+  background: var(--ok);
+}
+
+.reach-warning .reach-dot {
+  background: var(--warn);
+}
+
+.reach-danger .reach-dot {
+  background: var(--danger);
+}
+
+.reach-danger .reach-lines {
+  color: var(--danger-ink);
+}
+
+.reach-accent .reach-dot {
+  background: var(--accent);
+}
+
+.reach-none .reach-dot {
+  visibility: hidden;
+}
+
 /* ---- cards */
 .card-head {
   display: flex;
@@ -822,6 +880,115 @@ select.input {
   color: var(--muted);
   font-size: 12.5px;
   font-weight: 500;
+}
+
+/* ---- the panel in the page (InlinePanel): a sheet's parts under the row it belongs to */
+.inline-panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  scroll-margin-bottom: 16px;
+}
+
+.inline-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 6px 0 16px;
+}
+
+.inline-panel-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.inline-panel-heading h3 {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.inline-panel-close {
+  flex: none;
+  width: 36px;
+  height: 36px;
+}
+
+.inline-panel-desc {
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.inline-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 8px 16px 14px;
+}
+
+.inline-panel-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* A form's own actions (a removal, another mode) at the start of the actions. */
+.foot-start {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-right: auto;
+}
+
+.foot-start:empty {
+  display: none;
+}
+
+/* The row a panel opened under comes to the top with a gap; on a phone clear of the top and bottom bars. */
+tr:has(+ tr > td > .inline-panel) {
+  scroll-margin-top: 16px;
+}
+
+@media (max-width: 760px) {
+  .inline-panel {
+    scroll-margin-bottom: 88px;
+  }
+
+  tr:has(+ tr > td > .inline-panel) {
+    scroll-margin-top: 80px;
+  }
+
+  .inline-panel-head {
+    padding: 6px 4px 0 14px;
+  }
+
+  .inline-panel-close {
+    width: var(--tap);
+    height: var(--tap);
+  }
+
+  .inline-panel-body {
+    padding: 8px 14px 14px;
+  }
+
+  .inline-panel-foot {
+    padding: 10px 14px 12px;
+  }
+
+  .inline-panel-foot .btn {
+    flex: 1 1 auto;
+  }
 }
 
 /* ---- the data table: a table on wide containers, cards on narrow ones */

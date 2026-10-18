@@ -209,8 +209,8 @@ watch(() => live.offset, () => (now.value = serverNow()));
       <dl class="stats">
         <div class="stat" data-stat="tailscale"><dt>Tailscale adresi</dt><dd>{{ stat(access?.tailscale) }}</dd></div>
         <div class="stat" data-stat="internet"><dt>internet adı</dt><dd>{{ stat(access?.internet) }}</dd></div>
-        <div class="stat" data-stat="ham-internet"><dt>internete açık ham port</dt><dd>{{ stat(access?.rawInternet) }}</dd></div>
-        <div class="stat" data-stat="ham-tailscale"><dt>Tailscale'de ham port</dt><dd>{{ stat(access?.rawTailscale) }}</dd></div>
+        <div class="stat" data-stat="ham-internet"><dt>internete açık doğrudan port</dt><dd>{{ stat(access?.rawInternet) }}</dd></div>
+        <div class="stat" data-stat="ham-tailscale"><dt>Tailscale'de doğrudan port</dt><dd>{{ stat(access?.rawTailscale) }}</dd></div>
         <div class="stat" data-stat="wireguard"><dt>{{ wireguard.label }}</dt><dd>{{ wireguard.value }}</dd></div>
       </dl>
       <ul v-if="openings.length" class="access-chips" aria-label="İnternete açık olanlar">

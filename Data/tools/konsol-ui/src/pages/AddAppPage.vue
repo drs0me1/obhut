@@ -505,7 +505,7 @@ const planBoxes = computed(() => {
   return [
     { key: "uygulama", title: "Uygulama", lines: [plain(`${o.ad} · ${servicesText(o.servisler.length)}`), ...(o.pod ? [code(`pod ${o.pod}`)] : []), code(o.ag)] },
     { key: "adresler", title: "Adresler", lines: orNone(addresses) },
-    { key: "ham", title: "Ham portlar", lines: orNone(raw) },
+    { key: "ham", title: "Doğrudan portlar", lines: orNone(raw) },
     { key: "klasorler", title: "Klasörler", lines: orNone([...o.klasorler.map(code), ...srv]) },
     { key: "gizliler", title: "Gizli değerler", lines: o.gizliler.length ? [plain(`${o.gizliler.length} · Podman secret`), ...o.gizliler.map((g) => code(g.ad))] : orNone([]) },
     { key: "baslatma", title: "Başlatma", lines: o.servisler.map((s) => plain(startLine(s))) },
@@ -780,7 +780,7 @@ const barText = computed(() => {
         </section>
         <p class="notice" role="note">
           <Icon name="info" class="notice-icon" />
-          <span>Adresler yalnız Tailscale'de açılır; internet adı ve ham portlar Erişim'den açılır.</span>
+          <span>Adresler yalnız Tailscale'de açılır; internet adı ve doğrudan portlar Erişim'den açılır.</span>
         </p>
       </aside>
     </div>
@@ -800,7 +800,7 @@ const barText = computed(() => {
           <Icon name="check" class="notice-icon" />
           <div>
             <p class="notice-title">{{ jobName }} kuruldu</p>
-            <p class="notice-list">Adresleri yalnız Tailscale'de açık. İnternet adı ve ham portlar kapalı; Erişim'den açılır.</p>
+            <p class="notice-list">Adresleri yalnız Tailscale'de açık. İnternet adı ve doğrudan portlar kapalı; Erişim'den açılır.</p>
           </div>
         </div>
         <div v-else class="notice notice-danger" role="alert" tabindex="-1" data-testid="install-status" data-durum="hata">

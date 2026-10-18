@@ -161,7 +161,7 @@ class ReadModelTests(unittest.TestCase):
         peer, db = self.row(result, ROW_PEER), self.row(result, ROW_DB)
         self.assertEqual(self.states(peer), ("yok", "acik", "kapali", "kapali"), "a raw port is never on loopback")
         self.assertEqual(peer["tailscale"]["adresler"], ["100.64.0.2:6881/udp"])
-        self.assertEqual((peer["aciklama"], peer["satir"]), ("6881/udp · Ham port", ROWS[1]["satir"]))
+        self.assertEqual((peer["aciklama"], peer["satir"]), ("6881/udp · Doğrudan port", ROWS[1]["satir"]))
         self.assertEqual(self.states(db), ("yok", "kapali", "kapali", "kapali"))
         self.assertIs(db["calisiyor"], False, "the db service's container is not running")
         rows = copy.deepcopy(ROWS)

@@ -137,7 +137,7 @@ def app_row(env, item, pubs, running, wireguard, warnings):
     access = item["satir"]
     proto = item["protokol"]
     row = service(item["id"], "%s · %s" % (item["uygulama"], item["servis"]), "uygulama",
-                  "%d/%s · %s" % (item["port"], proto, "Adres" if access["tur"] == "adres" else "Ham port"),
+                  "%d/%s · %s" % (item["port"], proto, "Adres" if access["tur"] == "adres" else "Doğrudan port"),
                   wireguard, item["uygulama"], running)
     row.update(servis=item["servis"], anahtar=item["anahtar"], satir=copy.deepcopy(access))
     ts, wan = env.get("TAILSCALE_IPV4", ""), env.get("WAN_IPV4", "")

@@ -63,6 +63,8 @@ const data = {
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null }, internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
       wireguard: { kurulu: false, durduruldu: false, aglar: [] }, sertifikalar: [] } },
   uygulamalar: uygulamalar(APPS),
+  // Genel Bakış (the head's "Genel Bakış" button leads there) reads the live rate too.
+  ag: { read_at: NOW, sampled_at: null, rx: null, tx: null, uygulamalar: [] },
   paylasim: SHARES,
   depolama: STORAGE,
 };
@@ -356,6 +358,20 @@ async function drop(page, files, type = "drop") {
     const tabs = page.getByRole("tablist", { name: "Dosyalar bölümleri" }).getByRole("tab");
     assert.deepEqual(await tabs.allInnerTexts(), ["Depolama", "Sunucu klasörleri", "Çöp kutusu", "Paylaşımlar", "Sistem dosyaları"]);
     assert.deepEqual(await page.locator('.sidebar .nav-item[aria-current="page"] .nav-label').allInnerTexts(), ["Dosyalar"]);
+    // The head's "Geri" and "Genel Bakış" before the title: a way back for a folder opened from elsewhere (an
+    // application's Depolama links here). Opened directly there is nothing to go back to.
+    assert.equal(await page.getByTestId("page-back").isDisabled(), true, "opened directly: no page before");
+    assert.equal(await page.getByTestId("page-home").getAttribute("href"), "#/genel");
+    await page.getByTestId("page-home").click();
+    await page.waitForURL((u) => u.hash === "#/genel");
+    await page.locator(".sidebar .nav-item").filter({ hasText: "Dosyalar" }).click();
+    await page.waitForURL((u) => u.hash === "#/dosyalar");
+    assert.equal(await page.getByTestId("page-back").isEnabled(), true, "a page before: Geri goes there");
+    await page.getByTestId("page-back").click();
+    await page.waitForURL((u) => u.hash === "#/genel");
+    await page.locator(".sidebar .nav-item").filter({ hasText: "Dosyalar" }).click();
+    await page.waitForURL((u) => u.hash === "#/dosyalar");
+    assert.equal(await page.locator("main h1").innerText(), "Dosyalar");
     const disk = page.getByTestId("disk");
     await disk.getByTestId("disk-used").waitFor();
     assert.equal(await disk.getByTestId("disk-used").innerText(), `${bytes(180 * GB)} / ${bytes(500 * GB)}`);

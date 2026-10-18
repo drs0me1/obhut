@@ -78,7 +78,7 @@ export function internetOpenings(rows: readonly Hizmet[]): { id: string; text: s
     if (!isAccessRow(h) || !["acik", "kismen", "hata"].includes(c.durum)) continue;
     const key = portKey(h.anahtar ?? "");
     let detail = c.adresler[0] ?? "internet";
-    if (h.satir?.tur === "ham" && key) detail = `${h.satir.port}/${key.protokol.toUpperCase()} ham`;
+    if (h.satir?.tur === "ham" && key) detail = `${h.satir.port}/${key.protokol.toUpperCase()} doğrudan`;
     else if (h.satir?.tur === "adres" && h.satir.internet) detail = h.satir.internet;
     else if (h.web?.enabled && h.web.domain) detail = h.web.domain;
     out.push({ id: h.id, text: `${rowOwner(h)} · ${detail}`, warn: c.durum === "hata" || Boolean(c.uyari) || h.satir?.tur === "ham" });

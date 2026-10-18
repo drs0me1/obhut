@@ -317,17 +317,17 @@ def row_problem(key, row):
     if match is None or SERVICE_RE.fullmatch(match.group(1)) is None or int(match.group(2)) > 65535:
         return "Erişim satırının anahtarı geçersiz."
     if not isinstance(row, dict) or row.get("tur") not in ROW_KINDS:
-        return "Erişim satırı bir adres ya da ham port olmalı."
+        return "Erişim satırı bir adres ya da doğrudan port olmalı."
     if row["tur"] == "ham":
         if set(row) != {"tur", "kapsam", "port"} or row["kapsam"] not in SCOPES:
-            return "Ham port satırı kapsamını (kapalı, Tailscale ya da internet) ve portunu taşır."
+            return "Doğrudan port satırı kapsamını (kapalı, Tailscale ya da internet) ve portunu taşır."
         if not _port_number(row["port"]):
-            return "Ham portun numarası 1–65535 arasında olmalı."
+            return "Doğrudan portun numarası 1–65535 arasında olmalı."
         return None
     if set(row) != {"tur", "ad", "tailscale_portu", "internet"}:
         return "Adres satırı Tailscale adını, Tailscale portunu ve internet adını taşır."
     if match.group(3) != "tcp":
-        return "UDP portu yalnız ham port olabilir."
+        return "UDP portu yalnız doğrudan port olabilir."
     if not isinstance(row["ad"], str) or TAILSCALE_NAME_RE.fullmatch(row["ad"]) is None:
         return "Tailscale adı küçük harf, rakam ve '-' içermeli, '-' ile başlayıp bitmemeli (en çok 63)."
     if row["ad"] in RESERVED_NAMES:
@@ -527,7 +527,7 @@ def scope_address(env, scope):
     except ValueError:
         ip = None
     require(ip is not None and not (ip.is_loopback or ip.is_unspecified or ip.is_multicast or ip.is_link_local),
-            "Sunucunun %s IPv4 adresi kayıtlı değil; bu kapsamdaki ham port yayımlanamaz."
+            "Sunucunun %s IPv4 adresi kayıtlı değil; bu kapsamdaki doğrudan port yayımlanamaz."
             % ("Tailscale" if scope == "tailscale" else "internet"), 503)
     return str(ip)
 

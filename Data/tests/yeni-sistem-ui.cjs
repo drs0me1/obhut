@@ -72,7 +72,7 @@ const AUDIT_LINES = [
   "wg0 ağının adı ve varsayılan DNS'i güncellendi", "wg0/telefon QR kodu görüntülendi",
   "Erişim değişikliği · notlar · web 8080/TCP (Tailscale adı notlar, Tailscale portu kapalı, internet adı notlar.example.org) · uygulandı",
   "Erişim değişikliği · notlar · web 8080/TCP · geri alındı",
-  "Erişim değişikliği · ornek · app 9000/UDP (ham port, internet, sunucu portu 9001) · uygulandı",
+  "Erişim değişikliği · ornek · app 9000/UDP (doğrudan port, internet, sunucu portu 9001) · uygulandı",
   "Podman temizliği istendi (imaj cccccccccccc; ağ eski-ag; klasör eskiuygulama)", "Taslak dosya istendi: imaj registry.example/ornek:1",
   "Uygulama kurulumu istendi: ornek", "Uygulama imaj güncellemesi istendi: ornek", "Uygulama kaldırma istendi: notlar (veriler saklanır)",
   "Yüklendi: Filmler/kayit.mkv", "Yeni klasör: Filmler", "Kalıcı silindi (Sistem dosyaları): etc ['eski.conf']", "Konsol girişi",

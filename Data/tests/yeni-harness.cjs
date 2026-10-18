@@ -314,8 +314,8 @@ const soru = {
     const protocol = o.protocol || "tcp";
     const udp = protocol === "udp";
     return { id: `port:${service}:${port}/${protocol}`, kind: "port", line: 4, title: `${service}: ${port}/${protocol.toUpperCase()}`,
-      why: udp ? "UDP ham port olarak eklenir ve kapalı gelir; kapsamı (Tailscale ya da internet) Erişim'den seçilir."
-        : "Web arayüzü olabilir: bir adres (Caddy satırı, Tailscale adı) ya da ham port olarak eklenir. Seçim sizin; dosyadaki sunucu portu kullanılmaz.",
+      why: udp ? "UDP doğrudan port olarak eklenir ve kapalı gelir; kapsamı (Tailscale ya da internet) Erişim'den seçilir."
+        : "Web arayüzü olabilir: bir adres (Caddy satırı, Tailscale adı) ya da doğrudan port olarak eklenir. Seçim sizin; dosyadaki sunucu portu kullanılmaz.",
       service, port, protocol, guess: udp ? "raw" : "web", choices: udp ? ["raw"] : ["caddy", "raw"], suggest: null, host_port: null, ...o };
   },
   degisken: (name, o = {}) => ({ id: "var:" + name, kind: "var", line: 6, title: `Değişken: \${${name}}`,

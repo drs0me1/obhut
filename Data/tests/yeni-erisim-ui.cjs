@@ -1,15 +1,16 @@
 /* Konsol's interface, Erişim (DD-258; access rows since rebuild phase 4, the phase 5 prototype's screens): Genel,
    Adresler, Yerel adlar, Tailscale, Güvenlik duvarı and the pending settings change in the committed build under
    Data/console/yeni, with the production CSP and fixture replies for every endpoint they read or post to
-   (yeni-harness.cjs). Genel: the summaries and the matrix, each access row linking to its sheet. Adresler: the
+   (yeni-harness.cjs). Genel: the summaries and the matrix, each access row linking to its panel. Adresler: the
    addresses (Konsol, Paylaşımlar, each application port with a Caddy row) with their Tailscale name, Tailscale port,
-   internet name and state, and the raw ports with their scope; a switch or a scope opens the row's sheet with that
-   change made (a closing straight to the plan, an opening with its field first); "Ayrıntı" opens the sheet as it is:
+   internet name and state, and the raw ports with their scope; a row's panel opens under the row itself, one at a time
+   (no sheet beside the page); a switch or a scope opens it with that change made (a closing straight to the plan,
+   an opening with its field first); "Ayrıntı" opens it as it is and closes it again, Esc closes it too:
    an address row's Tailscale name, Tailscale port, internet name and "Adresi kaldır"; a raw row's scope and host port
-   with the internet consent; "Adres aç" (from the tab bar, a row or a raw sheet, another port chosen in the sheet);
+   with the internet consent; "Adres aç" (from the tab bar, a row or a raw row's panel, another port chosen in the panel);
    Konsol's internet name with the typed word; Paylaşımlar' Tailscale name. Every change goes through the settings
    plan with its exact body: an opening waits for the 60 s confirmation, a closing commits at once, a long apply
-   stays busy and says so. The sheet is in the address (?satir=<row id>, ?kip=adres-ac): Genel Bakış, the matrix,
+   stays busy and says so. The panel is in the address (?satir=<row id>, ?kip=adres-ac): Genel Bakış, the matrix,
    the firewall's locked rows and locked local names open it. Yerel adlar: names, records, forwarding (a draft →
    plan → apply) and the local domain. Güvenlik duvarı: the operator's rules beside the locked rows; the technical
    rules are Gelişmiş's. The WireGuard tab has its own suite (yeni-wireguard-ui.cjs). Fails on any console error,
@@ -28,7 +29,7 @@ const row = (id, ad, tur, cells, aciklama = "") => ({ id, ad, tur, aciklama, uyg
 function appRow(id, satir, cells) {
   const [, app, service, port] = id.split(":");
   return row(id, `${app} · ${service}`, "uygulama", { uygulama: app, servis: service, anahtar: `${service}:${port}`, satir, ...cells },
-    `${port} · ${satir.tur === "adres" ? "Adres" : "Ham port"}`);
+    `${port} · ${satir.tur === "adres" ? "Adres" : "Doğrudan port"}`);
 }
 const NOTLAR = "uygulama:notlar:web:8080/tcp";
 const MEDYA = "uygulama:medya:web:8096/tcp";
@@ -88,7 +89,7 @@ const PORTS = [
   { ad: "SSH", aile: 4, proto: "tcp", port: 22, kapsam: "wan", sabit: false, satir: null },
   { ad: "SSH", aile: 6, proto: "tcp", port: 22, kapsam: "wan", sabit: false, satir: null },
   { ad: "WireGuard wg0", aile: 4, proto: "udp", port: 61001, kapsam: "wan", sabit: false, satir: null },
-  { ad: "medya · web 8096/tcp · ham port", aile: 4, proto: "tcp", port: 8096, kapsam: "wan", sabit: true, satir: MEDYA },
+  { ad: "medya · web 8096/tcp · doğrudan port", aile: 4, proto: "tcp", port: 8096, kapsam: "wan", sabit: true, satir: MEDYA },
   { ad: "Caddy", aile: 4, proto: "tcp", port: 80, kapsam: "tail", sabit: false, satir: null },
   { ad: "dnsmasq", aile: 4, proto: "udp", port: 53, kapsam: "tail", sabit: false, satir: null },
   { ad: "notlar · web 8080/tcp · Tailscale portu", aile: 4, proto: "tcp", port: 8443, kapsam: "tail", sabit: true, satir: NOTLAR },
@@ -150,8 +151,8 @@ const { base, push, waitFor, newPage, count, posts, noHorizontalScroll, styleAtt
 // for the 60 s confirmation, a closing commits at once)
 const plan = (o = {}) => ({ revizyon: "rev-1", onay_sn: 0, degisiklikler: [], etkiler: [], uyarilar: [], uygulanabilir: true, ...o });
 const item = (alan, islem, nesne, once, sonra) => ({ alan, islem, nesne, once, sonra });
-const CONSENT_TEXT = "Ham port internete doğrudan açılır: arada Caddy, HTTPS ve Konsol girişi olmaz; şifreleme ve giriş uygulamanın kendisindedir.";
-const CONSENT_MISSING = "Ham portu internete açmak için bu uyarıyı onaylayın (internet onayı).";
+const CONSENT_TEXT = "Port internete doğrudan açılır: arada Caddy, HTTPS ve Konsol girişi olmaz; şifreleme ve giriş uygulamanın kendisindedir.";
+const CONSENT_MISSING = "Portu internete açmak için bu uyarıyı onaylayın (internet onayı).";
 const TIMED = { seviye: "info", metin: "Uygulandıktan sonra 60 saniye içinde onaylamazsanız kendiliğinden geri alınır." };
 /** master_publications.opening: whether an application row's change opens or widens access. */
 function rowOpens(old, now) {
@@ -166,7 +167,7 @@ function rowOpens(old, now) {
 }
 /** master_publications.web_opening for a fixed row. */
 const webOpens = (before, after) => (after.tail && !before.tail) || (after.enabled && !before.enabled) || (after.enabled && before.enabled && after.domain !== before.domain);
-const rowText = (r) => (r.tur === "ham" ? `Ham port · ${r.kapsam} ${r.port}` : `Adres · ${r.ad}.ev · ${r.tailscale_portu ?? "kapalı"} · internet: ${r.internet || "kapalı"}`);
+const rowText = (r) => (r.tur === "ham" ? `Doğrudan port · ${r.kapsam} ${r.port}` : `Adres · ${r.ad}.ev · ${r.tailscale_portu ?? "kapalı"} · internet: ${r.internet || "kapalı"}`);
 const appRows = () => data.erisim.hizmetler.filter((x) => x.tur === "uygulama");
 const rowOf = (req) => appRows().find((x) => x.uygulama === req.uygulama && x.anahtar === req.anahtar);
 function settingsPlan(body) {
@@ -248,9 +249,9 @@ async function noStyles(page, where) {
 const dateText = (seconds) => new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long", year: "numeric" }).format(new Date(seconds * 1000));
 const KEY_DATE = dateText(NOW + 10 * DAY);
 const KEY_DAY = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long" }).format(new Date((NOW + 10 * DAY) * 1000));
-/** The open access row sheet (one dialog at a time). */
-const rowSheet = (page) => page.getByRole("dialog");
-/** Opens a row's sheet from Adresler' tables ("Ayrıntı" or "Adres aç") and waits for its form. */
+/** The open access row panel (under its own row in Adresler; one at a time). */
+const rowSheet = (page) => page.locator("tr.row-detail .inline-panel");
+/** Opens a row's panel from Adresler' tables ("Ayrıntı" or "Adres aç") and waits for its form. */
 async function openRow(page, id, eylem = "ayrinti") {
   await page.getByTestId("addresses").locator(`tr[data-satir="${id}"] [data-eylem="${eylem}"]`).click();
   await page.waitForFunction((want) => new URLSearchParams(location.hash.split("?")[1] ?? "").get("satir") === want, id);
@@ -258,7 +259,7 @@ async function openRow(page, id, eylem = "ayrinti") {
   await sheet.getByTestId("row-form").waitFor();
   return sheet;
 }
-/** Asks for the plan from the sheet's form and returns the planned body. */
+/** Asks for the plan from the panel's form and returns the planned body. */
 async function review(sheet) {
   const before = posts("ayarlar/plan").length;
   await sheet.getByTestId("review").click();
@@ -267,7 +268,7 @@ async function review(sheet) {
   return lastPost("ayarlar/plan");
 }
 
-/** A table control's change opens the row's sheet straight on its plan; returns the planned body. */
+/** A table control's change opens the row's panel straight on its plan; returns the planned body. */
 async function planFrom(page, control) {
   const before = posts("ayarlar/plan").length;
   await control.click();
@@ -319,14 +320,17 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     // table. A warning or a fault is the cell's colour. An access row's name links to its sheet.
     const matrix = page.getByTestId("matrix");
     assert.deepEqual(await matrix.locator("thead th").allInnerTexts(), ["Hizmet", "Bu sunucu", "Tailscale", "WireGuard", "İnternet"]);
-    assert.deepEqual(await matrix.locator("tbody tr[data-hizmet]").evaluateAll((trs) => trs.map((t) => t.dataset.hizmet)), ROWS.map((r) => r.id));
+    assert.deepEqual(await matrix.locator("tbody tr[data-hizmet]").evaluateAll((trs) => trs.map((t) => t.dataset.hizmet)),
+      ROWS.map((r) => r.id).filter((id) => id !== MEDYA_UDP), "an application is one row whatever its ports");
+    assert.deepEqual(await matrix.locator("tbody tr[data-uygulama]").evaluateAll((trs) => trs.map((t) => [t.dataset.uygulama, t.querySelector(".matrix-name").textContent])),
+      [["notlar", "notlar"], ["medya", "medya"], ["kutu", "kutu"]]);
     const cellsOf = (id) => matrix.locator(`tr[data-hizmet="${id}"] .matrix-cell`).evaluateAll((tds) => tds.map((td) =>
       [td.querySelector(".reach").className.match(/reach-(ok|warning|danger|accent|neutral)/)[1],
         ...[...td.querySelectorAll(".reach-lines > span:not(.sr-only)")].map((s) => s.textContent)]));
     assert.deepEqual(await cellsOf(NOTLAR), [["ok", "127.0.0.1:62001"], ["ok", "notlar.ev", "100.64.0.2:8443"], ["neutral", "Kapalı"], ["ok", "notlar.example.org"]]);
     assert.deepEqual(await cellsOf("panel"), [["neutral", "—"], ["ok", "panel.ev"], ["neutral", "Kapalı"], ["neutral", "Kapalı"]]);
     assert.deepEqual(await cellsOf(MEDYA), [["neutral", "Kapalı"], ["neutral", "Kapalı"], ["neutral", "Kapalı"], ["warning", "203.0.113.10:8096/tcp"]],
-      "a raw port on the internet is a warning's colour");
+      "a raw port on the internet is a warning's colour; its closed UDP port adds nothing to the row");
     assert.deepEqual(await cellsOf("paylasim"), [["neutral", "—"], ["ok", "paylas.ev", "100.64.0.2:61010"], ["neutral", "Kapalı"], ["warning", "http://203.0.113.10:61010"]]);
     assert.deepEqual(await cellsOf("kural:u_yazici"), [["neutral", "—"], ["neutral", "631/tcp · yalnız 100.64.0.9"], ["neutral", "—"], ["neutral", "—"]],
       "a blocking rule keeps its port");
@@ -340,24 +344,26 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     assert.equal(await page.getByRole("switch", { name: "Teknik ayrıntı" }).count(), 0, "no technical switch: the addresses are always there");
     assert.equal(await page.getByTestId("vpn-note").count(), 0);
     const notlar = matrix.locator(`tr[data-hizmet="${NOTLAR}"]`);
-    assert.equal(await notlar.locator(".cell-sub").innerText(), "8080/tcp · Adres");
-    assert.equal(await matrix.locator(`tr[data-hizmet="${MEDYA}"] .cell-sub`).innerText(), "8096/tcp · Ham port");
+    assert.equal(await notlar.locator(".cell-sub").innerText(), "8080/tcp", "its ports under the name");
+    assert.equal(await matrix.locator(`tr[data-hizmet="${MEDYA}"] .cell-sub`).innerText(), "8096/tcp · 1900/udp");
     assert.deepEqual(await matrix.getByTestId("row-link").evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
-      ["#/erisim?sekme=adresler&satir=panel", ...[NOTLAR, MEDYA, MEDYA_UDP, KUTU].map((id) => `#/erisim?sekme=adresler&satir=${enc(id)}`), "#/erisim?sekme=adresler&satir=paylasim"],
-      "Konsol, every application port and Paylaşımlar link to their row; a container of no application has none");
+      ["#/erisim?sekme=adresler&satir=panel", `#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`, "#/uygulamalar/medya?sekme=erisim",
+        `#/erisim?sekme=adresler&satir=${enc(KUTU)}`, "#/erisim?sekme=adresler&satir=paylasim"],
+      "Konsol, an application with one port and Paylaşımlar link to their row, one with more to its own Erişim; a container of no application has none");
     await noStyles(page, "erisim genel");
     assert(await noHorizontalScroll(page));
     await shot(page, "1440-light-erisim-genel.png", true);
 
-    // A row's link opens its sheet on Adresler; closing it removes the row from the address.
-    await matrix.locator(`tr[data-hizmet="${MEDYA}"]`).getByTestId("row-link").click();
-    await page.waitForURL((u) => u.hash === `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`);
+    // A row's link opens its panel on Adresler, under the row; closing it removes the row from the address.
+    await matrix.locator(`tr[data-hizmet="${KUTU}"]`).getByTestId("row-link").click();
+    await page.waitForURL((u) => u.hash === `#/erisim?sekme=adresler&satir=${enc(KUTU)}`);
     let sheet = rowSheet(page);
     await sheet.getByTestId("row-form").waitFor();
-    assert.equal(await sheet.locator("h2").innerText(), "medya · web");
-    assert.equal(await sheet.locator(".modal-desc").innerText(), "8096/tcp · Ham port");
-    assert.equal(await sheet.locator('[data-kapsam="internet"] input').isChecked(), true, "the row as the server holds it");
-    assert.equal(await page.evaluate(() => document.querySelector(".app").inert), true, "the page behind the sheet is inert");
+    assert.equal(await sheet.locator("h3").innerText(), "kutu · app");
+    assert.equal(await sheet.locator(".inline-panel-desc").innerText(), "9000/tcp · Doğrudan port");
+    assert.equal(await sheet.locator('[data-kapsam="kapali"] input').isChecked(), true, "the row as the server holds it");
+    assert.equal(await page.locator(`tr[data-satir="${KUTU}"] + tr.row-detail .inline-panel`).count(), 1, "the panel opens under its own row");
+    assert.equal(await page.getByRole("dialog").count(), 0, "no sheet beside the page");
     await page.keyboard.press("Escape");
     await sheet.waitFor({ state: "detached" });
     assert.equal(await hashOf(page), "#/erisim?sekme=adresler", "closing removes the row from the address");
@@ -408,7 +414,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     assert.equal(await page.getByTestId("sum-wireguard").locator(".pill").innerText(), "Kapalı");
     await page.context().close();
     data.erisim = erisim();
-    // Genel Bakış: an access row's warning leads to its sheet; an application's to its page.
+    // Genel Bakış: an access row's warning leads to its panel; an application's to its page.
     page = await newPage();
     await page.goto(url("#/genel"));
     const rowFix = page.locator('.problem[data-kind="erisim"] [data-eylem="duzelt"]');
@@ -482,17 +488,42 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await page.getByTestId("adres-ac").click();
     await page.waitForURL((u) => u.hash === `#/erisim?sekme=adresler&satir=${enc(MEDYA)}&kip=adres-ac`);
     sheet = rowSheet(page);
-    await sheet.locator("h2").filter({ hasText: "medya · web · Adres aç" }).waitFor();
+    await sheet.locator("h3").filter({ hasText: "medya · web · Adres aç" }).waitFor();
     assert.deepEqual(await sheet.getByTestId("row-pick").locator("option").allInnerTexts(), ["medya · web · 8096/TCP", "kutu · app · 9000/TCP"]);
     await sheet.getByTestId("row-pick").selectOption(KUTU);
     await page.waitForFunction((want) => new URLSearchParams(location.hash.split("?")[1] ?? "").get("satir") === want, KUTU);
     assert.equal(new URLSearchParams((await hashOf(page)).split("?")[1]).get("kip"), "adres-ac", "still Adres aç");
-    await sheet.locator("h2").filter({ hasText: "kutu · app · Adres aç" }).waitFor();
+    await sheet.locator("h3").filter({ hasText: "kutu · app · Adres aç" }).waitFor();
     assert.equal(await sheet.getByTestId("row-name").inputValue(), "kutu", "the chosen port's name suggestion");
     await shot(page, "1440-light-erisim-adres-ac-sec.png");
     await sheet.getByRole("button", { name: "Vazgeç" }).click();
     await sheet.waitFor({ state: "detached" });
     assert.equal(await hashOf(page), "#/erisim?sekme=adresler");
+    // A row's panel opens under the row itself, one at a time: "Ayrıntı" opens and closes it, another row's moves it.
+    const detailOf = (id) => page.locator(`tr[data-satir="${id}"] + tr.row-detail .inline-panel`);
+    const toggleOf = (card, id) => card.locator(`tr[data-satir="${id}"] [data-eylem="ayrinti"]`);
+    assert.equal(await toggleOf(list, NOTLAR).getAttribute("aria-expanded"), "false");
+    await toggleOf(list, NOTLAR).click();
+    await detailOf(NOTLAR).getByTestId("row-form").waitFor();
+    assert.equal(await toggleOf(list, NOTLAR).getAttribute("aria-expanded"), "true");
+    assert.equal(await toggleOf(list, NOTLAR).getAttribute("aria-controls"), await detailOf(NOTLAR).evaluate((el) => el.closest("td").id));
+    assert.equal(await detailOf(NOTLAR).getByRole("heading").innerText(), "notlar · web");
+    assert.equal(await page.evaluate(() => document.querySelector(".app").inert), false, "the page stays usable around the panel");
+    await page.waitForFunction(() => document.activeElement?.dataset.testid === "row-name");
+    await shot(page, "1440-light-erisim-satir-panel.png");
+    await toggleOf(raws, KUTU).click();
+    await detailOf(KUTU).getByTestId("row-form").waitFor();
+    assert.equal(await page.locator(".inline-panel").count(), 1, "only the chosen row's panel is open");
+    assert.equal(await toggleOf(list, NOTLAR).getAttribute("aria-expanded"), "false");
+    await toggleOf(raws, KUTU).click();
+    await detailOf(KUTU).waitFor({ state: "detached" });
+    assert.equal(await hashOf(page), "#/erisim?sekme=adresler", "closing removes the row from the address");
+    // Esc in the panel closes it; the focus goes back to its row's "Ayrıntı".
+    await toggleOf(list, NOTLAR).click();
+    await page.waitForFunction(() => document.activeElement?.dataset.testid === "row-name");
+    await page.keyboard.press("Escape");
+    await detailOf(NOTLAR).waitFor({ state: "detached" });
+    assert(await toggleOf(list, NOTLAR).evaluate((el) => el === document.activeElement), "the focus is back on its Ayrıntı");
     await page.context().close();
 
     // ================= Yerel adlar: the managed names read-only, the records (draft → plan → apply) and the local domain
@@ -519,7 +550,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await namesCard.locator('tr[data-ad="notlar.ev"]').getByTestId("name-row").click();
     sheet = rowSheet(page);
     await sheet.getByTestId("row-form").waitFor();
-    assert.equal(await sheet.locator("h2").innerText(), "notlar · web");
+    assert.equal(await sheet.locator("h3").innerText(), "notlar · web");
     await sheet.getByRole("button", { name: "Vazgeç" }).click();
     await sheet.waitFor({ state: "detached" });
     await page.goto(url("#/erisim?sekme=adlar"));
@@ -632,9 +663,9 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     page = await newPage();
     await page.goto(url("#/erisim?sekme=adresler"));
     sheet = await openRow(page, NOTLAR);
-    assert.equal(await satirOf(page), NOTLAR, "the sheet is in the address");
-    assert.equal(await sheet.locator("h2").innerText(), "notlar · web");
-    assert.equal(await sheet.locator(".modal-desc").innerText(), "8080/tcp · Adres");
+    assert.equal(await satirOf(page), NOTLAR, "the panel is in the address");
+    assert.equal(await sheet.locator("h3").innerText(), "notlar · web");
+    assert.equal(await sheet.locator(".inline-panel-desc").innerText(), "8080/tcp · Adres");
     assert.deepEqual(await sheet.getByTestId("row-facts").locator("dd").allInnerTexts(), ["notlar · web · 8080/TCP", "127.0.0.1:62001 → 8080", "notlar.ev"]);
     assert.equal(await sheet.getByTestId("row-name").inputValue(), "notlar");
     assert(await sheet.getByTestId("row-name").evaluate((el) => el === document.activeElement), "the name has focus");
@@ -755,7 +786,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     body = await review(sheet);
     assert.deepEqual(body.erisim.satir, { tur: "adres", ad: "yazilar", tailscale_portu: 9443, internet: "yazilar.example.org" });
     assert.match(await sheet.getByTestId("plan-window").innerText(), /1:00 içinde/);
-    // The server refuses the apply (it rolled the change back): the sheet says why and stays on the plan.
+    // The server refuses the apply (it rolled the change back): the panel says why and stays on the plan.
     expectedFailures = ["/api/konsol/ayarlar/uygula"];
     applyReplies.push({ status: 400, body: { error: "notlar · web hazır olmadı; değişiklik geri alındı." } });
     await sheet.getByTestId("apply").click();
@@ -834,11 +865,10 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await page.waitForFunction(() => document.activeElement?.dataset.testid === "row-consent-box");
     assert.equal(posts("ayarlar/plan").length, consentPlans, "no plan without the consent");
     assert.equal(await sheet.getByTestId("row-open-address").count(), 0, "a UDP port cannot get an address");
-    await sheet.getByText("UDP portu yalnız ham port olabilir; adres açılamaz.").waitFor();
     assert.equal(await sheet.getByTestId("row-scope-hint").innerText(), "İnternetteki herkes 203.0.113.10:1900 ile ulaşır; arada Caddy ve HTTPS yok.");
     assert.match(await sheet.getByTestId("row-consent").innerText(), /arada Caddy, HTTPS ve Konsol girişi olmaz/);
     await sheet.getByTestId("review").click();
-    await sheet.getByText("Ham portu internete açmak için onay kutusunu işaretleyin.").waitFor();
+    await sheet.getByText("Portu internete açmak için onay kutusunu işaretleyin.").waitFor();
     assert.equal(posts("ayarlar/plan").length, consentPlans, "no plan without the consent");
     await shot(page, "1440-light-erisim-satir-onay.png");
     await sheet.getByTestId("row-consent-box").check();
@@ -876,7 +906,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
 
     // "Adres aç": a raw TCP port gets a Tailscale name (an opening), with a Tailscale port and an internet name if asked.
     sheet = await openRow(page, KUTU, "adres-ac");
-    assert.equal(await sheet.locator("h2").innerText(), "kutu · app · Adres aç");
+    assert.equal(await sheet.locator("h3").innerText(), "kutu · app · Adres aç");
     assert.equal(await sheet.getByTestId("row-name").inputValue(), "kutu", "the application's name when it is free");
     assert.equal(await sheet.getByTestId("row-facts").count(), 0);
     await sheet.getByTestId("row-name").fill("notlar");
@@ -905,7 +935,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await page.locator(".pending").waitFor({ state: "detached" });
     sheet = await openRow(page, KUTU);
     await sheet.getByTestId("row-open-address").click();
-    await sheet.locator("h2").filter({ hasText: "kutu · app · Adres aç" }).waitFor();
+    await sheet.locator("h3").filter({ hasText: "kutu · app · Adres aç" }).waitFor();
     assert.equal(await sheet.getByTestId("row-name").inputValue(), "kutu");
     await sheet.getByRole("button", { name: "Vazgeç" }).click();
     await sheet.waitFor({ state: "detached" });
@@ -917,10 +947,10 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await page.getByTestId("access-rows").locator('tr[data-satir="panel"]').getByRole("switch", { name: "Konsol · İnternet adı" }).click();
     sheet = rowSheet(page);
     await sheet.getByTestId("row-form").waitFor();
-    assert.equal(await sheet.locator("h2").innerText(), "Konsol");
+    assert.equal(await sheet.locator("h3").innerText(), "Konsol");
     assert.deepEqual(await sheet.getByTestId("row-facts").locator("dd").allInnerTexts(), ["Yönetim paneli", "Konsol soketi", "panel.ev"]);
     assert(await sheet.getByRole("switch", { name: "Tailscale adı" }).isDisabled(), "Konsol's Tailscale name stays on");
-    assert.match(await sheet.locator(".row-part").first().innerText(), /panel\.ev · Konsol'un Tailscale adı hep açıktır\./);
+    assert.match(await sheet.locator(".row-col").first().innerText(), /panel\.ev · Konsol'un Tailscale adı hep açıktır\./);
     assert.equal(await sheet.getByRole("switch", { name: "İnternet adı" }).getAttribute("aria-checked"), "true", "the table's switch, made");
     await page.waitForFunction(() => document.activeElement?.dataset.testid === "row-host");
     await sheet.getByTestId("row-host").fill("konsol.example.org");
@@ -946,7 +976,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     assert.deepEqual(planned, { revision: "rev-1", web: { service: "paylasim", tail: false, enabled: false, domain: "" } });
     assert.equal(await plans.getByTestId("plan-window").innerText(), "Hemen kaydedilir; onay beklenmez.");
     await plans.getByTestId("plan-back").click();
-    assert.equal(await plans.locator("h2").innerText(), "Paylaşımlar");
+    assert.equal(await plans.locator("h3").innerText(), "Paylaşımlar");
     assert.equal(await plans.getByTestId("row-shares").getAttribute("href"), "#/dosyalar?sekme=paylasimlar");
     assert.equal(await plans.getByTestId("row-problem").innerText(), "Şifresiz HTTP", "its internet cell's warning");
     body = await review(plans);
@@ -961,7 +991,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     // A deep link with the row id encoded opens the same sheet.
     await page.goto(url(`#/erisim?sekme=adresler&satir=${enc(KUTU)}`));
     await rowSheet(page).getByTestId("row-form").waitFor();
-    assert.equal(await rowSheet(page).locator("h2").innerText(), "kutu · app");
+    assert.equal(await rowSheet(page).locator("h3").innerText(), "kutu · app");
     await page.context().close();
 
     // ================= Güvenlik duvarı: the base's ports with the rules, a draft → plan → apply → 60 s → Onayla
@@ -1116,13 +1146,13 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await shot(page, "1440-light-erisim-guvenlik-wg-yok.png");
     await page.context().close();
     data["guvenlik-duvari"] = firewall();
-    // A locked row's link opens its access row's sheet in Adresler.
+    // A locked row's link opens its access row's panel in Adresler.
     page = await newPage();
     await page.goto(url("#/erisim?sekme=guvenlik-duvari"));
     await page.getByTestId("firewall").locator('tr[data-port="tcp/8096"]').getByTestId("fw-row-link").click();
     await page.waitForURL((u) => u.hash === `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`);
     await rowSheet(page).getByTestId("row-form").waitFor();
-    assert.equal(await rowSheet(page).locator("h2").innerText(), "medya · web");
+    assert.equal(await rowSheet(page).locator("h3").innerText(), "medya · web");
     await page.context().close();
 
     // ================= a rollback that failed five times: retry, or discard with the typed word
@@ -1185,7 +1215,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     assert.equal(await palette.locator('[data-key="yayinla"]').count(), 0, "no Yayınla action");
     await input.fill("dnsmasq");
     assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["Erişim → Yerel adlar", "Gelişmiş → DNS"], "names are changed in Erişim, read in Gelişmiş");
-    await input.fill("ham port");
+    await input.fill("doğrudan port");
     assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(),
       ["Erişim", "Erişim → Adresler", "medya · 8096/TCP", "medya · 1900/UDP", "kutu · 9000/TCP", "Adres aç"], "each raw port by its application and port");
     await input.fill("dnsmasq");
@@ -1234,8 +1264,10 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
           await sheet.getByTestId("row-host").fill("konsol.example.org");
         }
         if (id === NOTLAR) {
-          const sheetBox = await sheet.boundingBox();
-          assert(Math.abs(sheetBox.y + sheetBox.height - 844) <= 1 && sheetBox.width === 390, "a bottom sheet on a phone");
+          const [card, panel] = await Promise.all([page.locator(`tr[data-satir="${NOTLAR}"]`).boundingBox(), sheet.boundingBox()]);
+          assert(panel.y >= card.y + card.height - 1 && panel.x >= card.x && panel.x + panel.width <= card.x + card.width + 1 && panel.width >= 0.9 * card.width,
+            "on a phone the panel is under its card, nearly as wide");
+          assert(await noHorizontalScroll(page), "390 panel");
         }
         await noStyles(page, `390 ${colorScheme} ${shotName}`);
         await shot(page, `390-${colorScheme}-${shotName}.png`);
@@ -1268,12 +1300,13 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     assert.equal(count("yayinlar") + count("yayinlar/plan"), 0, "nothing asks for the removed Yayınla routes");
     assert.deepEqual(h.errors, []);
     console.log("PASS: Konsol Erişim under the production CSP — Genel (summaries, the matrix with each cell's addresses and ports and no sentence, " +
-      "each access row's link, an unreadable Erişim), Genel Bakış' links by duzelt (an access row's sheet, the application, Tailscale) and the chip, " +
+      "each access row's link, an unreadable Erişim), Genel Bakış' links by duzelt (an access row's panel, the application, Tailscale) and the chip, " +
       "Tailscale (device, addresses, client, key expiry warning, exit node, admin console link, disconnected), Adresler (addresses with their " +
       "Tailscale name, Tailscale port, internet name and state; raw ports with their scope; Adres aç from the tab bar with another port chosen in " +
-      "the sheet), the access row sheet (facts, name checks, a rename as an opening with the 60 s banner and Onayla, a long apply that stays busy " +
+      "the panel), the access row panel under its own row, one at a time (Ayrıntı opens and closes it, another row's moves it, Esc closes it and " +
+      "the focus returns; facts, name checks, a rename as an opening with the 60 s banner and Onayla, a long apply that stays busy " +
       "and counts, the table's switches: a closing straight to its plan with Geri to the form, an opening with its field focused; a refused apply, " +
-      "Adresi kaldır from the sheet and the Tailscale name's switch; raw scopes from the table (Tailscale planned at once, the internet with the " +
+      "Adresi kaldır from the panel and the Tailscale name's switch; raw scopes from the table (Tailscale planned at once, the internet with the " +
       "consent as internet_onayi, Kapalı), internet → Tailscale at once; Adres aç with a Tailscale port and an internet name; Konsol's internet " +
       "name with the typed word; Paylaşımlar' Tailscale name; deep links and a missing row), Yerel adlar (owners, the managed names read-only " +
       "with their row and no switch, the records' draft → plan → apply with exact bodies, a refused plan, the local domain: plan, 300 s, confirmation only from the new address, rollback), " +

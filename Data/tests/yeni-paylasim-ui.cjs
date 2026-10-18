@@ -650,11 +650,11 @@ async function openShares(page, extra = "") {
     await pubLink.waitFor();
     assert.equal(await pubLink.innerText(), "Klasör izinleri ve süreler: Dosyalar → Paylaşımlar");
     assert.equal(await page.getByTestId("access-rows").locator('tr[data-satir="panel"]').getByTestId("share-folders").count(), 0, "only WebDAV's row");
-    // Dosyalar' way to the address opens WebDAV's row sheet, which leads back to the folders.
+    // Dosyalar' way to the address opens WebDAV's row panel under its row, which leads back to the folders.
     await page.goto(url("#/dosyalar?sekme=paylasimlar"));
     await page.getByTestId("share-publication").click();
     await page.waitForURL((u) => u.hash === "#/erisim?sekme=adresler&satir=paylasim");
-    const rowSheet = page.getByRole("dialog", { name: "Paylaşımlar" });
+    const rowSheet = page.locator('tr[data-satir="paylasim"] + tr.row-detail').getByRole("region", { name: "Paylaşımlar" });
     await rowSheet.getByTestId("row-form").waitFor();
     assert.equal(await rowSheet.getByRole("switch", { name: "Tailscale adı" }).getAttribute("aria-checked"), "true");
     assert.equal(await rowSheet.getByTestId("row-shares").getAttribute("href"), "#/dosyalar?sekme=paylasimlar");

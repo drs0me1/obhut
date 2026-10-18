@@ -317,7 +317,7 @@ Konsol "Uygulama ekle"
 ### 6.4 An access change
 
 ```
-Erişim sheet ─ POST ayarlar/plan ─► master_settings.plan (in the backend: checks on a copy)
+Erişim form (a row's panel in Adresler, a sheet in the other tabs) ─ POST ayarlar/plan ─► master_settings.plan (in the backend: checks on a copy)
              ─ POST ayarlar/uygula ─► systemd-run master_settings.py apply (stdin; install/settings/state locks)
                  prepare (validate, master_publications.section) → guard timer on → pending file + snapshots
                  → erisim: master_container_worker.Manager.row_change (KONTEYNER_LOCK): units, restart, ready

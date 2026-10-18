@@ -224,7 +224,7 @@ The six sections stay. The prototype is the reference for every screen:
 - **Gelişmiş:** Caddy, DNS, Güvenlik duvarı (the technical rules), Podman (read-only, cleanup).
 
 Words used in the interface: Adres (technical detail: "Caddy satırı"), Tailscale adı, Tailscale portu,
-İnternet adı, Ham port, Yerel alan adı ("alan adı" only for this), Yalnız bu sunucu (loopback). A
+İnternet adı, Doğrudan port, Yerel alan adı ("alan adı" only for this), Yalnız bu sunucu (loopback). A
 button that opens a flow has one name everywhere.
 
 ### 4.6 The generation gate (S3)

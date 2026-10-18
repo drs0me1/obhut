@@ -1,10 +1,11 @@
 <!-- Uygulamalar (rebuild phase 5, the prototype): every application in one list (GET /api/konsol/uygulamalar), each
-     from its record with its live state: its name and where its file came from, its state and warnings, how it
-     is reached (Erişim's rows: a Tailscale name, an internet name, each open raw port), its resources, the live
-     rate of its own bridge (read again every 10 s while the page is shown), its image's update state, "Aç" (its
-     first address, while it runs) and its page. The filter (?suzgec=) and the search (?ara=) are in the address.
-     A table on wide screens, cards on narrow ones (a container query, so the sidebar's width counts).
-     "Uygulama ekle" opens its full-window page (AddAppPage, #/uygulama-ekle). -->
+     from its record with its live state: its name and where its file came from, its state and warnings, how each
+     of its container ports is reached (Erişim's rows: the addresses and ports on this server, in their cells'
+     colours, beside the container port, server → container), its resources, the live rate of its own bridge (read
+     again every 10 s while the page is shown), "Aç" (its first address, while it runs) and its page. A newer image
+     is the application's page's (Özet) and the Dikkat filter's, not a column. The filter (?suzgec=) and the search
+     (?ara=) are in the address. A table on wide screens, cards on narrow ones (a container query, so the sidebar's
+     width counts). "Uygulama ekle" opens its full-window page (AddAppPage, #/uygulama-ekle). -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
@@ -13,7 +14,7 @@ import AppIcon from "../components/AppIcon.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import StatusPill from "../components/ui/StatusPill.vue";
 import { apps, live, refreshApps } from "../live";
-import { accessChips, appLine, appState, needsAttention, openAddress, rateText, resourceText, updateText, warningText } from "../apps";
+import { accessMap, addressPieces, appLine, appState, needsAttention, openAddress, rateText, resourceText, warningText } from "../apps";
 import { ADD_APP, appRoute } from "../router";
 import { usePageHead } from "../page";
 import { useQueryParam } from "../query";
@@ -60,7 +61,7 @@ const rows = computed(() => {
       app,
       line: appLine(app),
       state: appState(app),
-      access: access ? accessChips(access, app.ad) : null,
+      access: access ? accessMap(access, app.ad, app.servisler.length) : null,
       resources: resourceText(app),
       rate: rateText(app),
       open: openAddress(app),
@@ -139,10 +140,9 @@ onBeforeUnmount(() => clearInterval(timer));
           <tr>
             <th scope="col">Uygulama</th>
             <th scope="col">Durum</th>
-            <th scope="col">Erişim</th>
+            <th scope="col" class="col-access"><span class="map-head"><span>Sunucu</span><span>Konteyner</span></span></th>
             <th scope="col">Kaynak</th>
             <th scope="col">Ağ</th>
-            <th scope="col">Güncelleme</th>
             <th scope="col"><span class="sr-only">Eylemler</span></th>
           </tr>
         </thead>
@@ -161,18 +161,25 @@ onBeforeUnmount(() => clearInterval(timer));
                 <StatusPill v-if="r.app.uyari" tone="warning" data-testid="app-warnings">{{ warningText(r.app.uyari) }}</StatusPill>
               </span>
             </td>
-            <td class="col-access" data-label="Erişim">
-              <span v-if="r.access" class="state-cell" data-testid="app-access">
-                <StatusPill v-for="c in r.access" :key="c.text" :tone="c.tone" :dot="c.tone !== 'neutral'">{{ c.text }}</StatusPill>
+            <td class="col-access" :class="{ 'cell-empty': !r.access }" data-label="Erişim">
+              <span v-if="r.access?.length" class="map-list" data-testid="app-access">
+                <span v-for="m in r.access" :key="m.id" class="map" :data-satir="m.id">
+                  <span class="map-server">
+                    <span v-for="l in m.server" :key="l.text" class="reach" :class="'reach-' + l.tone">
+                      <span class="reach-dot" aria-hidden="true"></span>
+                      <span class="reach-lines"
+                        ><span :class="{ mono: l.tone !== 'neutral' }"><template v-for="(part, j) in addressPieces(l.text)" :key="j"><wbr v-if="j" />{{ part }}</template></span
+                      ></span>
+                    </span>
+                  </span>
+                  <span class="map-container"><span class="map-arrow" aria-hidden="true">→</span><span class="mono">{{ m.container }}</span></span>
+                </span>
               </span>
+              <span v-else-if="r.access" class="muted" data-testid="app-access">Port yok</span>
               <span v-else class="muted">{{ UNKNOWN }}</span>
             </td>
             <td class="col-res" :class="{ 'cell-empty': r.resources === UNKNOWN }" data-label="Kaynak">{{ r.resources }}</td>
             <td class="col-net" :class="{ 'cell-empty': r.rate === UNKNOWN }" data-label="Ağ" data-testid="app-rate">{{ r.rate }}</td>
-            <td class="col-ver" :class="{ 'cell-empty': updateText(r.app.guncelleme) === UNKNOWN }" data-label="Güncelleme">
-              <StatusPill v-if="r.app.guncelleme === 'yeni'" tone="accent" :dot="true">{{ updateText("yeni") }}</StatusPill>
-              <span v-else :class="{ muted: r.app.guncelleme !== 'guncel', 'warn-text': r.app.guncelleme === 'denetlenemedi' }" :data-surum="r.app.guncelleme">{{ updateText(r.app.guncelleme) }}</span>
-            </td>
             <td class="col-act">
               <span class="row-actions">
                 <a v-if="r.open" :href="r.open" class="btn btn-secondary btn-sm" target="_blank" rel="noopener noreferrer" :aria-label="`${r.app.ad} uygulamasını aç`" data-eylem="ac">

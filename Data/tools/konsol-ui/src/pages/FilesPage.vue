@@ -2,7 +2,8 @@
      a lean view of the server folders (/srv), the trash, folder shares and, on the tailnet only, the whole
      server as root ("Sistem dosyaları"). Tabs in the address (?sekme=); a folder browser's own values (yol=,
      ara=, dosya=) belong to its tab and are left behind when another tab is chosen, unless the same change
-     set them (a link into a folder). -->
+     set them (a link into a folder). An application's Depolama links into a folder here, so the head carries
+     "Geri" and "Genel Bakış" before the title (a window without the browser's bar has no other way back). -->
 <script setup lang="ts">
 import { computed } from "vue";
 import { onBeforeRouteUpdate } from "vue-router";
@@ -13,10 +14,12 @@ import TrashTab from "./dosyalar/TrashTab.vue";
 import SharesTab from "./dosyalar/SharesTab.vue";
 import SystemFilesTab from "./dosyalar/SystemFilesTab.vue";
 import { FILES_TABS } from "../sections";
+import { usePageHead } from "../page";
 
 // Sistem dosyaları answers only on the tailnet (DD-235); the internet name never shows the tab.
 const tailnet = location.protocol === "http:";
 const TABS = computed(() => FILES_TABS.filter((t) => t.id !== "sistem" || tailnet).map((t) => ({ id: t.id, label: t.label })));
+usePageHead(() => ({ nav: true }));
 
 // Choosing another tab drops the browser's values the change did not set itself, before the new tab opens
 // (Sunucu klasörleri' folder never opens in Sistem dosyaları).

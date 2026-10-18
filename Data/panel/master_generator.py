@@ -464,9 +464,9 @@ class _Render:
             require(isinstance(port, dict) and type(port.get("port")) is int and 0 < port["port"] < 65536
                     and port.get("protocol") in ("tcp", "udp"), "%s: port okunamadı." % svc["name"])
             key = "%s:%d/%s" % (svc["name"], port["port"], port["protocol"])
-            require(not (key in self.ports and key in self.raw), "%s hem adres hem ham port olamaz." % key)
+            require(not (key in self.ports and key in self.raw), "%s hem adres hem doğrudan port olamaz." % key)
             if key in self.ports:
-                require(port["protocol"] == "tcp", "%s: UDP portu yalnız ham port olabilir." % svc["name"])
+                require(port["protocol"] == "tcp", "%s: UDP portu yalnız doğrudan port olabilir." % svc["name"])
                 pool = self.ports[key]
                 require(type(pool) is int and 0 < pool < 65536, "%s için yerel port ayrılmamış." % key)
                 rows.append({"service": svc["name"], "port": port["port"], "protocol": "tcp", "host_ip": LOOPBACK,
@@ -474,14 +474,14 @@ class _Render:
             elif key in self.raw:
                 host = self.raw[key]
                 require(isinstance(host, dict) and set(host) == {"host_ip", "host_port"} and type(host["host_port"]) is int
-                        and 0 < host["host_port"] < 65536, "%s ham portunun adresi okunamadı." % key)
+                        and 0 < host["host_port"] < 65536, "%s doğrudan portunun adresi okunamadı." % key)
                 try:
                     address = ipaddress.IPv4Address(host["host_ip"])
                 except (ValueError, TypeError) as err:
-                    raise GeneratorError("%s ham portu yalnız bir IPv4 adresinde yayımlanır." % key) from err
+                    raise GeneratorError("%s doğrudan portu yalnız bir IPv4 adresinde yayımlanır." % key) from err
                 require(str(address) == host["host_ip"] and not (address.is_loopback or address.is_unspecified
                                                                  or address.is_multicast or address.is_link_local),
-                        "%s ham portu yalnız sunucunun Tailscale ya da internet IPv4 adresinde yayımlanır." % key)
+                        "%s doğrudan portu yalnız sunucunun Tailscale ya da internet IPv4 adresinde yayımlanır." % key)
                 rows.append({"service": svc["name"], "port": port["port"], "protocol": port["protocol"],
                              "host_ip": host["host_ip"], "host_port": host["host_port"]})
         return rows

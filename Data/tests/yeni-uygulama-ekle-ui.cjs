@@ -50,7 +50,7 @@ const ORNEK_INSPECTION = inceleme({ name: "ornek", services: [{ name: "web" }, {
   soru.degisken("ADMIN_PASSWORD", { line: 9, secret: true, generate: true }),
   soru.port("web", 8080, { line: 5, suggest: "ornek", host_port: 8080 }), soru.port("web", 9000, { line: 5, protocol: "udp" }),
   soru.port("web", 5432, { line: 5, guess: "raw",
-    why: "Web dışı bir port gibi görünüyor (bilinen bir servis portu ya da aynı port UDP'de de açılıyor): ham port önerilir. Ham portlar kapalı gelir; Erişim'den açılır." }),
+    why: "Web dışı bir port gibi görünüyor (bilinen bir servis portu ya da aynı port UDP'de de açılıyor): doğrudan port önerilir. Doğrudan portlar kapalı gelir; Erişim'den açılır." }),
   soru.klasor("web", "/data", { line: 6 }),
   soru.klasor("web", "/belgeler", { line: 6, source: "/srv/Belgeler", source_kind: "absolute", read_only: true, suggest: "srv", folder: "belgeler", srv_path: "/srv/Belgeler" }),
   soru.gizli("web", "API_TOKEN", { line: 10 }),
@@ -424,7 +424,7 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     assert.equal(await q("port:web:8080/tcp").locator("input[type=radio]:checked").count(), 0, "no port is chosen for the operator");
     assert.equal(await q("port:web:5432/tcp").getByTestId("q-guess").innerText(), "Denetçinin tahmini: web değil (bilinen bir servis portu)");
     assert.equal(await q("port:web:9000/udp").locator("input").count(), 0, "a UDP port is a raw port, closed");
-    assert.match(await q("port:web:9000/udp").innerText(), /Ham port · kapalı gelir/);
+    assert.match(await q("port:web:9000/udp").innerText(), /Doğrudan port · kapalı gelir/);
     // A start mode: the suggestion marked, a word when the choice differs (A4).
     assert(await q("start:web").getByRole("radio", { name: /Root olarak/ }).isChecked());
     assert.equal(await q("start:web").locator('[data-secim="root"] .pill').innerText(), "Önerilen");
@@ -460,7 +460,7 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     await q("port:web:5432/tcp").getByRole("radio", { name: /Adres/ }).check();
     assert.match(await q("port:web:5432/tcp").innerText(), /Web arayüzü değilse adres çalışmaz/);
     assert.equal(await q("port:web:5432/tcp").getByTestId("q-name").inputValue(), "", "no suggestion for a non-web port");
-    await q("port:web:5432/tcp").getByRole("radio", { name: /Ham port/ }).check();
+    await q("port:web:5432/tcp").getByRole("radio", { name: /Doğrudan port/ }).check();
     // The secrets: a hidden value, "Rastgele üret" only where the inspector allows it, "Göster".
     const adminInput = q("var:ADMIN_PASSWORD").getByTestId("q-secret");
     assert.equal(await adminInput.getAttribute("type"), "password");
@@ -522,7 +522,7 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     await boxes.waitFor();
     assert.deepEqual(lastPost(KUR), { metin: ORNEK_FILE, yanitlar: ANSWERS, kaynak: { tur: "dosya" }, plan: true });
     assert.deepEqual(await boxes.locator("[data-kutu]").evaluateAll((els) => els.map((e) => [e.querySelector("dt").textContent, [...e.querySelectorAll("dd")].map((d) => d.textContent)])), [
-      ["Uygulama", ["ornek · 2 servis", "ksl-ornek"]], ["Adresler", ["http://ornek.ev"]], ["Ham portlar", ["web · 9000/UDP · kapalı", "web · 5432/TCP · kapalı"]],
+      ["Uygulama", ["ornek · 2 servis", "ksl-ornek"]], ["Adresler", ["http://ornek.ev"]], ["Doğrudan portlar", ["web · 9000/UDP · kapalı", "web · 5432/TCP · kapalı"]],
       ["Klasörler", ["/var/lib/master-stack/uygulamalar/ornek/veri", "/srv/Belgeler · salt okunur"]],
       ["Gizli değerler", ["2 · Podman secret", "ornek-admin-password", "ornek-api-token"]], ["Başlatma", ["web: root olarak", "db: doğrudan 999:999"]],
       ["İmajlar", ["registry.example/ornek/web:1.2", "registry.example/ornek/db:16"]]]);
@@ -582,7 +582,7 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     await flow2.getByTestId("paste").getByRole("textbox").fill(ADRES_FILE);
     await flow2.locator('[data-eylem="ileri"]').click();
     const q2 = (id) => flow2.locator(`[data-soru="${id}"]`);
-    await q2("port:pano:3000/tcp").getByRole("radio", { name: /Ham port/ }).check();
+    await q2("port:pano:3000/tcp").getByRole("radio", { name: /Doğrudan port/ }).check();
     await q2("start:pano").getByRole("radio", { name: /Doğrudan/ }).check();
     await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
     await flow2.locator('[data-eylem="plan"]').click();
@@ -609,7 +609,7 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     await flow2.getByRole("button", { name: "Başlatma sorusuna dön" }).click();
     await page.waitForFunction(() => document.querySelector("[data-testid=add-flow]")?.dataset.adim === "2");
     assert(await q2("start:pano").evaluate((e) => e.contains(document.activeElement)), "the question the job names has the focus");
-    assert(await q2("port:pano:3000/tcp").getByRole("radio", { name: /Ham port/ }).isChecked(), "the answers stay");
+    assert(await q2("port:pano:3000/tcp").getByRole("radio", { name: /Doğrudan port/ }).isChecked(), "the answers stay");
     await q2("start:pano").getByRole("radio", { name: /Root olarak/ }).check();
     await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
     await flow2.locator('[data-eylem="plan"]').click();
@@ -723,7 +723,7 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     assert.equal(await eq("port:web:8080/tcp").getByTestId("q-stay").innerText(), "Adres · notlar.ev");
     assert.equal(await eq("port:web:8080/tcp").getByTestId("q-stay-link").getAttribute("href"), "#/erisim?sekme=adresler&satir=uygulama%3Anotlar%3Aweb%3A8080%2Ftcp");
     assert.equal(await eq("port:web:8080/tcp").locator("input").count(), 0, "not editable here");
-    assert.equal(await eq("port:web:9000/udp").getByTestId("q-stay").innerText(), "Ham port · Kapalı");
+    assert.equal(await eq("port:web:9000/udp").getByTestId("q-stay").innerText(), "Doğrudan port · Kapalı");
     // A stored secret is "Kayıtlı" and kept; the other answers as stored.
     assert.equal(await eq("var:DB_PASSWORD").getByTestId("q-kept").locator(".pill").innerText(), "Kayıtlı");
     assert.equal(await eq("var:DB_PASSWORD").getByTestId("q-secret").count(), 0, "no value is shown or asked for");
@@ -747,7 +747,7 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     assert.equal(await eq("port:web:7000/tcp").locator("input[type=radio]:checked").count(), 0);
     assert.equal(await edit.getByTestId("edit-status").innerText(), "1 soru yanıt bekliyor");
     assert(await edit.locator('[data-eylem="incele"]').isDisabled());
-    await eq("port:web:7000/tcp").getByRole("radio", { name: /Ham port/ }).check();
+    await eq("port:web:7000/tcp").getByRole("radio", { name: /Doğrudan port/ }).check();
     await eq("var:DB_PASSWORD").locator('[data-eylem="yenile"]').click();
     await eq("var:DB_PASSWORD").locator('[data-eylem="uret"]').click();
     const renewed = await eq("var:DB_PASSWORD").getByTestId("q-secret").inputValue();
@@ -832,7 +832,7 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
         // On a phone one pane at a time: the questions first, the file a tap away.
         assert.equal(await s.locator(".add-switch").isVisible(), phone, "the pane switch only on a phone");
         await s.locator('[data-soru="port:web:8080/tcp"]').getByRole("radio", { name: /Adres/ }).check({ force: true });
-        await s.locator('[data-soru="port:web:5432/tcp"]').getByRole("radio", { name: /Ham port/ }).check({ force: true });
+        await s.locator('[data-soru="port:web:5432/tcp"]').getByRole("radio", { name: /Doğrudan port/ }).check({ force: true });
         await s.locator('[data-soru="var:ADMIN_PASSWORD"] [data-eylem="uret"]').click();
         await s.locator('[data-soru="secret:web:API_TOKEN"]').getByTestId("q-secret").fill("jeton");
         await noStyles(page, `${width} ${colorScheme} denetçi`);
@@ -876,7 +876,7 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
         await noStyles(page, `${width} ${colorScheme} tanım`);
         assert(await noHorizontalScroll(page), `${width} ${colorScheme} tanım`);
         await shot(page, `${width}-${colorScheme}-tanim-duzenle.png`, true);
-        await page.locator('[data-soru="port:web:7000/tcp"]').getByRole("radio", { name: /Ham port/ }).check({ force: true });
+        await page.locator('[data-soru="port:web:7000/tcp"]').getByRole("radio", { name: /Doğrudan port/ }).check({ force: true });
         await page.locator('[data-eylem="incele"]').click();
         await page.getByRole("dialog", { name: "notlar · Tanım değişikliği" }).getByTestId("diff").waitFor();
         await shot(page, `${width}-${colorScheme}-tanim-fark.png`);

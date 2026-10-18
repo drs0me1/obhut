@@ -62,7 +62,7 @@ const number = (n: number) => n.toLocaleString("tr-TR");
       </div>
       <p class="meter-note">
         Tüm ağlar · INPUT, FORWARD ve NAT dahil tüm tablolar · IPv{{ family }}. Kurallar zincir içindeki sırayla değerlendirilir; sayaçlar son
-        okumanın değeridir. Salt okunur: kurallar Erişim'deki adreslerden, ham portlardan ve port kurallarından üretilir.
+        okumanın değeridir. Salt okunur: kurallar Erişim'deki adreslerden, doğrudan portlardan ve port kurallarından üretilir.
       </p>
       <p v-for="(h, i) in fw.hatalar" :key="i" class="notice notice-warning" data-testid="fw-warning"><Icon name="alert" class="notice-icon" /><span>{{ h }}</span></p>
       <div v-if="rules.length" class="table-wrap">

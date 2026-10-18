@@ -40,6 +40,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   without encryption is amber). The explanatory sentences, the "Teknik ayrıntı" switch and its detail rows and the
   WireGuard note under the table are gone; a firewall rule's row says whether it allows or blocks, and a blocking
   rule shows its port. The service's name leads to its row in Adresler.
+- Erişim → Adresler: "Ayrıntı" opens a row's settings as a compact card right under the row instead of a panel from
+  the right (DD-283): the row's details on one line, its fields side by side like the table's columns, "Adresi
+  kaldır" or "Adres aç" beside Vazgeç. Pressing it again closes the card; choosing another row moves it there, so only one is open. A
+  switch or a scope in the table opens the same card with the change made, and links from Genel Bakış, the
+  services table, Yerel adlar or an application's page open it under its row. While a change is being applied,
+  the table's other controls wait.
+- "Ham port" is now "doğrudan port" everywhere Konsol and the server speak: a port published as itself, with no
+  Caddy row (DD-284). Adresler' second table is "Doğrudan portlar", a row's kind reads "Doğrudan port", the row's
+  number field is "Sunucu portu", and the plan, the inspector's questions and the errors say the same.
+- Uygulamalar: the Erişim column became a mapping, server → container: for each container port, the addresses and
+  ports it is reached on from Tailscale and the internet (each in its colour, as Erişim's table shows them; "Kapalı"
+  when the port is not open), then the container port itself ("→ 8080/tcp", with its service when the application
+  has more than one). The "Ham 8092 · Tailscale" chips are gone. The Güncelleme column is gone too: a newer image
+  shows on the application's page (Özet) and counts in the Dikkat filter.
+- Erişim → Genel: an application is one row whatever its ports; its ports are listed under its name and each cell
+  gathers every port's addresses. An application with one port still leads to its row in Adresler; one with more
+  leads to its own Erişim tab, where each port links to its row.
+- Dosyalar: "Geri" and "Genel Bakış" buttons before the title, so a folder opened from an application's Depolama
+  (or any link into Dosyalar) has a way back inside Konsol, also when it runs without a browser bar.
 
 ## [2.0.0] — 2026-10-18
 

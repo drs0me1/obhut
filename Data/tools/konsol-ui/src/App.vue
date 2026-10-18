@@ -1,7 +1,8 @@
 <!-- The shell (DD-258): sidebar, page head with the top bar's tools, the pending-change banner and the page;
      on a phone a compact top bar and a bottom bar instead of the sidebar. The palette, the activity drawer,
      the phone's menu sheet and a page's dialogs sit outside .app, which is inert while one of them is open.
-     A page below a section (an application) shows the trail back in the head and its own heading. A full-window
+     A page below a section (an application) shows the trail back in the head and its own heading; a page other
+     sections link into (Dosyalar) asks for "Geri" and "Genel Bakış" before its title. A full-window
      page (route meta full: Uygulama ekle) has its own head and bar: the shell keeps only the pending-change
      banner above it, since a change waiting for its confirmation must stay in sight, and the new-build notice
      (DD-280: the files this page runs were replaced on the server). -->
@@ -31,6 +32,8 @@ const full = computed(() => route.meta.full === true);
 const title = computed(() => pageHead.title ?? section.value.title);
 const description = computed(() => pageHead.description ?? section.value.description);
 const main = ref<HTMLElement | null>(null);
+/** Whether "Geri" has a page to go back to: the router notes the page before in the history entry. */
+const canBack = computed(() => route.fullPath !== "" && Boolean((window.history.state as { back?: string | null } | null)?.back));
 
 watch(title, (t) => (document.title = `${t} · Konsol`), { immediate: true });
 watch(anyOpen, (open) => document.documentElement.classList.toggle("modal-open", open));
@@ -83,9 +86,17 @@ onBeforeUnmount(() => {
             <Icon name="chevron" :size="14" />
             <span aria-current="page">{{ title }}</span>
           </nav>
-          <div v-else class="page-title">
-            <h1 tabindex="-1">{{ title }}</h1>
-            <p class="page-desc" data-testid="page-desc">{{ description }}</p>
+          <div v-else class="page-title" :class="{ 'page-title-nav': pageHead.nav }">
+            <nav v-if="pageHead.nav" class="page-nav" aria-label="Gezinme">
+              <button type="button" class="icon-btn" :disabled="!canBack" aria-label="Geri" title="Geri" data-testid="page-back" @click="router.back()">
+                <Icon name="back" :size="20" />
+              </button>
+              <RouterLink to="/genel" class="icon-btn" aria-label="Genel Bakış" title="Genel Bakış" data-testid="page-home"><Icon name="home" :size="20" /></RouterLink>
+            </nav>
+            <div class="page-title-text">
+              <h1 tabindex="-1">{{ title }}</h1>
+              <p class="page-desc" data-testid="page-desc">{{ description }}</p>
+            </div>
           </div>
           <TopTools class="desktop-tools" />
         </div>

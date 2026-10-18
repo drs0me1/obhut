@@ -58,7 +58,7 @@ function settingsSubject(detail: string): string {
     const row = rowWords(words[1]);
     if (words[2] === "ham") {
       const scope = SCOPE_TEXT[words[3] as keyof typeof SCOPE_TEXT] ?? words[3] ?? "";
-      return `Erişim değişikliği · ${row} (ham port, ${scope.toLocaleLowerCase("tr")}, sunucu portu ${words[4] ?? "?"})`;
+      return `Erişim değişikliği · ${row} (doğrudan port, ${scope.toLocaleLowerCase("tr")}, sunucu portu ${words[4] ?? "?"})`;
     }
     if (words[2] === "adres") {
       // erisim <id> adres <ad> tailscale-portu <port|kapali> internet <name|kapali>

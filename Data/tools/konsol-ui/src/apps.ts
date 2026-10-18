@@ -1,10 +1,10 @@
 // How an application (GET /api/konsol/uygulamalar, DD-271) is shown everywhere: its state, whether it needs
 // attention, its services, resources, live rate and version, where its file came from, how each service starts,
-// how it is reached (from Erişim's rows), its first address and its tile colour. One place, so Genel Bakış,
+// how its container ports are reached (from Erişim's rows), its first address and its tile colour. One place, so Genel Bakış,
 // Uygulamalar, the application page and the palette say the same thing. Erişim's cell words live here too
 // (CELL_TEXT, CELL_TONE).
 import type { Tone } from "./components/ui/types";
-import type { ErisimDurumu, Hizmet, KaynakTuru, SurecKullanicisi, Uygulama, UygulamaServisAyrintisi } from "./api/sema";
+import type { ErisimDurumu, ErisimHucresi, Hizmet, KaynakTuru, SurecKullanicisi, Uygulama, UygulamaServisAyrintisi } from "./api/sema";
 import { UNKNOWN, bytes, percent, rate } from "./format";
 
 export type AppState = Uygulama["durum"];
@@ -88,6 +88,10 @@ export const appLine = (app: Pick<Uygulama, "bicim" | "servisler" | "koken">): s
 /** "1 uyarı". */
 export const warningText = (n: number): string => `${n} uyarı`;
 
+/** An address in pieces a narrow cell may break between: after its scheme, before its port and its protocol, never
+    inside a number. */
+export const addressPieces = (line: string): string[] => line.replace("://", "://\n").split(/\n|(?=:\d|\/(?:tcp|udp))/);
+
 export const CELL_TEXT: Record<ErisimDurumu, string> = { acik: "Açık", kismen: "Kısmen", kapali: "Kapalı", yok: UNKNOWN, hata: "Sorun var" };
 export const CELL_TONE: Record<ErisimDurumu, Tone> = { acik: "ok", kismen: "accent", kapali: "neutral", yok: "neutral", hata: "danger" };
 
@@ -110,19 +114,34 @@ export function openAddress(app: Pick<Uygulama, "adres" | "durum">): string {
   return address && (app.durum === "calisiyor" || app.durum === "kismen") ? address : "";
 }
 
-/** How an application is reached, from Erişim's rows: a Tailscale name, an internet name, each open raw port;
-    "Kapalı" when nothing is open. */
-export function accessChips(rows: readonly Hizmet[], app: string): { text: string; tone: Tone }[] {
-  const mine = rows.filter((h) => h.tur === "uygulama" && h.uygulama === app && h.satir);
-  const out: { text: string; tone: Tone }[] = [];
-  if (mine.some((h) => h.satir?.tur === "adres")) out.push({ text: "Tailscale", tone: "ok" });
-  const internet = mine.filter((h) => h.satir?.tur === "adres" && h.satir.internet);
-  if (internet.length) out.push({ text: "İnternet", tone: internet.some((h) => h.internet.durum === "hata" || h.internet.uyari) ? "warning" : "accent" });
-  for (const h of mine) {
-    if (h.satir?.tur === "ham" && h.satir.kapsam !== "kapali") out.push({ text: `Ham ${h.satir.port} · ${h.satir.kapsam === "internet" ? "internet" : "Tailscale"}`, tone: "warning" });
-  }
-  if (!out.length) out.push({ text: "Kapalı", tone: "neutral" });
-  return out;
+/** A cell's colour in Erişim's tables: a warning (a raw port open on the internet, unencrypted WebDAV) over its
+    state. */
+export const cellTone = (c: ErisimHucresi): Tone => (c.uyari ? "warning" : (CELL_TONE[c.durum] ?? "neutral"));
+
+export interface AccessLine {
+  text: string;
+  tone: Tone;
+}
+
+/** One access row of an application as the list maps it: the addresses and ports it is reached on from Tailscale
+    and the internet (each in its cell's colour; "Kapalı" when the row opens nothing) beside its container port
+    ("8080/tcp"; with its service when the application has more than one). */
+export interface AccessMapping {
+  id: string;
+  server: AccessLine[];
+  container: string;
+}
+
+/** How an application's container ports are reached, from Erişim's rows, in the rows' order. */
+export function accessMap(rows: readonly Hizmet[], app: string, services: number): AccessMapping[] {
+  return rows
+    .filter((h) => h.tur === "uygulama" && h.uygulama === app && h.satir)
+    .map((h) => {
+      const server = (["tailscale", "internet"] as const).flatMap((k) => (h[k].durum === "yok" ? [] : h[k].adresler.map((text) => ({ text, tone: cellTone(h[k]) }))));
+      const key = h.anahtar ?? "";
+      const port = key.slice(key.indexOf(":") + 1);
+      return { id: h.id, server: server.length ? server : [{ text: "Kapalı", tone: "neutral" }], container: services > 1 && h.servis ? `${h.servis} · ${port}` : port };
+    });
 }
 
 /** One of four tile colours, always the same for the same application (by its name). */

@@ -14,6 +14,7 @@ interface IconDef {
 
 const ICONS = {
   home: { shapes: [{ d: "M3.5 11 12 4l8.5 7" }, { d: "M6 9.5V20h12V9.5" }] },
+  back: { shapes: [{ d: "M19 12H5.5" }, { d: "m11.5 6-6 6 6 6" }] },
   apps: {
     shapes: [
       { x: 4, y: 4, width: 6.5, height: 6.5, rx: 1.6 },

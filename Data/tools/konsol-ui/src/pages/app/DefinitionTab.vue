@@ -69,7 +69,7 @@ const portRows = computed(() =>
   props.detail.servisler.flatMap((s) =>
     s.portlar.map((p) => {
       const a = p.erisim;
-      const value = a.tur === "adres" ? `Adres · ${a.ad}${domain.value ? "." + domain.value : ""}` : `Ham port · ${SCOPE_TEXT[a.kapsam]}`;
+      const value = a.tur === "adres" ? `Adres · ${a.ad}${domain.value ? "." + domain.value : ""}` : `Doğrudan port · ${SCOPE_TEXT[a.kapsam]}`;
       return { id: portQuestion(s.ad, p), label: `${p.port}/${p.protokol.toUpperCase()} · ${s.ad}`, value, mono: false, secret: false };
     }),
   ),
@@ -93,7 +93,7 @@ function valueOf(id: string, a: Yanit | YanitSakli): { value: string; mono: bool
     return { value: startText(a.mode, service?.kullanici ?? null), mono: false, secret: false };
   }
   if ("to" in a) return a.to === "srv" ? { value: `${a.path} · ${a.read_only ? "salt okunur" : "okuma-yazma"}`, mono: true, secret: false } : { value: "Uygulamanın klasörü", mono: false, secret: false };
-  return { value: "use" in a ? (a.use === "raw" ? "Ham port" : "Adres") : "", mono: false, secret: false };
+  return { value: "use" in a ? (a.use === "raw" ? "Doğrudan port" : "Adres") : "", mono: false, secret: false };
 }
 
 const answerRows = computed(() => [

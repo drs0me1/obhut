@@ -67,9 +67,9 @@ const items = computed<Item[]>(() => {
       key: "satir-" + h.id,
       group: "Adresler",
       label: rowName(h, domain),
-      hint: `${rowOwner(h)} · ${raw ? "Ham port" : "Adres"}`,
+      hint: `${rowOwner(h)} · ${raw ? "Doğrudan port" : "Adres"}`,
       icon: raw ? "shield" : "globe",
-      words: `${h.ad} ${h.servis ?? ""} ${internet} ${raw ? "ham port" : "adres tailscale adı"} erişim`,
+      words: `${h.ad} ${h.servis ?? ""} ${internet} ${raw ? "doğrudan port" : "adres tailscale adı"} erişim`,
       run: { kind: "route", to: accessRoute("adresler", h.id) },
     });
   }
@@ -91,7 +91,7 @@ const items = computed<Item[]>(() => {
       label: "Adres aç",
       hint: "Erişim",
       icon: "globe",
-      words: "tailscale adı caddy satırı ham port",
+      words: "tailscale adı caddy satırı doğrudan port",
       run: { kind: "route", to: accessRoute("adresler", candidate.id, "adres-ac") },
     });
   }

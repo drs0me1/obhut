@@ -50,7 +50,7 @@ const first = computed(() => rows.value[0]?.id ?? "");
       <h2 id="erisim-baslik" class="card-title">Bu uygulamanın adresleri</h2>
       <RouterLink :to="accessRoute('adresler', first)" class="btn btn-secondary btn-sm" data-testid="access-edit">Erişim'de düzenle</RouterLink>
     </div>
-    <p class="meter-note">Burada yalnız görünür; adresler, Tailscale portu, internet adı ve ham portlar Erişim → Adresler'de değişir.</p>
+    <p class="meter-note">Burada yalnız görünür; adresler, Tailscale portu, internet adı ve doğrudan portlar Erişim → Adresler'de değişir.</p>
     <div v-if="rows.length" class="table-wrap">
       <table class="data-table app-access-table" data-testid="access-table">
         <thead>
@@ -70,7 +70,7 @@ const first = computed(() => rows.value[0]?.id ?? "");
               <span v-if="r.address && r.local" class="cell-sub mono">Yalnız bu sunucu · {{ r.local }}</span>
             </th>
             <td data-label="Tür">
-              <StatusPill :tone="r.address ? 'accent' : 'warning'">{{ r.address ? "Adres" : "Ham port" }}</StatusPill>
+              <StatusPill :tone="r.address ? 'accent' : 'warning'">{{ r.address ? "Adres" : "Doğrudan port" }}</StatusPill>
             </td>
             <template v-if="r.address">
               <td data-label="Tailscale adı" class="mono">{{ r.name }}</td>

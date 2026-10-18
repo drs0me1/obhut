@@ -103,7 +103,7 @@ const problem = (q: Soru): string => {
 const domId = (i: number) => `soru-${i}`;
 const stayText = (p: UygulamaPortu): string => {
   const a = p.erisim;
-  if (a.tur === "ham") return `Ham port · ${SCOPE_TEXT[a.kapsam]}${a.kapsam !== "kapali" ? ` · ${a.port}` : ""}`;
+  if (a.tur === "ham") return `Doğrudan port · ${SCOPE_TEXT[a.kapsam]}${a.kapsam !== "kapali" ? ` · ${a.port}` : ""}`;
   const parts = [`Adres · ${a.ad}${props.domain ? "." + props.domain : ""}`];
   if (a.tailscale_portu !== null) parts.push(`Tailscale portu ${a.tailscale_portu}`);
   if (a.internet) parts.push(`İnternet adı ${a.internet}`);
@@ -178,7 +178,7 @@ function pickPort(id: string, use: "caddy" | "raw", suggest: string | null): voi
               </label>
               <label class="choice-item" data-secim="raw">
                 <input type="radio" :name="q.id" value="raw" :checked="P(q.id).use === 'raw'" :disabled="disabled" @change="pickPort(q.id, 'raw', null)" />
-                <span class="choice-text"><span class="choice-head"><strong>Ham port</strong></span><span class="choice-sub">Kapalı gelir; Erişim'den açılır</span></span>
+                <span class="choice-text"><span class="choice-head"><strong>Doğrudan port</strong></span><span class="choice-sub">Kapalı gelir; Erişim'den açılır</span></span>
               </label>
             </fieldset>
             <div v-if="P(q.id).use === 'caddy'" class="field">
@@ -198,10 +198,10 @@ function pickPort(id: string, use: "caddy" | "raw", suggest: string | null): voi
                 />
                 <span v-if="domain" class="input-suffix" aria-hidden="true">.{{ domain }}</span>
               </div>
-              <p v-if="q.guess !== 'web'" class="field-help warn-text">Web arayüzü değilse adres çalışmaz; ham port daha uygun olabilir.</p>
+              <p v-if="q.guess !== 'web'" class="field-help warn-text">Web arayüzü değilse adres çalışmaz; doğrudan port daha uygun olabilir.</p>
             </div>
           </template>
-          <p v-else class="q-stay"><Icon name="lock" :size="14" /><span>Ham port · kapalı gelir</span></p>
+          <p v-else class="q-stay"><Icon name="lock" :size="14" /><span>Doğrudan port · kapalı gelir</span></p>
         </template>
 
         <!-- a secret (a secret-looking variable or an entry the inspector asks for) -->

@@ -541,8 +541,7 @@
   font-size: 15px;
 }
 
-.col-res,
-.col-ver {
+.col-res {
   white-space: nowrap;
 }
 
@@ -554,6 +553,49 @@
   display: flex;
   justify-content: flex-end;
   gap: 6px;
+}
+
+/* The access column: each row's addresses on this server (its Tailscale name and port, its internet name, a raw
+   port's address, each with its cell's colour) beside its container port. One grid per cell, the header's labels
+   in the same two columns, so the halves line up down the table whatever each entry's height. */
+.col-access {
+  min-width: 340px;
+}
+
+.map-head,
+.map-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(125px, 0.5fr);
+  column-gap: 12px;
+}
+
+.map-list {
+  row-gap: 8px;
+}
+
+.map {
+  display: contents;
+}
+
+.map-server {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.map-container {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.map-arrow {
+  flex: none;
+  color: var(--muted);
 }
 
 /* Narrow: each application is a card (the table's cells stacked with their column names). */
@@ -623,7 +665,7 @@
     grid-column: 1 / -1;
   }
 
-  /* An unknown resource or version is left out of a card. */
+  /* An unknown resource, rate or access (Erişim not read yet) is left out of a card. */
   .app-table td.cell-empty {
     display: none;
   }
@@ -633,9 +675,27 @@
   }
 
   .col-res,
-  .col-net,
-  .col-ver {
+  .col-net {
     white-space: normal;
+  }
+}
+
+/* A phone: each entry's container port under its addresses, the entries apart. */
+@container (max-width: 560px) {
+  .map-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .map {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .map-container {
+    padding-left: 16px;
   }
 }
 

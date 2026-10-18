@@ -201,6 +201,26 @@
   outline: none;
 }
 
+/* "Geri" and "Genel Bakış" before the title (Dosyalar). */
+.page-title-nav {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.page-nav {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.page-title-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .page-desc {
   color: var(--muted);
   font-size: 14px;

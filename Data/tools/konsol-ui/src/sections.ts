@@ -38,7 +38,7 @@ export const SECTIONS: readonly Section[] = [
     short: "Erişim",
     description: "Kim, neye, nereden erişir.",
     icon: "globe",
-    keywords: "adres ham port alan adı tailscale wireguard internet https sertifika caddy dns güvenlik duvarı",
+    keywords: "adres doğrudan port alan adı tailscale wireguard internet https sertifika caddy dns güvenlik duvarı",
   },
   {
     id: "dosyalar",
@@ -72,7 +72,7 @@ export const sectionById = (id: unknown): Section =>
 /** Erişim's tabs (rebuild phase 5, A7), in the address as ?sekme=; the palette lists each one. */
 export const ACCESS_TABS = [
   { id: "genel", label: "Genel", keywords: "erişim matris kim nereden sertifika özet" },
-  { id: "adresler", label: "Adresler", keywords: "adres aç ham port tailscale adı tailscale portu internet adı caddy https sertifika" },
+  { id: "adresler", label: "Adresler", keywords: "adres aç doğrudan port tailscale adı tailscale portu internet adı caddy https sertifika" },
   { id: "adlar", label: "Yerel adlar", keywords: "yerel ad dns dnsmasq kayıt yönlendirme üst dns yerel alan adı" },
   { id: "tailscale", label: "Tailscale", keywords: "tailnet cihaz anahtar çıkış düğümü exit node" },
   { id: "wireguard", label: "WireGuard", keywords: "vpn ağ cihaz peer qr profil" },

@@ -1356,7 +1356,7 @@ class Panel:
             row = item["satir"]
             name = "%s · %s %d/%s" % (item["uygulama"], item["servis"], item["port"], item["protokol"])
             if row["tur"] == "ham" and row["kapsam"] != "kapali":
-                rows.append({"name": name + " · ham port", "family": 4, "proto": item["protokol"], "port": row["port"],
+                rows.append({"name": name + " · doğrudan port", "family": 4, "proto": item["protokol"], "port": row["port"],
                              "scope": "tail" if row["kapsam"] == "tailscale" else "wan", "baseline": True, "fixed": True,
                              "row": item["id"]})
             elif row["tur"] == "adres" and row["tailscale_portu"] is not None:

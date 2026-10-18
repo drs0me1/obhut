@@ -166,7 +166,7 @@ class SectionTests(AccessFixture):
                            ({"uygulama": "Not Lar", "anahtar": RAW, "satir": raw("tailscale")}, "Uygulama adı geçersiz"),
                            ({"uygulama": "yok", "anahtar": RAW, "satir": raw("tailscale")}, "Uygulama bulunamadı"),
                            ({"uygulama": "notlar", "anahtar": "web:9/tcp", "satir": raw("tailscale")}, "böyle bir portu yok"),
-                           ({"uygulama": "notlar", "anahtar": PEER, "satir": address("notlar2")}, "UDP portu yalnız ham port"),
+                           ({"uygulama": "notlar", "anahtar": PEER, "satir": address("notlar2")}, "UDP portu yalnız doğrudan port"),
                            ({"uygulama": "notlar", "anahtar": RAW, "satir": raw("acik")}, "kapsamını"),
                            ({"uygulama": "notlar", "anahtar": RAW, "satir": raw()}, "Değişiklik yok"),
                            ({"uygulama": "notlar", "anahtar": RAW, "satir": raw("tailscale"), "internet_onayi": "evet"},
@@ -295,22 +295,22 @@ class PlanTests(AccessFixture):
              [("kapat", name + " 8080/tcp · internet adı", "notlar.example.net", "kapalı")], 0),
             (WEB, address(internet="notlar.example.net"), address(internet="defter.example.net"),
              [("degistir", name + " 8080/tcp · internet adı", "notlar.example.net", "defter.example.net")], 60),
-            (RAW, raw(), raw("tailscale"), [("ac", name + " 7000/tcp · ham port", "Ham port · kapalı", "Ham port · Tailscale TCP 7000")], 60),
-            (RAW, raw("tailscale"), raw(), [("kapat", name + " 7000/tcp · ham port", "Ham port · Tailscale TCP 7000", "Ham port · kapalı")], 0),
+            (RAW, raw(), raw("tailscale"), [("ac", name + " 7000/tcp · doğrudan port", "Doğrudan port · kapalı", "Doğrudan port · Tailscale TCP 7000")], 60),
+            (RAW, raw("tailscale"), raw(), [("kapat", name + " 7000/tcp · doğrudan port", "Doğrudan port · Tailscale TCP 7000", "Doğrudan port · kapalı")], 0),
             (RAW, raw("tailscale"), raw("internet"),
-             [("degistir", name + " 7000/tcp · ham port", "Ham port · Tailscale TCP 7000", "Ham port · İnternet TCP 7000")], 60),
+             [("degistir", name + " 7000/tcp · doğrudan port", "Doğrudan port · Tailscale TCP 7000", "Doğrudan port · İnternet TCP 7000")], 60),
             (RAW, raw("internet"), raw("tailscale"),
-             [("degistir", name + " 7000/tcp · ham port", "Ham port · İnternet TCP 7000", "Ham port · Tailscale TCP 7000")], 0),
+             [("degistir", name + " 7000/tcp · doğrudan port", "Doğrudan port · İnternet TCP 7000", "Doğrudan port · Tailscale TCP 7000")], 0),
             (RAW, raw("tailscale"), raw("tailscale", 7001),
-             [("degistir", name + " 7000/tcp · ham port", "Ham port · Tailscale TCP 7000", "Ham port · Tailscale TCP 7001")], 60),
+             [("degistir", name + " 7000/tcp · doğrudan port", "Doğrudan port · Tailscale TCP 7000", "Doğrudan port · Tailscale TCP 7001")], 60),
             (RAW, raw(), raw(port=7005),
-             [("degistir", name + " 7000/tcp · ham port", "Ham port · kapalı · port 7000", "Ham port · kapalı · port 7005")], 0),
+             [("degistir", name + " 7000/tcp · doğrudan port", "Doğrudan port · kapalı · port 7000", "Doğrudan port · kapalı · port 7005")], 0),
             (RAW, raw(), address("defter"),
-             [("ekle", name + " 7000/tcp · adres", "Ham port · kapalı", "Adres · defter.ayc · internet: kapalı")], 60),
+             [("ekle", name + " 7000/tcp · adres", "Doğrudan port · kapalı", "Adres · defter.ayc · internet: kapalı")], 60),
             (WEB, address(), raw(port=8080),
-             [("kaldir", name + " 8080/tcp · adres", "Adres · notlar.ayc · internet: kapalı", "Ham port · kapalı")], 0),
+             [("kaldir", name + " 8080/tcp · adres", "Adres · notlar.ayc · internet: kapalı", "Doğrudan port · kapalı")], 0),
             (WEB, address(), raw("tailscale", 8080),
-             [("kaldir", name + " 8080/tcp · adres", "Adres · notlar.ayc · internet: kapalı", "Ham port · Tailscale TCP 8080")], 60),
+             [("kaldir", name + " 8080/tcp · adres", "Adres · notlar.ayc · internet: kapalı", "Doğrudan port · Tailscale TCP 8080")], 60),
         )
         for key, before, after, items, seconds in cases:
             with self.subTest(before=before, after=after):
@@ -333,7 +333,7 @@ class PlanTests(AccessFixture):
         self.assertIn("web servisi (ve ona bağlı servisler) yeniden başlar; birkaç saniye yanıt vermez.", plan["etkiler"])
         self.assertIn("Güvenlik duvarı ve konteyner koruması yeniden kurulur.", plan["etkiler"])
         self.assertNotIn("Caddy yapılandırması yeniden yüklenir.", plan["etkiler"])
-        self.assertIn("Ham port güvenlik duvarının kurallarından geçmez", " ".join(w["metin"] for w in plan["uyarilar"]))
+        self.assertIn("Doğrudan açılan port güvenlik duvarının kurallarından geçmez", " ".join(w["metin"] for w in plan["uyarilar"]))
         self.assertIn("Uygulandıktan sonra 60 saniye", plan["uyarilar"][-1]["metin"])
         plan = self.plan(WEB, address("defter"))
         self.assertEqual(plan["etkiler"], ["Caddy yapılandırması yeniden yüklenir.", "Yerel adlar (dnsmasq) yeniden başlar."],
@@ -634,7 +634,7 @@ class FirewallAndNamesTests(AccessFixture):
         master_api.check(master_api.ref("GuvenlikDuvari"), answer)
         row = next(r for r in answer["portlar"] if r["port"] == 6881)
         self.assertEqual((row["sabit"], row["satir"], row["kapsam"], row["ad"]),
-                         (True, RID[PEER], "wan", "notlar · web 6881/udp · ham port"))
+                         (True, RID[PEER], "wan", "notlar · web 6881/udp · doğrudan port"))
 
     def test_managed_names_are_read_only_in_local_names(self):
         Path(self.env["DNSMASQ_CONF_FILE"]).write_text("local=/ayc/\ninterface-name=panel.ayc,tailscale0/4\n")

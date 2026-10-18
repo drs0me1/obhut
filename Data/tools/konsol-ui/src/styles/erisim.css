@@ -93,62 +93,6 @@ a.matrix-name:hover {
   text-decoration: underline;
 }
 
-/* A cell: a dot in its state's colour and the addresses it is reached on there, one per line. */
-.reach {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.reach-dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--line-strong);
-  transform: translateY(-1px);
-}
-
-.reach-lines {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.reach-lines .mono {
-  font-size: 12.5px;
-}
-
-.reach-neutral .reach-lines {
-  color: var(--muted);
-}
-
-.reach-ok .reach-dot {
-  background: var(--ok);
-}
-
-.reach-warning .reach-dot {
-  background: var(--warn);
-}
-
-.reach-danger .reach-dot {
-  background: var(--danger);
-}
-
-.reach-danger .reach-lines {
-  color: var(--danger-ink);
-}
-
-.reach-accent .reach-dot {
-  background: var(--accent);
-}
-
-.reach-none .reach-dot {
-  visibility: hidden;
-}
 
 @container (max-width: 760px) {
   .matrix .col-main {
@@ -181,6 +125,64 @@ a.matrix-name:hover {
 
 .row-current > * {
   background: var(--accent-soft);
+}
+
+/* A row's panel opens under the row itself (AccessRowPanel); the row and its panel read as one. */
+.data-table .row-detail > td {
+  padding: 0 12px 14px;
+  background: var(--accent-soft);
+}
+
+/* The panel takes the row's width and gives the table's columns none of its own (its long lines would widen them). */
+.data-table .row-detail > td > * {
+  contain: inline-size;
+}
+
+.data-table tbody tr:has(+ .row-detail) > * {
+  border-bottom: 0;
+}
+
+.data-table .row-detail:has(> td:empty) {
+  display: none;
+}
+
+.row-toggle-icon {
+  transform: rotate(90deg);
+}
+
+.row-toggle[aria-expanded="true"] .row-toggle-icon {
+  transform: rotate(-90deg);
+}
+
+/* On a phone the current row's card and its panel are one tinted block. */
+@container (max-width: 760px) {
+  .data-table tbody tr.row-current {
+    padding: 14px 8px;
+    border-radius: var(--r-md);
+    background: var(--accent-soft);
+  }
+
+  .data-table tbody tr.row-current > * {
+    background: none;
+  }
+
+  .data-table tbody tr:has(+ .row-detail) {
+    border-bottom: 0;
+    border-radius: var(--r-md) var(--r-md) 0 0;
+  }
+
+  .data-table tbody tr.row-detail {
+    display: block;
+    padding: 0 8px 8px;
+    border-radius: 0 0 var(--r-md) var(--r-md);
+    background: var(--accent-soft);
+  }
+
+  .data-table .row-detail > td {
+    display: block;
+    padding: 0;
+    background: none;
+  }
 }
 
 .scope-choice {
@@ -561,7 +563,7 @@ a.matrix-name:hover {
   margin-top: 2px;
 }
 
-/* ---- an access row's sheet (Adresler) */
+/* ---- choices (Uygulama ekle's questions too) */
 .choice-list {
   display: flex;
   flex-direction: column;
@@ -624,18 +626,68 @@ a.matrix-name:hover {
   overflow-wrap: anywhere;
 }
 
-.row-part {
+/* ---- an access row's panel (Adresler): its facts on one line beside the close button, then its fields side by side
+   as the row's own columns, flat; notices and notes across the whole width. */
+.row-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.row-facts > div {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.row-facts dt {
+  color: var(--muted);
+}
+
+.row-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.row-facts dd.mono {
+  font-size: 12.5px;
+}
+
+.row-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.row-cols {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px 28px;
+}
+
+.row-cols > * {
+  flex: 1 1 210px;
+  min-width: 0;
+}
+
+.row-col {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  gap: 8px;
 }
 
-.row-part .field {
+.row-col > .field {
   align-self: stretch;
+}
+
+.row-cols > .row-wide {
+  flex-basis: 100%;
 }
 
 .row-port {
@@ -644,6 +696,28 @@ a.matrix-name:hover {
 
 .row-word .form-stack {
   gap: 10px;
+}
+
+/* The scope as the table's segmented choice, with radios inside. */
+.segment:has(> input) {
+  display: inline-flex;
+  align-items: center;
+}
+
+.segment:has(> input:checked) {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: var(--shadow-raised);
+}
+
+.scope-choice .segment-danger:has(> input:checked) {
+  color: var(--danger-ink);
+}
+
+.segment:has(> input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .address-table .col-main,

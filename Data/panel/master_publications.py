@@ -36,9 +36,9 @@ SCOPE_TEXT = {"kapali": "kapalı", "tailscale": "Tailscale", "internet": "İnter
 # A2: what opening a raw port to the internet means; the request carries internet_onayi: true.
 APP_GUARD_TEXT = ("İnternet adında Konsol giriş istemez; bu adrese internetten gelen herkesi yalnız uygulamanın kendi "
                   "girişi durdurur.")
-CONSENT_TEXT = ("Ham port internete doğrudan açılır: arada Caddy, HTTPS ve Konsol girişi olmaz; şifreleme ve giriş "
+CONSENT_TEXT = ("Port internete doğrudan açılır: arada Caddy, HTTPS ve Konsol girişi olmaz; şifreleme ve giriş "
                 "uygulamanın kendisindedir.")
-CONSENT_MISSING = "Ham portu internete açmak için bu uyarıyı onaylayın (internet onayı)."
+CONSENT_MISSING = "Portu internete açmak için bu uyarıyı onaylayın (internet onayı)."
 RULE_HELD = "Bu port bir uygulamanın erişim satırına ait; Erişim → Adresler'den değişir."
 WILDCARDS = ("0.0.0.0", "*", "::", "[::]")
 
@@ -549,8 +549,8 @@ def row_text(env, change, row):
     proto = change["protokol"].upper()
     if row["tur"] == "ham":
         if row["kapsam"] == "kapali":
-            return "Ham port · kapalı"
-        return "Ham port · %s %s %d" % (SCOPE_TEXT[row["kapsam"]], proto, row["port"])
+            return "Doğrudan port · kapalı"
+        return "Doğrudan port · %s %s %d" % (SCOPE_TEXT[row["kapsam"]], proto, row["port"])
     parts = ["%s.%s" % (row["ad"], env["LOCAL_DOMAIN"])]
     if row["tailscale_portu"] is not None:
         parts.append("Tailscale portu %d" % row["tailscale_portu"])
@@ -588,7 +588,7 @@ def plan_items(env, change):
     if closed == (True, True):
         # A closed raw port's number is the one it opens on later.
         once, sonra = "%s · port %d" % (once, old["port"]), "%s · port %d" % (sonra, new["port"])
-    return [item(islem, name + " · ham port", once, sonra)]
+    return [item(islem, name + " · doğrudan port", once, sonra)]
 
 
 def plan_notes(env, change):
@@ -617,7 +617,7 @@ def plan_notes(env, change):
         warnings.append({"seviye": "warn", "metin": "%s.%s adı artık yanıt vermez; yer imlerini ve uygulamanın kendi adres "
                          "ayarını güncelleyin." % (old["ad"], env["LOCAL_DOMAIN"])})
     if new["tur"] == "ham" and new["kapsam"] != "kapali" and claims(change["anahtar"], new) - claims(change["anahtar"], old):
-        warnings.append({"seviye": "warn", "metin": "Ham port güvenlik duvarının kurallarından geçmez; ona kimin "
+        warnings.append({"seviye": "warn", "metin": "Doğrudan açılan port güvenlik duvarının kurallarından geçmez; ona kimin "
                          "ulaşacağını yalnız bu satır belirler."})
     if change["internet_acilir"]:
         warnings.append({"seviye": "warn", "metin": CONSENT_TEXT})

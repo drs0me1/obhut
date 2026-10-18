@@ -388,10 +388,10 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       // The access summary: counts and a chip for whatever is open to the internet, each leading to its row.
       const summary = page.getByTestId("access-summary");
       assert.deepEqual(await summary.locator(".stat").evaluateAll((els) => els.map((e) => [e.querySelector("dt").textContent, e.querySelector("dd").textContent])), [
-        ["Tailscale adresi", "3"], ["internet adı", "1"], ["internete açık ham port", "1"], ["Tailscale'de ham port", "1"], ["WireGuard ağı açık", "1"]]);
+        ["Tailscale adresi", "3"], ["internet adı", "1"], ["internete açık doğrudan port", "1"], ["Tailscale'de doğrudan port", "1"], ["WireGuard ağı açık", "1"]]);
       assert.deepEqual(await summary.locator(".access-chip").evaluateAll((as) => as.map((a) => [a.textContent.trim(), a.getAttribute("href"), a.className.replace("access-chip ", "")])), [
         ["notlar · notlar.example.org", `#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`, "access-chip-accent"],
-        ["medya · 8096/TCP ham", `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`, "access-chip-warning"],
+        ["medya · 8096/TCP doğrudan", `#/erisim?sekme=adresler&satir=${enc(MEDYA)}`, "access-chip-warning"],
         ["Paylaşımlar · http://203.0.113.10:61010", "#/erisim?sekme=adresler&satir=paylasim", "access-chip-warning"]], "SSH has no row: no chip");
       assert.equal(await summary.getByRole("link", { name: "Erişim'e git" }).getAttribute("href"), "#/erisim");
       // Resources, the network with the busiest applications, the server.
@@ -438,7 +438,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       const rowOptions = pal.locator('[aria-labelledby="palet-grup-2"] .palette-option');
       assert.deepEqual(await rowOptions.locator(".palette-label").allInnerTexts(), ["panel.ev", "notlar.ev", "medya · 8096/TCP", "kutu · 9000/UDP", "paylas.ev"],
         "SSH has no row");
-      assert.deepEqual(await rowOptions.locator(".palette-hint").allInnerTexts(), ["Konsol · Adres", "notlar · Adres", "medya · Ham port", "kutu · Ham port",
+      assert.deepEqual(await rowOptions.locator(".palette-hint").allInnerTexts(), ["Konsol · Adres", "notlar · Adres", "medya · Doğrudan port", "kutu · Doğrudan port",
         "Paylaşımlar · Adres"]);
       assert.deepEqual(await pal.locator('[aria-labelledby="palet-grup-3"] .palette-label').allInnerTexts(),
         ["Uygulama ekle", "Adres aç", "Tema: sistem", "Tema: açık", "Tema: koyu", "İşlemleri göster"]);
@@ -447,9 +447,9 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       await page.keyboard.press("Enter");
       await page.waitForURL((u) => u.hash === `#/erisim?sekme=adresler&satir=${enc(NOTLAR)}`);
       await page.locator("main h1").filter({ hasText: "Erişim" }).waitFor();
-      await page.getByRole("dialog", { name: "notlar · web" }).waitFor();
+      await page.getByRole("region", { name: "notlar · web" }).waitFor();
       await page.keyboard.press("Escape");
-      await page.getByRole("dialog", { name: "notlar · web" }).waitFor({ state: "detached" });
+      await page.getByRole("region", { name: "notlar · web" }).waitFor({ state: "detached" });
       await page.keyboard.press("Control+K");
       await palInput.fill("adres aç");
       assert.deepEqual(await optionLabels(page), ["Erişim → Adresler", "Adres aç"]);
@@ -852,7 +852,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       "busiest applications, network reads every 5 s only while shown and visible, a failed read, no applications, phone tiles), event stream (X-Konsol fetch, multi-line data, unknown events, kapat → immediate reconnect), activity drawer " +
       "(focus trap, Esc, focus return, finished job reloads the applications, the pending change named with its phase, a cleanup job's reason), " +
       "pending banner naming every timed change (an access row, WireGuard, the local domain, a fixed row, the firewall or names) with local " +
-      "countdown and phases, palette (Ctrl+K/Meta+K, groups, İŞ/ıs/is, ↑↓, Enter to a page, access rows by name opening their sheet, Uygulama " +
+      "countdown and phases, palette (Ctrl+K/Meta+K, groups, İŞ/ıs/is, ↑↓, Enter to a page, access rows by name opening their panel, Uygulama " +
       "ekle, Adres aç, theme actions, no Görünüm, Esc and focus return), the top bar's theme button stepping sistem → açık → koyu kept across a " +
       "reload, an unknown address → Genel Bakış, " +
       "skip link, phone bottom bar and sheet, 1440/390/320 in light and dark, polling without a stream (404/503: 5/10/60 s, no settings status), " +

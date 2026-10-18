@@ -24,6 +24,66 @@ Konsol's single-container definitions and adoption, Yayınla and the manual
 phase 6; live entries that still mention them end with a note naming what no
 longer applies and which entry replaced it.
 
+### DD-284: "Doğrudan port", the applications list's server → container mapping, one row per application in Genel (v2-271)
+
+- **Why:** the operator found "Ham" meaningless ("Ham 8092 · Tailscale" in Uygulamalar said nothing about what
+  reaches what), asked for ports to be named by their protocol and the list to show server port → container port
+  as a mapping, Erişim → Genel to stop repeating an application's name on every port's row, and a folder opened
+  from an application's Depolama to have a way back (2026-10-19).
+- **The word:** the row kind DD-275 calls a *raw port* in English is "doğrudan port" in Turkish: the port
+  published as itself, directly, with no Caddy row. One word everywhere (the row's kind, Adresler' "Doğrudan
+  portlar", the inspector's question, the plan's lines, the errors); the protocol is always beside it in the port
+  itself ("8092/tcp", "9000/UDP"), so the label never repeats it. The row's number field is "Sunucu portu" (the
+  port opened on the server). The API keeps `tur: "ham"`, `use: "raw"` and the ids: a word for people, not a
+  schema change.
+- **The list's mapping (`accessMap`):** for each access row of the application, the addresses and ports of its
+  Tailscale and internet cells, straight from Erişim's read model and in the cells' colours (so the list and
+  Erişim → Genel never disagree), beside the container port (`anahtar`'s port; its service when the application
+  has more than one). The loopback pool port is left out: it is Caddy's, shown on the application's Erişim. The
+  two halves are one grid per cell with the header's labels in the same columns, so they line up whatever an
+  entry's height; on a phone each container port goes under its addresses. The update column went: a newer image
+  is the page's (Özet) and the Dikkat filter's, and the column was "—" for most rows.
+- **One row per application in Genel:** the rows stay per port in the read model (DD-275: the row is the model;
+  Adresler, the palette, the counts and `obhut erisim liste` read them); the table merges them on the client: the
+  ports under the name, each cell every port's addresses with the state that matters most (a fault, else open),
+  a warning from any of them. The name leads to the row in Adresler when there is one port, and to the
+  application's own Erişim tab when there are more, since Adresler' panel is one row's.
+- **"Geri" and "Genel Bakış" in Dosyalar:** a page other sections link into asks the shell for them (`nav` in the
+  page head); "Geri" is the browser's back (the router keeps the page before in the history entry, so the button
+  is disabled on a direct open), "Genel Bakış" the section the sidebar's home icon names. Only Dosyalar asks: the
+  other sections are reached through the sidebar and the breadcrumb.
+- **Tests:** the wording in every suite; the mapping's entries, colours and container ports, no chips and no
+  update column; the merged rows, their ports line, links and cells; the way back from a folder.
+
+### DD-283: An access row's panel opens under its own row (v2-270)
+
+- **Why:** in Erişim → Adresler "Ayrıntı" opened the row's form in a sheet from the right, away from the row and
+  over the page; the operator asked for it to open as a card under its own row, open and close there, and only
+  for the row chosen (2026-10-18), as long flows already left side sheets (DD-279).
+- **What:** the row's panel (`AccessRowPanel`, the former sheet) is a table row under the row, in both tables
+  (Adresler and Doğrudan portlar), as one tinted block with it. It is a compact card, not the sheet moved down: the
+  row's facts on one line beside the close button (the row above names it, so the title is for screen readers,
+  except "Adres aç"), the fields side by side like the row's own columns (Tailscale name | Tailscale port |
+  internet name; scope | host port), flat, short hints, notices across the width, and "Adresi kaldır" or "Adres
+  aç" at the start of the actions (the plan says what they do). The card gives the table's columns none of its
+  width (`contain: inline-size`), so opening it never reflows the rows. "Ayrıntı" (and a raw row's "Adres aç") opens and
+  closes it (`aria-expanded`, a chevron); choosing another row moves it there; a switch or a scope of the table
+  opens it with its change made, as before. `?satir=` and `?kip=adres-ac` still name it, so every link into a row
+  (Genel Bakış, the matrix, the firewall's locked rows, Yerel adlar, an application's page, the palette) opens
+  it under its row. The other Erişim tabs keep their sheets.
+- **The panel in the page (`InlinePanel`):** the sheet's parts without a layer: the page is not inert. When it
+  opens, its row and the panel come into view (the row at the top when both do not fit; scroll margins keep them
+  clear of a phone's bars) and the focus goes to its first field; when a step replaces the focused control (the
+  form → the plan) the focus comes back into the panel; Esc and "Kapat" close it and the focus returns to the
+  row's "Ayrıntı". `SettingsPlanSheet` renders either form (`inline`).
+- **What a sheet gave for free, kept:** while an apply runs (a service restart can take minutes) the table's
+  switches, scopes and buttons wait (`busy`), so the panel is not moved away from its running apply; while the
+  panel holds a change, closing the browser tab asks first and a new Konsol build waits (DD-280), which the modal
+  surface did before.
+- **Tests:** the panel under its row, one at a time, opened and closed by "Ayrıntı", moved by another row, Esc
+  and the focus back; every flow of the row (closings straight to the plan, openings with their field, the
+  long apply, the refusal, Adres aç with another port) in the panel; on a phone under its card at 390 and 320.
+
 ### DD-282: An application's page says what its processes run as (v2-268)
 
 - **Why:** a root start with a writable `/srv` folder carries the inspector's warning that the container "may write

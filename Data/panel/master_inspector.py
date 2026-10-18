@@ -261,16 +261,16 @@ class _Inspector:
             title = "%s: %d/%s" % (svc["name"], port["port"], port["protocol"].upper())
             if port["protocol"] == "udp":
                 self.ask(qid, "port", port["line"], title,
-                         "UDP ham port olarak eklenir ve kapalı gelir; kapsamı (Tailscale ya da internet) Erişim'den seçilir.",
+                         "UDP doğrudan port olarak eklenir ve kapalı gelir; kapsamı (Tailscale ya da internet) Erişim'den seçilir.",
                          service=svc["name"], port=port["port"], protocol="udp", guess="raw", choices=["raw"],
                          suggest=None, host_port=port["host_port"])
                 continue
             raw = port["port"] in RAW_PORTS or port["port"] in udp
             if raw:
                 why = ("Web dışı bir port gibi görünüyor (bilinen bir servis portu ya da aynı port UDP'de de açılıyor): "
-                       "ham port önerilir. Ham portlar kapalı gelir; Erişim'den açılır.")
+                       "doğrudan port önerilir. Doğrudan portlar kapalı gelir; Erişim'den açılır.")
             else:
-                why = ("Web arayüzü olabilir: bir adres (Caddy satırı, Tailscale adı) ya da ham port olarak eklenir. "
+                why = ("Web arayüzü olabilir: bir adres (Caddy satırı, Tailscale adı) ya da doğrudan port olarak eklenir. "
                        "Seçim sizin; dosyadaki sunucu portu kullanılmaz.")
             self.ask(qid, "port", port["line"], title, why, service=svc["name"], port=port["port"], protocol="tcp",
                      guess="raw" if raw else "web", choices=["caddy", "raw"],
@@ -514,10 +514,10 @@ class _Check:
         if self.shape(answer, ("use",)) and answer["use"] == "raw":
             return {"use": "raw", "tailscale_name": None}
         if q["protocol"] == "udp":
-            self.error(q["id"], "UDP portu yalnız ham port olabilir.")
+            self.error(q["id"], "UDP portu yalnız doğrudan port olabilir.")
             return None
         if not self.shape(answer, ("use", "tailscale_name")) or answer["use"] != "caddy":
-            self.error(q["id"], "Bir adres (Caddy satırı ve Tailscale adı) ya da ham port seçin.")
+            self.error(q["id"], "Bir adres (Caddy satırı ve Tailscale adı) ya da doğrudan port seçin.")
             return None
         ts = answer["tailscale_name"]
         if not isinstance(ts, str) or not TAILSCALE_NAME_RE.fullmatch(ts):

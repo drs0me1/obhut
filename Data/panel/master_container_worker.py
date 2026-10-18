@@ -1422,7 +1422,7 @@ def main(argv=None):
     refresh-tailnet-config as its own transient unit. Busy (a job, the installer or a pending settings change): one
     line and exit 0, the next run retries; a failure: exit 1. The worker has no other entry of its own (the jobs
     come through master_container_manager)."""
-    parser = argparse.ArgumentParser(description='Uygulamaların ham portlarını sunucunun şimdiki adreslerine taşır.')
+    parser = argparse.ArgumentParser(description='Uygulamaların doğrudan portlarını sunucunun şimdiki adreslerine taşır.')
     parser.add_argument('--state', required=True)
     parser.add_argument('--adres-yenile', action='store_true', dest='refresh', required=True)
     args = parser.parse_args(argv)

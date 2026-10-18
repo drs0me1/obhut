@@ -361,7 +361,7 @@ onBeforeUnmount(() => {
 
     <Modal :open="removeOpen" :title="app ? `${app.ad} kaldırılsın mı?` : ''" @close="closeDialogs">
       <p data-testid="remove-text">
-        {{ app?.ad }} durdurulur; birimleri, ağı, gizli değerleri, adresleri, yerel adları, ham portları, verileri ve iş kayıtları kaldırılır.
+        {{ app?.ad }} durdurulur; birimleri, ağı, gizli değerleri, adresleri, yerel adları, doğrudan portları, verileri ve iş kayıtları kaldırılır.
         İmajlarını başka bir uygulama ya da konteyner kullanmıyorsa onlar da silinir.
       </p>
       <label class="check-row remove-keep" data-testid="remove-keep">

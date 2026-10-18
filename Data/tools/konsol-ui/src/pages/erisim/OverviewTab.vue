@@ -3,40 +3,95 @@
      addresses only; how many ports are open is its state, what they are is Güvenlik duvarı's), WireGuard (its
      networks), the certificates (each name with its end). Then every service with its four cells: the addresses and
      ports it is reached on there, or that it is closed; a warning (a raw port open on the internet, unencrypted
-     WebDAV) or a fault is the cell's colour, never a sentence in the table: the words are Genel Bakış' Dikkat. A
-     service's name leads to its row in Adresler. A table on wide screens, cards on narrow ones. -->
+     WebDAV) or a fault is the cell's colour, never a sentence in the table: the words are Genel Bakış' Dikkat. An
+     application is one row whatever its ports: its ports under its name, each cell every port's addresses (a
+     fault's, else an open port's colour). A service's name leads to its row in Adresler; an application with more
+     than one port to its own Erişim, where each port has its link. A table on wide screens, cards on narrow ones. -->
 <script setup lang="ts">
 import { computed } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, type RouteLocationRaw } from "vue-router";
 import SummaryCard, { type SummaryRow } from "../../components/ui/SummaryCard.vue";
 import EmptyState from "../../components/ui/EmptyState.vue";
 import type { Tone } from "../../components/ui/types";
 import { Icon } from "../../components/icons";
-import { CELL_TEXT, CELL_TONE } from "../../apps";
-import { isAccessRow } from "../../access";
+import { CELL_TEXT, addressPieces, cellTone } from "../../apps";
+import { isAccessRow, portKey } from "../../access";
 import { accessRoute } from "../../sections";
+import { appRoute } from "../../router";
 import { live, serverNow } from "../../live";
 import { UNKNOWN, date, dayMonth, daysUntil } from "../../format";
-import type { ErisimHucresi, Hizmet } from "../../api/sema";
+import type { ErisimDurumu, ErisimHucresi, Hizmet } from "../../api/sema";
 
 const e = computed(() => live.erisim);
 
-const COLUMNS: readonly { key: "yerel" | "tailscale" | "wireguard" | "internet"; title: string }[] = [
+type ColumnKey = "yerel" | "tailscale" | "wireguard" | "internet";
+const COLUMNS: readonly { key: ColumnKey; title: string }[] = [
   { key: "yerel", title: "Bu sunucu" },
   { key: "tailscale", title: "Tailscale" },
   { key: "wireguard", title: "WireGuard" },
   { key: "internet", title: "İnternet" },
 ];
 
-/** A cell's colour: a warning (a raw port open on the internet, unencrypted WebDAV) over its state. */
-const cellTone = (c: ErisimHucresi): Tone => (c.uyari ? "warning" : CELL_TONE[c.durum] ?? "neutral");
+/** A row of the table: a service, or an application with every one of its ports. */
+interface Shown {
+  id: string;
+  ad: string;
+  sub: string;
+  to: RouteLocationRaw | null;
+  cells: Record<ColumnKey, ErisimHucresi>;
+  app: string;
+  rows: Hizmet[];
+}
+
+/** An application's cells of one column as one: every port's addresses, the state that matters most (a fault, else
+ *  open, else partly, else closed), a warning from any of them. */
+function merged(cells: ErisimHucresi[]): ErisimHucresi {
+  const shown = cells.filter((c) => c.durum !== "yok");
+  const first = cells[0] ?? { durum: "yok", adresler: [], not: "", uyari: "" };
+  if (!shown.length) return first;
+  const order: readonly ErisimDurumu[] = ["hata", "acik", "kismen", "kapali"];
+  const durum = order.find((d) => shown.some((c) => c.durum === d)) ?? "kapali";
+  return { durum, adresler: [...new Set(shown.flatMap((c) => c.adresler))], not: "", uyari: shown.map((c) => c.uyari).find(Boolean) ?? "" };
+}
+
+/** The ports of an application's rows under its name: "8080/tcp · 8092/tcp", each with its service when the rows
+ *  belong to more than one. */
+function portsLine(rows: Hizmet[]): string {
+  const keys = rows.map((h) => portKey(h.anahtar ?? ""));
+  const services = new Set(keys.map((k) => k?.servis));
+  return keys.map((k, i) => (k ? `${services.size > 1 ? k.servis + " " : ""}${k.port}/${k.protokol}` : rows[i]?.aciklama ?? "")).join(" · ");
+}
+
+const shown = computed<Shown[]>(() => {
+  const out: Shown[] = [];
+  const byApp = new Map<string, Shown>();
+  for (const h of e.value?.hizmetler ?? []) {
+    const app = h.tur === "uygulama" && h.uygulama ? h.uygulama : "";
+    const cells = { yerel: h.yerel, tailscale: h.tailscale, wireguard: h.wireguard, internet: h.internet };
+    const group = app ? byApp.get(app) : undefined;
+    if (group) {
+      group.rows.push(h);
+      continue;
+    }
+    const row: Shown = { id: h.id, ad: app || h.ad, sub: h.aciklama || KIND[h.tur], to: isAccessRow(h) ? accessRoute("adresler", h.id) : null, cells, app, rows: [h] };
+    if (app) byApp.set(app, row);
+    out.push(row);
+  }
+  for (const g of byApp.values()) {
+    g.sub = portsLine(g.rows);
+    if (g.rows.length > 1) {
+      g.to = { ...appRoute(g.app), query: { sekme: "erisim" } };
+      for (const k of COLUMNS) g.cells[k.key] = merged(g.rows.map((h) => h[k.key]));
+    }
+  }
+  return out;
+});
+
 /** Whether a cell shows addresses: the addresses and ports it is reached on (or that a blocking rule closes). */
 const addressed = (c: ErisimHucresi): boolean => c.durum !== "yok" && c.adresler.length > 0;
 /** What a cell shows: its addresses and ports when it has them, else its state's word ("—" when it does not apply). */
 const cellLines = (c: ErisimHucresi): string[] => (addressed(c) ? c.adresler : [CELL_TEXT[c.durum] ?? UNKNOWN]);
-/** An address in pieces a narrow card may break between: after its scheme, before its port and its protocol, never
- *  inside a number. */
-const pieces = (line: string): string[] => line.replace("://", "://\n").split(/\n|(?=:\d|\/(?:tcp|udp))/);
+const pieces = addressPieces;
 const KIND: Record<Hizmet["tur"], string> = {
   konsol: "Konsol", uygulama: "Uygulama portu", konteyner: "Konteyner", paylasim: "Paylaşım", sistem: "Sistem", vpn: "VPN ağı", kural: "Kural",
 };
@@ -147,18 +202,18 @@ const certState = computed<{ text: string; tone: Tone; dot?: boolean }>(() => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="h in e.hizmetler" :key="h.id" :data-hizmet="h.id">
+              <tr v-for="s in shown" :key="s.id" :data-hizmet="s.id" :data-uygulama="s.app || undefined">
                 <th scope="row" class="col-main">
-                  <RouterLink v-if="isAccessRow(h)" :to="accessRoute('adresler', h.id)" class="matrix-name" data-testid="row-link">{{ h.ad }}</RouterLink>
-                  <strong v-else class="matrix-name">{{ h.ad }}</strong>
-                  <span class="cell-sub">{{ h.aciklama || KIND[h.tur] }}</span>
+                  <RouterLink v-if="s.to" :to="s.to" class="matrix-name" data-testid="row-link">{{ s.ad }}</RouterLink>
+                  <strong v-else class="matrix-name">{{ s.ad }}</strong>
+                  <span class="cell-sub">{{ s.sub }}</span>
                 </th>
-                <td v-for="c in COLUMNS" :key="c.key" :data-label="c.title" :data-hucre="c.key" :data-durum="h[c.key].durum" class="matrix-cell">
-                  <span class="reach" :class="['reach-' + cellTone(h[c.key]), { 'reach-none': h[c.key].durum === 'yok' }]">
+                <td v-for="c in COLUMNS" :key="c.key" :data-label="c.title" :data-hucre="c.key" :data-durum="s.cells[c.key].durum" class="matrix-cell">
+                  <span class="reach" :class="['reach-' + cellTone(s.cells[c.key]), { 'reach-none': s.cells[c.key].durum === 'yok' }]">
                     <span class="reach-dot" aria-hidden="true"></span>
                     <span class="reach-lines">
-                      <span v-if="addressed(h[c.key])" class="sr-only">{{ CELL_TEXT[h[c.key].durum] }}{{ h[c.key].uyari ? ", uyarı" : "" }}: </span>
-                      <span v-for="(line, i) in cellLines(h[c.key])" :key="i" :class="{ mono: addressed(h[c.key]) }"
+                      <span v-if="addressed(s.cells[c.key])" class="sr-only">{{ CELL_TEXT[s.cells[c.key].durum] }}{{ s.cells[c.key].uyari ? ", uyarı" : "" }}: </span>
+                      <span v-for="(line, i) in cellLines(s.cells[c.key])" :key="i" :class="{ mono: addressed(s.cells[c.key]) }"
                         ><template v-for="(part, j) in pieces(line)" :key="j"><wbr v-if="j" />{{ part }}</template></span
                       >
                     </span>

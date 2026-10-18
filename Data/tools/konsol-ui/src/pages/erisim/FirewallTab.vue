@@ -316,7 +316,7 @@ function applied(): void {
           </div>
           <EmptyState v-else title="Bu seçimde port yok" icon="shield" />
         </template>
-        <p class="meter-note">Adres ve ham port satırlarının kuralları kendiliğinden gelir ve burada değiştirilemez; elle kurallar plan → uygula ve 60 sn onay ister.</p>
+        <p class="meter-note">Adres ve doğrudan port satırlarının kuralları kendiliğinden gelir ve burada değiştirilemez; elle kurallar plan → uygula ve 60 sn onay ister.</p>
       </section>
 
       <div v-if="dirty" class="draft-bar" role="region" aria-label="Taslak" data-testid="fw-draft">

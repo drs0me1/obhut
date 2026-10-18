@@ -261,7 +261,7 @@ async function noStyles(page, where) {
     assert.equal(await page.evaluate(() => document.activeElement.tagName), "H1", "the application's heading has focus");
     await page.context().close();
 
-    // ================= Uygulamalar: summary, columns, access, rate, update, filters, search, all in the address
+    // ================= Uygulamalar: summary, columns, the access mapping, rate, filters, search, all in the address
     page = await newPage();
     await page.goto(url("#/uygulamalar"));
     await page.getByTestId("page-desc").filter({ hasText: "5 uygulama · 2 çalışıyor · 1 durdurulmuş · 2 dikkat" }).waitFor();
@@ -271,29 +271,36 @@ async function noStyles(page, where) {
     assert.equal(await chips.filter({ hasText: "Tümü" }).getAttribute("aria-pressed"), "true");
     assert.deepEqual(await rowNames(page), ["arsiv", "galeri", "notlar", "pano", "yedek"]);
     assert(await page.locator(".app-table thead").isVisible(), "a table on a wide screen");
-    assert.deepEqual((await page.locator(".app-table thead th").allInnerTexts()).slice(0, 6), ["Uygulama", "Durum", "Erişim", "Kaynak", "Ağ", "Güncelleme"]);
+    assert.deepEqual(await page.locator(".app-table thead th").evaluateAll((ths) => ths.map((x) => x.innerText.replace(/\s+/g, " ").trim())),
+      ["Uygulama", "Durum", "Sunucu Konteyner", "Kaynak", "Ağ", "Eylemler"], "the access column in two halves; no update column");
     const tr = (ad) => page.locator(`tr[data-uygulama="${ad}"]`);
     assert.equal(await tr("notlar").locator(".app-desc").innerText(), "Compose · dosyadan · 2 servis");
     assert.deepEqual(await tr("notlar").locator(".col-state .pill").allInnerTexts(), ["Çalışıyor", "1 uyarı"], "a warning shows beside the state");
-    assert.deepEqual(await tr("notlar").getByTestId("app-access").locator(".pill").allInnerTexts(), ["Tailscale", "İnternet", "Ham 9001 · Tailscale"],
-      "how it is reached, from Erişim's rows");
+    // Each access row as a mapping: the addresses on this server (each in its cell's colour) → the container port.
+    const mapOf = (ad) => tr(ad).getByTestId("app-access").locator(".map").evaluateAll((ms) => ms.map((m) => [m.dataset.satir,
+      [...m.querySelectorAll(".reach")].map((r) => [r.className.match(/reach-(ok|warning|danger|accent|neutral)/)[1], r.textContent.trim()]),
+      m.querySelector(".map-container").textContent.replace(/\s+/g, " ").trim()]));
+    assert.deepEqual(await mapOf("notlar"), [
+      [NOTLAR_WEB, [["ok", "notlar.ev"], ["ok", "100.64.0.2:8443"], ["ok", "notlar.example.org"]], "→web · 8080/tcp"],
+      [NOTLAR_UDP, [["ok", "100.64.0.2:9001"]], "→web · 9000/udp"]], "server → container, the service named when the application has more than one");
+    assert.equal(await tr("notlar").getByTestId("app-access").locator(".pill").count(), 0, "no chips, no 'Ham'");
     assert.equal(await tr("notlar").locator(".col-res").innerText(), "%3 · 210 MB");
     assert.equal(await tr("notlar").getByTestId("app-rate").innerText(), "↓ 1 MB/s · ↑ 38 KB/s", "its own bridge's live rate");
-    assert.equal(await tr("notlar").locator(".col-ver").innerText(), "Yeni imaj");
+    assert.equal(await tr("notlar").locator(".col-ver").count(), 0, "a newer image is the page's Özet and the Dikkat filter's");
+    assert.equal(await page.locator(".app-table").innerText().then((s) => s.includes("Yeni imaj")), false);
     assert.equal(await tr("notlar").locator('[data-eylem="ac"]').getAttribute("href"), "http://notlar.ev", "Aç: its first address");
     assert.equal(await tr("notlar").locator('[data-eylem="ac"]').getAttribute("target"), "_blank");
     assert.equal(await tr("galeri").locator(".col-state").innerText(), "Kısmen çalışıyor");
-    assert.deepEqual(await tr("galeri").getByTestId("app-access").locator(".pill").allInnerTexts(), ["Tailscale"]);
+    assert.deepEqual(await mapOf("galeri"), [["uygulama:galeri:web:80/tcp", [["ok", "galeri.ev"]], "→web · 80/tcp"]]);
+    assert.deepEqual(await mapOf("pano"), [["uygulama:pano:web:3000/tcp", [["ok", "pano.ev"]], "→3000/tcp"]], "one service: the port alone");
     assert.equal(await tr("galeri").locator(".col-res").innerText(), "%1 · 50 MB");
     assert.equal(await tr("galeri").getByTestId("app-rate").innerText(), "—", "no rate while it has none");
-    assert.equal(await tr("galeri").locator(".col-ver").innerText(), "Güncel");
     assert.equal(await tr("arsiv").locator(".col-state").innerText(), "İşlemde…");
-    assert.deepEqual(await tr("arsiv").getByTestId("app-access").locator(".pill").allInnerTexts(), ["Kapalı"], "nothing reaches it");
+    assert.equal(await tr("arsiv").getByTestId("app-access").innerText(), "Port yok", "no access row: no port");
     assert.equal(await tr("arsiv").locator('[data-eylem="ac"]').count(), 0, "no address, no Aç");
     assert.equal(await tr("yedek").locator(".col-state").innerText(), "Durdurulmuş");
     assert.equal(await tr("yedek").locator(".app-desc").innerText(), "Kubernetes · imajdan · 1 servis");
     assert.equal(await tr("pano").locator(".app-desc").innerText(), "Compose · adresten · 1 servis");
-    assert.equal(await tr("pano").locator(".col-ver").innerText(), "—", "not checked yet: nothing shown, not an error");
     assert.equal(await tr("pano").locator(".col-res").innerText(), "—", "unknown resources");
     assert.equal(await tr("pano").getByTestId("app-rate").innerText(), "↓ 0 B/s · ↑ 1 KB/s");
     assert.equal(await tr("yedek").getByRole("link", { name: "yedek ayrıntıları" }).getAttribute("href"), "#/uygulamalar/yedek");
@@ -472,16 +479,16 @@ async function noStyles(page, where) {
     assert.deepEqual(await texts(addressRow.locator("th, td")), ["web · 8080/TCP Yalnız bu sunucu · 127.0.0.1:62001 → 8080", "Adres", "notlar.ev",
       "100.64.0.2:8443", "notlar.example.org", "Adresler'de aç"]);
     assert.deepEqual(await texts(access.locator(`tr[data-satir="${NOTLAR_UDP}"] th, tr[data-satir="${NOTLAR_UDP}"] td`)),
-      ["web · 9000/UDP", "Ham port", "Yalnız Tailscale 100.64.0.2:9001", "Adresler'de aç"]);
+      ["web · 9000/UDP", "Doğrudan port", "Yalnız Tailscale 100.64.0.2:9001", "Adresler'de aç"]);
     assert.deepEqual(await access.getByTestId("access-link").evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
       ["#/erisim?sekme=adresler&satir=uygulama%3Anotlar%3Aweb%3A8080%2Ftcp", "#/erisim?sekme=adresler&satir=uygulama%3Anotlar%3Aweb%3A9000%2Fudp"]);
     assert.equal(await page.getByTestId("access-edit").getAttribute("href"), "#/erisim?sekme=adresler&satir=uygulama%3Anotlar%3Aweb%3A8080%2Ftcp");
     assert.equal(await page.getByTestId("access").locator("button, input, [role=switch]").count(), 0, "read-only: the row changes in Erişim");
     await shot(page, "1440-light-uygulama-erisim.png", true);
-    // The link opens the row's sheet in Adresler.
+    // The link opens the row's panel in Adresler, under the row.
     await addressRow.getByTestId("access-link").click();
     await page.waitForURL((u) => u.hash === "#/erisim?sekme=adresler&satir=uygulama%3Anotlar%3Aweb%3A8080%2Ftcp");
-    const rowSheet = page.getByRole("dialog", { name: "notlar · web" });
+    const rowSheet = page.locator('tr[data-satir="uygulama:notlar:web:8080/tcp"] + tr.row-detail').getByRole("region", { name: "notlar · web" });
     await rowSheet.getByTestId("row-form").waitFor();
     assert.equal(await rowSheet.getByTestId("row-name").inputValue(), "notlar");
     await rowSheet.getByRole("button", { name: "Vazgeç" }).click();
@@ -518,7 +525,7 @@ async function noStyles(page, where) {
     assert.equal(await page.getByTestId("source").locator('[data-eylem="kaynaktan-yenile"]').count(), 0, "a pasted file has no source to refresh from");
     const answer = (id) => page.getByTestId("answers").locator(`[data-yanit="${id}"]`).innerText();
     assert.equal(await answer("port:web:8080/tcp"), "Adres · notlar.ev");
-    assert.equal(await answer("port:web:9000/udp"), "Ham port · Tailscale");
+    assert.equal(await answer("port:web:9000/udp"), "Doğrudan port · Tailscale");
     assert.equal(await answer("var:DB_PASSWORD"), "Kayıtlı", "a secret answer never shows a value");
     assert.equal(await answer("var:TZ"), "Europe/Istanbul");
     assert.equal(await answer("mount:web:/belgeler"), "/srv/Belgeler · salt okunur");
@@ -649,7 +656,7 @@ async function noStyles(page, where) {
     await removeDialog.waitFor();
     assert.match(await removeDialog.getAttribute("class"), /modal-dialog/);
     assert.equal((await removeDialog.getByTestId("remove-text").innerText()).replace(/\s+/g, " "),
-      "notlar durdurulur; birimleri, ağı, gizli değerleri, adresleri, yerel adları, ham portları, verileri ve iş kayıtları kaldırılır. " +
+      "notlar durdurulur; birimleri, ağı, gizli değerleri, adresleri, yerel adları, doğrudan portları, verileri ve iş kayıtları kaldırılır. " +
       "İmajlarını başka bir uygulama ya da konteyner kullanmıyorsa onlar da silinir.");
     const keep = removeDialog.getByRole("checkbox", { name: /Verileri sakla/ });
     assert(!(await keep.isChecked()), "deleting the data is the default");

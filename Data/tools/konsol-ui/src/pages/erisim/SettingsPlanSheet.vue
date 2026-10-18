@@ -7,9 +7,13 @@
      review button (`reviewLabel`; a submit button of the form named by `form`, otherwise it emits `review`); the
      page then sets `request` and the plan is asked for. "Geri" (emits `back`) returns to the form. An access row's
      apply may restart a service and wait until it is ready (minutes): the request stays open, the sheet says what
-     it waits for and counts the seconds. -->
+     it waits for and counts the seconds. With `inline` the same steps are a panel in the page (InlinePanel, under an
+     access row in Adresler; `hideTitle` and a `lead` line as there); `busy` says while an apply runs, so the page
+     holds its other controls meanwhile. An `extra` slot puts the form step's own actions at the start of the actions
+     (a removal, another mode). -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, useSlots, watch } from "vue";
+import InlinePanel from "../../components/ui/InlinePanel.vue";
 import Modal from "../../components/ui/Modal.vue";
 import PlanReview from "../../components/ui/PlanReview.vue";
 import { applySettings, planSettings } from "../../api/erisim";
@@ -27,10 +31,12 @@ const props = withDefaults(
     reviewLabel?: string;
     canReview?: boolean;
     form?: string;
+    inline?: boolean;
+    hideTitle?: boolean;
   }>(),
-  { description: "", applyLabel: "Uygula", danger: false, reviewLabel: "İncele", canReview: true, form: "" },
+  { description: "", applyLabel: "Uygula", danger: false, reviewLabel: "İncele", canReview: true, form: "", inline: false, hideTitle: false },
 );
-const emit = defineEmits<{ close: []; applied: [result: AyarSonucu]; review: []; back: [] }>();
+const emit = defineEmits<{ close: []; applied: [result: AyarSonucu]; review: []; back: []; busy: [busy: boolean] }>();
 const slots = useSlots();
 
 const plan = ref<AyarPlani | null>(null);
@@ -95,7 +101,11 @@ function startClock(): void {
   clearInterval(timer);
   timer = window.setInterval(() => (elapsed.value += 1), 1000);
 }
-onBeforeUnmount(() => clearInterval(timer));
+watch(applying, (on) => emit("busy", on));
+onBeforeUnmount(() => {
+  clearInterval(timer);
+  if (applying.value) emit("busy", false);
+});
 
 async function apply(): Promise<void> {
   const request = props.request;
@@ -145,7 +155,15 @@ const progress = computed(() => {
 </script>
 
 <template>
-  <Modal :open="open" variant="sheet" :title="title" :description="description" @close="close">
+  <component
+    :is="inline ? InlinePanel : Modal"
+    :open="open"
+    v-bind="inline ? { hideTitle } : { variant: 'sheet' }"
+    :title="title"
+    :description="description"
+    @close="close"
+  >
+    <template v-if="slots.lead" #lead><slot name="lead" /></template>
     <slot v-if="editing()" name="form" />
     <template v-else>
       <slot />
@@ -161,6 +179,7 @@ const progress = computed(() => {
     </template>
     <template #actions>
       <template v-if="editing()">
+        <span v-if="slots.extra" class="foot-start"><slot name="extra" /></span>
         <button type="button" class="btn btn-secondary" @click="close">Vazgeç</button>
         <button
           v-if="form"
@@ -192,5 +211,5 @@ const progress = computed(() => {
         </button>
       </template>
     </template>
-  </Modal>
+  </component>
 </template>
