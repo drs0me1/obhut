@@ -679,6 +679,58 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       await page.context().close();
     }
 
+    // ================= a new build while the page is open (DD-280): the page's own files, asked with HEAD
+    let etag = '"yapi-1"';
+    const heads = [];
+    const ownFiles = (p) => p.route(/\/app\.(js|css)$/, (route) => {
+      if (route.request().method() !== "HEAD") return route.continue();
+      heads.push(route.request().url());
+      return route.fulfill({ status: 200, headers: { ETag: etag + (route.request().url().endsWith(".css") ? "-css" : "-js") } });
+    });
+    page = await newPage();
+    await ownFiles(page);
+    await page.goto(new URL("/#/genel", base).href);
+    await waitFor(() => stream.clients.size === 1 && heads.length === 2, "the page noted its script and style sheet");
+    const buildNotice = page.getByTestId("build-notice");
+    // The installer writes the new build number first (stage 3); while the files are the old ones nothing happens.
+    push("kaynaklar", { ...data.kaynaklar, version: "2026.08.06-v2-243" });
+    await waitFor(() => heads.length >= 4, "looked again at once");
+    await page.waitForTimeout(500);
+    assert.equal(await buildNotice.count(), 0, "the same files: no notice, no reload");
+    // The files change (stage 6): the notice, and the page reloads itself.
+    etag = '"yapi-2"';
+    await buildNotice.filter({ hasText: "Konsol güncellendi (yapı v2-243). Sayfa yenileniyor…" }).waitFor({ timeout: 8000 });
+    const reloaded = page.waitForEvent("load", { timeout: 6000 });
+    await reloaded;
+    await page.locator("main h1").filter({ hasText: "Genel Bakış" }).waitFor();
+    assert.equal(await buildNotice.count(), 0, "the reloaded page runs the new files");
+    await page.context().close();
+    // With something entered the page waits for the operator.
+    etag = '"yapi-2"';
+    heads.length = 0;
+    page = await newPage();
+    await ownFiles(page);
+    const heldNotice = page.getByTestId("build-notice");
+    await page.goto(new URL("/#/uygulama-ekle", base).href);
+    await page.getByTestId("add-flow").getByRole("radio", { name: /Dosya/ }).check();
+    await page.getByTestId("paste").getByRole("textbox").fill("services:\n  web:\n    image: registry.example/web:1\n");
+    await waitFor(() => stream.clients.size === 1 && heads.length === 2, "noted");
+    push("kaynaklar", { ...data.kaynaklar, version: "2026.08.06-v2-243" });
+    etag = '"yapi-3"';
+    await heldNotice.filter({ hasText: "Yeni arayüz sayfa yenilenince açılır; yenileyince girdikleriniz silinir." }).waitFor({ timeout: 8000 });
+    await page.waitForTimeout(2500);
+    assert.equal(new URL(page.url()).hash, "#/uygulama-ekle");
+    assert.match(await page.getByTestId("paste").getByRole("textbox").inputValue(), /registry\.example\/web:1/, "nothing dropped while it waits");
+    assert(await heldNotice.evaluate((e) => e.getBoundingClientRect().bottom <= document.querySelector(".add-head").getBoundingClientRect().top), "above the page's head");
+    await shot(page, "1440-light-yeni-yapi.png");
+    page.once("dialog", (dialog) => void dialog.accept());
+    const reloadedByHand = page.waitForEvent("load", { timeout: 6000 });
+    await heldNotice.getByRole("button", { name: "Şimdi yenile" }).click();
+    await reloadedByHand;
+    await page.getByTestId("add-flow").waitFor();
+    assert.equal(await heldNotice.count(), 0);
+    await page.context().close();
+
     // ================= no stream (404): polling, kaynaklar 10 s, saglik 60 s, etkinlik and bekleyen 5 s
     stream.mode = 404;
     status["/api/konsol/erisim"] = 404;
@@ -805,6 +857,8 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       "reload, an unknown address → Genel Bakış, " +
       "skip link, phone bottom bar and sheet, 1440/390/320 in light and dark, polling without a stream (404/503: 5/10/60 s, no settings status), " +
       "a failing stream (502: 3 s, 6 s, polling after the third failure, polling ends when the stream is back), " +
+      "a new build while a page is open (a new build number alone changes nothing; new files show the notice and reload the page; " +
+      "with something entered it waits for Şimdi yenile, above Uygulama ekle's head), " +
       "unknown values as —, 401 → sign-in, local Outfit font. Screenshots: " + shots);
   } finally {
     await h.stop();

@@ -24,6 +24,30 @@ Konsol's single-container definitions and adoption, Yayınla and the manual
 phase 6; live entries that still mention them end with a note naming what no
 longer applies and which entry replaced it.
 
+### DD-280: An open Konsol notices a new build (v2-265)
+
+- **Why:** after the installer ran again from the terminal, an open Konsol page kept running the code it had
+  loaded; the operator saw neither the new Uygulama ekle page nor any hint, and the update check rightly offered
+  nothing (the server already ran the newest build). Konsol reloaded itself only after an update started from its
+  own Güncelle (2026-10-18).
+- **What the page watches:** its own script's and style sheet's identity, their ETag asked with HEAD and never
+  from a cache, noted when it starts. Not the build number alone: the installer writes `V2_VERSION` to
+  `state.env` in stage 3 and Konsol's files only in stage 6, so a reload on the number would load the old files
+  again and then never notice. When the build number in `kaynaklar` (every 2 s on the event stream) changes, the
+  page looks at its files every 5 s until they change or 20 minutes pass; it looks once more whenever the tab
+  comes back into view (a re-run that kept the number). An install that did not touch Konsol's files changes
+  nothing on the page.
+- **What it does:** a notice above every page, the full-window ones too. With nothing unsaved and no dialog open
+  the page reloads itself after 2 s; with a draft (the leave guard's) or a dialog open it waits for "Şimdi
+  yenile", since a reload drops what was entered.
+- **Nothing changes on the server:** the files and their headers are Caddy's as before; no route, no new file.
+- **Also in v2-265, from a review of DD-279:** secret values are masked in a failed install's raw container
+  output before a line is cleaned (a multi-line value line by line too, a value with a tab whole); job records
+  older than 30 days go when a job begins; the direct start's reason and `soru` come with any job whose direct
+  start stopped, as the code already did, and the documents say so.
+- **Tests:** `yeni-ui.cjs` (a new number alone changes nothing; new files show the notice and reload the page;
+  with something entered it waits, above Uygulama ekle's head); the worker's masking and pruning.
+
 ### DD-279: Uygulama ekle is a full-window page; an install shows its own log (v2-264)
 
 - **Why:** on the test host a Compose file whose image starts as root and switches to the user its `PUID`/`PGID`
@@ -58,6 +82,8 @@ longer applies and which entry replaced it.
   stays the root start. This reads the file's own words; no image or application is named.
 - **Tests:** the worker's log, its order, the masking, the cap, no journal read for other jobs; the inspector's
   `PUID`; the three affected Konsol suites with the layout audit at 1440, 390 and 320.
+- **Amended in v2-265 (DD-280):** the masking works on the raw output (a multi-line secret line by line too);
+  records older than 30 days go when a job begins; any job whose direct start stopped names its question.
 
 ### DD-278: The rebuild's phase 6: documents, sweep and back doors (v2-261)
 

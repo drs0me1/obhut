@@ -185,8 +185,8 @@ SCHEMAS = {
         "kayitlar": arr(ref("DnsKaydi")), "yonlendirme": BOOL, "sunucular": arr(STR), "hatalar": arr(STR),
     }),
     # A job's record (an application's or the cleanup's), never its request: its log (gunluk: each step, fact, a
-    # failed install's container output and why it failed, with its time), its error and, for a failed install, the
-    # question most likely behind it (soru).
+    # failed install's container output and why it failed, with its time), its error and, for a job whose direct
+    # start stopped at once, that start's question (soru).
     "IsSatiri": obj({"t": INT, "tur": enum("adim", "bilgi", "cikti", "hata", "tamam"), "ileti": STR}),
     "KonteynerIsi": open_obj({"id": STR, "action": STR, "name": STR, "state": STR, "step": STR, "error": STR,
                               "failed_step": STR, "soru": STR, "gunluk": arr(ref("IsSatiri"))}),

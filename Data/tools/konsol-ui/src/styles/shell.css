@@ -328,6 +328,18 @@
   right: -5px;
 }
 
+/* ---- a new build on the server (DD-280) */
+.notice.build-notice {
+  align-items: center;
+  flex-wrap: wrap;
+  max-width: 1160px;
+  margin-bottom: 16px;
+}
+
+.build-notice-text {
+  flex: 1 1 260px;
+}
+
 /* ---- pending settings change */
 .pending {
   display: flex;

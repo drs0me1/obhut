@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and "Başlatma sorusuna dön" leads back to the question with every answer kept.
 - An image that starts as root and switches to its own user (a `PUID`/`PGID` in the file) is explained in its
   start question; starting it directly as that user stops at once, and the error now says so.
+- An open Konsol notices when the server's Konsol files change, after the installer ran again or an update from
+  another tab (DD-280): it says so and reloads itself, or, while something is entered, waits for "Şimdi yenile".
+  A new build number alone (an install that did not change Konsol's files) changes nothing on the page.
+- A failed install's container lines in its log mask a secret even when it spans several lines; job records
+  older than 30 days are removed when a job begins.
 
 ## [2.0.0] — 2026-10-18
 

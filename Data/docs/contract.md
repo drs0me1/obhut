@@ -667,7 +667,7 @@ the transient unit `master-container-<id>` (at most 1800 s; the cleanup 900 s) w
 standard input only, and the worker (`master_container_worker.py`) does it. A job's record
 (`KONTEYNER_STATE_DIR/operations/<id>.json`, 0600 root) names the job and its steps, never the request, and
 keeps its log (`gunluk`: each step and fact with its time, why it failed said once; the newest 300 lines of at
-most 400 characters, **DD-279**). At most four
+most 400 characters, **DD-279**); records older than 30 days go when a job begins. At most four
 jobs run at once and one per target; a job takes `install.lock` and `KONTEYNER_LOCK` (waiting up to 5 s)
 and is refused while a settings change is pending. Each write is a line `uygulama-<verb>` in İşlem geçmişi.
 
@@ -678,9 +678,10 @@ and is refused while a settings change is pending. Each write is a line `uygulam
   unit is active and each container is its own, running and healthy; then the access projection. Any
   failure takes back everything the job made and names the step. A container that does not come up leaves
   its own last 20 lines since the job began (journald's `CONTAINER_NAME`) in the job's log before the rollback
-  removes its unit, each secret value the job holds masked; a direct start that stopped at once says the
-  usual reason (an image that switches to its own user from root) and the record names that start question
-  (`soru`). `kur` with `plan: true` runs every check and writes, pulls and creates nothing.
+  removes its unit, each secret value the job holds masked in the raw output; any job whose direct start
+  stopped at once says the usual reason (an image that switches to its own user from root) and its record
+  names that start question (`soru`). `kur` with `plan: true` runs every check and writes, pulls and creates
+  nothing.
 - **Takeover:** installing from a standalone container copies its named volumes into the new folders and
   removes the old container (never its volumes) once the application is ready.
 - **Start, stop, restart:** stop removes `[Install]`, so a stopped application stays stopped across
@@ -904,6 +905,11 @@ WireGuard profiles carry the endpoint they were made with (**DD-138**).
   frame-ancestors 'none'`, `Cache-Control: no-cache`, `nosniff`, `X-Frame-Options: DENY`, no referrer.
   Pages and API replies are compressed (zstd, gzip) except the event stream (**DD-181**).
 - The app manifest (`manifest.json` with two icons) makes Konsol installable; there is no service worker.
+- An open page notes its own script's and style sheet's ETag (HEAD, not cached). When the server's build number
+  changes it looks again every 5 s until those files change (the installer writes the number in stage 3 and the
+  files in stage 6) or 20 minutes pass, and once whenever the tab comes back into view; new files show a notice
+  above every page and reload it after 2 s, or wait for "Şimdi yenile" while something is entered or a dialog
+  is open (**DD-280**).
 - Views are hash routes (`#/genel`, `#/erisim?sekme=adresler`, `#/uygulamalar/<app>`); a tab and a
   view's state are in the query, so a reload or a bookmark opens the same view. `/` and any unknown address
   open Genel Bakış.

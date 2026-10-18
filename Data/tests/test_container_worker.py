@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 from unittest.mock import patch
@@ -557,6 +558,27 @@ class InstallTests(WorkerCase):
         self.assertIn({'t': record['gunluk'][0]['t'], 'tur': 'bilgi', 'ileti': 'notlar_db konteyneri bir şey yazmadı.'},
                       [dict(line, t=record['gunluk'][0]['t']) for line in record['gunluk']])
         self.assertNotIn('never-print', json.dumps(record))
+
+    def test_a_multi_line_secret_and_one_with_a_tab_are_masked_before_a_line_is_cleaned(self):
+        self.manager.begin('uygulama-kur', {'name': 'notlar'}, uuid.uuid4().hex)
+        key = '-----BEGIN KEY-----\nQUJDREVGR0hJSktMTU5PUA==\nUVJTVFVWV1hZWjAxMjM0NQ==\n-----END KEY-----'
+        tabbed = 'parola\tsekmeli-77'
+        self.host.journal['notlar_web'] = 'anahtar: %s\nyeniden: %s\nbaşka: %s\n' % (key, key.splitlines()[2], tabbed)
+        self.manager.container_output('notlar_web', {'anahtar': key, 'parola': tabbed})
+        lines = [line['ileti'] for line in self.operation()['gunluk'] if line['tur'] == 'cikti']
+        self.assertEqual(lines, ['anahtar: ••••', 'yeniden: ••••', 'başka: ••••'])
+
+    def test_records_older_than_thirty_days_go_when_a_job_begins(self):
+        folder = Path(self.env['KONTEYNER_STATE_DIR']) / 'operations'
+        folder.mkdir(parents=True)
+        old, recent = folder / ('a' * 32 + '.json'), folder / ('b' * 32 + '.json')
+        for path in (old, recent):
+            path.write_text('{}')
+        stale = time.time() - (worker.RECORD_DAYS + 1) * 86400
+        os.utime(old, (stale, stale))
+        self.install()
+        self.assertFalse(old.exists())
+        self.assertTrue(recent.exists())
 
     def test_the_log_keeps_its_newest_lines(self):
         self.manager.begin('uygulama-baslat', {'name': 'notlar'}, uuid.uuid4().hex)

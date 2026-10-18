@@ -3,13 +3,15 @@
      the phone's menu sheet and a page's dialogs sit outside .app, which is inert while one of them is open.
      A page below a section (an application) shows the trail back in the head and its own heading. A full-window
      page (route meta full: Uygulama ekle) has its own head and bar: the shell keeps only the pending-change
-     banner above it, since a change waiting for its confirmation must stay in sight. -->
+     banner above it, since a change waiting for its confirmation must stay in sight, and the new-build notice
+     (DD-280: the files this page runs were replaced on the server). -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import SideNav from "./components/SideNav.vue";
 import TopTools from "./components/TopTools.vue";
 import PendingBanner from "./components/PendingBanner.vue";
+import BuildNotice from "./components/BuildNotice.vue";
 import BottomBar from "./components/BottomBar.vue";
 import CommandPalette from "./components/CommandPalette.vue";
 import ActivityDrawer from "./components/ActivityDrawer.vue";
@@ -20,6 +22,7 @@ import { sectionById } from "./sections";
 import { live } from "./live";
 import { pageHead } from "./page";
 import { anyOpen, toggleSurface, ui } from "./ui";
+import { watchBuild } from "./build";
 
 const route = useRoute();
 const router = useRouter();
@@ -50,7 +53,10 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
-onMounted(() => window.addEventListener("keydown", onKeydown));
+onMounted(() => {
+  window.addEventListener("keydown", onKeydown);
+  void watchBuild();
+});
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeydown);
   stopAfterEach();
@@ -83,6 +89,7 @@ onBeforeUnmount(() => {
           </div>
           <TopTools class="desktop-tools" />
         </div>
+        <BuildNotice />
         <PendingBanner />
         <RouterView />
       </main>

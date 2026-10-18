@@ -7,7 +7,8 @@ DD-271, phase 3) and Gelişmiş's cleanup of what nothing uses (K8). Each action
 and a durable record (KONTEYNER_STATE_DIR/operations/<id>.json) that never holds the request; a failure
 undoes what the job did, in reverse, and names the failed step. The record carries the job's log (gunluk):
 each step and fact with its time, and for an install whose container does not come up that container's own last
-lines (it is rolled back, so its unit and record go), each secret value the job holds masked. Secret values reach
+lines (it is rolled back, so its unit and record go), each secret value the job holds masked. Records older than
+RECORD_DAYS go when a job begins. Secret values reach
 Podman on standard input only: never an argument, a file of Obhut's, a record, a log line or a reply.
 
 Access rows (rebuild phase 4): install seeds an application's rows, an edit keeps, seeds and drops them,
@@ -58,6 +59,10 @@ COPY_SECONDS = 1200
 LOG_LINES = 300
 LINE_CHARS = 400
 OUTPUT_LINES = 20
+# A multi-line secret's own lines are masked too when they are at least this long (a short line is not a secret's).
+SECRET_LINE_CHARS = 8
+# A job's record (with a failed install's container lines) stays this long; an older one goes when a job begins.
+RECORD_DAYS = 30
 ANSI_RE = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')
 MASK = '••••'
 # A directly started container that stops at once (DD-227): the usual reason, said beside the error.
@@ -212,20 +217,26 @@ class Manager:
 
     def container_output(self, container, values):
         """A container's own last lines since the job began (journald's CONTAINER_NAME) as lines of the job's log.
-        Each secret value the job holds is masked; a line keeps its printable text only. Reading the journal never
-        hides the job's own error."""
+        Each secret value the job holds is masked in the raw output, before anything else touches it, and so is each
+        long line of a multi-line one; then a line keeps its printable text only. Reading the journal never hides
+        the job's own error."""
         argv = ['journalctl', 'CONTAINER_NAME=' + container, '--since', '@%d' % int(self.operation.get('created_at') or 0),
                 '-n', str(OUTPUT_LINES), '-o', 'cat', '--no-pager']
         try:
             p = self.call(argv, timeout=30, check=False)
         except cfg.ContainerConfigError:
             return
-        hidden = sorted({v for v in values.values() if isinstance(v, str) and v}, key=len, reverse=True)
+        hidden = set()
+        for value in values.values():
+            if isinstance(value, str) and value:
+                hidden.add(value)
+                hidden.update(part.strip() for part in value.splitlines() if len(part.strip()) >= SECRET_LINE_CHARS)
+        output = (p.stdout or '') if p.returncode == 0 else ''
+        for value in sorted(hidden, key=len, reverse=True):
+            output = output.replace(value, MASK)
         lines = []
-        for raw in (p.stdout or '').splitlines() if p.returncode == 0 else []:
+        for raw in output.splitlines():
             text = ''.join(ch if ch.isprintable() else ' ' for ch in ANSI_RE.sub('', raw)).strip()
-            for value in hidden:
-                text = text.replace(value, MASK)
             if text:
                 lines.append(text)
         if not lines:
@@ -233,12 +244,25 @@ class Manager:
         for text in lines[-OUTPUT_LINES:]:
             self.note(text, 'cikti')
 
+    @staticmethod
+    def prune(folder):
+        """Job records older than RECORD_DAYS go (the journal rotates; these would not)."""
+        limit = time.time() - RECORD_DAYS * 86400
+        for path in folder.glob('*.json'):
+            try:
+                info = path.lstat()
+                if stat.S_ISREG(info.st_mode) and info.st_mtime < limit:
+                    path.unlink()
+            except OSError:
+                pass
+
     def begin(self, action, request, operation):
         cfg.require(isinstance(operation, str) and cfg.REV_RE.fullmatch(operation), 'İşlem kimliği geçersiz.')
         root = Path(self.env.get('KONTEYNER_STATE_DIR', ''))
         cfg.require(root.is_absolute() and '..' not in root.parts, 'Konteyner kayıt yolu eksik; kurulumu yeniden çalıştırın.', 503)
         cfg.private_dir(root)
         cfg.private_dir(root / 'operations')
+        self.prune(root / 'operations')
         self.op_path = root / 'operations' / (operation + '.json')
         # Reserve the id exclusively before any side effect; a replay never repeats an action.
         with settings.parent_fd(self.op_path) as (directory, name):

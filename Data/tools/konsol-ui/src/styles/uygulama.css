@@ -432,7 +432,9 @@
   max-width: none;
 }
 
-.app-full .pending {
+.app-full .pending,
+.app-full .build-notice {
+  max-width: none;
   margin: 12px 24px 0;
 }
 
@@ -719,7 +721,8 @@
     display: none;
   }
 
-  .app-full .pending {
+  .app-full .pending,
+  .app-full .build-notice {
     margin: 12px 16px 0;
   }
 

@@ -12,6 +12,9 @@ function onLeave(event: BeforeUnloadEvent): void {
   event.returnValue = "";
 }
 
+/** Whether any page holds a draft now (a new build waits for the operator then, DD-280). */
+export const hasDrafts = (): boolean => drafts.size > 0;
+
 /** Call in a page's setup with a getter or ref that is true while the page holds a draft. */
 export function useLeaveGuard(dirty: WatchSource<boolean>): void {
   const key = Symbol("taslak");

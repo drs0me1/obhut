@@ -116,7 +116,7 @@ PYTHONDONTWRITEBYTECODE=1 python3.13 -m unittest discover -s tests -p 'test_*.py
 python3.13 -m unittest discover -s tests -p 'test_share*.py'             # by pattern
 ```
 
-872 tests. Use Python 3.11 or newer with OpenSSL's scrypt: macOS's `/usr/bin/python3` (3.9) parses
+888 tests. Use Python 3.11 or newer with OpenSSL's scrypt: macOS's `/usr/bin/python3` (3.9) parses
 neither the runtime's nanosecond timestamps nor has scrypt; the test host runs 3.13. The suites use
 temporary folders, temporary Unix sockets, fake tools and documentation addresses only.
 
@@ -211,7 +211,7 @@ shapes with neutral `registry.example` images.
 
 | Suite | Port | Covers |
 |---|---|---|
-| `yeni-ui.cjs` | 8768 | The frame and Genel Bakış: sidebar counts, the problem chip, Dikkat with each problem's place, the applications, the access summary, the network card, the event stream and polling fallback, İşlemler, the pending banner, the command palette, the theme button, the skip link, phone bars and sheets, the app manifest and no service worker |
+| `yeni-ui.cjs` | 8768 | The frame and Genel Bakış: sidebar counts, the problem chip, Dikkat with each problem's place, the applications, the access summary, the network card, the event stream and polling fallback, İşlemler, the pending banner, the new-build notice (a number alone changes nothing; new files reload the page; a draft waits), the command palette, the theme button, the skip link, phone bars and sheets, the app manifest and no service worker |
 | `yeni-uygulamalar-ui.cjs` | 8769 | Uygulamalar and an application's page: list, filters and search, reach chips, live rate, update state, the tabs Özet, Erişim, Depolama, Tanım and Günlük, actions and removal bodies, jobs in İşlemler |
 | `yeni-uygulama-ekle-ui.cjs` | 8770 | Uygulama ekle, a full-window page (the shell giving it the window with the pending banner kept, the four sources with an upload and a drop, the file beside the questions, the marks and the question in hand's line, every question kind by service, answers checked as they change, the plan with refusals leading to their question, the install job's log, a failed install leading back to the question it names, leaving with input asking first, three widths), Tanım's edit and "Kaynaktan yenile"; no secret value in an address, the browser's storage or a GET |
 | `yeni-erisim-ui.cjs` | 8771 | Erişim's Genel, Adresler (addresses and raw ports, each sheet's exact settings body, "Adres aç", openings waiting for the 60 s banner, closings at once, deep links), Yerel adlar (the managed names read-only with their owner and link, the draft of records and forwarding, the local domain), Tailscale and Güvenlik duvarı (rules beside locked rows) |
