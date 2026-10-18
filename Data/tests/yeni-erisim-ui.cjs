@@ -249,6 +249,7 @@ async function noStyles(page, where) {
 }
 const dateText = (seconds) => new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long", year: "numeric" }).format(new Date(seconds * 1000));
 const KEY_DATE = dateText(NOW + 10 * DAY);
+const KEY_DAY = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long" }).format(new Date((NOW + 10 * DAY) * 1000));
 /** The open access row sheet (one dialog at a time). */
 const rowSheet = (page) => page.getByRole("dialog");
 /** Opens a row's sheet from Adresler' tables ("Ayrıntı" or "Adres aç") and waits for its form. */
@@ -296,19 +297,26 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     assert.equal(await page.locator(".problem").count(), 0, "no warnings card in Erişim");
     // Konsol, Paylaşımlar and notlar have a Tailscale name; notlar an internet name.
     await page.getByTestId("page-desc").filter({ hasText: "3 adres Tailscale'de · 1 internet adı · 4 uyarı" }).waitFor();
-    // Summaries.
-    const ts = page.getByTestId("sum-tailscale");
-    assert.equal(await ts.locator(".pill").innerText(), "Bağlı");
-    assert.deepEqual(await ts.locator("dd").allInnerTexts(), ["sunucu.example-tailnet.ts.net", "100.64.0.2 · fd7a:115c:a1e0::2", `${KEY_DATE} tarihine kadar`]);
-    assert.match(await ts.locator("dd").nth(2).getAttribute("class"), /warn-text/, "a key within 14 days is a warning");
-    assert.deepEqual(await page.getByTestId("sum-internet").locator("dd").allInnerTexts(),
-      ["203.0.113.10", "SSH 22/tcp, WireGuard wg0 61001/udp (yalnız IPv4), Oyun 27015/udp (yalnız IPv4, kural)"]);
-    const wgSum = page.getByTestId("sum-wireguard");
-    assert.equal(await wgSum.locator(".pill").innerText(), "Açık");
-    assert.deepEqual(await wgSum.locator(".fact-list li").allInnerTexts(), ["wg0 · Ana ağ · UDP 61001 · açık"]);
-    assert.equal(await wgSum.getByTestId("sum-wireguard-link").getAttribute("href"), "#/erisim?sekme=wireguard");
-    const cert = page.getByTestId("sum-certs").locator(".cert");
-    assert.deepEqual((await cert.innerText()).split("\n"), ["notlar.example.org", `${KEY_DATE} tarihine kadar`, "Geçerli"]);
+    // Summaries: one template (SummaryCard): the state, one-line rows, the tab with the details at the foot.
+    const summaryRows = (card) => card.locator(".summary-rows").evaluate((dl) => [...dl.children].reduce((out, el, i, all) =>
+      (el.tagName === "DT" ? [...out, [el.textContent, all[i + 1].textContent]] : out), []));
+    const summary = async (id) => {
+      const card = page.getByTestId(id);
+      return [await card.locator(".pill").innerText(), await summaryRows(card), await card.locator(".summary-link").innerText(), await card.locator(".summary-link").getAttribute("href")];
+    };
+    assert.deepEqual(await summary("sum-tailscale"), ["Bağlı", [["IPv4", "100.64.0.2"], ["IPv6", "fd7a:115c:a1e0::2"], ["Anahtar", KEY_DATE]],
+      "Tailscale", "#/erisim?sekme=tailscale"]);
+    assert.match(await page.getByTestId("sum-tailscale").locator("dd").nth(2).getAttribute("class"), /warn-text/, "a key within 14 days is a warning");
+    // The internet card holds its addresses only; how many ports are open is its state, which ones Güvenlik duvarı's.
+    assert.deepEqual(await summary("sum-internet"), ["3 port açık", [["IPv4", "203.0.113.10"], ["IPv6", "yok"]], "Güvenlik duvarı", "#/erisim?sekme=guvenlik-duvari"]);
+    assert.deepEqual(await summary("sum-wireguard"), ["Açık", [["wg0", "Ana ağ · UDP 61001"]], "WireGuard", "#/erisim?sekme=wireguard"]);
+    assert.deepEqual(await summary("sum-certs"), ["Yakında doluyor", [[KEY_DAY, "notlar.example.org"]], "Adresler", "#/erisim?sekme=adresler"]);
+    assert.equal(await page.getByTestId("sum-certs").locator("dd").getAttribute("title"), `notlar.example.org: ${KEY_DATE} tarihine kadar`);
+    // The cards of a row are as tall as each other and their links share one line.
+    const feet = await page.locator(".summary-card").evaluateAll((cards) => cards.map((c) => [Math.round(c.getBoundingClientRect().height),
+      Math.round(c.querySelector(".summary-link").getBoundingClientRect().bottom)]));
+    assert.equal(new Set(feet.map((f) => f[0])).size, 1, "equal heights");
+    assert.equal(new Set(feet.map((f) => f[1])).size, 1, "the links on one line");
     // The matrix in plain words; an access row links to its sheet.
     const matrix = page.getByTestId("matrix");
     assert.deepEqual(await matrix.locator("thead th").allInnerTexts(), ["Hizmet", "Bu sunucu", "Tailscale", "WireGuard", "İnternet"]);
@@ -396,7 +404,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     assert.equal(await page.getByTestId("ts-exit").innerText(), "Sunulmuyor.");
     // WireGuard with no network: the summary says it is off.
     await page.goto(url("#/erisim"));
-    assert.equal(await page.getByTestId("sum-wireguard-none").innerText(), "Ağ yok; açınca ilk ağ kurulur.");
+    assert.equal(await page.getByTestId("sum-wireguard").locator(".summary-empty").innerText(), "Ağ yok; açınca ilk ağ kurulur.");
     assert.equal(await page.getByTestId("sum-wireguard").locator(".pill").innerText(), "Kapalı");
     await page.context().close();
     data.erisim = erisim();

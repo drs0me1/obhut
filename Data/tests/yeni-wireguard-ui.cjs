@@ -258,6 +258,18 @@ const panel = (page) => page.locator(".modal-sheet");
     await netTabs.first().waitFor();
     assert.deepEqual(await netTabs.evaluateAll((ts) => ts.map((t) => [t.querySelector(".tab-label").textContent, t.querySelector(".tab-hint").textContent])),
       [["wg0 · Ana ağ", "1/3 bağlı · UDP 61001"], ["wg1 · Misafir", "Kapalı · UDP 61020"]]);
+    // "Ağ ekle" follows the last network's tab (it moves on with each network); WireGuard'ı kapat keeps to the right.
+    // No strip overflows downwards (a 1 px overflow showed a scroll bar beside the tabs).
+    const strip = await page.evaluate(() => {
+      const box = (s) => document.querySelector(s).getBoundingClientRect();
+      const tabs = [...document.querySelectorAll('[data-testid="wireguard"] [role="tab"]')];
+      return { lastTab: tabs.at(-1).getBoundingClientRect().right, add: box('[data-testid="wg-add-net"]').left,
+        stop: box('[data-testid="wg-stop"]').right, bar: box('[data-testid="wireguard"] .tabs-bar').right,
+        overflowing: [...document.querySelectorAll(".tablist")].filter((l) => l.scrollHeight > l.clientHeight).length };
+    });
+    assert(strip.add - strip.lastTab >= 0 && strip.add - strip.lastTab <= 16, `Ağ ekle beside the last network (${strip.add - strip.lastTab}px)`);
+    assert(strip.bar - strip.stop <= 1, "WireGuard'ı kapat at the strip's right end");
+    assert.equal(strip.overflowing, 0, "no tab strip overflows downwards");
     const card = tab.locator(".wg-net");
     const view = tab.locator(".wg-view");
     assert.equal(await card.locator("h2").innerText(), "wg0 · Ana ağ");

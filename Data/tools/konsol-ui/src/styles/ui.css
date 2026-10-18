@@ -317,18 +317,21 @@
   gap: 18px;
 }
 
+/* The line under a strip is an inset shadow, not a border: the chosen tab's 2px line paints over it and nothing
+   overflows the list, which scrolls sideways on a narrow screen (a tab pulled 1px into a border did overflow it,
+   and a scroll bar showed beside the tabs). */
 .tablist {
   display: flex;
   gap: 4px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--line-strong);
+  overflow-y: hidden;
+  box-shadow: inset 0 -1px 0 var(--line-strong);
   scrollbar-width: thin;
 }
 
 .tab {
   flex: none;
   min-height: var(--tap);
-  margin-bottom: -1px;
   padding: 0 16px;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -745,26 +748,60 @@ select.input {
   opacity: 0.55;
 }
 
-/* ---- tabs with a second line and an end slot */
+/* ---- tabs with a second line, what follows the last tab and an end slot. The list is as wide as its tabs (it
+   scrolls when the row is narrower); what follows it (an "Ağ ekle") sits beside the last tab and moves on with
+   each new one; the end slot keeps to the right. */
 .tabs-bar-end {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 8px 12px;
-  border-bottom: 1px solid var(--line-strong);
+  box-shadow: inset 0 -1px 0 var(--line-strong);
 }
 
 .tabs-bar-end > .tablist {
-  flex: 1 1 260px;
+  flex: 0 1 auto;
   min-width: 0;
-  border-bottom: 0;
+  box-shadow: none;
 }
 
+.tabs-after,
 .tabs-end {
   display: flex;
   align-items: center;
   gap: 8px;
   padding-bottom: 8px;
+}
+
+.tabs-end {
+  margin-left: auto;
+}
+
+/* A tab-shaped "add" beside the tabs: a dashed outline, the tabs' type. */
+.tab-add {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px dashed var(--line-button);
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--accent-strong);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-add:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.tab-add:disabled {
+  color: var(--muted);
+  cursor: default;
 }
 
 .tab-hinted {
@@ -1112,4 +1149,51 @@ select.input {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+/* ---- the summary card (SummaryCard.vue): its rows, one line each, and its link at the foot; the cards of a grid
+   row stretch to the tallest, so every link sits on one line */
+.summary-rows {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.summary-rows dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.summary-rows dt.warn-text {
+  color: var(--warn-ink);
+}
+
+.summary-rows dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-rows dd.mono {
+  font-size: 13px;
+}
+
+.summary-link {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 2px;
+  margin-top: auto;
+  color: var(--accent-strong);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.summary-link:hover {
+  text-decoration: underline;
 }

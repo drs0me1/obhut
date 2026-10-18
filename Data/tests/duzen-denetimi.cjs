@@ -9,7 +9,12 @@
                       and only counted (`uzun`);
    - cakisma:         two pieces of text (measured where their glyphs are drawn, so text spilling out of a
                       narrow cell into the next one counts) or controls in the same layer drawn over each other;
-   - pencere:         an open dialog or sheet that does not fit the window and cannot scroll.
+   - pencere:         an open dialog or sheet that does not fit the window and cannot scroll;
+   - kucuk-kaydirma:  a scroll box (overflow auto or scroll on that axis) whose content is 1 to 3 px larger than
+                      it: not a place meant to scroll but a stray scroll bar where the system shows them (a box
+                      that scrolls sideways also scrolls the other way: one pixel down is enough). Sideways, text
+                      kept on its lines (a <pre>, a text area, `white-space: pre` or `nowrap`) is left out: its
+                      width follows its longest line, so at some width it is a pixel too wide by chance.
    Truncation with an ellipsis is intentional and only counted (`shortened`). Hidden, screen-reader-only,
    inert and decorative (SVG) elements and the content of a closed <details> are skipped. Pure measurement:
    changes nothing on the page. The suites run it on every screenshot (yeni-harness.cjs); giris-ui.cjs at each
@@ -122,6 +127,15 @@ function measure() {
         else if (!["BODY", "HTML"].includes(el.tagName) && !el.matches("input, textarea, select, img, video, canvas, iframe")) {
           add("kirpilma", el, wide ? `genişlik ${el.scrollWidth} > ${el.clientWidth}` : `yükseklik ${el.scrollHeight} > ${el.clientHeight}`);
         }
+      }
+    }
+    // A scroll box that overflows by a pixel or three: a stray scroll bar, not a place meant to scroll. (The check
+    // above counts more than one pixel only, so it misses this.)
+    if (el.clientHeight > 0 && el.clientWidth > 0 && !["BODY", "HTML"].includes(el.tagName)) {
+      const lines = el.matches("pre, textarea") || ["pre", "nowrap"].includes(s.whiteSpace);
+      for (const [axis, over, mode] of [["dikey", el.scrollHeight - el.clientHeight, s.overflowY], ["yatay", el.scrollWidth - el.clientWidth, s.overflowX]]) {
+        if (axis === "yatay" && lines) continue;
+        if ((mode === "auto" || mode === "scroll") && over >= 1 && over <= 3) add("kucuk-kaydirma", el, `${axis} ${over} px (overflow ${mode})`);
       }
     }
     // Squeezed text: more lines than words means a word was broken across lines.

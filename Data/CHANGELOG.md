@@ -24,6 +24,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Removing an application leaves nothing behind by default (DD-281): its data is deleted once you type its name
   (tick "Verileri sakla" to keep it), its images go unless another application or container uses them, and its
   old job records go with the data. Your `/srv` folders are never touched.
+- Erişim → WireGuard: "Ağ ekle" sits right after the last network's tab, as a dashed tab, and moves on as you add
+  networks; "WireGuard'ı kapat" stays at the right. No tab strip shows a stray scroll bar any more (a tab was drawn
+  1 px into the strip's line, which made the strip scroll), in Erişim or anywhere else; the layout check of every
+  Konsol screen now catches such a one-pixel overflow.
+- Erişim → Genel: the four summary cards share one layout (their state at the top, short one-line rows, a link to
+  the tab with the details at the foot) and are as tall as each other. The İnternet card shows only the server's
+  addresses; how many ports are open is its state, and which ones are in Güvenlik duvarı.
 
 ## [2.0.0] — 2026-10-18
 

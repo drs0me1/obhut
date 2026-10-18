@@ -47,6 +47,14 @@ export function date(unixSeconds: number | null | undefined): string {
   return dateFormat.format(new Date(unixSeconds * 1000));
 }
 
+const dayMonthFormat = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long" });
+
+/** Unix seconds as "8 Kasım" (a summary's short date). */
+export function dayMonth(unixSeconds: number | null | undefined): string {
+  if (!isNumber(unixSeconds) || unixSeconds <= 0) return UNKNOWN;
+  return dayMonthFormat.format(new Date(unixSeconds * 1000));
+}
+
 /** Whole days from `now` until a server time (negative once it has passed). */
 export function daysUntil(unixSeconds: number, now: number): number {
   return Math.floor((unixSeconds - now) / 86400);

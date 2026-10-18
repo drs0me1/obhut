@@ -50,37 +50,6 @@
   border-radius: var(--r-lg);
 }
 
-.summary-grid .card > .btn {
-  margin-top: auto;
-}
-
-.cert-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.cert {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 0;
-  border-top: 1px solid var(--line-soft);
-}
-
-.cert:first-child {
-  border-top: 0;
-  padding-top: 0;
-}
-
-.cert-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  font-size: 13.5px;
-  overflow-wrap: anywhere;
-}
 
 /* A lock beside a value that changes elsewhere ("Hep açık", "Adresler'de yönet"). */
 .lock-line {

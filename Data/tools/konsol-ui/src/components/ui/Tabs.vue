@@ -1,15 +1,16 @@
 <!-- Tabs (DD-258 goal 5): the chosen tab is a query parameter of the address (`param`, the first tab when
      absent or no longer listed), so a reload or a shared link opens the same tab. One tab stop: ←/→ move and
-     choose, Home/End go to the ends. A tab may carry a second line (`hint`, e.g. a network's "2/3 bağlı"),
-     and the `end` slot sits beside the tab list (an "Ağ ekle" button). The list may change while shown. The
-     panel below shows the chosen tab's content (the default slot gets its id). -->
+     choose, Home/End go to the ends. A tab may carry a second line (`hint`, e.g. a network's "2/3 bağlı").
+     The `after` slot follows the last tab (an "Ağ ekle", moving on as tabs are added) and the `end` slot keeps
+     to the right of the strip ("Adres aç"). The list may change while shown. The panel below shows the chosen
+     tab's content (the default slot gets its id). -->
 <script setup lang="ts">
 import { ref, useId } from "vue";
 import { useQueryParam } from "../../query";
 import type { TabItem } from "./types";
 
 const props = defineProps<{ tabs: readonly TabItem[]; label: string; param: string }>();
-defineSlots<{ default(props: { active: string }): unknown; end?(): unknown }>();
+defineSlots<{ default(props: { active: string }): unknown; after?(): unknown; end?(): unknown }>();
 
 const active = useQueryParam(
   props.param,
@@ -39,7 +40,7 @@ function onKeydown(event: KeyboardEvent, index: number): void {
 
 <template>
   <div class="tabs">
-    <div class="tabs-bar" :class="{ 'tabs-bar-end': $slots.end }">
+    <div class="tabs-bar" :class="{ 'tabs-bar-end': $slots.end || $slots.after }">
       <div class="tablist" role="tablist" :aria-label="label">
         <button
           v-for="(t, i) in tabs"
@@ -61,6 +62,7 @@ function onKeydown(event: KeyboardEvent, index: number): void {
           <template v-else>{{ t.label }}</template>
         </button>
       </div>
+      <div v-if="$slots.after" class="tabs-after"><slot name="after" /></div>
       <div v-if="$slots.end" class="tabs-end"><slot name="end" /></div>
     </div>
     <div :id="panelId" class="tabpanel" role="tabpanel" :aria-labelledby="active ? tabId(active) : undefined" tabindex="0">

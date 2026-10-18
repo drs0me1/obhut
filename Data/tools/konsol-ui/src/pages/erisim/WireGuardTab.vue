@@ -559,10 +559,10 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
         </section>
 
         <Tabs v-else :tabs="tabs" label="WireGuard ağları" param="ag">
-          <template #end>
+          <template #after>
             <button
               type="button"
-              class="btn btn-secondary btn-sm"
+              class="tab-add"
               :disabled="next === null || !writable || planLocked"
               :aria-describedby="next === null ? 'wg-sinir' : undefined"
               data-testid="wg-add-net"
@@ -571,6 +571,8 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
               <Icon name="plus" :size="16" />Ağ ekle
             </button>
             <span v-if="next === null" id="wg-sinir" class="meter-note">En çok {{ state.max }} ağ</span>
+          </template>
+          <template #end>
             <button v-if="!stopped" type="button" class="btn btn-danger-quiet btn-sm" :disabled="working || planLocked" data-testid="wg-stop" @click="openStop">
               <Icon name="power" :size="16" />WireGuard'ı kapat
             </button>
