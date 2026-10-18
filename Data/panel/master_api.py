@@ -184,8 +184,12 @@ SCHEMAS = {
         "adlar": arr(obj({"ad": STR, "aile": null(INT), "hedef": STR, "kaynak": STR, "satir": null(STR)})),
         "kayitlar": arr(ref("DnsKaydi")), "yonlendirme": BOOL, "sunucular": arr(STR), "hatalar": arr(STR),
     }),
-    # A job's record (an application's or the cleanup's), never its request.
-    "KonteynerIsi": open_obj({"id": STR, "action": STR, "name": STR, "state": STR, "step": STR}),
+    # A job's record (an application's or the cleanup's), never its request: its log (gunluk: each step, fact, a
+    # failed install's container output and why it failed, with its time), its error and, for a failed install, the
+    # question most likely behind it (soru).
+    "IsSatiri": obj({"t": INT, "tur": enum("adim", "bilgi", "cikti", "hata", "tamam"), "ileti": STR}),
+    "KonteynerIsi": open_obj({"id": STR, "action": STR, "name": STR, "state": STR, "step": STR, "error": STR,
+                              "failed_step": STR, "soru": STR, "gunluk": arr(ref("IsSatiri"))}),
     # DD-266 (phase 4a): the Podman list; this table is its contract (docs/konsol-api.json is generated from it).
     # Rows stay open objects and carry fields of their own. An application's container names it.
     "KonteynerPortu": open_obj({"host_ip": STR, "host_port": INT, "container_port": INT, "protocol": STR, "scope": STR}),

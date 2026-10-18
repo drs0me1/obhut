@@ -61,6 +61,10 @@
   --on-tile: #ffffff;
   --log-bg: #101820;
   --log-ink: #d8e1e8;
+  /* A job's log on it: times and a container's own output, a finished step, why it failed. */
+  --log-muted: #93a3af;
+  --log-ok: #7ad9a6;
+  --log-err: #ff9b91;
   /* An off switch's track, 3:1 against the surface. */
   --switch-off: #75838f;
 

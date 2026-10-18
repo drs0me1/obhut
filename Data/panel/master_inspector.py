@@ -41,6 +41,9 @@ MAX_QUESTIONS = 256
 SRV = "/srv"
 DIRECT_USER = "1000:1000"
 SRV_TARGETS = ("/srv", "/media", "/downloads")
+# Variables by which a file tells an image which user to switch to after its own root start (a convention of many
+# images): such an image cannot start directly as that user.
+SWITCH_VARS = ("PUID", "PGID")
 RAW_PORTS = frozenset((21, 22, 23, 25, 53, 110, 143, 465, 587, 993, 995, 1883, 3306, 5432, 6379, 6881, 8883, 27017,
                        51413))
 SECRET_RE = re.compile(r"PASS|PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|APIKEY|PRIVATE_KEY|PWD", re.I)
@@ -396,6 +399,11 @@ class _Inspector:
         elif user:
             why = ("Dosya kullanıcıyı belirtiyor (%s): doğrudan bu kullanıcıyla başlayabilir; bütün yetkiler kapalı, "
                    "yeni yetki kazanılamaz." % user)
+        elif any(e["name"] == SWITCH_VARS[0] for e in svc["environment"]):
+            given = ["%s=%s" % (e["name"], e["value"]) if isinstance(e["value"], str) and e["value"].isdigit() else e["name"]
+                     for e in svc["environment"] if e["name"] in SWITCH_VARS]
+            why = ("Dosyada %s var: imaj root olarak başlar ve uygulamayı kendisi bu kullanıcıya geçirir. Doğrudan "
+                   "başlatılırsa bu geçişi yapamaz ve büyük olasılıkla açılmaz." % " ve ".join(given))
         else:
             why = ("Dosya kullanıcı belirtmiyor: imaj büyük olasılıkla root başlayıp kendi kullanıcısına geçiyor. "
                    "Doğrudan başlatılırsa %s ile başlar ve açılmayabilir." % DIRECT_USER)

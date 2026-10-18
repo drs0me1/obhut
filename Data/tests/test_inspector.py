@@ -761,6 +761,28 @@ class EditAndWarningTests(unittest.TestCase):
         errors = check(i, {"name": "uyg", "answers": {"var:WD": {"value": "/a\nb"}, "start:a": {"mode": "root"}}})[2]
         self.assertEqual(list(errors), ["var:WD"])
 
+    def test_a_user_the_image_switches_to_itself_suggests_the_root_start_and_says_why(self):
+        i = compose("""\
+            services:
+              web:
+                image: x
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+              api:
+                image: y
+                environment: {PUID: "${KULLANICI:-1000}"}
+              db:
+                image: z
+                user: "999"
+                environment: [PUID=1000]
+            """)
+        q = questions(i)
+        self.assertEqual(q["start:web"]["suggest"], "root")
+        self.assertIn("Dosyada PUID=1000 ve PGID=1000 var: imaj root olarak başlar", q["start:web"]["why"])
+        self.assertIn("Dosyada PUID var:", q["start:api"]["why"], "a variable's value is not quoted")
+        self.assertEqual(q["start:db"]["suggest"], "direct", "the file's own user wins")
+
     def test_the_start_question_names_no_image_family(self):
         why = questions(fixture("ornek-compose.yaml"))["start:ornek"]["why"]
         self.assertNotRegex(why.lower(), "linuxserver|gosu|ör\\.")

@@ -17,6 +17,7 @@ export function countdown(seconds: number): string {
 }
 
 const clockFormat = new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit" });
+const secondsFormat = new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const dateTimeFormat = new Intl.DateTimeFormat("tr-TR", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
 const percentFormat = new Intl.NumberFormat("tr-TR", { style: "percent", maximumFractionDigits: 0 });
 
@@ -24,6 +25,12 @@ const percentFormat = new Intl.NumberFormat("tr-TR", { style: "percent", maximum
 export function clock(unixSeconds: number | null | undefined): string {
   if (!isNumber(unixSeconds) || unixSeconds <= 0) return UNKNOWN;
   return clockFormat.format(new Date(unixSeconds * 1000));
+}
+
+/** Unix seconds as the local hh:mm:ss (a job's log). */
+export function clockSeconds(unixSeconds: number | null | undefined): string {
+  if (!isNumber(unixSeconds) || unixSeconds <= 0) return UNKNOWN;
+  return secondsFormat.format(new Date(unixSeconds * 1000));
 }
 
 /** Unix seconds as "8 Ekim 14:02". */

@@ -1,7 +1,9 @@
 <!-- The shell (DD-258): sidebar, page head with the top bar's tools, the pending-change banner and the page;
      on a phone a compact top bar and a bottom bar instead of the sidebar. The palette, the activity drawer,
      the phone's menu sheet and a page's dialogs sit outside .app, which is inert while one of them is open.
-     A page below a section (an application) shows the trail back in the head and its own heading. -->
+     A page below a section (an application) shows the trail back in the head and its own heading. A full-window
+     page (route meta full: Uygulama ekle) has its own head and bar: the shell keeps only the pending-change
+     banner above it, since a change waiting for its confirmation must stay in sight. -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
@@ -22,6 +24,7 @@ import { anyOpen, toggleSurface, ui } from "./ui";
 const route = useRoute();
 const router = useRouter();
 const section = computed(() => sectionById(route.meta.section ?? route.name));
+const full = computed(() => route.meta.full === true);
 const title = computed(() => pageHead.title ?? section.value.title);
 const description = computed(() => pageHead.description ?? section.value.description);
 const main = ref<HTMLElement | null>(null);
@@ -55,20 +58,20 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app" :inert="anyOpen" :data-baglanti="live.connection">
+  <div class="app" :class="{ 'app-full': full }" :inert="anyOpen" :data-baglanti="live.connection">
     <a class="skip-link" href="#icerik" @click.prevent="focusMain">İçeriğe geç</a>
-    <header class="sidebar">
+    <header v-if="!full" class="sidebar">
       <SideNav />
     </header>
     <div class="column">
-      <header class="mobile-top">
+      <header v-if="!full" class="mobile-top">
         <RouterLink to="/genel" class="mobile-brand" aria-label="Obhut · Genel Bakış">
           <Wordmark />
         </RouterLink>
         <TopTools compact />
       </header>
       <main id="icerik" ref="main" class="main" tabindex="-1">
-        <div class="page-head" :class="{ 'page-head-trail': pageHead.parent }">
+        <div v-if="!full" class="page-head" :class="{ 'page-head-trail': pageHead.parent }">
           <nav v-if="pageHead.parent" class="trail" aria-label="Konum">
             <RouterLink :to="pageHead.parent.to" class="trail-link">{{ pageHead.parent.label }}</RouterLink>
             <Icon name="chevron" :size="14" />
@@ -84,7 +87,7 @@ onBeforeUnmount(() => {
         <RouterView />
       </main>
     </div>
-    <BottomBar />
+    <BottomBar v-if="!full" />
   </div>
   <CommandPalette />
   <ActivityDrawer />

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Uygulama ekle is a page of its own that fills the window (DD-279): the source list beside the chosen source (a
+  file can also be dropped on it), the file beside the inspector's questions, grouped by service, with the line of
+  the question in hand lit and "Bekleyene git" for the next unanswered one; the plan beside the install's order.
+  Leaving with something entered asks first, also inside Konsol; a running install is not stopped by leaving.
+- A new Kurulum step shows the install as it runs: each step with its time, the image pinned, each service
+  running. A finished install stays on its log until you move on. When a container does not come up, its own last
+  lines are kept in the log before the install is rolled back (secret values masked), the reason is said once,
+  and "Başlatma sorusuna dön" leads back to the question with every answer kept.
+- An image that starts as root and switches to its own user (a `PUID`/`PGID` in the file) is explained in its
+  start question; starting it directly as that user stops at once, and the error now says so.
+
 ## [2.0.0] — 2026-10-18
 
 The second generation of Obhut (DD-271 to DD-278). Applications run from their own Compose or Kubernetes files: an

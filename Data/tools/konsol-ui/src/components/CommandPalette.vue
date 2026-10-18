@@ -12,7 +12,7 @@ import { SECTIONS, SECTION_TABS, accessRoute } from "../sections";
 import { apps, live } from "../live";
 import { FORMAT_TEXT } from "../apps";
 import { addressCandidates, isAccessRow, rowName, rowOwner } from "../access";
-import { appRoute } from "../router";
+import { ADD_APP, appRoute } from "../router";
 import { THEMES, setTheme, theme, themeText, type ThemeChoice } from "../theme";
 import { closeSurface, openSurface, ui } from "../ui";
 import { fold } from "../format";
@@ -80,7 +80,7 @@ const items = computed<Item[]>(() => {
     hint: "Uygulamalar",
     icon: "plus",
     words: "yeni kur compose kubernetes dosya imaj konteyner",
-    run: { kind: "route", to: "/uygulamalar?ekle=1" },
+    run: { kind: "route", to: ADD_APP },
   });
   // "Adres aç" as Erişim offers it: the first raw TCP port without an address, while no change waits.
   const candidate = live.bekleyen ? undefined : addressCandidates(live.erisim?.hizmetler ?? [])[0];

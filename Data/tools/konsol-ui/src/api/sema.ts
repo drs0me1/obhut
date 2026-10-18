@@ -411,12 +411,22 @@ export interface Adlar {
   hatalar: string[];
 }
 
+export interface IsSatiri {
+  t: number;
+  tur: "adim" | "bilgi" | "cikti" | "hata" | "tamam";
+  ileti: string;
+}
+
 export interface KonteynerIsi {
   id?: string;
   action?: string;
   name?: string;
   state?: string;
   step?: string;
+  error?: string;
+  failed_step?: string;
+  soru?: string;
+  gunluk?: IsSatiri[];
   [key: string]: unknown;
 }
 

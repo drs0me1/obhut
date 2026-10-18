@@ -181,7 +181,7 @@ facts only; the WAN address is detected again on every run.
 | `SETTINGS_FILE` (`ayarlar.json`), `SETTINGS_PENDING_FILE` (`ayarlar-bekleyen.json`) | settings worker | confirmed choices; the pending change with its file snapshots (root only) |
 | `SHARE_STATE_FILE` (`webdav.json`, `.pending`) | `master_shares.py` | folder accounts (scrypt), both connection policies, folder identity; 0600 |
 | `KONSOL_AUTH_DIR` (`/etc/master-stack/konsol/`) | backend, `master-konsol` | `hesap.json`, `oturumlar.json`, `.kilit`; 0700/0600 |
-| `KONTEYNER_STATE_DIR` (`/etc/master-stack/containers/`) | container worker | `operations/<id>.json` (job records, never requests) |
+| `KONTEYNER_STATE_DIR` (`/etc/master-stack/containers/`) | container worker | `operations/<id>.json` (job records with their logs, never requests) |
 | `UYGULAMA_STATE_DIR/<app>/` | container worker, settings worker (rows) | `kaynak.yaml`, `kaynak.json`, `yanitlar.json`, `tanim.json`, `yerler.json`, `erisim.json`, `env/<service>.env`; 0700/0600 |
 | `UYGULAMA_VERI_DIR/<app>/<folder>/` (`/var/lib/master-stack/uygulamalar/`) | container worker | applications' data; 0700 root, the service's own user inside |
 | `KONTEYNER_BIRIM_DIR` (`/etc/containers/systemd/`) | container worker | `konsol-<app>.network`, `konsol-<app>_<service>.container`, `konsol-<app>.pod` |
@@ -306,8 +306,12 @@ Konsol "Uygulama ekle"
      worker (install.lock + KONTEYNER_LOCK): record → guard apply → folders → pull and pin → Podman secrets
        → generator → env files → Quadlet dry run → units → daemon-reload → start in order → ready (300 s)
        → master_shares publish (Caddy sites, DNS names, firewall, Caddy reload) → [takeover: old container removed]
-     on failure: everything the job made is undone in reverse; the job record names the step
-  GET konsol/islem?id=… and the event stream's "islemler" follow the job
+     every step and fact is a line of the job's log; a container that does not come up adds its own last lines
+     (journalctl CONTAINER_NAME=…, the job's secret values masked) before the rollback
+     on failure: everything the job made is undone in reverse; the job record names the step (and a direct
+     start's question)
+  GET konteynerler/islem?id=… every second: the page's Kurulum step shows the log; the event stream's
+  "islemler" follows the job in İşlemler
 ```
 
 ### 6.4 An access change

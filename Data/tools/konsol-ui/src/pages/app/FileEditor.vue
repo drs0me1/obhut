@@ -3,15 +3,25 @@
      numbers and the marks are drawn behind the text area, which stays the only thing that takes input; they scroll
      with it. No soft wrap, so a line is a line; a long one scrolls inside the box, never the page. The full words of
      each mark are the refusals, notes and questions the page lists, so the drawing is hidden from screen readers.
-     `readonly` shows the file without editing it (its text stays selectable). -->
+     `readonly` shows the file without editing it (its text stays selectable). `current` lights the line of the
+     question in hand; a click reports its line (`pick`), so the page can show that line's question. -->
 <script setup lang="ts">
 import { computed, ref, useId } from "vue";
 import type { LineMark } from "./answers";
 
 const props = withDefaults(
-  defineProps<{ marks?: ReadonlyMap<number, LineMark> | null; readonly?: boolean; label: string; describedby?: string; invalid?: boolean; maxRows?: number }>(),
-  { marks: null, readonly: false, describedby: undefined, invalid: false, maxRows: 24 },
+  defineProps<{
+    marks?: ReadonlyMap<number, LineMark> | null;
+    readonly?: boolean;
+    label: string;
+    describedby?: string;
+    invalid?: boolean;
+    maxRows?: number;
+    current?: number | null;
+  }>(),
+  { marks: null, readonly: false, describedby: undefined, invalid: false, maxRows: 24, current: null },
 );
+const emit = defineEmits<{ pick: [line: number] }>();
 const text = defineModel<string>({ default: "" });
 
 const id = useId();
@@ -50,7 +60,21 @@ function reveal(line: number): void {
   a.scrollIntoView({ block: "nearest" });
 }
 
-defineExpose({ reveal });
+/** Scrolls a line into the text area's view without taking the focus (the question in hand). */
+function show(line: number): void {
+  const a = area.value;
+  if (!a) return;
+  const top = (line - 1) * 20;
+  if (top < a.scrollTop || top + 20 > a.scrollTop + a.clientHeight - 20) a.scrollTop = Math.max(0, top - a.clientHeight / 3);
+  sync();
+}
+
+function onPick(): void {
+  const a = area.value;
+  if (a) emit("pick", text.value.slice(0, a.selectionStart).split("\n").length);
+}
+
+defineExpose({ reveal, show });
 </script>
 
 <template>
@@ -60,7 +84,8 @@ defineExpose({ reveal });
     </div>
     <div class="code-area">
       <div ref="backdrop" class="code-backdrop" aria-hidden="true" data-testid="code-marks">
-        <div v-for="(line, i) in lines" :key="i" class="code-line" :class="mark(i + 1) ? 'code-line-' + mark(i + 1)?.tone : ''" :data-satir="mark(i + 1) ? i + 1 : undefined">
+        <div v-for="(line, i) in lines" :key="i" class="code-line" :class="[mark(i + 1) ? 'code-line-' + mark(i + 1)?.tone : '', { 'code-line-current': current === i + 1 }]"
+          :data-satir="mark(i + 1) ? i + 1 : undefined">
           <span class="code-text">{{ line || " " }}</span><span v-if="mark(i + 1)" class="code-mark">{{ mark(i + 1)?.labels.join(" · ") }}</span>
         </div>
       </div>
@@ -81,6 +106,7 @@ defineExpose({ reveal });
         data-testid="code-input"
         @scroll="sync"
         @input="sync"
+        @mouseup="onPick"
       ></textarea>
     </div>
   </div>

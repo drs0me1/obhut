@@ -4951,6 +4951,33 @@
         ],
         "additionalProperties": false
       },
+      "IsSatiri": {
+        "type": "object",
+        "properties": {
+          "t": {
+            "type": "integer"
+          },
+          "tur": {
+            "type": "string",
+            "enum": [
+              "adim",
+              "bilgi",
+              "cikti",
+              "hata",
+              "tamam"
+            ]
+          },
+          "ileti": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "t",
+          "tur",
+          "ileti"
+        ],
+        "additionalProperties": false
+      },
       "KonteynerIsi": {
         "type": "object",
         "properties": {
@@ -4968,6 +4995,21 @@
           },
           "step": {
             "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "failed_step": {
+            "type": "string"
+          },
+          "soru": {
+            "type": "string"
+          },
+          "gunluk": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IsSatiri"
+            }
           }
         },
         "required": [],

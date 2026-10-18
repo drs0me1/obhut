@@ -1,9 +1,11 @@
-/* Konsol's Uygulama ekle and an application's Tanım edit (rebuild phase 5, the prototype; K2, K3) in the committed
-   build under Data/console/yeni, with the production CSP and fixture replies for every endpoint they read or post to
-   (yeni-harness.cjs): the four sources (a pasted or uploaded file, an https address, an image name as a job, an
-   existing container), the inspector (the file's line marks, refusals with their lines, every question kind, the
-   answers checked again as they change), the install's plan (a refusal leading back to its question) and the
-   install job; Tanım's editor and questions (a staying port's use left to Erişim, a stored secret kept or renewed, a
+/* Konsol's Uygulama ekle, a full-window page (DD-279), and an application's Tanım edit (rebuild phase 5; K2, K3) in
+   the committed build under Data/console/yeni, with the production CSP and fixture replies for every endpoint they
+   read or post to (yeni-harness.cjs): the four sources (a pasted, uploaded or dropped file, an https address, an image
+   name as a job with its log, an existing container), the inspector (the file beside the questions, its line marks,
+   the question in hand lighting its line, refusals with their lines, every question kind by service, the answers
+   checked again as they change), the install's plan (a refusal leading back to its question), the install job's log
+   (a finished one staying, a failed one leading back to the question it names) and leaving with something entered;
+   Tanım's editor and questions (a staying port's use left to Erişim, a stored secret kept or renewed, a
    new port), its plan's difference and apply job, and the refresh from an address source. Every request body is
    checked exactly; no secret value reaches an address, the browser's storage or a GET request. Fails on any console
    error, CSP violation, page error or layout finding. Never contacts a server.
@@ -202,12 +204,28 @@ h.handlers["/api/konsol/uygulamalar/kaynak"] = ({ method, body }) => {
   if (body.tur === "imaj") return { body: { is: JOB(50) } };
   return { body: { metin: CONTAINER_FILE, kaynak: body } };
 };
+const L = (t, tur, ileti) => ({ t: 1791845200 + t, tur, ileti });
+const IMAGE_LOG = [L(0, "adim", "Doğrulanıyor"), L(1, "adim", `İmaj indiriliyor: ${IMAGE}`)];
+// An install's records, read in turn (the last one stays): set by each scenario.
+let installReads = [];
 h.handlers["/api/konsol/konteynerler/islem"] = ({ method, query }) => {
-  if (method !== "GET" || query.get("id") !== JOB(50)) return undefined;
+  if (method !== "GET") return undefined;
+  if (query.get("id") === JOB(1)) return { body: installReads.length > 1 ? installReads.shift() : installReads[0] };
+  if (query.get("id") !== JOB(50)) return undefined;
   imageReads += 1;
-  return imageReads < 3 ? { body: { id: JOB(50), action: "uygulama-taslak", name: IMAGE, state: "running", step: `İmaj indiriliyor: ${IMAGE}` } }
-    : { body: { id: JOB(50), action: "uygulama-taslak", name: IMAGE, state: "done", step: "", result: { metin: IMAGE_FILE, kaynak: { tur: "imaj", imaj: IMAGE } } } };
+  return imageReads < 3 ? { body: { id: JOB(50), action: "uygulama-taslak", name: IMAGE, state: "running", step: `İmaj indiriliyor: ${IMAGE}`, gunluk: IMAGE_LOG } }
+    : { body: { id: JOB(50), action: "uygulama-taslak", name: IMAGE, state: "done", step: "", gunluk: IMAGE_LOG, result: { metin: IMAGE_FILE, kaynak: { tur: "imaj", imaj: IMAGE } } } };
 };
+const installJob = (name, o) => ({ id: JOB(1), action: "uygulama-kur", name, state: "running", step: "", created_at: 1791845200, updated_at: 1791845200, gunluk: [], ...o });
+const OK_LOG = [L(0, "adim", "Doğrulanıyor"), L(0, "adim", "Dosya denetleniyor"), L(1, "adim", "İmaj indiriliyor: registry.example/ornek/web:1.2"),
+  L(3, "bilgi", "İmaj sabitlendi: registry.example/ornek/web@sha256:" + D("d")), L(4, "adim", "Başlatılıyor: konsol-ornek_web.service"),
+  L(5, "adim", "Hazır olması bekleniyor"), L(6, "bilgi", "web çalışıyor."), L(6, "bilgi", "db çalışıyor."), L(7, "adim", "Adresler yayımlanıyor"), L(8, "tamam", "Tamamlandı")];
+const PANO_ERROR = "Kurulum başarısız (Hazır olması bekleniyor): pano başladıktan hemen sonra durdu (günlüğü: journalctl -u konsol-pano_pano.service). " +
+  "Doğrudan başlatma bu imajda çalışmayabilir (imaj root başlayıp kendi kullanıcısına geçiyor olabilir); Root olarak başlatmayı deneyin. Yapılan her şey geri alındı.";
+const FAIL_LOG = [L(0, "adim", "Doğrulanıyor"), L(2, "adim", "Başlatılıyor: konsol-pano_pano.service"), L(3, "adim", "Hazır olması bekleniyor"),
+  L(4, "cikti", "preinit: fatal: /run belongs to uid 0 instead of 1000"), L(4, "cikti", "child failed with exit code 100"),
+  L(4, "hata", "pano başladıktan hemen sonra durdu (günlüğü: journalctl -u konsol-pano_pano.service)."), L(5, "adim", "Geri alınıyor"),
+  L(16, "bilgi", "Yapılan her şey geri alındı.")];
 // The install's plan (every check before the first write) and the install.
 h.handlers["/api/konsol/uygulamalar/kur"] = ({ method, body }) => {
   if (method !== "POST") return undefined;
@@ -281,88 +299,126 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
   await h.start();
   try {
     let page;
-    // ================= Kaynak: four sources; a pasted file; the address carries only ekle=1
+    // ================= Kaynak: a full-window page of its own; four sources; an upload and a drop read here
     page = await newPage();
-    await page.goto(url("#/uygulamalar?ekle=1"));
-    const sheet = page.getByRole("dialog", { name: "Uygulama ekle" });
-    await sheet.waitFor();
-    assert.equal(await sheet.locator(".modal-desc").innerText(), "Kurulumu dosya anlatır; denetçi sorar, Obhut kendi birimlerini üretir.");
-    const sources = sheet.locator(".src-card");
+    await page.goto(url("#/uygulama-ekle"));
+    const flow = page.getByTestId("add-flow");
+    await flow.waitFor();
+    assert.equal(await page.locator(".sidebar, .mobile-top, .page-head, .bottom-bar").count(), 0, "the shell gives the page the whole window");
+    assert.equal(await flow.locator("h1").innerText(), "Uygulama ekle");
+    assert.equal(await page.title(), "Uygulama ekle · Konsol");
+    assert.equal(await flow.locator(".add-back").getAttribute("href"), "#/uygulamalar");
+    assert.deepEqual(await flow.locator(".flow-steps li").allInnerTexts(), ["1\nKaynak", "2\nDenetçi", "3\nPlan", "4\nKurulum"]);
+    // A settings change waiting for its confirmation stays in sight, above the page's own head.
+    await waitFor(() => h.stream.clients.size === 1, "event stream");
+    push("bekleyen", { bekleyen: { id: "p1", phase: "awaiting", seconds: 45 } });
+    const banner = page.locator(".pending");
+    await banner.getByTestId("pending-title").waitFor();
+    assert(await banner.evaluate((e) => e.getBoundingClientRect().bottom <= document.querySelector(".add-head").getBoundingClientRect().top), "above the head");
+    await shot(page, "1440-light-ekle-bekleyen.png");
+    push("bekleyen", { bekleyen: null });
+    await banner.waitFor({ state: "detached" });
+    const sources = flow.locator(".src-card");
     assert.deepEqual(await sources.evaluateAll((els) => els.map((e) => [e.dataset.kaynak, e.querySelector("strong").textContent, e.querySelector(".src-text span").textContent])), [
-      ["dosya", "Dosya", "Compose ya da Kubernetes YAML yapıştır ya da yükle"], ["adres", "Adresten", "https ile bir Compose ya da Kubernetes dosyası"],
+      ["dosya", "Dosya", "Compose ya da Kubernetes YAML: yapıştır, yükle ya da sürükle"], ["adres", "Adresten", "https ile bir Compose ya da Kubernetes dosyası"],
       ["imaj", "İmaj adından", "Obhut taslak bir dosya üretir"], ["konteyner", "Var olan konteyner", "Elle başlatılmış bir konteyner yönetime alınır"]]);
-    const next = sheet.locator('[data-eylem="ileri"]');
+    assert.match(await flow.locator(".add-hint").innerText(), /^Uygulamanın nereden geldiğini seçin\./);
+    const next = flow.locator('[data-eylem="ileri"]');
     assert.equal(await next.innerText(), "Devam");
     assert(await next.isDisabled(), "nothing chosen yet");
     await shot(page, "1440-light-ekle-kaynak.png");
-    await sheet.getByRole("radio", { name: /Dosya/ }).check();
+    await flow.getByRole("radio", { name: /Dosya/ }).check();
     assert.equal(await next.innerText(), "Denetle");
     assert(await next.isDisabled(), "no file yet");
-    // An upload is read here: too large, not UTF-8, then a file.
-    const input = sheet.getByTestId("file-input");
+    // An upload is read here: too large, not UTF-8; a file dropped on the editor is read the same way.
+    const input = flow.getByTestId("file-input");
+    const pasteBox = flow.getByTestId("paste").getByRole("textbox", { name: "Kurulum dosyası" });
     await input.setInputFiles({ name: "buyuk.yaml", mimeType: "text/yaml", buffer: Buffer.alloc(300 * 1024, 0x61) });
-    await sheet.getByTestId("source-error").filter({ hasText: "buyuk.yaml çok büyük (en çok 256 KiB)." }).waitFor();
+    await flow.getByTestId("source-error").filter({ hasText: "buyuk.yaml çok büyük (en çok 256 KiB)." }).waitFor();
     await input.setInputFiles({ name: "ikili.yaml", mimeType: "text/yaml", buffer: Buffer.from([0x73, 0x65, 0xff, 0xfe, 0x0a]) });
-    await sheet.getByTestId("source-error").filter({ hasText: "ikili.yaml UTF-8 bir metin dosyası değil." }).waitFor();
-    await input.setInputFiles({ name: "compose.yaml", mimeType: "text/yaml", buffer: Buffer.from(REFUSED_FILE, "utf8") });
-    await page.waitForFunction(() => document.querySelector("[data-testid=paste]").value.includes("privileged"));
-    assert.equal(await sheet.getByTestId("paste").inputValue(), REFUSED_FILE, "the file's text, read in the browser");
-    assert.match(await sheet.locator("#kurulum-dosyasi-ipucu").innerText(), /^compose\.yaml okundu\./);
+    await flow.getByTestId("source-error").filter({ hasText: "ikili.yaml UTF-8 bir metin dosyası değil." }).waitFor();
+    await flow.getByTestId("paste").evaluate((zone, text) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([text], "compose.yaml", { type: "text/yaml" }));
+      zone.dispatchEvent(new DragEvent("dragover", { dataTransfer: dt, bubbles: true, cancelable: true }));
+      zone.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+    }, REFUSED_FILE);
+    await waitFor(async () => (await pasteBox.inputValue()) === REFUSED_FILE, "the dropped file's text, read in the browser");
+    assert.match(await flow.locator("#kurulum-dosyasi-ipucu").innerText(), /^compose\.yaml okundu\./);
+    assert.equal(await flow.getByTestId("source-error").count(), 0);
     assert.equal(h.requests.filter((r) => r.method === "POST").length, 0, "nothing sent while reading");
     await shot(page, "1440-light-ekle-dosya.png");
-    // Closing with a file in the form asks first.
-    await page.keyboard.press("Escape");
-    const closeConfirm = sheet.getByTestId("close-confirm");
-    await closeConfirm.waitFor();
-    assert.match(await closeConfirm.innerText(), /Girdikleriniz silinir; uygulama kurulmaz\./);
-    await closeConfirm.getByRole("button", { name: "Devam et" }).click();
-    await closeConfirm.waitFor({ state: "detached" });
-    assert.equal(await sheet.getByTestId("paste").inputValue(), REFUSED_FILE, "kept");
+    // Leaving with a file in the form asks first (inside Konsol too); "Devam et" keeps everything.
+    await flow.getByRole("button", { name: "Vazgeç" }).click();
+    const leave = page.getByRole("dialog", { name: "Uygulama ekleme bırakılsın mı?" });
+    await leave.waitFor();
+    assert.equal(await leave.getByTestId("close-confirm").innerText(), "Girdikleriniz silinir; uygulama kurulmaz.");
+    await leave.getByRole("button", { name: "Devam et" }).click();
+    await leave.waitFor({ state: "detached" });
+    assert.equal(new URL(page.url()).hash, "#/uygulama-ekle", "still here");
+    assert.equal(await pasteBox.inputValue(), REFUSED_FILE, "kept");
 
-    // ================= Denetçi: a refused line stops the flow; correcting the file in the editor goes on
+    // ================= Denetçi: the file beside the questions; a refused line stops the flow; correcting it goes on
     await next.click();
     await page.waitForFunction(() => document.querySelector("[data-testid=add-flow]")?.dataset.adim === "2");
-    await sheet.getByTestId("refusals").waitFor();
+    await flow.getByTestId("refusals").waitFor();
     assert.deepEqual(postsTo(DENETLE)[0], { metin: REFUSED_FILE }, "the first read: the file only");
-    assert.equal(await sheet.getByTestId("format").innerText(), "Compose");
-    assert.equal(await sheet.getByTestId("refusal-count").innerText(), "1 satır");
-    assert.equal(await sheet.getByTestId("refusals").locator("li").innerText(), "Satır 5 web: privileged kullanılamaz; konteynerler ayrıcalıklı çalışmaz.");
-    assert.deepEqual(await marksOf(sheet), [[5, "durduruyor", "refuse"]], "the refused line marked beside it");
-    assert.equal(await sheet.getByTestId("questions").count(), 0, "no questions while a line stops it");
-    assert.equal(await sheet.getByTestId("flow-status").innerText(), "1 satır kurulumu durduruyor");
-    assert(await sheet.locator('[data-eylem="plan"]').isDisabled());
-    assert.equal(await sheet.locator(".flow-boxes dd").nth(1).innerText(), "compose.yaml (yüklenen dosya)");
+    assert.equal(await flow.getByTestId("format").innerText(), "Compose");
+    assert.equal(await flow.locator(".add-file .add-pane-head .wrap").innerText(), "compose.yaml (yüklenen dosya)");
+    assert.equal(await flow.getByTestId("refusals").locator("li").innerText(), "Satır 5 web: privileged kullanılamaz; konteynerler ayrıcalıklı çalışmaz.");
+    assert.deepEqual(await marksOf(flow), [[5, "durduruyor", "refuse"]], "the refused line marked beside it");
+    assert.equal(await flow.getByTestId("questions").count(), 0, "no questions while a line stops it");
+    assert.equal(await flow.getByTestId("flow-status").innerText(), "1 satır kurulumu durduruyor");
+    assert(await flow.locator('[data-eylem="plan"]').isDisabled());
+    // On a wide screen the page fills the window; its panes scroll on their own.
+    assert(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1), "no page scroll at 1440");
     await shot(page, "1440-light-ekle-durduran.png");
     // "Satır 5" shows the line in the editor (the caret at its start).
-    await sheet.getByTestId("refusals").getByRole("button", { name: "Satır 5" }).click();
-    const editor = sheet.getByRole("textbox", { name: "Kurulum dosyası" });
+    await flow.getByTestId("refusals").getByRole("button", { name: "Satır 5" }).click();
+    const editor = flow.locator(".add-file").getByRole("textbox", { name: "Kurulum dosyası" });
     assert.equal(await editor.evaluate((t) => t === document.activeElement && t.value.slice(0, t.selectionStart).split("\n").length), 5);
     await editor.fill(ORNEK_FILE);
-    await sheet.getByTestId("questions").waitFor();
+    await flow.getByTestId("questions").waitFor();
     await waitFor(() => lastPost(DENETLE)?.yanitlar, "checked again with the answers");
     assert(postsTo(DENETLE).some((b) => b.metin === ORNEK_FILE), "the corrected file read again");
-    assert.equal(await sheet.getByTestId("refusals").count(), 0);
-    assert.equal(await sheet.getByTestId("refusal-count").innerText(), "Yok");
+    assert.equal(await flow.getByTestId("refusals").count(), 0);
     // The marks beside the lines: the questions' words, a note.
-    assert.deepEqual(await marksOf(sheet), [[1, "ad", "question"], [3, "başlatma", "question"], [5, "port · not", "question"], [6, "klasör", "question"],
+    assert.deepEqual(await marksOf(flow), [[1, "ad", "question"], [3, "başlatma", "question"], [5, "port · not", "question"], [6, "klasör", "question"],
       [8, "değişken", "question"], [9, "gizli değer", "question"], [10, "gizli değer", "question"], [11, "başlatma", "question"]]);
-    assert.deepEqual(await sheet.getByTestId("notes").locator("li").allInnerTexts(), ["Satır 5 Dosyadaki sunucu tarafı (8080) kullanılmaz; port Erişim'den açılır."]);
-    // Every question, in the inspector's order.
-    assert.equal(await sheet.getByTestId("app-name").inputValue(), "ornek", "the inspector's name");
-    assert.deepEqual(await questionIds(sheet), ["var:TZ", "var:ADMIN_PASSWORD", "port:web:8080/tcp", "port:web:9000/udp", "port:web:5432/tcp", "mount:web:/data",
+    assert.deepEqual(await flow.getByTestId("notes").locator("li").allInnerTexts(), ["Satır 5 Dosyadaki sunucu tarafı (8080) kullanılmaz; port Erişim'den açılır."]);
+    // Every question, the file's variables first, then each service's under its name.
+    assert.equal(await flow.getByTestId("app-name").inputValue(), "ornek", "the inspector's name");
+    assert.deepEqual(await flow.locator(".q-group").evaluateAll((els) => els.map((e) => [e.dataset.grup, e.textContent])),
+      [["", "Dosyanın değişkenleri"], ["web", "web"], ["db", "db"]]);
+    assert.deepEqual(await questionIds(flow), ["var:TZ", "var:ADMIN_PASSWORD", "port:web:8080/tcp", "port:web:9000/udp", "port:web:5432/tcp", "mount:web:/data",
       "mount:web:/belgeler", "secret:web:API_TOKEN", "start:web", "start:db"]);
-    const q = (id) => sheet.locator(`[data-soru="${id}"]`);
-    assert.deepEqual(await sheet.locator("[data-soru] .q-title").allInnerTexts(), ["Değişken ${TZ}", "Gizli değer ${ADMIN_PASSWORD}", "8080/TCP · web", "9000/UDP · web",
+    const q = (id) => flow.locator(`[data-soru="${id}"]`);
+    assert.deepEqual(await flow.locator("[data-soru] .q-title").allInnerTexts(), ["Değişken ${TZ}", "Gizli değer ${ADMIN_PASSWORD}", "8080/TCP · web", "9000/UDP · web",
       "5432/TCP · web", "Klasör /data · web", "Klasör /belgeler · web", "Gizli değer API_TOKEN · web", "web · nasıl başlasın?", "db · nasıl başlasın?"]);
-    assert.equal(await sheet.getByTestId("flow-status").innerText(), "4 soru yanıt bekliyor");
-    assert.deepEqual(await sheet.locator(".q-need").evaluateAll((els) => els.map((e) => e.dataset.soru)),
+    assert.equal(await flow.locator("[data-soru] .q-title").first().evaluate((e) => e.tagName), "H4", "below its group's heading");
+    assert.equal(await flow.getByTestId("flow-status").innerText(), "4 soru yanıt bekliyor");
+    assert.equal(await flow.getByTestId("answered").innerText(), "6/10 yanıtlandı");
+    assert.deepEqual(await flow.locator(".q-need").evaluateAll((els) => els.map((e) => e.dataset.soru)),
       ["var:ADMIN_PASSWORD", "port:web:8080/tcp", "port:web:5432/tcp", "secret:web:API_TOKEN"], "the waiting ones stand out");
+    // "Bekleyene git" takes the first waiting question; the question in hand lights its line in the file.
+    await flow.locator('[data-eylem="bekleyene-git"]').click();
+    assert(await q("var:ADMIN_PASSWORD").evaluate((e) => e.contains(document.activeElement)), "the first waiting question has the focus");
+    const currentLine = () => flow.locator(".add-file .code-line").evaluateAll((els) => els.findIndex((e) => e.classList.contains("code-line-current")) + 1);
+    assert.equal(await currentLine(), 9, "its line lit");
+    await q("start:web").getByRole("radio", { name: /Root olarak/ }).focus();
+    assert.equal(await currentLine(), 3);
+    // A click on a marked line of the file shows its question (here: line 11, db's start).
+    await editor.evaluate((t) => {
+      t.setSelectionRange(t.value.split("\n").slice(0, 10).join("\n").length + 3, t.value.split("\n").slice(0, 10).join("\n").length + 3);
+      t.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+    assert.equal(await currentLine(), 11);
     // The answers already given are checked; a waiting question's "Yanıt gerekli." is not shown.
     const SEEDED = { metin: ORNEK_FILE, yanitlar: { name: "ornek", answers: {
       "var:TZ": { value: "Europe/Istanbul" }, "port:web:9000/udp": { use: "raw" }, "mount:web:/data": { to: "app" },
       "mount:web:/belgeler": { to: "srv", path: "/srv/Belgeler", read_only: true }, "start:web": { mode: "root" }, "start:db": { mode: "direct" } } } };
     await waitFor(() => isDeepStrictEqual(lastPost(DENETLE), SEEDED), "the answers given so far (the file's defaults and suggestions) checked");
-    assert.equal(await sheet.getByTestId("q-error").count(), 0);
+    assert.equal(await flow.getByTestId("q-error").count(), 0);
     // A port: nothing chosen (A1), the inspector's guess beside it.
     assert.equal(await q("port:web:8080/tcp").getByTestId("q-guess").innerText(), "Denetçinin tahmini: web arayüzü");
     assert.equal(await q("port:web:8080/tcp").locator("input[type=radio]:checked").count(), 0, "no port is chosen for the operator");
@@ -417,7 +473,9 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     await q("var:ADMIN_PASSWORD").getByRole("button", { name: "Değeri gizle" }).click();
     const tokenSecret = "jeton-degeri-4711";
     await q("secret:web:API_TOKEN").getByTestId("q-secret").fill(tokenSecret);
-    await sheet.getByTestId("flow-status").filter({ hasText: "Bütün sorular yanıtlandı" }).waitFor();
+    await flow.getByTestId("flow-status").filter({ hasText: "Bütün sorular yanıtlandı" }).waitFor();
+    assert.equal(await flow.getByTestId("answered").innerText(), "10/10 yanıtlandı");
+    assert.equal(await flow.locator('[data-eylem="bekleyene-git"]').count(), 0, "nothing waits");
     await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
     const ANSWERS = { name: "ornek", answers: {
       "var:TZ": { value: "Europe/Istanbul" }, "var:ADMIN_PASSWORD": { value: adminSecret }, "port:web:8080/tcp": { use: "caddy", tailscale_name: "ornek" },
@@ -436,30 +494,31 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     await waitFor(() => lastPost(DENETLE).yanitlar.answers["mount:web:/belgeler"].path === "/srv/Filmler", "the folder checked");
     await shot(page, "1440-light-ekle-yanitlar.png");
 
-    // ================= Plan: a refusal leads back to its question; then what the install creates
+    // ================= Plan: a refusal leads back to its question; then what the install creates, in its order
     await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
-    await sheet.locator('[data-eylem="plan"]').click();
-    const problems = sheet.getByTestId("plan-problems");
+    await flow.locator('[data-eylem="plan"]').click();
+    const problems = flow.getByTestId("plan-problems");
     await problems.waitFor();
     const filmler = { ...ANSWERS, answers: { ...ANSWERS.answers, "mount:web:/belgeler": { to: "srv", path: "/srv/Filmler", read_only: true } } };
     assert.deepEqual(lastPost(KUR), { metin: ORNEK_FILE, yanitlar: filmler, kaynak: { tur: "dosya" }, plan: true });
     assert.deepEqual(await problems.locator("li").evaluateAll((els) => els.map((e) => [e.dataset.hata, e.querySelector("span").textContent, Boolean(e.querySelector("button"))])), [
       ["mount:web:/belgeler", "Klasör /belgeler · web: Klasör yok: /srv/Filmler", true], ["podman", "Podman: Bu dosya Podman 5 gerekir; bu sunucuda 4.9.", false]]);
-    assert(await sheet.locator('[data-eylem="kur"]').isDisabled(), "nothing to install while the plan refuses");
-    assert.deepEqual(await sheet.locator(".flow-steps li").evaluateAll((els) => els.map((e) => e.getAttribute("aria-current"))), [null, null, "step"]);
+    assert(await flow.locator('[data-eylem="kur"]').isDisabled(), "nothing to install while the plan refuses");
+    assert.equal(await flow.getByTestId("flow-status").innerText(), "Kurulum yapılamaz");
+    assert.deepEqual(await flow.locator(".flow-steps li").evaluateAll((els) => els.map((e) => e.getAttribute("aria-current"))), [null, null, "step", null]);
     await shot(page, "1440-light-ekle-plan-engel.png");
     await problems.getByRole("button", { name: "Soruya git" }).click();
     await page.waitForFunction(() => document.querySelector("[data-testid=add-flow]")?.dataset.adim === "2");
     assert.equal(await q("mount:web:/belgeler").getByTestId("q-error").innerText(), "Klasör yok: /srv/Filmler", "the refusal beside its question");
     assert(await q("mount:web:/belgeler").evaluate((e) => e.contains(document.activeElement)), "the question has the focus");
-    assert(await sheet.locator('[data-eylem="plan"]').isDisabled(), "not again before the answer changes");
+    assert(await flow.locator('[data-eylem="plan"]').isDisabled(), "not again before the answer changes");
     await q("mount:web:/belgeler").getByTestId("share-folder-toggle").click();
     await q("mount:web:/belgeler").locator('[data-klasor="Belgeler"]').waitFor();
     await q("mount:web:/belgeler").getByRole("button", { name: "Belgeler seç" }).click();
     await q("mount:web:/belgeler").getByTestId("q-error").waitFor({ state: "detached" });
     await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
-    await sheet.locator('[data-eylem="plan"]').click();
-    const boxes = sheet.getByTestId("plan-boxes");
+    await flow.locator('[data-eylem="plan"]').click();
+    const boxes = flow.getByTestId("plan-boxes");
     await boxes.waitFor();
     assert.deepEqual(lastPost(KUR), { metin: ORNEK_FILE, yanitlar: ANSWERS, kaynak: { tur: "dosya" }, plan: true });
     assert.deepEqual(await boxes.locator("[data-kutu]").evaluateAll((els) => els.map((e) => [e.querySelector("dt").textContent, [...e.querySelectorAll("dd")].map((d) => d.textContent)])), [
@@ -467,139 +526,184 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
       ["Klasörler", ["/var/lib/master-stack/uygulamalar/ornek/veri", "/srv/Belgeler · salt okunur"]],
       ["Gizli değerler", ["2 · Podman secret", "ornek-admin-password", "ornek-api-token"]], ["Başlatma", ["web: root olarak", "db: doğrudan 999:999"]],
       ["İmajlar", ["registry.example/ornek/web:1.2", "registry.example/ornek/db:16"]]]);
-    assert.deepEqual(await sheet.getByTestId("plan-units").locator("li").allInnerTexts(), PLAN.birimler);
-    assert.equal(await sheet.getByTestId("plan-warnings").locator("li").innerText(), "web: " + ROOT_WARNING);
-    assert(await sheet.locator('[data-eylem="kur"]').isEnabled());
+    assert.deepEqual(await flow.getByTestId("plan-units").locator("li").allInnerTexts(), PLAN.birimler);
+    assert.equal(await flow.getByTestId("plan-warnings").locator("li").innerText(), "web: " + ROOT_WARNING);
+    assert.equal(await flow.locator(".add-order li").count(), 7, "the install's order beside the plan");
+    assert.equal(await flow.getByTestId("flow-status").innerText(), "Bütün denetimler geçti");
+    assert(await flow.locator('[data-eylem="kur"]').isEnabled());
     await shot(page, "1440-light-ekle-plan.png");
 
-    // ================= Kur: the job in İşlemler; when it ends the application's page opens
-    await sheet.locator('[data-eylem="kur"]').click();
+    // ================= Kurulum: the job's log as it grows; a finished install stays until the operator moves on
+    installReads = [installJob("ornek", { step: "Doğrulanıyor", gunluk: OK_LOG.slice(0, 2) }), installJob("ornek", { step: "Başlatılıyor: konsol-ornek_web.service", gunluk: OK_LOG.slice(0, 5) })];
+    await flow.locator('[data-eylem="kur"]').click();
     await waitFor(() => postsTo(KUR).length === 3, "install posted");
     assert.deepEqual(lastPost(KUR), { metin: ORNEK_FILE, yanitlar: ANSWERS, kaynak: { tur: "dosya" } }, "the same body, without plan");
-    await waitFor(() => h.stream.clients.size === 1, "event stream");
-    push("islemler", { items: [job({ adim: "İmaj indiriliyor: registry.example/ornek/web:1.2" })] });
-    await sheet.getByTestId("install-progress").filter({ hasText: "Kuruluyor · İmaj indiriliyor: registry.example/ornek/web:1.2 · ilerlemesi İşlemler'de de görünür." }).waitFor();
-    assert(await sheet.locator('[data-eylem="kur"]').isDisabled());
+    await page.waitForFunction(() => document.querySelector("[data-testid=add-flow]")?.dataset.adim === "4");
+    const status = flow.getByTestId("install-status");
+    await status.filter({ hasText: "Başlatılıyor: konsol-ornek_web.service" }).waitFor();
+    assert.equal(await status.getAttribute("data-durum"), "calisiyor");
+    assert.equal(await flow.locator(".add-result .add-pane-title").innerText(), "ornek");
+    const log = flow.getByTestId("job-log");
+    assert.deepEqual(await log.locator("li").evaluateAll((els) => els.map((e) => [e.dataset.tur, e.querySelector(".job-text").textContent])),
+      OK_LOG.slice(0, 5).map((l) => [l.tur, l.ileti]));
+    assert.match(await log.locator("li").first().locator(".job-time").innerText(), /^\d\d:\d\d:\d\d$/);
+    assert.equal(await flow.getByTestId("flow-status").innerText(), "Ayrılırsanız kurulum sürer; İşlemler'den izlenir.");
+    assert.deepEqual(await flow.locator(".add-bar button").allInnerTexts(), ["Uygulamalar'a dön"], "no way back while it runs");
     await noSecrets(page, [adminSecret, tokenSecret], "install");
     await shot(page, "1440-light-ekle-kuruluyor.png");
     data.uygulamalar = uygulamalar([...apps(), uygulama("ornek", { servisler: [servis("web"), servis("db")] })]);
-    push("islemler", { items: [job({ durum: "tamam", bitis: 1791845300 })] });
+    installReads = [installJob("ornek", { state: "done", step: "Tamamlandı", gunluk: OK_LOG, finished_at: 1791845208, result: { ok: true, ad: "ornek" } })];
+    await status.filter({ hasText: "ornek kuruldu" }).waitFor();
+    assert.equal(await status.getAttribute("data-durum"), "tamam");
+    assert.equal(await log.locator("li").count(), OK_LOG.length);
+    assert.equal(await log.locator("li").last().getAttribute("data-tur"), "tamam");
+    assert.equal(await flow.getByTestId("install-elapsed").innerText(), "8 sn");
+    assert.deepEqual(await flow.locator(".flow-steps li").evaluateAll((els) => els.map((e) => e.classList.contains("flow-step-done"))), [true, true, true, true]);
+    await page.waitForTimeout(1200);
+    assert.equal(new URL(page.url()).hash, "#/uygulama-ekle", "a finished install stays on its log");
+    await flow.locator('[data-eylem="kopyala"]').click();
+    await log.locator("..").locator('[role="status"]').filter({ hasText: /Kopyala(ndı|namadı)/ }).waitFor();
+    await shot(page, "1440-light-ekle-kuruldu.png");
+    await flow.locator('[data-eylem="uygulamaya-git"]').click();
     await page.waitForURL((u) => u.hash === "#/uygulamalar/ornek");
-    await sheet.waitFor({ state: "detached" });
     await page.locator("main h1").filter({ hasText: "ornek" }).waitFor();
+    assert.equal(await page.locator(".sidebar").count(), 1, "the shell is back");
     await noSecrets(page, [adminSecret, tokenSecret], "the new application's page");
     await page.context().close();
     data.uygulamalar = uygulamalar(apps(), { kaynaklar: [{ ad: "eski-redis", imaj: "registry.example/redis:7", durum: "running" }] });
 
-    // ================= a failed install says why; Vazgeç drops what was entered
+    // ================= a failed install: why, the container's own lines, back to the question it names; leaving asks
     page = await newPage();
-    await page.goto(url("#/uygulamalar?ekle=1"));
-    const sheet2 = page.getByRole("dialog", { name: "Uygulama ekle" });
-    await sheet2.getByRole("radio", { name: /Dosya/ }).check();
-    await sheet2.getByTestId("paste").fill(ADRES_FILE);
-    await sheet2.locator('[data-eylem="ileri"]').click();
-    const q2 = (id) => sheet2.locator(`[data-soru="${id}"]`);
+    await page.goto(url("#/uygulamalar"));
+    await page.locator('.apps-toolbar [data-eylem="ekle"]').click();
+    await page.waitForURL((u) => u.hash === "#/uygulama-ekle");
+    const flow2 = page.getByTestId("add-flow");
+    await flow2.getByRole("radio", { name: /Dosya/ }).check();
+    await flow2.getByTestId("paste").getByRole("textbox").fill(ADRES_FILE);
+    await flow2.locator('[data-eylem="ileri"]').click();
+    const q2 = (id) => flow2.locator(`[data-soru="${id}"]`);
     await q2("port:pano:3000/tcp").getByRole("radio", { name: /Ham port/ }).check();
+    await q2("start:pano").getByRole("radio", { name: /Doğrudan/ }).check();
     await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
-    await sheet2.locator('[data-eylem="plan"]').click();
-    await sheet2.getByTestId("plan-boxes").waitFor();
-    await sheet2.locator('[data-eylem="kur"]').click();
+    await flow2.locator('[data-eylem="plan"]').click();
+    await flow2.getByTestId("plan-boxes").waitFor();
+    installReads = [installJob("pano", { step: "Hazır olması bekleniyor", gunluk: FAIL_LOG.slice(0, 3) }),
+      installJob("pano", { state: "failed", step: "Başarısız", error: PANO_ERROR, failed_step: "Hazır olması bekleniyor", soru: "start:pano", status: 502,
+        gunluk: FAIL_LOG, finished_at: 1791845216 })];
+    await flow2.locator('[data-eylem="kur"]').click();
     await waitFor(() => !lastPost(KUR).plan, "install posted");
-    assert.deepEqual(lastPost(KUR).kaynak, { tur: "dosya" });
-    await waitFor(() => h.stream.clients.size === 1, "event stream");
-    push("islemler", { items: [job({ ad: "pano · Kurulum", adim: "pano başlatılıyor" })] });
-    await page.waitForTimeout(150);
-    push("islemler", { items: [job({ ad: "pano · Kurulum", durum: "hata", adim: "pano başlamadı; günlüğü: journalctl -u konsol-pano_pano", bitis: 1791845310 })] });
-    await sheet2.getByTestId("install-error").filter({ hasText: "Kurulum başarısız: pano başlamadı; günlüğü: journalctl -u konsol-pano_pano" }).waitFor();
-    assert(await sheet2.locator('[data-eylem="kur"]').isEnabled(), "it can be tried again");
-    await sheet2.getByRole("button", { name: "Kapat" }).click();
-    await sheet2.getByTestId("close-confirm").getByRole("button", { name: "Vazgeç" }).click();
-    await sheet2.waitFor({ state: "detached" });
+    const status2 = flow2.getByTestId("install-status");
+    await status2.filter({ hasText: "Kurulum yapılamadı" }).waitFor();
+    assert.equal(await status2.getAttribute("data-durum"), "hata");
+    assert.equal(await status2.getAttribute("role"), "alert");
+    assert.equal(await flow2.getByTestId("install-error").innerText(), PANO_ERROR, "the job's own words, once");
+    assert.equal(await flow2.getByTestId("install-blame").innerText(), "İlgili soru: pano · nasıl başlasın?");
+    const log2 = flow2.getByTestId("job-log");
+    assert.deepEqual(await log2.locator("li").evaluateAll((els) => els.map((e) => e.dataset.tur)), FAIL_LOG.map((l) => l.tur));
+    assert.equal(await log2.locator('li[data-tur="cikti"] .job-text').first().textContent(), "Konteyner: preinit: fatal: /run belongs to uid 0 instead of 1000",
+      "a container's own line, named for a screen reader");
+    assert.equal(await flow2.getByTestId("flow-status").innerText(), "Yanıtlarınız duruyor; düzeltip yeniden kurabilirsiniz.");
+    assert.equal(await flow2.getByTestId("install-elapsed").innerText(), "16 sn");
+    await shot(page, "1440-light-ekle-hata.png");
+    // Back to the start question with every answer kept; root this time.
+    await flow2.getByRole("button", { name: "Başlatma sorusuna dön" }).click();
+    await page.waitForFunction(() => document.querySelector("[data-testid=add-flow]")?.dataset.adim === "2");
+    assert(await q2("start:pano").evaluate((e) => e.contains(document.activeElement)), "the question the job names has the focus");
+    assert(await q2("port:pano:3000/tcp").getByRole("radio", { name: /Ham port/ }).isChecked(), "the answers stay");
+    await q2("start:pano").getByRole("radio", { name: /Root olarak/ }).check();
+    await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
+    await flow2.locator('[data-eylem="plan"]').click();
+    await flow2.getByTestId("plan-boxes").waitFor();
+    assert.deepEqual(lastPost(KUR).yanitlar.answers["start:pano"], { mode: "root" });
+    // Leaving after a failure asks; "Bırak" leaves, and the page starts afresh.
+    await flow2.getByRole("button", { name: "Kapat" }).first().click();
+    const leave2 = page.getByRole("dialog", { name: "Uygulama ekleme bırakılsın mı?" });
+    await leave2.getByRole("button", { name: "Bırak" }).click();
     await page.waitForURL((u) => u.hash === "#/uygulamalar");
     await page.locator('.apps-toolbar [data-eylem="ekle"]').click();
-    await sheet2.waitFor();
-    assert.equal(await sheet2.locator("input[type=radio]:checked").count(), 0, "a fresh start: nothing kept");
+    await flow2.waitFor();
+    assert.equal(await flow2.locator("input[type=radio]:checked").count(), 0, "a fresh start: nothing kept");
     await page.context().close();
 
     // ================= Adresten: https only; a server error in its words; the draft inspected; its kaynak in the plan
     page = await newPage();
-    await page.goto(url("#/uygulamalar?ekle=1"));
-    const sheet3 = page.getByRole("dialog", { name: "Uygulama ekle" });
-    await sheet3.getByRole("radio", { name: /Adresten/ }).check();
-    const urlField = sheet3.getByTestId("src-url");
+    await page.goto(url("#/uygulama-ekle"));
+    const flow3 = page.getByTestId("add-flow");
+    await flow3.getByRole("radio", { name: /Adresten/ }).check();
+    const urlField = flow3.getByTestId("src-url");
     assert.equal(await urlField.getAttribute("placeholder"), "https://depo.example.org/compose.yaml");
     await urlField.fill("http://files.example.org/ornek/compose.yaml");
-    await sheet3.locator('[data-eylem="ileri"]').click();
-    await sheet3.getByTestId("source-error").filter({ hasText: "Adres https ile başlamalı." }).waitFor();
+    await flow3.locator('[data-eylem="ileri"]').click();
+    await flow3.getByTestId("source-error").filter({ hasText: "Adres https ile başlamalı." }).waitFor();
     assert.equal(postsTo(KAYNAK).length, 0, "refused before asking the server");
     expectedFailures = [KAYNAK];
     await urlField.fill("https://bos.example.org/compose.yaml");
-    assert.equal(await sheet3.locator('[data-eylem="ileri"]').innerText(), "İndir ve denetle");
-    await sheet3.locator('[data-eylem="ileri"]').click();
-    await sheet3.getByTestId("source-error").filter({ hasText: "Adres indirilemedi: bağlantı kurulamadı." }).waitFor();
+    assert.equal(await flow3.locator('[data-eylem="ileri"]').innerText(), "İndir ve denetle");
+    await flow3.locator('[data-eylem="ileri"]').click();
+    await flow3.getByTestId("source-error").filter({ hasText: "Adres indirilemedi: bağlantı kurulamadı." }).waitFor();
     expectedFailures = [];
     await urlField.fill(ADRES);
     await urlField.press("Enter");
-    await sheet3.getByTestId("questions").waitFor();
+    await flow3.getByTestId("questions").waitFor();
     assert.deepEqual(lastPost(KAYNAK), { tur: "adres", adres: ADRES });
-    assert.equal(await sheet3.locator(".flow-boxes dd").nth(1).innerText(), ADRES);
-    assert.equal(await sheet3.getByRole("textbox", { name: "Kurulum dosyası" }).inputValue(), ADRES_FILE);
-    await sheet3.locator('[data-soru="port:pano:3000/tcp"]').getByRole("radio", { name: /Adres/ }).check();
+    assert.equal(await flow3.locator(".add-file .add-pane-head .wrap").innerText(), ADRES);
+    assert.equal(await flow3.locator(".add-file").getByRole("textbox", { name: "Kurulum dosyası" }).inputValue(), ADRES_FILE);
+    await flow3.locator('[data-soru="port:pano:3000/tcp"]').getByRole("radio", { name: /Adres/ }).check();
     await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
-    await sheet3.locator('[data-eylem="plan"]').click();
-    await sheet3.getByTestId("plan-boxes").waitFor();
+    await flow3.locator('[data-eylem="plan"]').click();
+    await flow3.getByTestId("plan-boxes").waitFor();
     assert.deepEqual(lastPost(KUR), { metin: ADRES_FILE, yanitlar: { name: "pano", answers: { "port:pano:3000/tcp": { use: "caddy", tailscale_name: "pano" },
       "start:pano": { mode: "root" } } }, kaynak: { tur: "adres", adres: ADRES }, plan: true }, "the source travels with the file");
     // Geri goes back step by step.
-    await sheet3.getByRole("button", { name: "Geri" }).click();
-    await sheet3.getByTestId("questions").waitFor();
-    await sheet3.getByRole("button", { name: "Geri" }).click();
+    await flow3.getByRole("button", { name: "Geri" }).click();
+    await flow3.getByTestId("questions").waitFor();
+    await flow3.getByRole("button", { name: "Geri" }).click();
     await page.waitForFunction(() => document.querySelector("[data-testid=add-flow]")?.dataset.adim === "1");
-    assert.equal(await urlField.inputValue(), ADRES, "the address is kept while the sheet is open");
+    assert.equal(await urlField.inputValue(), ADRES, "the address is kept while the page is open");
     await page.context().close();
 
-    // ================= İmaj adından: a job; its progress here; its result is the draft
+    // ================= İmaj adından: a job; its log here; its result is the draft
     page = await newPage();
-    await page.goto(url("#/uygulamalar?ekle=1"));
-    const sheet4 = page.getByRole("dialog", { name: "Uygulama ekle" });
-    await sheet4.getByRole("radio", { name: /İmaj adından/ }).check();
-    await sheet4.getByTestId("src-image").fill(IMAGE);
-    assert.equal(await sheet4.locator('[data-eylem="ileri"]').innerText(), "Taslak üret");
+    await page.goto(url("#/uygulama-ekle"));
+    const flow4 = page.getByTestId("add-flow");
+    await flow4.getByRole("radio", { name: /İmaj adından/ }).check();
+    await flow4.getByTestId("src-image").fill(IMAGE);
+    assert.equal(await flow4.locator('[data-eylem="ileri"]').innerText(), "Taslak üret");
     imageReads = 0;
-    await sheet4.locator('[data-eylem="ileri"]').click();
-    await sheet4.getByTestId("draft-progress").filter({ hasText: `İmaj indiriliyor: ${IMAGE} · ilerlemesi İşlemler'de de görünür.` }).waitFor();
+    await flow4.locator('[data-eylem="ileri"]').click();
+    await flow4.getByTestId("draft-progress").getByTestId("job-log").locator("li").filter({ hasText: `İmaj indiriliyor: ${IMAGE}` }).waitFor();
     assert.deepEqual(lastPost(KAYNAK), { tur: "imaj", imaj: IMAGE });
-    assert.equal(await sheet4.locator('[data-eylem="ileri"]').innerText(), "Taslak üretiliyor…");
-    assert(await sheet4.getByTestId("src-image").isDisabled());
+    assert.equal(await flow4.locator('[data-eylem="ileri"]').innerText(), "Taslak üretiliyor…");
+    assert(await flow4.getByTestId("src-image").isDisabled());
     await shot(page, "1440-light-ekle-imaj.png");
-    await sheet4.getByTestId("questions").waitFor({ timeout: 8000 });
+    await flow4.getByTestId("questions").waitFor({ timeout: 8000 });
     assert(imageReads >= 3, "the job's record read until it ended");
-    assert.equal(await sheet4.locator(".flow-boxes dd").nth(1).innerText(), `İmaj adından taslak · ${IMAGE}`);
-    assert.equal(await sheet4.getByRole("textbox", { name: "Kurulum dosyası" }).inputValue(), IMAGE_FILE);
+    assert.equal(await flow4.locator(".add-file .add-pane-head .wrap").innerText(), `İmaj adından taslak · ${IMAGE}`);
+    assert.equal(await flow4.locator(".add-file").getByRole("textbox", { name: "Kurulum dosyası" }).inputValue(), IMAGE_FILE);
     await page.context().close();
 
     // ================= Var olan konteyner: the standalone containers; the draft from one
     page = await newPage();
-    await page.goto(url("#/uygulamalar?ekle=1"));
-    const sheet5 = page.getByRole("dialog", { name: "Uygulama ekle" });
-    await sheet5.getByRole("radio", { name: /Var olan konteyner/ }).check();
-    const containers = sheet5.getByTestId("src-containers");
+    await page.goto(url("#/uygulama-ekle"));
+    const flow5 = page.getByTestId("add-flow");
+    await flow5.getByRole("radio", { name: /Var olan konteyner/ }).check();
+    const containers = flow5.getByTestId("src-containers");
     await containers.waitFor();
     assert.equal(await containers.locator(".choice-item").innerText(), "eski-redis\nrunning\nregistry.example/redis:7");
-    assert(await sheet5.locator('[data-eylem="ileri"]').isDisabled());
+    assert(await flow5.locator('[data-eylem="ileri"]').isDisabled());
     await containers.getByRole("radio", { name: /eski-redis/ }).check();
-    assert.equal(await sheet5.locator('[data-eylem="ileri"]').innerText(), "Dosyaya çevir");
+    assert.equal(await flow5.locator('[data-eylem="ileri"]').innerText(), "Dosyaya çevir");
     await shot(page, "1440-light-ekle-konteyner.png");
-    await sheet5.locator('[data-eylem="ileri"]').click();
-    await sheet5.getByTestId("questions").waitFor();
+    await flow5.locator('[data-eylem="ileri"]').click();
+    await flow5.getByTestId("questions").waitFor();
     assert.deepEqual(lastPost(KAYNAK), { tur: "konteyner", konteyner: "eski-redis" });
-    assert.equal(await sheet5.locator(".flow-boxes dd").nth(1).innerText(), "eski-redis konteynerinden taslak");
+    assert.equal(await flow5.locator(".add-file .add-pane-head .wrap").innerText(), "eski-redis konteynerinden taslak");
     await page.context().close();
     // No standalone container: it says so.
     data.uygulamalar = uygulamalar(apps());
     page = await newPage();
-    await page.goto(url("#/uygulamalar?ekle=1"));
-    await page.getByRole("dialog", { name: "Uygulama ekle" }).getByRole("radio", { name: /Var olan konteyner/ }).check();
+    await page.goto(url("#/uygulama-ekle"));
+    await page.getByTestId("add-flow").getByRole("radio", { name: /Var olan konteyner/ }).check();
     await page.getByTestId("src-containers-empty").filter({ hasText: "Elle başlatılmış, Obhut'un yönetmediği bir konteyner yok." }).waitFor();
     await page.context().close();
 
@@ -710,34 +814,60 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     panoSource = PANO_NEW;
     await page.context().close();
 
-    // ================= 1440, 390 and 320 in both themes: each step of the flow, the edit
+    // ================= 1440, 390 and 320 in both themes: each step of the page, the edit
     data.uygulamalar = uygulamalar(apps(), { kaynaklar: [{ ad: "eski-redis", imaj: "registry.example/redis:7", durum: "running" }] });
     for (const colorScheme of ["light", "dark"]) {
       for (const [width, height] of [[1440, 900], [390, 844], [320, 640]]) {
         const phone = width < 768;
         page = await newPage({ colorScheme, viewport: { width, height }, ...(phone ? { isMobile: true, hasTouch: true, reducedMotion: "reduce" } : {}) });
-        await page.goto(url("#/uygulamalar?ekle=1"));
-        const s = page.getByRole("dialog", { name: "Uygulama ekle" });
+        await page.goto(url("#/uygulama-ekle"));
+        const s = page.getByTestId("add-flow");
         await s.waitFor();
         await s.getByRole("radio", { name: /Dosya/ }).check({ force: true });
-        await s.getByTestId("paste").fill(ORNEK_FILE);
+        await s.getByTestId("paste").getByRole("textbox").fill(ORNEK_FILE);
+        assert(await noHorizontalScroll(page), `${width} ${colorScheme} kaynak`);
         await shot(page, `${width}-${colorScheme}-ekle-kaynak.png`);
         await s.locator('[data-eylem="ileri"]').click();
         await s.getByTestId("questions").waitFor();
+        // On a phone one pane at a time: the questions first, the file a tap away.
+        assert.equal(await s.locator(".add-switch").isVisible(), phone, "the pane switch only on a phone");
         await s.locator('[data-soru="port:web:8080/tcp"]').getByRole("radio", { name: /Adres/ }).check({ force: true });
         await s.locator('[data-soru="port:web:5432/tcp"]').getByRole("radio", { name: /Ham port/ }).check({ force: true });
         await s.locator('[data-soru="var:ADMIN_PASSWORD"] [data-eylem="uret"]').click();
         await s.locator('[data-soru="secret:web:API_TOKEN"]').getByTestId("q-secret").fill("jeton");
         await noStyles(page, `${width} ${colorScheme} denetçi`);
+        assert(await noHorizontalScroll(page), `${width} ${colorScheme} denetçi`);
         await shot(page, `${width}-${colorScheme}-ekle-denetci.png`);
+        if (phone) {
+          assert(!(await s.locator(".add-file").isVisible()), "the file waits behind its switch");
+          await s.locator('[data-bolme-sec="dosya"]').click();
+          await s.locator(".add-file").getByRole("textbox", { name: "Kurulum dosyası" }).waitFor();
+          assert(!(await s.getByTestId("questions").isVisible()));
+          assert(await noHorizontalScroll(page), `${width} ${colorScheme} dosya`);
+          await shot(page, `${width}-${colorScheme}-ekle-dosya-bolme.png`);
+          await s.locator('[data-bolme-sec="sorular"]').click();
+        }
         await page.waitForFunction(() => !document.querySelector('[data-eylem="plan"]').disabled);
         await s.locator('[data-eylem="plan"]').click();
         await s.getByTestId("plan-boxes").waitFor();
+        assert(await noHorizontalScroll(page), `${width} ${colorScheme} plan`);
         await shot(page, `${width}-${colorScheme}-ekle-plan.png`);
-        if (phone) {
-          const box = await s.boundingBox();
-          assert(Math.abs(box.y + box.height - height) <= 1 && box.width === width, "a bottom sheet on a phone");
-        }
+        // The bar of actions stays in sight at the bottom of the window.
+        const bar = await s.locator(".add-bar").boundingBox();
+        assert(Math.abs(bar.y + bar.height - height) <= 1 && Math.abs(bar.width - width) <= 1, `${width}: the bar at the window's bottom`);
+        installReads = [installJob("ornek", { state: "failed", step: "Başarısız", error: PANO_ERROR, soru: "start:web", gunluk: FAIL_LOG, finished_at: 1791845216 })];
+        await s.locator('[data-eylem="kur"]').click();
+        await s.getByTestId("install-status").filter({ hasText: "Kurulum yapılamadı" }).waitFor();
+        assert(await noHorizontalScroll(page), `${width} ${colorScheme} kurulum`);
+        await shot(page, `${width}-${colorScheme}-ekle-kurulum.png`);
+        installReads = [installJob("ornek", { state: "done", step: "Tamamlandı", gunluk: OK_LOG, finished_at: 1791845208 })];
+        await s.getByRole("button", { name: "Başlatma sorusuna dön" }).click();
+        await s.getByTestId("questions").waitFor();
+        await s.locator('[data-eylem="plan"]').click();
+        await s.getByTestId("plan-boxes").waitFor();
+        await s.locator('[data-eylem="kur"]').click();
+        await s.getByTestId("install-status").filter({ hasText: "ornek kuruldu" }).waitFor();
+        await shot(page, `${width}-${colorScheme}-ekle-kuruldu.png`);
         await page.goto(url("#/uygulamalar/notlar?sekme=tanim"));
         await page.locator('.definition-tab [data-eylem="duzenle"]').click();
         await page.getByTestId("edit-answers").waitFor();
@@ -755,17 +885,20 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     }
 
     assert.deepEqual(h.errors, []);
-    console.log("PASS: Konsol's Uygulama ekle and Tanım (rebuild phase 5) under the production CSP — #/uygulamalar?ekle=1, the four sources " +
-      "(a pasted file, an upload read in the browser with its size and UTF-8 checks, an https address with its refusal and a server error, an " +
-      "image name as a job with its progress, an existing container and none), the close confirmation, Denetçi (a refused line stopping the flow " +
-      "and corrected in the editor, the marks beside the lines, notes, every question kind: name, TCP ports with nothing chosen and the guess, a " +
-      "UDP port, a variable with its default and a server error, a generated and a typed secret, Göster, the app folder and a /srv folder from " +
-      "the picker, start modes with the suggestion and a word; answers checked again as they change, waiting ones left out, a taken Tailscale " +
-      "name refused at once), Plan (exact body, a refusal mapped back to its question and a part, what the install creates), Kur (exact body " +
-      "without plan, the job's step, the application's page when it ends; a failure's reason), Tanım (staying ports read-only with their link, " +
-      "a kept and a renewed secret, a new port asked for, a plan refusal mapped to its question, the difference, apply as a job and the view " +
-      "again), Kaynaktan yenile (new text, the new question marked; unchanged), no secret in an address, storage or GET request, 1440/390/320 in " +
-      "light and dark. Screenshots: " + h.shots);
+    console.log("PASS: Konsol's Uygulama ekle (a full-window page, #/uygulama-ekle) and Tanım under the production CSP — the shell giving " +
+      "the page the window, the four sources (a pasted file, an upload and a drop read in the browser with their size and UTF-8 checks, an https " +
+      "address with its refusal and a server error, an image name as a job with its log, an existing container and none), leaving with input " +
+      "asking first, Denetçi (the file beside the questions with no page scroll at 1440, a refused line stopping the flow and corrected in the " +
+      "editor, the marks, notes, the questions grouped by service, Bekleyene git, the question in hand lighting its line and a click on a line " +
+      "showing its question, every question kind: name, TCP ports with nothing chosen and the guess, a UDP port, a variable with its default and " +
+      "a server error, a generated and a typed secret, Göster, the app folder and a /srv folder from the picker, start modes with the suggestion " +
+      "and a word; answers checked again, waiting ones left out, a taken Tailscale name refused at once), Plan (exact body, a refusal mapped back " +
+      "to its question and a part, what the install creates and its order), Kurulum (exact body without plan, the job's log as it grows, a " +
+      "finished install staying until Uygulamaya git, a failed one with its words, the container's lines and the way back to the question it " +
+      "names with every answer kept), Tanım (staying ports read-only with their link, a kept and a renewed secret, a new port asked for, a plan " +
+      "refusal mapped to its question, the difference, apply as a job and the view again), Kaynaktan yenile (new text, the new question marked; " +
+      "unchanged), no secret in an address, storage or GET request, 1440/390/320 in light and dark with the phone's pane switch and the bar at the " +
+      "window's bottom. Screenshots: " + h.shots);
   } finally {
     await h.stop();
   }

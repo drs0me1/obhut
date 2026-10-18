@@ -213,7 +213,7 @@ async function noStyles(page, where) {
     assert.equal(await appsEmpty.locator(".empty-text").innerText(),
       "Bir Compose ya da Kubernetes dosyasından, bir adresten, bir imaj adından ya da var olan bir konteynerden eklenir.");
     assert.equal(await page.locator(".app-table").count(), 0);
-    assert.equal(await page.getByRole("button", { name: "Uygulama ekle" }).count(), 2, "in the toolbar and in the empty state");
+    assert.equal(await page.getByRole("link", { name: "Uygulama ekle" }).count(), 2, "in the toolbar and in the empty state");
     assert.equal(await page.getByTestId("infra").count(), 0, "the infrastructure card is Gelişmiş's (K8)");
     const emptyChips = page.getByRole("group", { name: "Süzgeç" }).getByRole("button");
     assert.deepEqual((await emptyChips.allInnerTexts()).map((t) => t.replace(/\s+/g, " ")), ["Tümü 0", "Çalışan 0", "Durdurulmuş 0", "Dikkat 0"]);
@@ -221,17 +221,18 @@ async function noStyles(page, where) {
     assert(await noHorizontalScroll(page));
     assert.equal(await page.locator('.sidebar [data-badge="uygulamalar"]').count(), 0, "no count beside an empty section");
     await shot(page, "1440-light-uygulamalar-bos.png", true);
-    // The empty state's button opens the add flow at its own address; closing it leaves the address.
-    await appsEmpty.getByRole("button", { name: "Uygulama ekle" }).click();
-    await page.waitForURL((u) => u.hash === "#/uygulamalar?ekle=1");
-    const addSheet = page.getByRole("dialog", { name: "Uygulama ekle" });
-    await addSheet.waitFor();
-    assert.deepEqual(await addSheet.locator(".flow-steps li").evaluateAll((els) => els.map((e) => [e.textContent, e.getAttribute("aria-current")])),
-      [["1Kaynak", "step"], ["2Denetçi", null], ["3Plan", null]]);
-    await page.keyboard.press("Escape");
-    await addSheet.waitFor({ state: "detached" });
+    // The empty state's link opens Uygulama ekle, a page of its own; closing it with nothing entered goes back at once.
+    await appsEmpty.getByRole("link", { name: "Uygulama ekle" }).click();
+    await page.waitForURL((u) => u.hash === "#/uygulama-ekle");
+    const addPage = page.getByTestId("add-flow");
+    await addPage.waitFor();
+    assert.deepEqual(await addPage.locator(".flow-steps li").evaluateAll((els) => els.map((e) => [e.textContent, e.getAttribute("aria-current")])),
+      [["1Kaynak", "step"], ["2Denetçi", null], ["3Plan", null], ["4Kurulum", null]]);
+    assert.equal(await active(page), "Uygulama ekle", "the page's heading has the focus");
+    await addPage.getByRole("button", { name: "Kapat" }).click();
     await page.waitForURL((u) => u.hash === "#/uygulamalar");
-    assert.equal(await active(page), "Uygulama ekle", "focus back on the button that opened it");
+    await addPage.waitFor({ state: "detached" });
+    assert.equal(await active(page), "Uygulamalar", "back on the list, its heading focused");
     await page.context().close();
     data.uygulamalar = uygulamalar(apps());
 
@@ -357,11 +358,11 @@ async function noStyles(page, where) {
     assert.equal(await page.getByTestId("app-errors").getByRole("heading").innerText(), "Bazı bilgiler okunamadı");
     await shot(page, "1440-light-uygulamalar-hatalar.png", true);
     data.uygulamalar = { ...data.uygulamalar, hatalar: [] };
-    // "Uygulama ekle" in the toolbar opens the flow (its own suite drives it).
+    // "Uygulama ekle" in the toolbar opens its page (its own suite drives it).
     await page.reload();
     await page.locator('.apps-toolbar [data-eylem="ekle"]').click();
-    await page.waitForURL((u) => u.hash === "#/uygulamalar?ekle=1");
-    await page.getByRole("dialog", { name: "Uygulama ekle" }).getByRole("button", { name: "Vazgeç" }).click();
+    await page.waitForURL((u) => u.hash === "#/uygulama-ekle");
+    await page.getByTestId("add-flow").getByRole("button", { name: "Vazgeç" }).click();
     await page.waitForURL((u) => u.hash === "#/uygulamalar");
 
     // ================= an application's page
@@ -827,7 +828,7 @@ async function noStyles(page, where) {
 
     assert.deepEqual(h.errors, []);
     console.log("PASS: Konsol's Uygulamalar and an application's page (rebuild phase 5) under the production CSP — a clean server's empty " +
-      "state with Uygulama ekle (#/uygulamalar?ekle=1, focus back), the palette opening application pages (by name or service), Uygulamalar " +
+      "state with Uygulama ekle (its own page #/uygulama-ekle, closed at once with nothing entered), the palette opening application pages (by name or service), Uygulamalar " +
       "(summary, state and warning pills, access chips from Erişim's rows, resources, the live rate read again every 10 s, update state, Aç, " +
       "filter chips with counts, Turkish-aware search by name, service and image, URL state and reload, empty filters, errors, keyboard order " +
       "and focus ring), the application page (trail, heading focus, Aç, the warning, tabs with arrow keys and URL; Özet's state, resources " +

@@ -24,6 +24,41 @@ Konsol's single-container definitions and adoption, Yayınla and the manual
 phase 6; live entries that still mention them end with a note naming what no
 longer applies and which entry replaced it.
 
+### DD-279: Uygulama ekle is a full-window page; an install shows its own log (v2-264)
+
+- **Why:** on the test host a Compose file whose image starts as root and switches to the user its `PUID`/`PGID`
+  name was installed with the direct start as `1000:1000`. The image's init stopped at once ("/run belongs to
+  uid 0 instead of 1000 …"), the install was rolled back as it should be, and the side sheet showed one line
+  below the plan; the operator could not tell what happened. The operator asked for a full-window add flow and a
+  log that shows the install as it runs (2026-10-18).
+- **The page:** `#/uygulama-ekle` (route meta `full`; under `#/uygulamalar/` it would be an application named
+  `ekle`). The shell drops its sidebar, page head and bottom bar there and keeps only the pending-change banner,
+  since a change waiting for its confirmation must stay in sight. Four steps: Kaynak (the sources beside the
+  chosen one; a file can be dropped), Denetçi (on a wide screen the file beside the questions, each pane
+  scrolling on its own; on a phone one of the two; the questions grouped by service; the question in hand lights
+  its line, a click on a marked line shows its question, "Bekleyene git"), Plan (what the install creates beside
+  its order) and Kurulum (the job's log, its result and the way on). The sheet and its `?ekle=1` are gone.
+- **Leaving:** with something entered, leaving asks inside Konsol too (DD-266 asked only when the tab closes), since
+  a page this size holds more work; leaving a running install does not stop it (İşlemler follows it); a
+  finished install stays on its log until the operator moves on.
+- **The job's log:** the worker's record carries `gunluk` (`t`, `tur` of `adim`/`bilgi`/`cikti`/`hata`/`tamam`,
+  `ileti`; the newest 300 lines of at most 400 characters). Every step is a line, facts are lines (an image
+  pinned, a service running), and a failed job says why once. Konsol reads the record every second
+  (`GET konteynerler/islem`); the event stream's İşlemler is unchanged.
+- **A container's own lines:** an install whose container does not come up adds that container's last 20 lines
+  since the job began (`journalctl CONTAINER_NAME=…`) before its rollback removes the unit, so the reason
+  survives the rollback. Each secret value the job holds is masked first, so the operator's values never reach
+  the record. Only the install does this: after any other failed job the application is still there and its
+  Günlük shows the same journal. Lines an application prints about itself (its own generated password, say) are
+  what Günlük shows too; the record is root's (0600) like the journal.
+- **The usual reason, said:** a direct start that stops at once adds that such an image may start as root and
+  switch to its own user, and the record names that start question (`soru: start:<service>`); the page offers
+  "Başlatma sorusuna dön" with every answer kept. The inspector says the same before the install when a service
+  without `user:` and without added capabilities has `PUID` in its environment (with `PGID`); its suggestion
+  stays the root start. This reads the file's own words; no image or application is named.
+- **Tests:** the worker's log, its order, the masking, the cap, no journal read for other jobs; the inspector's
+  `PUID`; the three affected Konsol suites with the layout audit at 1440, 390 and 320.
+
 ### DD-278: The rebuild's phase 6: documents, sweep and back doors (v2-261)
 
 - **Scope (`rebuild.md` phase 6):** the documents describe only generation 2, superseded decisions are
@@ -165,6 +200,8 @@ longer applies and which entry replaced it.
   33 screen states of every section at 390 px and at 1440 px in both themes with no layout finding and no
   console error; the cleanup through the interface removing an unused image with the typed word, its audit
   line written.
+- **Note (DD-279):** "Uygulama ekle" is no longer a sheet at `#/uygulamalar?ekle=1` but a full-window page at
+  `#/uygulama-ekle` with a fourth step, Kurulum, that shows the install job's log.
 
 ### DD-275: The rebuild's phase 4: access rows (v2-258)
 
@@ -726,6 +763,8 @@ longer applies and which entry replaced it.
   image, adoption), an application's Ayarlar tab, `uygulamalar/hesap` and `kur` (DD-272, DD-274), Gelişmiş's
   create and remove actions, `konteynerler/ayrinti|islem`, `ayarlar/klasorler` and Görünüm (DD-276) are gone;
   Sistem, the routes moved into the table, the copy button, the leave guard and the workers' lock wait hold.
+- **Amended by DD-279 (v2-264):** leaving Uygulama ekle, now a page of its own, with something entered asks
+  inside Konsol too, not only when the tab closes.
 
 ### DD-265: The redesign's third phase: Erişim, the Yayınla flow and the settings plan (v2-248)
 

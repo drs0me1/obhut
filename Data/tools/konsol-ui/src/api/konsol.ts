@@ -10,6 +10,7 @@ import {
   type Denetim,
   type DenetimIstegi,
   type Inceleme,
+  type IsSatiri,
   type KaldirIstegi,
   type KaynakIstegi,
   type KaynakYaniti,
@@ -96,10 +97,12 @@ export async function removeApp(app: string, request: KaldirIstegi): Promise<Uyg
   return shaped(await postJson(appPath(YOLLAR.uygulama_kaldir, app), request), (v) => isText(v.is) && v.is !== "");
 }
 
-/** A finished job's record (GET …/konteynerler/islem?id=): its result, such as whether an image update changed anything. */
-export async function readJob(id: string): Promise<KonteynerIsi & { result: Record<string, unknown> | null }> {
+/** A job's record (GET …/konteynerler/islem?id=): its result, such as whether an image update changed anything, and
+    its log (a line without its time, kind or text is left out). */
+export async function readJob(id: string): Promise<KonteynerIsi & { result: Record<string, unknown> | null; gunluk: IsSatiri[] }> {
   const v = shaped<KonteynerIsi>(await getJson(query(YOLLAR.konteyner_isi, { id })), (d) => isText(d.id) && isText(d.state));
-  return { ...v, result: isObject(v.result) ? v.result : null };
+  const line = (x: unknown): x is IsSatiri => isObject(x) && typeof x.t === "number" && isText(x.tur) && isText(x.ileti);
+  return { ...v, result: isObject(v.result) ? v.result : null, gunluk: isList(v.gunluk) ? v.gunluk.filter(line) : [] };
 }
 
 /** The WAN rate and the busiest applications' rates (an item without a name or numbers is left out). */

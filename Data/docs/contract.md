@@ -591,6 +591,9 @@ definition and, separately, the secret values. Neither raises: a reader bug refu
   `SYS_CHROOT`, and less `NET_BIND_SERVICE` when no container port is below 1024, plus the file's own
   `cap_add` from the default set; the file's drops only narrow it.
 - Privileged mode, devices and host namespaces never.
+- The inspector suggests the direct start only when the file names the user and adds no capability. A
+  service whose environment has `PUID` (with `PGID`) is told why the root start fits: the image starts as
+  root and switches to that user itself, so a direct start cannot (**DD-279**).
 
 ### 4.5 Folders and binds (A5, DD-226, DD-227)
 
@@ -662,7 +665,9 @@ writes them. This is not a reconcile engine; nothing runs unasked.
 Every write is a job: the backend hands it to the broker (`master_container_manager.py`), which runs it as
 the transient unit `master-container-<id>` (at most 1800 s; the cleanup 900 s) with the request on
 standard input only, and the worker (`master_container_worker.py`) does it. A job's record
-(`KONTEYNER_STATE_DIR/operations/<id>.json`) names the job and its steps, never the request. At most four
+(`KONTEYNER_STATE_DIR/operations/<id>.json`, 0600 root) names the job and its steps, never the request, and
+keeps its log (`gunluk`: each step and fact with its time, why it failed said once; the newest 300 lines of at
+most 400 characters, **DD-279**). At most four
 jobs run at once and one per target; a job takes `install.lock` and `KONTEYNER_LOCK` (waiting up to 5 s)
 and is refused while a settings change is pending. Each write is a line `uygulama-<verb>` in İşlem geçmişi.
 
@@ -671,8 +676,11 @@ and is refused while a settings change is pending. Each write is a line `uygulam
   pool ports, a preliminary render, Podman 5); then the record, the guard, the folders, the pulls and
   digests, the secrets, Quadlet's dry run, the units, the start in order and the wait (300 s) until each
   unit is active and each container is its own, running and healthy; then the access projection. Any
-  failure takes back everything the job made and names the step. `kur` with `plan: true` runs every check
-  and writes, pulls and creates nothing.
+  failure takes back everything the job made and names the step. A container that does not come up leaves
+  its own last 20 lines since the job began (journald's `CONTAINER_NAME`) in the job's log before the rollback
+  removes its unit, each secret value the job holds masked; a direct start that stopped at once says the
+  usual reason (an image that switches to its own user from root) and the record names that start question
+  (`soru`). `kur` with `plan: true` runs every check and writes, pulls and creates nothing.
 - **Takeover:** installing from a standalone container copies its named volumes into the new folders and
   removes the old container (never its volumes) once the application is ready.
 - **Start, stop, restart:** stop removes `[Install]`, so a stopped application stays stopped across
@@ -910,7 +918,7 @@ its countdown and Onayla/Geri al.
 | Section | Tabs and contents |
 |---|---|
 | Genel Bakış | Dikkat (problems, most serious first, each with its place), Uygulamalar, Erişim özeti, Kaynaklar, Ağ (WAN rate and the busiest applications' rates from their bridges), Sunucu |
-| Uygulamalar | The list (state, reach, resources, live rate, update state); "Uygulama ekle" (`?ekle=1`: Kaynak, Denetçi, Plan, then the job); an application's page with Özet (actions, update card), Erişim (its rows, read-only, linking to Adresler), Depolama (folders with sizes), Tanım (the file and answers, the difference as a plan) and Günlük (its units' journal, 100–1000 lines, unfiltered, **DD-251**) |
+| Uygulamalar | The list (state, reach, resources, live rate, update state); "Uygulama ekle" (a full-window page of its own, `#/uygulama-ekle`: Kaynak, Denetçi with the file beside the questions, Plan, Kurulum with the job's log; leaving with something entered asks, **DD-279**); an application's page with Özet (actions, update card), Erişim (its rows, read-only, linking to Adresler), Depolama (folders with sizes), Tanım (the file and answers, the difference as a plan) and Günlük (its units' journal, 100–1000 lines, unfiltered, **DD-251**) |
 | Erişim | Genel, Adresler (Konsol, Paylaşımlar, every application row; "Adres aç"), Yerel adlar (the managed names read-only, records, forwarding, the local domain), Tailscale, WireGuard, Güvenlik duvarı (the operator's rules and the locked application rows) |
 | Dosyalar | Depolama (the disk, who uses which folder, Uygulama verileri with a bounded cached walk), Sunucu klasörleri, Çöp kutusu, Paylaşımlar, Sistem dosyaları (tailnet only) |
 | Sistem | Sağlık (with Onarım kaydı), Güncellemeler (Obhut and the count of application updates), Hesap, Sunucu (facts and "Yeniden başlat"), İşlem geçmişi |

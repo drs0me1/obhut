@@ -4,7 +4,7 @@
      rate of its own bridge (read again every 10 s while the page is shown), its image's update state, "Aç" (its
      first address, while it runs) and its page. The filter (?suzgec=) and the search (?ara=) are in the address.
      A table on wide screens, cards on narrow ones (a container query, so the sidebar's width counts).
-     "Uygulama ekle" opens the add flow (AddAppSheet), which has its own address: #/uygulamalar?ekle=1. -->
+     "Uygulama ekle" opens its full-window page (AddAppPage, #/uygulama-ekle). -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
@@ -12,12 +12,11 @@ import { Icon } from "../components/icons";
 import AppIcon from "../components/AppIcon.vue";
 import EmptyState from "../components/ui/EmptyState.vue";
 import StatusPill from "../components/ui/StatusPill.vue";
-import AddAppSheet from "./app/AddAppSheet.vue";
 import { apps, live, refreshApps } from "../live";
 import { accessChips, appLine, appState, needsAttention, openAddress, rateText, resourceText, updateText, warningText } from "../apps";
-import { appRoute } from "../router";
+import { ADD_APP, appRoute } from "../router";
 import { usePageHead } from "../page";
-import { useQueryFlag, useQueryParam } from "../query";
+import { useQueryParam } from "../query";
 import { UNKNOWN, fold } from "../format";
 import type { Uygulama } from "../api/sema";
 
@@ -35,7 +34,6 @@ const TESTS: Record<Filter, (a: Uygulama) => boolean> = {
   dikkat: needsAttention,
 };
 
-const adding = useQueryFlag("ekle");
 const filter = useQueryParam<Filter>("suzgec", FILTERS.map((f) => f.id), "tumu");
 const searchParam = useQueryParam<string>("ara", null, "");
 // The field keeps exactly what was typed; the address follows it, and Back/Forward set it again.
@@ -131,7 +129,7 @@ onBeforeUnmount(() => clearInterval(timer));
         <Icon name="search" :size="18" class="search-icon" />
         <input id="uyg-ara" v-model="search" class="input" type="search" placeholder="Uygulama ara" autocomplete="off" spellcheck="false" />
       </div>
-      <button type="button" class="btn btn-primary apps-add" data-eylem="ekle" @click="adding = true"><Icon name="plus" :size="16" />Uygulama ekle</button>
+      <RouterLink :to="ADD_APP" class="btn btn-primary apps-add" data-eylem="ekle"><Icon name="plus" :size="16" />Uygulama ekle</RouterLink>
     </div>
     <p class="sr-only" role="status">{{ apps ? `${rows.length} uygulama gösteriliyor` : "" }}</p>
 
@@ -193,7 +191,7 @@ onBeforeUnmount(() => clearInterval(timer));
         icon="apps"
         data-testid="apps-empty"
       >
-        <button type="button" class="btn btn-primary" data-eylem="ekle" @click="adding = true"><Icon name="plus" :size="16" />Uygulama ekle</button>
+        <RouterLink :to="ADD_APP" class="btn btn-primary" data-eylem="ekle"><Icon name="plus" :size="16" />Uygulama ekle</RouterLink>
       </EmptyState>
       <EmptyState v-else-if="apps" :title="emptyText" :icon="search.trim() ? 'search' : 'apps'">
         <button v-if="search.trim() || filter !== 'tumu'" type="button" class="btn btn-secondary" @click="(search = ''), (filter = 'tumu')">
@@ -202,7 +200,5 @@ onBeforeUnmount(() => clearInterval(timer));
       </EmptyState>
       <EmptyState v-else title="Uygulamalar henüz okunamadı" text="Sunucu yanıt verince liste burada görünür." icon="unknown" />
     </section>
-
-    <AddAppSheet :open="adding" @close="adding = false" />
   </div>
 </template>

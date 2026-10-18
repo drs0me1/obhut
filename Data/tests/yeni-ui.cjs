@@ -460,10 +460,9 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       await page.keyboard.press("Control+K");
       await palInput.fill("uygulama ekle");
       await page.keyboard.press("Enter");
-      await page.waitForURL((u) => u.hash === "#/uygulamalar?ekle=1");
-      await page.getByRole("dialog", { name: "Uygulama ekle" }).waitFor();
-      await page.keyboard.press("Escape");
-      await page.getByRole("dialog", { name: "Uygulama ekle" }).waitFor({ state: "detached" });
+      await page.waitForURL((u) => u.hash === "#/uygulama-ekle");
+      await page.getByTestId("add-flow").getByRole("button", { name: "Kapat" }).click();
+      await page.waitForURL((u) => u.hash === "#/uygulamalar");
 
       // Every timed change is named in the banner and in İşlemler: an access row, WireGuard, the local domain, a fixed row.
       const pendingTitle = page.getByTestId("pending-title");

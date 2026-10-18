@@ -6,7 +6,9 @@
      under the server root, chosen with the folder picker, read-only or not. A start (A4): directly as its own user or
      as root, the inspector's suggestion marked and a word when the choice differs from it. On an edit a port that
      stays is not asked: its use is shown with a link to its row in Erişim → Adresler, its one home. Errors come
-     from the server (by question id) or from the form's own first checks. -->
+     from the server (by question id) or from the form's own first checks. `grouped` puts the file's variables
+     first and each service's questions under its name; a card taking the focus is reported (`active`), so the
+     page can light its line in the file. -->
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { RouterLink } from "vue-router";
@@ -53,12 +55,24 @@ const props = withDefaults(
     /** The application's data folder when it is known (an edit). */
     dataFolder?: string;
     disabled?: boolean;
+    grouped?: boolean;
   }>(),
-  { edit: null, taken: () => [], fresh: () => [], dataFolder: "", disabled: false },
+  { edit: null, taken: () => [], fresh: () => [], dataFolder: "", disabled: false, grouped: false },
 );
-const emit = defineEmits<{ line: [line: number] }>();
+const emit = defineEmits<{ line: [line: number]; active: [q: Soru] }>();
 
 const questions = computed(() => formQuestions(props.inspection));
+/** The cards in their groups, each with its place in the whole list (its element ids). */
+const groups = computed(() => {
+  const all = questions.value.map((q, i) => ({ q, i }));
+  if (!props.grouped) return [{ key: "", title: "", items: all }];
+  const owner = (q: Soru): string => ("service" in q ? q.service : "");
+  const names = [...new Set([...props.inspection.services.map((s) => s.name), ...all.map(({ q }) => owner(q)).filter(Boolean)])];
+  return [
+    { key: "", title: "Dosyanın değişkenleri", items: all.filter(({ q }) => !owner(q)) },
+    ...names.map((name) => ({ key: name, title: name, items: all.filter(({ q }) => owner(q) === name) })),
+  ].filter((g) => g.items.length);
+});
 
 // Each draft by its kind (the template shows a question's controls only when its draft has that kind).
 const P = (id: string): PortDraft => {
@@ -121,181 +135,185 @@ function pickPort(id: string, use: "caddy" | "raw", suggest: string | null): voi
 
 <template>
   <div class="questions" data-testid="questions">
-    <section
-      v-for="(q, i) in questions"
-      :id="domId(i)"
-      :key="q.id"
-      class="q-card"
-      :class="{ 'q-need': waiting(q, state.drafts[q.id], edit), 'q-invalid': problem(q) }"
-      :data-soru="q.id"
-      :data-tur="q.kind"
-      :aria-labelledby="domId(i) + '-baslik'"
-      tabindex="-1"
-    >
-      <div class="q-head">
-        <h3 :id="domId(i) + '-baslik'" class="q-title">{{ questionTitle(q) }}</h3>
-        <span class="q-meta">
-          <StatusPill v-if="fresh.includes(q.id)" tone="accent">Yeni</StatusPill>
-          <button type="button" class="q-line" :aria-label="`Dosyada satır ${q.line}`" @click="emit('line', q.line)">Satır {{ q.line }}</button>
-        </span>
-      </div>
+    <template v-for="g in groups" :key="g.key">
+      <h3 v-if="g.title" class="q-group" :data-grup="g.key">{{ g.title }}</h3>
+      <section
+        v-for="{ q, i } in g.items"
+        :id="domId(i)"
+        :key="q.id"
+        class="q-card"
+        :class="{ 'q-need': waiting(q, state.drafts[q.id], edit), 'q-invalid': problem(q) }"
+        :data-soru="q.id"
+        :data-tur="q.kind"
+        :aria-labelledby="domId(i) + '-baslik'"
+        tabindex="-1"
+        @focusin="emit('active', q)"
+      >
+        <div class="q-head">
+          <component :is="grouped ? 'h4' : 'h3'" :id="domId(i) + '-baslik'" class="q-title">{{ questionTitle(q) }}</component>
+          <span class="q-meta">
+            <StatusPill v-if="fresh.includes(q.id)" tone="accent">Yeni</StatusPill>
+            <button type="button" class="q-line" :aria-label="`Dosyada satır ${q.line}`" @click="emit('line', q.line)">Satır {{ q.line }}</button>
+          </span>
+        </div>
 
-      <!-- a port that stays: its use is its row's, changed in Erişim → Adresler -->
-      <template v-if="q.kind === 'port' && staying(q)">
-        <p class="q-stay" data-testid="q-stay">
-          <Icon name="lock" :size="14" /><span>{{ stayText(staying(q)!) }}</span>
-        </p>
-        <p class="q-why">Bu portun kullanımı Erişim'den değişir. <RouterLink :to="accessRoute('adresler', staying(q)!.id)" data-testid="q-stay-link">Erişim'de değiştir</RouterLink></p>
-      </template>
+        <!-- a port that stays: its use is its row's, changed in Erişim → Adresler -->
+        <template v-if="q.kind === 'port' && staying(q)">
+          <p class="q-stay" data-testid="q-stay">
+            <Icon name="lock" :size="14" /><span>{{ stayText(staying(q)!) }}</span>
+          </p>
+          <p class="q-why">Bu portun kullanımı Erişim'den değişir. <RouterLink :to="accessRoute('adresler', staying(q)!.id)" data-testid="q-stay-link">Erişim'de değiştir</RouterLink></p>
+        </template>
 
-      <!-- a port: an address or a raw port (A1: nothing chosen); UDP: a raw port only (A2) -->
-      <template v-else-if="q.kind === 'port' && state.drafts[q.id]?.kind === 'port'">
-        <p class="q-why">{{ q.why }}</p>
-        <p class="q-guess" data-testid="q-guess">Denetçinin tahmini: {{ guessText(q) }}</p>
-        <template v-if="q.choices.includes('caddy')">
-          <fieldset class="choice-list q-choices">
-            <legend class="sr-only">{{ questionTitle(q) }}</legend>
-            <label class="choice-item" data-secim="caddy">
-              <input type="radio" :name="q.id" value="caddy" :checked="P(q.id).use === 'caddy'" :disabled="disabled" @change="pickPort(q.id, 'caddy', q.suggest)" />
-              <span class="choice-text"><span class="choice-head"><strong>Adres</strong></span><span class="choice-sub">Caddy satırı · Tailscale adıyla açılır</span></span>
-            </label>
-            <label class="choice-item" data-secim="raw">
-              <input type="radio" :name="q.id" value="raw" :checked="P(q.id).use === 'raw'" :disabled="disabled" @change="pickPort(q.id, 'raw', null)" />
-              <span class="choice-text"><span class="choice-head"><strong>Ham port</strong></span><span class="choice-sub">Kapalı gelir; Erişim'den açılır</span></span>
-            </label>
-          </fieldset>
-          <div v-if="P(q.id).use === 'caddy'" class="field">
-            <label :for="domId(i) + '-ad'" class="field-label">Tailscale adı</label>
-            <div class="input-suffixed">
+        <!-- a port: an address or a raw port (A1: nothing chosen); UDP: a raw port only (A2) -->
+        <template v-else-if="q.kind === 'port' && state.drafts[q.id]?.kind === 'port'">
+          <p class="q-why">{{ q.why }}</p>
+          <p class="q-guess" data-testid="q-guess">Denetçinin tahmini: {{ guessText(q) }}</p>
+          <template v-if="q.choices.includes('caddy')">
+            <fieldset class="choice-list q-choices">
+              <legend class="sr-only">{{ questionTitle(q) }}</legend>
+              <label class="choice-item" data-secim="caddy">
+                <input type="radio" :name="q.id" value="caddy" :checked="P(q.id).use === 'caddy'" :disabled="disabled" @change="pickPort(q.id, 'caddy', q.suggest)" />
+                <span class="choice-text"><span class="choice-head"><strong>Adres</strong></span><span class="choice-sub">Caddy satırı · Tailscale adıyla açılır</span></span>
+              </label>
+              <label class="choice-item" data-secim="raw">
+                <input type="radio" :name="q.id" value="raw" :checked="P(q.id).use === 'raw'" :disabled="disabled" @change="pickPort(q.id, 'raw', null)" />
+                <span class="choice-text"><span class="choice-head"><strong>Ham port</strong></span><span class="choice-sub">Kapalı gelir; Erişim'den açılır</span></span>
+              </label>
+            </fieldset>
+            <div v-if="P(q.id).use === 'caddy'" class="field">
+              <label :for="domId(i) + '-ad'" class="field-label">Tailscale adı</label>
+              <div class="input-suffixed">
+                <input
+                  :id="domId(i) + '-ad'"
+                  v-model="P(q.id).name"
+                  class="input mono"
+                  type="text"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  :disabled="disabled"
+                  :aria-invalid="Boolean(problem(q)) || undefined"
+                  data-testid="q-name"
+                />
+                <span v-if="domain" class="input-suffix" aria-hidden="true">.{{ domain }}</span>
+              </div>
+              <p v-if="q.guess !== 'web'" class="field-help warn-text">Web arayüzü değilse adres çalışmaz; ham port daha uygun olabilir.</p>
+            </div>
+          </template>
+          <p v-else class="q-stay"><Icon name="lock" :size="14" /><span>Ham port · kapalı gelir</span></p>
+        </template>
+
+        <!-- a secret (a secret-looking variable or an entry the inspector asks for) -->
+        <template v-else-if="isSecret(q) && state.drafts[q.id]?.kind === 'value'">
+          <p class="q-why">{{ q.why }}</p>
+          <div v-if="stored(q) && V(q.id).keep" class="q-kept" data-testid="q-kept">
+            <StatusPill tone="ok">Kayıtlı</StatusPill>
+            <span class="meter-note">Değer sunucuda; değiştirmezseniz korunur.</span>
+            <button type="button" class="btn btn-secondary btn-sm" :disabled="disabled" data-eylem="yenile" @click="renew(q.id, true)">Yeni değer gir</button>
+          </div>
+          <template v-else>
+            <div class="q-secret">
+              <label :for="domId(i) + '-deger'" class="sr-only">{{ questionTitle(q) }}</label>
               <input
-                :id="domId(i) + '-ad'"
-                v-model="P(q.id).name"
+                :id="domId(i) + '-deger'"
+                v-model="V(q.id).value"
                 class="input mono"
-                type="text"
-                autocomplete="off"
+                :type="reveal[q.id] ? 'text' : 'password'"
+                autocomplete="new-password"
                 autocapitalize="off"
                 spellcheck="false"
                 :disabled="disabled"
                 :aria-invalid="Boolean(problem(q)) || undefined"
-                data-testid="q-name"
+                data-testid="q-secret"
               />
-              <span v-if="domain" class="input-suffix" aria-hidden="true">.{{ domain }}</span>
+              <button type="button" class="icon-btn" :aria-label="reveal[q.id] ? 'Değeri gizle' : 'Değeri göster'" :aria-pressed="Boolean(reveal[q.id])" :disabled="disabled"
+                @click="reveal[q.id] = !reveal[q.id]"><Icon name="eye" :size="18" /></button>
+              <button v-if="canGenerate(q)" type="button" class="btn btn-secondary btn-sm" :disabled="disabled" data-eylem="uret" @click="generate(q.id)">Rastgele üret</button>
             </div>
-            <p v-if="q.guess !== 'web'" class="field-help warn-text">Web arayüzü değilse adres çalışmaz; ham port daha uygun olabilir.</p>
-          </div>
+            <p class="field-help">Podman secret olur; diske ve tarayıcıya açık yazılmaz.</p>
+            <button v-if="stored(q)" type="button" class="btn btn-secondary btn-sm fit" :disabled="disabled" data-eylem="koru" @click="renew(q.id, false)">Kayıtlı değeri koru</button>
+          </template>
         </template>
-        <p v-else class="q-stay"><Icon name="lock" :size="14" /><span>Ham port · kapalı gelir</span></p>
-      </template>
 
-      <!-- a secret (a secret-looking variable or an entry the inspector asks for) -->
-      <template v-else-if="isSecret(q) && state.drafts[q.id]?.kind === 'value'">
-        <p class="q-why">{{ q.why }}</p>
-        <div v-if="stored(q) && V(q.id).keep" class="q-kept" data-testid="q-kept">
-          <StatusPill tone="ok">Kayıtlı</StatusPill>
-          <span class="meter-note">Değer sunucuda; değiştirmezseniz korunur.</span>
-          <button type="button" class="btn btn-secondary btn-sm" :disabled="disabled" data-eylem="yenile" @click="renew(q.id, true)">Yeni değer gir</button>
-        </div>
-        <template v-else>
-          <div class="q-secret">
-            <label :for="domId(i) + '-deger'" class="sr-only">{{ questionTitle(q) }}</label>
-            <input
-              :id="domId(i) + '-deger'"
-              v-model="V(q.id).value"
-              class="input mono"
-              :type="reveal[q.id] ? 'text' : 'password'"
-              autocomplete="new-password"
-              autocapitalize="off"
-              spellcheck="false"
-              :disabled="disabled"
-              :aria-invalid="Boolean(problem(q)) || undefined"
-              data-testid="q-secret"
-            />
-            <button type="button" class="icon-btn" :aria-label="reveal[q.id] ? 'Değeri gizle' : 'Değeri göster'" :aria-pressed="Boolean(reveal[q.id])" :disabled="disabled"
-              @click="reveal[q.id] = !reveal[q.id]"><Icon name="eye" :size="18" /></button>
-            <button v-if="canGenerate(q)" type="button" class="btn btn-secondary btn-sm" :disabled="disabled" data-eylem="uret" @click="generate(q.id)">Rastgele üret</button>
-          </div>
-          <p class="field-help">Podman secret olur; diske ve tarayıcıya açık yazılmaz.</p>
-          <button v-if="stored(q)" type="button" class="btn btn-secondary btn-sm fit" :disabled="disabled" data-eylem="koru" @click="renew(q.id, false)">Kayıtlı değeri koru</button>
-        </template>
-      </template>
-
-      <!-- a plain variable -->
-      <template v-else-if="q.kind === 'var' && state.drafts[q.id]?.kind === 'value'">
-        <p class="q-why">{{ q.why }}</p>
-        <label :for="domId(i) + '-deger'" class="sr-only">{{ questionTitle(q) }}</label>
-        <input
-          :id="domId(i) + '-deger'"
-          v-model="V(q.id).value"
-          class="input mono"
-          type="text"
-          autocomplete="off"
-          autocapitalize="off"
-          spellcheck="false"
-          :disabled="disabled"
-          :aria-invalid="Boolean(problem(q)) || undefined"
-          data-testid="q-value"
-        />
-      </template>
-
-      <!-- a folder (A5): the application's own or one under the server root -->
-      <template v-else-if="q.kind === 'mount' && state.drafts[q.id]?.kind === 'mount'">
-        <p class="q-why">Dosyada: <span class="mono">{{ mountSource(q) }}</span>. Başka bir sunucu yolu kullanılmaz.</p>
-        <fieldset class="choice-list q-choices">
-          <legend class="sr-only">{{ questionTitle(q) }}</legend>
-          <label class="choice-item" data-secim="app">
-            <input v-model="M(q.id).to" type="radio" :name="q.id" value="app" :disabled="disabled" />
-            <span class="choice-text">
-              <span class="choice-head"><strong>Uygulamanın klasörü</strong></span>
-              <span class="choice-sub mono">{{ dataFolder ? `${dataFolder}/${q.folder}` : q.folder }}</span>
-            </span>
-          </label>
-          <label class="choice-item" data-secim="srv">
-            <input v-model="M(q.id).to" type="radio" :name="q.id" value="srv" :disabled="disabled || !root" />
-            <span class="choice-text"><span class="choice-head"><strong>{{ root || "Sunucu" }} altından bir klasör</strong></span><span class="choice-sub">Dosyalar hesabıyla</span></span>
-          </label>
-        </fieldset>
-        <template v-if="M(q.id).to === 'srv' && root">
-          <ShareFolderPicker
-            :id="domId(i) + '-klasor'"
-            v-model="M(q.id).path"
-            :root="root"
+        <!-- a plain variable -->
+        <template v-else-if="q.kind === 'var' && state.drafts[q.id]?.kind === 'value'">
+          <p class="q-why">{{ q.why }}</p>
+          <label :for="domId(i) + '-deger'" class="sr-only">{{ questionTitle(q) }}</label>
+          <input
+            :id="domId(i) + '-deger'"
+            v-model="V(q.id).value"
+            class="input mono"
+            type="text"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
             :disabled="disabled"
-            :invalid="Boolean(problem(q))"
-            :pick-label="`${questionTitle(q)}: klasör seç`"
+            :aria-invalid="Boolean(problem(q)) || undefined"
+            data-testid="q-value"
           />
-          <label class="check-row">
-            <input v-model="M(q.id).readOnly" type="checkbox" :disabled="disabled" data-testid="q-readonly" />
-            <span>Salt okunur</span>
-          </label>
         </template>
-      </template>
 
-      <!-- a start (A4) -->
-      <template v-else-if="q.kind === 'start' && state.drafts[q.id]?.kind === 'start'">
-        <p class="q-why">{{ q.why }}</p>
-        <fieldset class="choice-list">
-          <legend class="sr-only">{{ questionTitle(q) }}</legend>
-          <label class="choice-item" data-secim="direct">
-            <input v-model="S(q.id).mode" type="radio" :name="q.id" value="direct" :disabled="disabled" />
-            <span class="choice-text">
-              <span class="choice-head"><strong>Doğrudan · <span class="mono">{{ q.direct_user }}</span></strong><StatusPill v-if="q.suggest === 'direct'" tone="accent">Önerilen</StatusPill></span>
-              <span class="choice-sub">Bütün yetkiler kapalı; yeni yetki kazanılamaz</span>
-            </span>
-          </label>
-          <label class="choice-item" data-secim="root">
-            <input v-model="S(q.id).mode" type="radio" :name="q.id" value="root" :disabled="disabled" />
-            <span class="choice-text">
-              <span class="choice-head"><strong>Root olarak</strong><StatusPill v-if="q.suggest === 'root'" tone="accent">Önerilen</StatusPill></span>
-              <span class="choice-sub">{{ rootText(q) }}</span>
-            </span>
-          </label>
-        </fieldset>
-        <p v-if="S(q.id).mode !== q.suggest" class="field-help warn-text" data-testid="q-start-note">
-          {{ S(q.id).mode === "direct" ? "Bu imaj doğrudan başlatılınca açılmayabilir; açılmazsa kurulum geri alınır." : "Dosya kullanıcıyı belirtiyor; root başlangıcı gereksiz yetki bırakır." }}
-        </p>
-      </template>
+        <!-- a folder (A5): the application's own or one under the server root -->
+        <template v-else-if="q.kind === 'mount' && state.drafts[q.id]?.kind === 'mount'">
+          <p class="q-why">Dosyada: <span class="mono">{{ mountSource(q) }}</span>. Başka bir sunucu yolu kullanılmaz.</p>
+          <fieldset class="choice-list q-choices">
+            <legend class="sr-only">{{ questionTitle(q) }}</legend>
+            <label class="choice-item" data-secim="app">
+              <input v-model="M(q.id).to" type="radio" :name="q.id" value="app" :disabled="disabled" />
+              <span class="choice-text">
+                <span class="choice-head"><strong>Uygulamanın klasörü</strong></span>
+                <span class="choice-sub mono">{{ dataFolder ? `${dataFolder}/${q.folder}` : q.folder }}</span>
+              </span>
+            </label>
+            <label class="choice-item" data-secim="srv">
+              <input v-model="M(q.id).to" type="radio" :name="q.id" value="srv" :disabled="disabled || !root" />
+              <span class="choice-text"><span class="choice-head"><strong>{{ root || "Sunucu" }} altından bir klasör</strong></span><span class="choice-sub">Dosyalar hesabıyla</span></span>
+            </label>
+          </fieldset>
+          <template v-if="M(q.id).to === 'srv' && root">
+            <ShareFolderPicker
+              :id="domId(i) + '-klasor'"
+              v-model="M(q.id).path"
+              :root="root"
+              :disabled="disabled"
+              :invalid="Boolean(problem(q))"
+              :pick-label="`${questionTitle(q)}: klasör seç`"
+            />
+            <label class="check-row">
+              <input v-model="M(q.id).readOnly" type="checkbox" :disabled="disabled" data-testid="q-readonly" />
+              <span>Salt okunur</span>
+            </label>
+          </template>
+        </template>
 
-      <p v-if="problem(q)" class="field-error" data-testid="q-error">{{ problem(q) }}</p>
-    </section>
+        <!-- a start (A4) -->
+        <template v-else-if="q.kind === 'start' && state.drafts[q.id]?.kind === 'start'">
+          <p class="q-why">{{ q.why }}</p>
+          <fieldset class="choice-list">
+            <legend class="sr-only">{{ questionTitle(q) }}</legend>
+            <label class="choice-item" data-secim="direct">
+              <input v-model="S(q.id).mode" type="radio" :name="q.id" value="direct" :disabled="disabled" />
+              <span class="choice-text">
+                <span class="choice-head"><strong>Doğrudan · <span class="mono">{{ q.direct_user }}</span></strong><StatusPill v-if="q.suggest === 'direct'" tone="accent">Önerilen</StatusPill></span>
+                <span class="choice-sub">Bütün yetkiler kapalı; yeni yetki kazanılamaz</span>
+              </span>
+            </label>
+            <label class="choice-item" data-secim="root">
+              <input v-model="S(q.id).mode" type="radio" :name="q.id" value="root" :disabled="disabled" />
+              <span class="choice-text">
+                <span class="choice-head"><strong>Root olarak</strong><StatusPill v-if="q.suggest === 'root'" tone="accent">Önerilen</StatusPill></span>
+                <span class="choice-sub">{{ rootText(q) }}</span>
+              </span>
+            </label>
+          </fieldset>
+          <p v-if="S(q.id).mode !== q.suggest" class="field-help warn-text" data-testid="q-start-note">
+            {{ S(q.id).mode === "direct" ? "Bu imaj doğrudan başlatılınca açılmayabilir; açılmazsa kurulum geri alınır." : "Dosya kullanıcıyı belirtiyor; root başlangıcı gereksiz yetki bırakır." }}
+          </p>
+        </template>
+
+        <p v-if="problem(q)" class="field-error" data-testid="q-error">{{ problem(q) }}</p>
+      </section>
+    </template>
   </div>
 </template>

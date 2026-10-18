@@ -5,8 +5,10 @@ The broker (master_container_manager) runs every job as its own transient unit a
 the request on standard input only. This module owns every container write: the application lifecycle (rebuild
 DD-271, phase 3) and Gelişmiş's cleanup of what nothing uses (K8). Each action is a job with steps
 and a durable record (KONTEYNER_STATE_DIR/operations/<id>.json) that never holds the request; a failure
-undoes what the job did, in reverse, and names the failed step. Secret values reach Podman on standard
-input only: never an argument, a file of Obhut's, a record, a log line or a reply.
+undoes what the job did, in reverse, and names the failed step. The record carries the job's log (gunluk):
+each step and fact with its time, and for an install whose container does not come up that container's own last
+lines (it is rolled back, so its unit and record go), each secret value the job holds masked. Secret values reach
+Podman on standard input only: never an argument, a file of Obhut's, a record, a log line or a reply.
 
 Access rows (rebuild phase 4): install seeds an application's rows, an edit keeps, seeds and drops them,
 removal takes them; each of the three then runs the publication projection (master_shares publish). Two
@@ -51,6 +53,16 @@ LOCK_WAIT = 5.0
 READY_SECONDS = 300
 PULL_SECONDS = 600
 COPY_SECONDS = 1200
+# The job's log: the newest LOG_LINES lines, each at most LINE_CHARS; a failed install keeps OUTPUT_LINES of its
+# container's own output.
+LOG_LINES = 300
+LINE_CHARS = 400
+OUTPUT_LINES = 20
+ANSI_RE = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')
+MASK = '••••'
+# A directly started container that stops at once (DD-227): the usual reason, said beside the error.
+DIRECT_HINT = (' Doğrudan başlatma bu imajda çalışmayabilir (imaj root başlayıp kendi kullanıcısına geçiyor olabilir); '
+               'Root olarak başlatmayı deneyin.')
 QUADLET = ('/usr/lib/systemd/system-generators/podman-system-generator', '/usr/libexec/podman/quadlet')
 
 
@@ -90,6 +102,7 @@ class Manager:
         self.clock, self.sleep, self.now = clock, sleep, now
         self.operation = None
         self.op_path = None
+        self.told = False
 
     @property
     def records(self):
@@ -176,9 +189,49 @@ class Manager:
 
     # -- the job record
     def step(self, label):
+        """The job's current step, also a line of its log."""
         if self.operation is not None:
-            self.operation.update(step=label, updated_at=int(time.time()))
-            settings.atomic(self.op_path, json.dumps(self.operation, ensure_ascii=False) + '\n', 0o600)
+            self.operation['step'] = label
+            self.note(label, 'adim')
+
+    def note(self, text, kind='bilgi'):
+        """One line of the job's log: adim (a step began), bilgi (a fact), cikti (a container's own output), hata
+        (why the job failed) or tamam (it finished)."""
+        if self.operation is None:
+            return
+        if kind == 'hata':
+            self.told = True
+        log = self.operation.setdefault('gunluk', [])
+        log.append({'t': int(self.now()), 'tur': kind, 'ileti': str(text)[:LINE_CHARS]})
+        del log[:-LOG_LINES]
+        self.save()
+
+    def save(self):
+        self.operation['updated_at'] = int(time.time())
+        settings.atomic(self.op_path, json.dumps(self.operation, ensure_ascii=False) + '\n', 0o600)
+
+    def container_output(self, container, values):
+        """A container's own last lines since the job began (journald's CONTAINER_NAME) as lines of the job's log.
+        Each secret value the job holds is masked; a line keeps its printable text only. Reading the journal never
+        hides the job's own error."""
+        argv = ['journalctl', 'CONTAINER_NAME=' + container, '--since', '@%d' % int(self.operation.get('created_at') or 0),
+                '-n', str(OUTPUT_LINES), '-o', 'cat', '--no-pager']
+        try:
+            p = self.call(argv, timeout=30, check=False)
+        except cfg.ContainerConfigError:
+            return
+        hidden = sorted({v for v in values.values() if isinstance(v, str) and v}, key=len, reverse=True)
+        lines = []
+        for raw in (p.stdout or '').splitlines() if p.returncode == 0 else []:
+            text = ''.join(ch if ch.isprintable() else ' ' for ch in ANSI_RE.sub('', raw)).strip()
+            for value in hidden:
+                text = text.replace(value, MASK)
+            if text:
+                lines.append(text)
+        if not lines:
+            self.note('%s konteyneri bir şey yazmadı.' % container)
+        for text in lines[-OUTPUT_LINES:]:
+            self.note(text, 'cikti')
 
     def begin(self, action, request, operation):
         cfg.require(isinstance(operation, str) and cfg.REV_RE.fullmatch(operation), 'İşlem kimliği geçersiz.')
@@ -199,6 +252,7 @@ class Manager:
         # The record names the job; the request (and any secret in it) is never stored.
         self.operation = {'id': operation, 'action': action, 'name': name, 'state': 'running',
                           'step': 'Doğrulanıyor', 'created_at': int(time.time()), 'updated_at': int(time.time())}
+        self.told = False
         self.step('Doğrulanıyor')
 
     def execute(self, action, request, operation):
@@ -207,15 +261,23 @@ class Manager:
         try:
             with self.locked():
                 result = self.dispatch(action, request)
-            self.operation.update(state='done', result=result, finished_at=int(time.time()))
-            self.step('Tamamlandı')
+            self.operation.update(state='done', result=result, finished_at=int(time.time()), step='Tamamlandı')
+            self.note('Tamamlandı', 'tamam')
             return result
         except Exception as err:
             if not isinstance(err, cfg.ContainerConfigError):
                 err = cfg.ContainerConfigError(502, 'Konteyner işlemi tamamlanamadı; işlem kaydındaki durumu kontrol edin.')
             self.operation.update(state='failed', error=str(err), status=err.status, finished_at=int(time.time()),
                                   failed_step=getattr(err, 'failed_step', self.operation['step']))
-            self.step('Başarısız')
+            # The question whose answer most likely caused it (a direct start), for Uygulama ekle's way back.
+            if getattr(err, 'question', None):
+                self.operation['soru'] = err.question
+            self.operation['step'] = 'Başarısız'
+            # An install already said why before its rollback; any other job says it here.
+            if self.told:
+                self.save()
+            else:
+                self.note(str(err), 'hata')
             raise err
 
     def dispatch(self, action, request):
@@ -523,23 +585,27 @@ class Manager:
         extra = ([objects['pod_unit']] if objects.get('pod') else []) + [objects['network_unit']]
         return list(plan['stop']) + [u for u in extra if u not in plan['stop']]
 
-    def ready(self, app, definition, objects):
+    def ready(self, app, definition, objects, watch=None):
         """Each unit active, each container running and owned by this application, health neither starting
-        nor unhealthy, and a direct start proved (DD-227): its user and no capabilities."""
+        nor unhealthy, and a direct start proved (DD-227): its user and no capabilities. watch (an install's) is
+        called with the container of a service that does not come up, before the job says so."""
         deadline = self.clock() + READY_SECONDS
         self.step('Hazır olması bekleniyor')
+        running = set()
         while True:
             waiting = None
             for svc in definition['services']:
                 name = svc['name']
                 unit, container = objects['units'][name], objects['containers'][name]
                 state = self.unit_state(unit)
-                cfg.require(state != 'failed', '%s başlamadı: birimi başarısız oldu (günlüğü: journalctl -u %s).'
-                            % (name, unit), 502)
+                if state == 'failed':
+                    self.not_ready(svc, container, '%s başlamadı: birimi başarısız oldu (günlüğü: journalctl -u %s).'
+                                   % (name, unit), watch)
                 # A container that stops at once is restarted by systemd (Restart=); waiting the whole time would
                 # only hide why. Its journal stays after the rollback removes the unit.
-                cfg.require(self.restarts(unit) == 0, '%s başladıktan hemen sonra durdu (günlüğü: journalctl -u %s).'
-                            % (name, unit), 502)
+                if self.restarts(unit):
+                    self.not_ready(svc, container, '%s başladıktan hemen sonra durdu (günlüğü: journalctl -u %s).'
+                                   % (name, unit), watch)
                 try:
                     info = self.inspect(container) if state == 'active' else None
                 except cfg.ContainerConfigError:
@@ -559,11 +625,27 @@ class Manager:
                     dropped = all(key in info and info[key] in (None, []) for key in ('EffectiveCaps', 'BoundingCaps'))
                     cfg.require((info.get('Config') or {}).get('User') == svc['user'] and dropped,
                                 '%s kendi kullanıcısıyla, yetkisiz başlamadı.' % name, 502)
+                if name not in running:
+                    running.add(name)
+                    self.note('%s çalışıyor.' % name)
             if waiting is None:
                 return
             if self.clock() >= deadline:
+                if watch:
+                    watch(objects['containers'][waiting])
                 raise cfg.ContainerConfigError(502, '%s %d saniyede başlamadı ya da sağlık denetimini geçmedi.' % (waiting, READY_SECONDS))
             self.sleep(2)
+
+    def not_ready(self, svc, container, message, watch):
+        """A service that did not come up: its container's output first (watch), then the error; a direct start
+        says its usual reason and names its question."""
+        if watch:
+            watch(container)
+        direct = svc['start'] == 'direct'
+        error = cfg.ContainerConfigError(502, message + (DIRECT_HINT if direct else ''))
+        if direct:
+            error.question = 'start:' + svc['name']
+        raise error
 
     def create_secret(self, app, value):
         """A Podman secret holding one value, named obhut_<app>_<8 random hex>; the value goes to Podman's
@@ -606,6 +688,7 @@ class Manager:
                 info = self.json_call(['podman', 'image', 'inspect', reference])
                 cfg.require(isinstance(info, list) and len(info) == 1 and isinstance(info[0], dict), 'İmaj okunamadı.', 502)
                 pulled[reference] = apps.pinned(info[0], reference)
+                self.note('İmaj sabitlendi: %s' % pulled[reference])
             images[svc['name']] = pulled[reference]
         return images
 
@@ -744,7 +827,7 @@ class Manager:
             undo.reload = True
             self.call(['systemctl', 'daemon-reload'])
             self.start_units(plan, undo.started)
-            self.ready(app, definition, objects)
+            self.ready(app, definition, objects, watch=lambda container: self.container_output(container, values))
             # The new rows' names and sites: a failed projection keeps what it applied (its own restore).
             self.step('Adresler yayımlanıyor')
             self.publish()
@@ -756,14 +839,19 @@ class Manager:
             return {'ok': True, 'ad': app, 'revizyon': places['revision']}
         except Exception as original:
             failed = self.operation['step'] if self.operation else 'Kurulum'
+            cause = str(original) if isinstance(original, cfg.ContainerConfigError) else 'beklenmeyen hata.'
+            # The log says why before the rollback's own steps.
+            self.note(cause, 'hata')
             self.step('Geri alınıyor')
             recovered = self.undo_install(app, plan, objects, undo, old)
+            self.note('Yapılan her şey geri alındı.' if recovered else 'Geri alma tamamlanamadı.', 'bilgi' if recovered else 'hata')
             error = cfg.ContainerConfigError(
                 original.status if isinstance(original, cfg.ContainerConfigError) else 502,
                 ('Kurulum başarısız (%s): %s Yapılan her şey geri alındı.' if recovered else
                  'Kurulum başarısız (%s): %s Geri alma da tamamlanamadı; Gelişmiş → Podman ve İşlem geçmişine bakın.')
-                % (failed, str(original) if isinstance(original, cfg.ContainerConfigError) else 'beklenmeyen hata.'))
+                % (failed, cause))
             error.failed_step = failed
+            error.question = getattr(original, 'question', None)
             raise error from original
 
     def undo_install(self, app, plan, objects, undo, old):

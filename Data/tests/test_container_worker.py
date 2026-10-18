@@ -84,6 +84,7 @@ class FakeHost:
         self.fail = []
         self.unhealthy = set()
         self.restarts = {}
+        self.journal = {}
         self.vanish = set()
         self.version = '5.4.2'
         self.volumes = {}
@@ -192,6 +193,8 @@ class FakeHost:
         elif argv[0] == 'cp':
             source, target = argv[-2].rstrip('.'), argv[-1]
             shutil.copytree(source, target, dirs_exist_ok=True)
+        elif argv[0] == 'journalctl' and argv[1].startswith('CONTAINER_NAME='):
+            out = self.journal.get(argv[1].split('=', 1)[1], '')
         elif argv[:2] == ['systemctl', 'daemon-reload']:
             self.reloads += 1
         elif argv[:2] == ['systemctl', 'show'] and 'NRestarts' in argv:
@@ -501,6 +504,69 @@ class InstallTests(WorkerCase):
                 self.assertNotIn('never-print', json.dumps(record), 'a tool error is never echoed')
                 self.assert_no_secret()
 
+    def test_the_job_log_holds_each_step_and_fact_in_order(self):
+        self.install()
+        log = self.operation()['gunluk']
+        self.assertEqual(log[0], {'t': log[0]['t'], 'tur': 'adim', 'ileti': 'Doğrulanıyor'})
+        self.assertEqual(log[-1]['tur'], 'tamam')
+        texts = [line['ileti'] for line in log]
+        for before, after in [('Kayıt yazılıyor', 'İmaj indiriliyor: registry.example/notlar/web:1.4'),
+                              ('İmaj indiriliyor: registry.example/notlar/web:1.4', 'İmaj sabitlendi: registry.example/notlar/web@sha256:' + 'd' * 64),
+                              ('Başlatılıyor: konsol-notlar_web.service', 'Hazır olması bekleniyor'),
+                              ('Hazır olması bekleniyor', 'web çalışıyor.'), ('db çalışıyor.', 'Adresler yayımlanıyor')]:
+            self.assertLess(texts.index(before), texts.index(after), (before, after))
+        self.assertEqual({line['tur'] for line in log}, {'adim', 'bilgi', 'tamam'})
+        self.assertFalse([c for c in self.host.calls if c[0] == 'journalctl'], 'a running install reads no journal')
+
+    def test_a_failed_install_keeps_its_containers_output_masked_and_names_the_start_question(self):
+        self.host.restarts['konsol-notlar_web.service'] = 1
+        self.host.journal['notlar_web'] = ''.join('satır %d\n' % i for i in range(30)) + \
+            '\x1b[31mfatal:\x1b[0m parola %s kabul edilmedi\x07\n\n' % SECRET
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.install()
+        self.assertIn('web başladıktan hemen sonra durdu', str(err.exception))
+        self.assertIn(worker.DIRECT_HINT.strip(), str(err.exception))
+        record = self.operation()
+        self.assertEqual(record['soru'], 'start:web')
+        kinds = [(line['tur'], line['ileti']) for line in record['gunluk']]
+        output = [text for kind, text in kinds if kind == 'cikti']
+        self.assertEqual(len(output), worker.OUTPUT_LINES)
+        self.assertEqual(output[-1], 'fatal: parola •••• kabul edilmedi')
+        self.assertEqual(output[0], 'satır 11')
+        cause = kinds.index(('hata', 'web başladıktan hemen sonra durdu (günlüğü: journalctl -u konsol-notlar_web.service).'
+                             + worker.DIRECT_HINT))
+        self.assertLess(kinds.index(('cikti', output[-1])), cause)
+        self.assertLess(cause, kinds.index(('adim', 'Geri alınıyor')))
+        self.assertEqual(kinds[-1], ('bilgi', 'Yapılan her şey geri alındı.'))
+        self.assertEqual([k for k, _ in kinds].count('hata'), 1, 'the cause is said once')
+        journal = [c for c in self.host.calls if c[0] == 'journalctl']
+        self.assertEqual(journal, [['journalctl', 'CONTAINER_NAME=notlar_web', '--since', '@%d' % record['created_at'],
+                                    '-n', str(worker.OUTPUT_LINES), '-o', 'cat', '--no-pager']])
+        self.assert_nothing_left()
+        self.assert_no_secret()
+
+    def test_a_root_start_names_no_question_and_an_unreadable_journal_hides_nothing(self):
+        self.host.restarts['konsol-notlar_db.service'] = 1
+        self.host.fails('journalctl CONTAINER_NAME=notlar_db')
+        with self.assertRaises(cfg.ContainerConfigError) as err:
+            self.install()
+        self.assertIn('db başladıktan hemen sonra durdu', str(err.exception))
+        self.assertNotIn(worker.DIRECT_HINT.strip(), str(err.exception))
+        record = self.operation()
+        self.assertNotIn('soru', record)
+        self.assertIn({'t': record['gunluk'][0]['t'], 'tur': 'bilgi', 'ileti': 'notlar_db konteyneri bir şey yazmadı.'},
+                      [dict(line, t=record['gunluk'][0]['t']) for line in record['gunluk']])
+        self.assertNotIn('never-print', json.dumps(record))
+
+    def test_the_log_keeps_its_newest_lines(self):
+        self.manager.begin('uygulama-baslat', {'name': 'notlar'}, uuid.uuid4().hex)
+        for i in range(worker.LOG_LINES + 5):
+            self.manager.note('satır %d ' % i + 'x' * worker.LINE_CHARS)
+        log = self.operation()['gunluk']
+        self.assertEqual(len(log), worker.LOG_LINES)
+        self.assertTrue(log[-1]['ileti'].startswith('satır %d ' % (worker.LOG_LINES + 4)))
+        self.assertEqual({len(line['ileti']) for line in log}, {worker.LINE_CHARS})
+
     def test_a_failed_rollback_says_so(self):
         self.host.fails('systemctl start konsol-notlar_web.service')
         self.host.fails('podman secret rm')
@@ -616,8 +682,14 @@ class LifecycleTests(WorkerCase):
         before = apps.Records(self.env).snapshot('notlar')
         self.host.calls.clear()
         self.host.fails('systemctl start konsol-notlar_web.service')
-        with self.assertRaises(cfg.ContainerConfigError):
+        with self.assertRaises(cfg.ContainerConfigError) as err:
             self.execute('uygulama-baslat', {'name': 'notlar', 'revizyon': self.revision()})
+        # Any job but an install says why once, as its log's last line; only an install reads a journal.
+        log = self.operation()['gunluk']
+        self.assertEqual(log[-1]['tur'], 'hata')
+        self.assertEqual(log[-1]['ileti'], str(err.exception))
+        self.assertEqual([line['tur'] for line in log].count('hata'), 1)
+        self.assertFalse([c for c in self.host.calls if c[0] == 'journalctl'])
         self.assertEqual(apps.Records(self.env).snapshot('notlar'), before)
         self.assertNotIn('[Install]', self.unit('web'))
         self.assertIn('konsol-notlar_db.service', self.host.stopped())
@@ -743,7 +815,8 @@ class DraftAndJobTests(WorkerCase):
             worker.Manager(str(self.state), run=self.host, network=self.guard).execute('uygulama-kur', request, ident)
         self.assertEqual(err.exception.status, 409)
         record = json.loads((Path(self.env['KONTEYNER_STATE_DIR']) / 'operations' / (ident + '.json')).read_text())
-        self.assertEqual(set(record) - {'result', 'finished_at'}, {'id', 'action', 'name', 'state', 'step', 'created_at', 'updated_at'})
+        self.assertEqual(set(record) - {'result', 'finished_at'}, {'id', 'action', 'name', 'state', 'step', 'created_at', 'updated_at', 'gunluk'})
+        self.assertEqual({tuple(sorted(line)) for line in record['gunluk']}, {('ileti', 't', 'tur')})
         self.assertEqual((record['name'], record['action']), ('notlar', 'uygulama-kur'))
 
     def test_a_job_waits_briefly_for_a_held_install_lock(self):
