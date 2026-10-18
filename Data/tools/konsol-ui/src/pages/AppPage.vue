@@ -3,7 +3,8 @@
      prominent; then Özet · Erişim · Depolama · Tanım · Günlük (?sekme=). Data from GET /api/konsol/uygulamalar/{app};
      the live rate from the list, read again every 10 s while the page is shown. Başlat, Durdur, Yeniden başlat and
      Güncelle (only those the backend's `eylemler` offers) go to POST …/{app}/islem with the revision; Kaldır to
-     POST …/{app}/kaldir, keeping the data by default and deleting it only after the application's name is typed;
+     POST …/{app}/kaldir, deleting the data with it after the application's name is typed unless "Verileri sakla"
+     is ticked (DD-281: its unused images and, with the data, its job records go too);
      Tanım's apply is POST …/{app}/tanim. Each answers with a job (202) followed through İşlemler: its end reads the
      page again, a failure says why, an image update says whether anything changed, a finished removal leads back
      to the list. Durdur and Güncelle ask first; Kaldır is a dialog. Tanım is kept while another tab is shown, so a
@@ -109,7 +110,7 @@ const actionError = ref("");
 const actionNote = ref("");
 const confirmAction = ref<"durdur" | "guncelle" | null>(null);
 const removeOpen = ref(false);
-const keepData = ref(true);
+const keepData = ref(false);
 const deleteTyped = ref(false);
 const dialogOpen = computed(() => confirmAction.value !== null || removeOpen.value);
 
@@ -189,7 +190,7 @@ async function confirm(): Promise<void> {
 
 function askRemove(): void {
   actionError.value = "";
-  keepData.value = true;
+  keepData.value = false;
   deleteTyped.value = false;
   removeOpen.value = true;
 }
@@ -351,14 +352,20 @@ onBeforeUnmount(() => {
     </Modal>
 
     <Modal :open="removeOpen" :title="app ? `${app.ad} kaldırılsın mı?` : ''" @close="closeDialogs">
-      <p>{{ app?.ad }} durdurulur; birimleri, ağı, gizli değerleri, adresleri, yerel adları ve ham portları kaldırılır. İmajlar Gelişmiş'teki temizliğe kalır.</p>
+      <p data-testid="remove-text">
+        {{ app?.ad }} durdurulur; birimleri, ağı, gizli değerleri, adresleri, yerel adları, ham portları, verileri ve iş kayıtları kaldırılır.
+        İmajlarını başka bir uygulama ya da konteyner kullanmıyorsa onlar da silinir.
+      </p>
       <label class="check-row remove-keep" data-testid="remove-keep">
-        <input v-model="keepData" type="checkbox" data-autofocus />
+        <input v-model="keepData" type="checkbox" />
         <span>Verileri sakla <span class="mono muted wrap">{{ detail?.veri ?? "" }}</span></span>
       </label>
       <p class="notice" role="note"><Icon name="info" class="notice-icon" /><span>Sunucu klasörlerine (/srv) hiçbir durumda dokunulmaz.</span></p>
-      <p v-if="keepData" class="meter-note">Aynı adla yeniden eklenince klasör geri bağlanır; istemezseniz Gelişmiş → Podman'daki temizlikle silinir.</p>
-      <ConfirmWord v-else-if="app" v-model:confirmed="deleteTyped" :word="app.ad" />
+      <p v-if="keepData" class="meter-note">Klasör kalır; aynı adla yeniden eklenince geri bağlanır. İstemezseniz Gelişmiş → Podman'daki temizlikle silinir.</p>
+      <template v-else-if="app">
+        <p class="meter-note">Veriler geri alınamaz biçimde silinir; onaylamak için uygulamanın adını yazın.</p>
+        <ConfirmWord v-model:confirmed="deleteTyped" :word="app.ad" />
+      </template>
       <p v-if="actionError" class="form-error" role="alert" data-testid="dialog-error">{{ actionError }}</p>
       <template #actions>
         <button type="button" class="btn btn-secondary" :disabled="acting !== null" @click="closeDialogs">Vazgeç</button>

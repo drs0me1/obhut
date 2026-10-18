@@ -78,7 +78,7 @@ const mounts = computed(() =>
     </section>
     <Card title="Uygulamanın verileri" data-testid="data-folder">
       <p class="mono wrap" data-testid="data-path">{{ detail.veri }}</p>
-      <p class="meter-note">Uygulamanın klasörleri burada durur. Kaldırırken verilerin saklanması sorulur (saklamak varsayılan); sunucu klasörlerine (/srv) hiçbir durumda dokunulmaz.</p>
+      <p class="meter-note">Uygulamanın klasörleri burada durur. Kaldırınca veriler de silinir (uygulamanın adı yazılarak); saklamak isteğe bağlıdır. Sunucu klasörlerine (/srv) hiçbir durumda dokunulmaz.</p>
       <div><RouterLink :to="systemPath(detail.veri)" class="btn btn-secondary btn-sm">Sistem dosyaları'nda aç</RouterLink></div>
     </Card>
   </div>

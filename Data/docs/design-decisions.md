@@ -24,6 +24,34 @@ Konsol's single-container definitions and adoption, Yayınla and the manual
 phase 6; live entries that still mention them end with a note naming what no
 longer applies and which entry replaced it.
 
+### DD-281: Removing an application leaves nothing behind unless asked (v2-266)
+
+- **Why:** the operator removed an application and found its data folder (kept by default, K9) and its image
+  (left for Gelişmiş's cleanup) still on the server, besides job records holding its container's lines. A full scan
+  of the test host found nothing else: record, Quadlet and systemd units, containers, pod, bridge, Podman secrets,
+  bind anchors, Caddy sites, dnsmasq names, iptables and the container guard's nft rules all went. The operator
+  decided that a removal cleans everything by default (2026-10-18).
+- **Data:** Konsol's removal dialog now deletes the data by default; the typed application name stays the
+  confirmation (an irreversible action, rebuild.md ground rule 7). "Verileri sakla" keeps the folder for a
+  reinstall under the same name; Gelişmiş's cleanup still offers such a folder. The request is unchanged
+  (`veri: sil|sakla`, `onay` for `sil`); only the default moved.
+- **Images:** each image the record pinned goes after the record does, with the cleanup's own checks (no other
+  record names it, no container in any state comes from it, never `--force`). One that stays is a line of the job's
+  log, never its failure: the application is gone either way, and the cleanup offers the image later.
+- **Job records:** with the data, the application's earlier records in `KONTEYNER_STATE_DIR/operations/` go (a
+  failed install's record holds its container's own lines); the removal's own record stays, and İşlem geçmişi
+  keeps its lines (who did what, when). Records of an application that was never installed go after 30 days
+  (DD-280).
+- **systemd's memory:** a unit whose file went stays listed while it is failed (a container killed because it would
+  not stop in time, one that never came up), so a removal, an install's rollback and an edit that drops a service
+  reset the failed state of their units (`systemctl reset-failed`, never a job failure). Found on the test host: a
+  removed application's service showed as `not-found failed` in `systemctl --failed`.
+- **Left on purpose:** `/srv` folders an application used (the operator's), İşlem geçmişi, and the journal, which
+  rotates.
+- **Tests:** the worker's removal (an unused image goes, one a container uses stays and is named, the data and the
+  job records go with `sil` and only this application's, every unit's failed state reset), a rollback's and an
+  edit's reset; the removal dialog's default, focus and texts; live on the test host.
+
 ### DD-280: An open Konsol notices a new build (v2-265)
 
 - **Why:** after the installer ran again from the terminal, an open Konsol page kept running the code it had
@@ -414,6 +442,8 @@ longer applies and which entry replaced it.
   drafts. After a reboot every application came back. A re-run of the installer left the running
   applications alone. Konsol's list, Genel Bakış and every tab of four applications read clean at 390 and
   1440 px.
+- **Note (DD-281):** a removal now deletes the data by default once the name is typed ("sakla" keeps it), takes
+  the images nothing else uses, and with the data the application's job records.
 
 ### DD-273: The rebuild's phase 2: reading and inspecting application files (v2-256)
 

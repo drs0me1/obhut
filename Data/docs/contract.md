@@ -692,8 +692,12 @@ and is refused while a settings change is pending. Each write is a line `uygulam
   ports, folders, secrets, start modes, warnings); applying it restarts the application. A staying port's
   answer is filled from its row; a different one is refused ("Bu portun kullanımı Erişim'den değişir.").
 - **Refresh from the source address:** fetched and inspected again; only new questions are new.
-- **Remove (K9):** the units, containers, pod, network, secrets, record and rows go; the data stays unless
-  the application's name is typed for `sil`; images stay for the cleanup; `/srv` is never touched.
+- **Remove (K9, DD-281):** the units, containers, pod, network, secrets, record and rows go; each of its images
+  goes unless another record names it or any container comes from it (one that stays is a line of the job's
+  log); with `sil`, after the application's name is typed (Konsol's default), its data folder and its earlier
+  job records go too; `sakla` keeps the folder for a reinstall under the same name or the cleanup. The units'
+  failed state is reset, as after an install's rollback and an edit that drops a service. `/srv` is never
+  touched.
 
 ### 4.10 Image updates (DD-214)
 

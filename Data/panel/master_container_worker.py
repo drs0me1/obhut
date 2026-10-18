@@ -595,6 +595,18 @@ class Manager:
             started.append(unit)
             self.call(['systemctl', 'start', unit], timeout=READY_SECONDS + 30)
 
+    def forget_units(self, units):
+        """Units whose files went: systemd keeps a failed one listed (a container killed because it would not stop
+        in time, one that never came up) until it is reset. Resetting one that was not failed is no error, and a
+        reset that cannot run never fails the job."""
+        names = sorted(u for u in units if isinstance(u, str) and u.endswith('.service'))
+        if not names:
+            return
+        try:
+            self.call(['systemctl', 'reset-failed', '--', *names], timeout=30, check=False)
+        except cfg.ContainerConfigError:
+            pass
+
     def stop_units(self, units, check=True):
         """Stops units in the given order; with check, a unit that is still active afterwards is a failure."""
         for unit in units:
@@ -896,6 +908,7 @@ class Manager:
             attempt(lambda: self.unit_restore(undo.units))
         if undo.reload:
             attempt(lambda: self.call(['systemctl', 'daemon-reload']))
+            attempt(lambda: self.forget_units(self.all_units(plan, objects)))
         for name in reversed(undo.secrets):
             attempt(lambda name=name: self.remove_secret(name))
         for path in reversed(undo.folders):
@@ -1104,6 +1117,7 @@ class Manager:
             self.step('Ağ koruması uygulanıyor')
             self.net_call('apply')
             self.call(['systemctl', 'daemon-reload'])
+            self.forget_units(set(self.all_units(old_plan, old_objects)) - set(self.all_units(plan, objects)))
             if gone := set(old_objects['containers'].values()) - set(objects['containers'].values()):
                 for container in sorted(gone):
                     if self.exists('container', container):
@@ -1141,7 +1155,7 @@ class Manager:
                     raise cfg.ContainerConfigError(502, 'Yeni tanım çalışıyor; eski Podman secret kaldırılamadı: %s' % podman) from err
         return {'ok': True, 'ad': app, 'revizyon': places['revision']}
 
-    # -- uygulama-kaldir (K9: data kept by default; images stay for Gelişmiş's cleanup)
+    # -- uygulama-kaldir (K9 as amended by DD-281: its unused images go; with sil, its data and job records too)
     def app_remove(self, request):
         app, record = self.app_record(request)
         veri = request.get('veri')
@@ -1162,6 +1176,7 @@ class Manager:
             for name in units:
                 cfg.unlink(self.unit_dir() / name)
             self.call(['systemctl', 'daemon-reload'])
+            self.forget_units(self.all_units(plan, objects))
         except Exception as original:
             def recover():
                 self.unit_restore(units)
@@ -1187,13 +1202,53 @@ class Manager:
             self.publish()
         except cfg.ContainerConfigError as err:
             unpublished = err
+        self.remove_images(record['places'].get('images') or {})
         if veri == 'sil':
             self.step('Veriler siliniyor')
             apps.remove_tree(apps.data_dir(self.env, app))
+            self.step('İş kayıtları siliniyor')
+            self.forget_jobs(app)
         if unpublished is not None:
             raise cfg.ContainerConfigError(502, 'Uygulama kaldırıldı ama adresleri yayından kaldırılamadı: %s' % unpublished) \
                 from unpublished
         return {'ok': True, 'ad': app, 'veri': veri}
+
+    def remove_images(self, images):
+        """A removed application's images, each unless another record names it or any container comes from it
+        (cleanup_one's checks, made after the record went). One that stays is a line of the job's log, never its
+        failure: the application is gone either way, and Gelişmiş's cleanup offers the image later."""
+        refs = sorted({ref for ref in images.values() if isinstance(ref, str) and ref})
+        if refs:
+            self.step('İmajlar kaldırılıyor')
+        for ref in refs:
+            try:
+                if not self.exists('image', ref):
+                    continue
+                info = self.json_call(['podman', 'image', 'inspect', ref])
+                ident = info[0].get('Id') if isinstance(info, list) and len(info) == 1 and isinstance(info[0], dict) else None
+                cfg.require(isinstance(ident, str) and re.fullmatch(r'(?:sha256:)?[0-9a-f]{64}', ident), 'İmaj okunamadı.', 502)
+                self.cleanup_one('imaj', ident.rpartition(':')[2])
+                self.note('İmaj kaldırıldı: %s' % ref)
+            except cfg.ContainerConfigError as err:
+                self.note('İmaj kaldı (%s): %s' % (ref, err))
+
+    def forget_jobs(self, app):
+        """The application's earlier job records go with its data (a failed install's record holds its container's
+        own lines); this job's record stays. İşlem geçmişi keeps its lines."""
+        if self.op_path is None:
+            return
+        for path in self.op_path.parent.glob('*.json'):
+            if path == self.op_path:
+                continue
+            try:
+                if not stat.S_ISREG(path.lstat().st_mode):
+                    continue
+                with open(path, encoding='utf-8') as handle:
+                    job = json.load(handle)
+                if isinstance(job, dict) and job.get('name') == app:
+                    path.unlink()
+            except (OSError, ValueError):
+                pass
 
     # -- uygulama-taslak (K2): an image turned into a Compose draft; nothing else is written
     def app_draft(self, request):

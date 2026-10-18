@@ -90,6 +90,7 @@ class FakeHost:
         self.version = '5.4.2'
         self.volumes = {}
         self.reloads = 0
+        self.reset = []
         # The cleanup's view: images by ID, the containers Podman's filters find ("ancestor=<id>", "network=<name>",
         # "volume=<name>") and the images another one depends on (their last tag cannot take them).
         self.images = {}
@@ -198,6 +199,8 @@ class FakeHost:
             out = self.journal.get(argv[1].split('=', 1)[1], '')
         elif argv[:2] == ['systemctl', 'daemon-reload']:
             self.reloads += 1
+        elif argv[:2] == ['systemctl', 'reset-failed']:
+            self.reset.extend(argv[3:])
         elif argv[:2] == ['systemctl', 'show'] and 'NRestarts' in argv:
             out = '%d\n' % self.restarts.get(argv[-1], 0)
         elif argv[:2] == ['systemctl', 'show']:
@@ -490,6 +493,8 @@ class InstallTests(WorkerCase):
                 self.assertIn('Yapılan her şey geri alındı', str(err.exception))
                 if label in ('restarted', 'gone'):
                     self.assertIn('journalctl -u konsol-notlar_web.service', str(err.exception))
+                if label in ('first start', 'second start', 'unhealthy', 'restarted', 'gone', 'wrong user'):
+                    self.assertIn('konsol-notlar_web.service', self.host.reset, 'a failed unit is not left listed')
                 if label != 'guard':
                     self.assert_nothing_left()
                 self.assertFalse(os.path.lexists(Path(self.env['UYGULAMA_STATE_DIR']) / 'notlar'))
@@ -785,6 +790,8 @@ class LifecycleTests(WorkerCase):
         self.assertTrue((Path(self.env['UYGULAMA_VERI_DIR']) / 'notlar/db-data').is_dir(), 'a dropped folder stays on disk')
         self.assertEqual(self.host.secrets, {}, 'a dropped secret goes after the new units run')
         self.assertNotIn('notlar_db', self.host.containers)
+        self.assertEqual(self.host.reset, ['konsol-notlar_db.service', 'konsol-notlar_web.service'],
+                         'the dropped services (web and db; the new file has app) are forgotten')
 
     def test_an_edit_cannot_rename_the_application(self):
         given = app_fixtures.answers()
@@ -794,17 +801,41 @@ class LifecycleTests(WorkerCase):
                                             'yanitlar': given, 'revizyon': self.revision()})
         self.assertEqual(err.exception.status, 409)
 
-    def test_removal_keeps_the_data_by_default_and_deletes_it_only_with_the_name(self):
+    def test_removal_takes_the_unused_images_and_with_the_name_the_data_and_the_job_records(self):
         data = Path(self.env['UYGULAMA_VERI_DIR']) / 'notlar'
+        operations = Path(self.env['KONTEYNER_STATE_DIR']) / 'operations'
+        places = self.record()['places']['images']
+        web, db = '%064x' % 0xaa, '%064x' % 0xbb
+        # web's image is only notlar's; db's is also another container's, so it stays.
+        for ident, ref, tag in ((web, places['web'], 'registry.example/notlar/web:1.4'), (db, places['db'], 'registry.example/notlar/db:16')):
+            info = {'Id': 'sha256:' + ident, 'RepoTags': [tag], 'RepoDigests': [ref]}
+            self.host.images.update({ident: info, ref: info})
+        self.host.users['ancestor=' + db] = [{'Id': 'c' * 64}]
         with self.assertRaises(cfg.ContainerConfigError):
             self.execute('uygulama-kaldir', {'name': 'notlar', 'revizyon': self.revision(), 'veri': 'sil', 'onay': 'yanlis'})
         self.execute('uygulama-kaldir', {'name': 'notlar', 'revizyon': self.revision(), 'veri': 'sakla'})
         self.assert_nothing_left()
-        self.assertTrue((data / 'uploads').is_dir(), 'K9: the data stays')
-        self.assertFalse([c for c in self.host.calls if c[:3] == ['podman', 'image', 'rm']], 'images stay for Gelişmiş')
+        self.assertTrue((data / 'uploads').is_dir(), 'kept when asked')
+        self.assertEqual(set(self.host.reset), {'konsol-notlar_web.service', 'konsol-notlar_db.service', 'konsol-notlar-network.service'},
+                         'systemd forgets the failed state of every unit that went')
+        self.assertIn(['podman', 'image', 'rm', 'registry.example/notlar/web:1.4'], self.host.calls)
+        self.assertNotIn(web, self.host.images, 'the unused image went')
+        self.assertIn(db, self.host.images, 'an image a container uses stays')
+        log = [(line['tur'], line['ileti']) for line in self.operation()['gunluk']]
+        self.assertIn(('bilgi', 'İmaj kaldırıldı: %s' % places['web']), log)
+        self.assertIn(('bilgi', 'İmaj kaldı (%s): İmaj bir konteynerde kullanılıyor.' % places['db']), log)
+        self.assertEqual(self.operation()['state'], 'done')
+        # Again, now deleting: the data and notlar's earlier job records go; another application's and this job's stay.
         self.install()
+        other = operations / ('f' * 32 + '.json')
+        other.write_text(json.dumps({'id': 'f' * 32, 'name': 'pano', 'action': 'uygulama-kur'}))
+        before = {p.name for p in operations.iterdir() if json.loads(p.read_text()).get('name') == 'notlar'}
+        self.assertGreaterEqual(len(before), 3, 'two installs and a removal so far')
         self.execute('uygulama-kaldir', {'name': 'notlar', 'revizyon': self.revision(), 'veri': 'sil', 'onay': 'notlar'})
         self.assertFalse(data.exists())
+        left = [json.loads(p.read_text()) for p in operations.iterdir()]
+        self.assertEqual([j['action'] for j in left if j.get('name') == 'notlar'], ['uygulama-kaldir'], 'only this removal stays')
+        self.assertTrue(other.exists())
 
     def test_an_interrupted_removal_can_be_run_again(self):
         self.host.fails('podman secret rm')

@@ -195,7 +195,8 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
   application's own folder (A5), secret values become Podman secrets on standard input and never reach a
   file, log or reply, images are pinned by digest (`Pull=never`) and updated only on the operator's
   confirmation (**DD-214**), each application has its own bridge and its containers reach only the
-  internet (**DD-224**). Removing an application keeps its data unless its name is typed (K9).
+  internet (**DD-224**). Removing an application deletes its data and its job records once its name is typed, unless the
+  operator keeps the data, and its images when nothing else uses them (K9 as amended by **DD-281**).
 - A container port reaches outside only through its access row (**DD-275**): an address (a Caddy row to a
   `127.0.0.1` pool port: Tailscale name, optional Tailscale port, optional internet name) or a raw port
   (closed, Tailscale or internet; the internet needs an extra consent; published on the Tailscale or WAN

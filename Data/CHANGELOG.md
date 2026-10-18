@@ -21,6 +21,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   A new build number alone (an install that did not change Konsol's files) changes nothing on the page.
 - A failed install's container lines in its log mask a secret even when it spans several lines; job records
   older than 30 days are removed when a job begins.
+- Removing an application leaves nothing behind by default (DD-281): its data is deleted once you type its name
+  (tick "Verileri sakla" to keep it), its images go unless another application or container uses them, and its
+  old job records go with the data. Your `/srv` folders are never touched.
 
 ## [2.0.0] — 2026-10-18
 

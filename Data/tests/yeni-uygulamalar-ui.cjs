@@ -618,29 +618,31 @@ async function noStyles(page, where) {
     await waitFor(() => detailReads() > beforeUpdate, "read again when the image update ends");
     await page.getByTestId("action-note").filter({ hasText: "notlar: imajlar zaten güncel." }).waitFor();
     assert.equal(reads("/api/konsol/konteynerler/islem").at(-1).query, `?id=${updateJob}`, "the job's own record");
-    // Kaldır keeps the data by default: the body names only the data choice and the revision.
+    // Kaldır deletes the data by default (DD-281), after the application's name; "Verileri sakla" keeps it.
     const kaldir = "/api/konsol/uygulamalar/notlar/kaldir";
     await button("kaldir").click();
     const removeDialog = page.getByRole("dialog", { name: "notlar kaldırılsın mı?" });
     await removeDialog.waitFor();
     assert.match(await removeDialog.getAttribute("class"), /modal-dialog/);
+    assert.equal((await removeDialog.getByTestId("remove-text").innerText()).replace(/\s+/g, " "),
+      "notlar durdurulur; birimleri, ağı, gizli değerleri, adresleri, yerel adları, ham portları, verileri ve iş kayıtları kaldırılır. " +
+      "İmajlarını başka bir uygulama ya da konteyner kullanmıyorsa onlar da silinir.");
     const keep = removeDialog.getByRole("checkbox", { name: /Verileri sakla/ });
-    assert(await keep.isChecked(), "keeping the data is the default");
-    assert(await keep.evaluate((el) => el === document.activeElement), "the default has focus");
+    assert(!(await keep.isChecked()), "deleting the data is the default");
+    const word = removeDialog.getByRole("textbox", { name: "Onaylamak için notlar yazın" });
+    assert(await word.evaluate((el) => el === document.activeElement), "the name to type has focus");
     assert.equal(await removeDialog.getByTestId("remove-keep").innerText(), "Verileri sakla\n/var/lib/master-stack/uygulamalar/notlar");
     assert.match(await removeDialog.innerText(), /Sunucu klasörlerine \(\/srv\) hiçbir durumda dokunulmaz\./);
-    assert.equal(await removeDialog.getByRole("textbox").count(), 0, "no word to type while the data stays");
+    assert.match(await removeDialog.innerText(), /Veriler geri alınamaz biçimde silinir; onaylamak için uygulamanın adını yazın\./);
     const removeButton = removeDialog.locator('[data-onay="kaldir"]');
-    assert.equal(await removeButton.innerText(), "Kaldır");
-    assert(await removeButton.isEnabled());
-    await shot(page, "1440-light-uygulama-kaldir.png");
-    // Deleting the data asks for the application's name; keeping it again needs none.
-    await keep.uncheck();
-    const word = removeDialog.getByRole("textbox", { name: "Onaylamak için notlar yazın" });
-    await word.waitFor();
     assert(await removeButton.isDisabled(), "not before the name");
     assert.equal(await removeButton.innerText(), "Kaldır ve verileri sil");
+    await shot(page, "1440-light-uygulama-kaldir.png");
+    // Keeping the data needs no name.
     await keep.check();
+    await word.waitFor({ state: "detached" });
+    assert.match(await removeDialog.innerText(), /Klasör kalır; aynı adla yeniden eklenince geri bağlanır\./);
+    assert.equal(await removeButton.innerText(), "Kaldır");
     assert(await removeButton.isEnabled());
     await removeButton.click();
     await removeDialog.waitFor({ state: "detached" });
@@ -688,7 +690,7 @@ async function noStyles(page, where) {
     await page.getByTestId("app-actions").locator('[data-eylem="kaldir"]').click();
     const wipeDialog = page.getByRole("dialog", { name: "yedek kaldırılsın mı?" });
     await wipeDialog.waitFor();
-    await wipeDialog.getByRole("checkbox", { name: /Verileri sakla/ }).uncheck();
+    assert(!(await wipeDialog.getByRole("checkbox", { name: /Verileri sakla/ }).isChecked()), "deleting is the default");
     const name = wipeDialog.getByRole("textbox", { name: "Onaylamak için yedek yazın" });
     await name.fill("yede");
     assert(await wipeDialog.locator('[data-onay="kaldir"]').isDisabled());
@@ -797,7 +799,6 @@ async function noStyles(page, where) {
       await dialog.waitFor();
       const box = await dialog.boundingBox();
       assert(Math.abs(box.y + box.height - 844) <= 1 && box.width === 390, "at the bottom on a phone");
-      await dialog.getByRole("checkbox", { name: /Verileri sakla/ }).uncheck();
       await dialog.getByRole("textbox").waitFor();
       await shot(page, `390-${colorScheme}-kaldir.png`);
       await dialog.getByRole("button", { name: "Kapat" }).tap();
@@ -835,7 +836,7 @@ async function noStyles(page, where) {
       "with the rate, update digests and services; Erişim's read-only rows with links to Adresler and the sheet they open; Depolama's mounts " +
       "with their ways into Dosyalar and the data folder; Tanım's source, answers without secret values, ports from their rows, secrets " +
       "by name, units and the file with the inspector's marks; Günlük per service with Yenile, an error and the Canlı switch), exact POST " +
-      "bodies (yeniden-baslat, durdur, guncelle, baslat, kaldir keeping and deleting the data with the typed name), dialog focus trap, Esc and " +
+      "bodies (yeniden-baslat, durdur, guncelle, baslat, kaldir deleting the data by default with the typed name, or keeping it), dialog focus trap, Esc and " +
       "focus return, error replies, jobs in the drawer and their end reading the page again, a failed job's reason, the image update's " +
       "result, a removed application, a busy one, an unknown one, 1440/390/320 in light and dark. Screenshots: " + h.shots);
   } finally {
