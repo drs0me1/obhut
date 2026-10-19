@@ -1,8 +1,8 @@
-// The six sections of Konsol (DD-258, docs/archive/redesign.md): Genel Bakış and Uygulamalar (phase 2), Erişim
-// (phase 3), Sistem and Gelişmiş (phase 4a), Dosyalar (phase 4b); each section's tabs and add flows.
+// The seven sections of Konsol (DD-258, docs/archive/redesign.md): Genel Bakış and Uygulamalar (phase 2), Erişim
+// (phase 3), Sistem and Gelişmiş (phase 4a), Dosyalar (phase 4b), Podman (DD-289); each section's tabs and add flows.
 import type { IconName } from "./components/icons";
 
-export type SectionId = "genel" | "uygulamalar" | "erisim" | "dosyalar" | "sistem" | "gelismis";
+export type SectionId = "genel" | "uygulamalar" | "podman" | "erisim" | "dosyalar" | "sistem" | "gelismis";
 
 export interface Section {
   id: SectionId;
@@ -33,6 +33,14 @@ export const SECTIONS: readonly Section[] = [
     keywords: "uygulama servis konteyner podman imaj compose kubernetes başlat durdur kaldır",
   },
   {
+    id: "podman",
+    title: "Podman",
+    short: "Podman",
+    description: "Konteynerler, imajlar, birimler, ağlar ve depolama.",
+    icon: "box",
+    keywords: "podman konteyner imaj birim volume ağ network depolama disk bellek işlemci temizlik temizle kullanılmayan sahipsiz obhut dışı",
+  },
+  {
     id: "erisim",
     title: "Erişim",
     short: "Erişim",
@@ -60,9 +68,9 @@ export const SECTIONS: readonly Section[] = [
     id: "gelismis",
     title: "Gelişmiş",
     short: "Gelişmiş",
-    description: "Salt okunur teknik görünümler; tek işlem temizlik.",
+    description: "Salt okunur teknik görünümler.",
     icon: "sliders",
-    keywords: "teknik caddy dns kayıt güvenlik duvarı kural port podman imaj ağ temizlik",
+    keywords: "teknik caddy dns kayıt güvenlik duvarı kural port dinleyici",
   },
 ];
 
@@ -74,7 +82,6 @@ export const ACCESS_TABS = [
   { id: "genel", label: "Genel", keywords: "erişim matris kim nereden sertifika özet" },
   { id: "adresler", label: "Adresler", keywords: "adres aç doğrudan port tailscale adı tailscale portu internet adı caddy https sertifika" },
   { id: "adlar", label: "Yerel adlar", keywords: "yerel ad dns dnsmasq kayıt yönlendirme üst dns yerel alan adı" },
-  { id: "tailscale", label: "Tailscale", keywords: "tailnet cihaz anahtar çıkış düğümü exit node" },
   { id: "wireguard", label: "WireGuard", keywords: "vpn ağ cihaz peer qr profil" },
   { id: "guvenlik-duvari", label: "Güvenlik duvarı", keywords: "firewall port kural izin" },
 ] as const;
@@ -98,18 +105,17 @@ export const SYSTEM_TABS = [
   { id: "saglik", label: "Sağlık", keywords: "sağlık denetim onarım denetle onar master-onar onarım kaydı" },
   { id: "guncellemeler", label: "Güncellemeler", keywords: "güncelleme sürüm yeni sürüm github yükselt imaj uygulama güncellemesi" },
   { id: "hesap", label: "Hesap", keywords: "hesap oturum parola giriş çıkış kullanıcı" },
-  { id: "sunucu", label: "Sunucu", keywords: "sunucu çekirdek işletim sistemi yeniden başlat reboot açık kalma" },
+  { id: "sunucu", label: "Sunucu", keywords: "sunucu çekirdek işletim sistemi yeniden başlat reboot açık kalma tailscale cihaz istemci çıkış düğümü exit node" },
   { id: "gecmis", label: "İşlem geçmişi", keywords: "işlem geçmişi kayıt log denetim kaydı kim ne yaptı" },
 ] as const;
 
 export type SystemTab = (typeof SYSTEM_TABS)[number]["id"];
 
-/** Gelişmiş's tabs (K8), in the address as ?sekme=: read-only views; Podman's cleanup is the only write. */
+/** Gelişmiş's tabs (K8, DD-289), in the address as ?sekme=: read-only views. */
 export const ADVANCED_TABS = [
   { id: "caddy", label: "Caddy", keywords: "caddy site yapılandırma caddyfile ham yönlendirme proxy" },
   { id: "dns", label: "DNS", keywords: "dns dnsmasq kayıt ad dinleme dhcp" },
   { id: "guvenlik-duvari", label: "Güvenlik duvarı", keywords: "güvenlik duvarı iptables nftables teknik kural zincir dinleyici" },
-  { id: "podman", label: "Podman", keywords: "podman imaj birim volume ağ network temizlik temizle kullanılmayan sahipsiz konteyner" },
 ] as const;
 
 export type AdvancedTab = (typeof ADVANCED_TABS)[number]["id"];

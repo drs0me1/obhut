@@ -3544,8 +3544,7 @@
                     "type": "string",
                     "enum": [
                       "adresler",
-                      "uygulama",
-                      "tailscale"
+                      "uygulama"
                     ]
                   },
                   "hedef": {
@@ -3908,12 +3907,6 @@
                   "surum": {
                     "type": "string"
                   },
-                  "adresler": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
                   "cikis_dugumu": {
                     "anyOf": [
                       {
@@ -3932,7 +3925,6 @@
                   "anahtar_bitis",
                   "ad",
                   "surum",
-                  "adresler",
                   "cikis_dugumu"
                 ],
                 "additionalProperties": false
@@ -5217,6 +5209,49 @@
                     "type": "null"
                   }
                 ]
+              },
+              "types": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "images",
+                        "containers",
+                        "volumes"
+                      ]
+                    },
+                    "count": {
+                      "type": "integer"
+                    },
+                    "active": {
+                      "type": "integer"
+                    },
+                    "size": {
+                      "type": "integer"
+                    },
+                    "reclaimable": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "count",
+                    "active",
+                    "size",
+                    "reclaimable"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
             "required": [],

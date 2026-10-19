@@ -735,7 +735,7 @@ class AuditAndShapeTests(AccessFixture):
         self.assertNotIn("YayinSatiri", master_api.SCHEMAS)
         self.assertNotIn("elle", master_api.SCHEMAS["Hizmet"]["properties"]["tur"]["enum"])
         self.assertEqual(master_api.SCHEMAS["Uyari"]["properties"]["duzelt"]["anyOf"][0]["properties"]["bolum"]["enum"],
-                         ["adresler", "uygulama", "tailscale"])
+                         ["adresler", "uygulama"], "DD-288: no Tailscale tab to lead to")
 
 
 if __name__ == "__main__":

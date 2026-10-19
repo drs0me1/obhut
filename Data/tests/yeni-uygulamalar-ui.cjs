@@ -145,7 +145,7 @@ const data = {
   bekleyen: { bekleyen: null },
   etkinlik: { items: [] },
   erisim: { read_at: 1791845000, alan: "ev", revizyon: "rev-1", hizmetler: ACCESS_ROWS, hatalar: [], uyarilar: [WARNING],
-    ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "sunucu", surum: "1.80.0", adresler: ["100.64.0.2"], cikis_dugumu: true },
+    ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "sunucu", surum: "1.80.0", cikis_dugumu: true },
       internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, aglar: [] }, sertifikalar: [] } },
   uygulamalar: uygulamalar(apps()),
   // Erişim → Adresler (a port's link leads there): the local names, read with the rows.
@@ -221,7 +221,7 @@ async function noStyles(page, where) {
       "Bir Compose ya da Kubernetes dosyasından, bir adresten, bir imaj adından ya da var olan bir konteynerden eklenir.");
     assert.equal(await page.locator(".app-table").count(), 0);
     assert.equal(await page.getByRole("link", { name: "Uygulama ekle" }).count(), 2, "in the toolbar and in the empty state");
-    assert.equal(await page.getByTestId("infra").count(), 0, "the infrastructure card is Gelişmiş's (K8)");
+    assert.equal(await page.getByTestId("infra").count(), 0, "the infrastructure card is Podman's (K8, DD-289)");
     const emptyChips = page.getByRole("group", { name: "Süzgeç" }).getByRole("button");
     assert.deepEqual((await emptyChips.allInnerTexts()).map((t) => t.replace(/\s+/g, " ")), ["Tümü 0", "Çalışan 0", "Durdurulmuş 0", "Dikkat 0"]);
     await noStyles(page, "uygulamalar, no applications");

@@ -1,5 +1,5 @@
 <!-- Command palette (DD-258; rebuild phase 5): ⌘K / Ctrl+K or the search field. Pages (with the tabs of Erişim,
-     Dosyalar, Sistem and Gelişmiş), the applications (each opens its own page), the access rows by name (each opens
+     Dosyalar, Sistem and Gelişmiş; Podman, DD-289), the applications (each opens its own page), the access rows by name (each opens
      its sheet in Erişim → Adresler) and actions ("Uygulama ekle", "Adres aç", the theme, İşlemler), matched with
      Turkish case rules ("İŞ" finds "iş", "ıs" does not find "is"). A combobox over a listbox: focus stays in the
      field, ↑/↓ move, Enter opens, Esc closes. -->

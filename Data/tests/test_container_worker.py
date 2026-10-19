@@ -1,5 +1,5 @@
 """The root worker (rebuild DD-271, phases 3 and 4): an application's lifecycle with its access rows, the
-settings worker's row change and its restore, the address refresh (--adres-yenile) and Gelişmiş's Podman
+settings worker's row change and its restore, the address refresh (--adres-yenile) and Podman's
 cleanup (K8). Podman, systemctl, Quadlet, the guard and the publication projection are fakes; every rollback path
 is driven to its end and checked for what it left behind. No secret value may reach an argument, a file other
 than Podman's standard input, an operation record, a log line or a reply."""
@@ -905,7 +905,7 @@ class DraftAndJobTests(WorkerCase):
 
 
 class CleanupTests(WorkerCase):
-    """K8: Gelişmiş's cleanup. Every item is checked again right before it goes; what is in use or gone stays and is
+    """K8: Podman's cleanup. Every item is checked again right before it goes; what is in use or gone stays and is
     named, the rest goes; nothing is removed with --force."""
     P, U, N, C = ('%064x' % n for n in (0x1, 0x2, 0x3, 0x4))
 

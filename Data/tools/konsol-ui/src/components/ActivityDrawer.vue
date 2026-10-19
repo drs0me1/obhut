@@ -1,6 +1,6 @@
 <!-- İşlemler (DD-258; rebuild phase 5): the settings change waiting for its confirmation (named as the banner names
-     it; it is confirmed or rolled back from the banner), the jobs the server is running (applications, Gelişmiş's
-     Podman cleanup, the Obhut update, repair) and the ones that just ended with their result (a failed one's reason,
+     it; it is confirmed or rolled back from the banner), the jobs the server is running (applications, Podman's
+     cleanup, the Obhut update, repair) and the ones that just ended with their result (a failed one's reason,
      such as what a cleanup left and why), as the event stream or GET /api/konsol/etkinlik report them. A side
      panel: focus stays inside, Esc or the backdrop closes it. -->
 <script setup lang="ts">
@@ -23,7 +23,7 @@ watch(open, (isOpen) => {
   if (isOpen) void nextTick(() => closeButton.value?.focus());
 });
 
-const KINDS: Record<Islem["tur"], string> = { uygulama: "Uygulama", konteyner: "Gelişmiş", guncelleme: "Güncelleme", onarim: "Onarım" };
+const KINDS: Record<Islem["tur"], string> = { uygulama: "Uygulama", konteyner: "Podman", guncelleme: "Güncelleme", onarim: "Onarım" };
 const STATES: Record<Islem["durum"], string> = { calisiyor: "Çalışıyor", tamam: "Tamamlandı", hata: "Hata" };
 const kind = (j: Islem) => KINDS[j.tur] ?? j.tur;
 const state = (j: Islem) => STATES[j.durum] ?? j.durum;

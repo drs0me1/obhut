@@ -1,7 +1,7 @@
 // What needs the operator (rebuild phase 5): one list for Uyarılar (the page the top bar's count opens) and the
 // count itself, so both say the same thing. A failed or warning health check leads to Sistem →
 // Sağlık (its repair is there), an Erişim warning to where its `duzelt` says (an access row's sheet, an
-// application, the Tailscale tab), an application that does not run fully to its page. A newer image of an
+// application; Tailscale's own to Erişim → Genel), an application that does not run fully to its page. A newer image of an
 // application is news, not a problem: it is listed (tone "accent") but not counted in the chip.
 import { computed } from "vue";
 import type { Tone } from "./components/ui/types";

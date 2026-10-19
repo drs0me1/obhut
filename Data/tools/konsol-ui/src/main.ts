@@ -11,6 +11,7 @@ import "./styles/ui.css";
 import "./styles/pages.css";
 import "./styles/erisim.css";
 import "./styles/sistem.css";
+import "./styles/podman.css";
 import "./styles/uygulama.css";
 import "./styles/paylasim.css";
 import "./styles/dosyalar.css";

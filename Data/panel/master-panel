@@ -2092,7 +2092,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         view = self.panel.settings(fresh="yenile" in query)
         self.json(200, {"read_at": view["read_at"], "caddy": view["web"], "dnsmasq": view["dns"]})
 
-    # K8: Gelişmiş's only write, the cleanup of what nothing uses: a read model and one job (each item checked again
+    # K8: Podman's only write, the cleanup of what nothing uses: a read model and one job (each item checked again
     # by the worker right before it goes), with an audit line naming what was asked.
     def api_temizlik(self, query):
         self.container_read(lambda: self.container_view().cleanup(fresh="yenile" in query))

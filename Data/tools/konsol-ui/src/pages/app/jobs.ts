@@ -1,5 +1,5 @@
 // A job followed through İşlemler (live.islemler): an application's (tur "uygulama": an install, a lifecycle action,
-// a definition change, a removal) or Gelişmiş's cleanup (tur "konteyner"): its steps while it runs, and its end
+// a definition change, a removal) or Podman's cleanup (tur "konteyner"): its steps while it runs, and its end
 // once — finished or failed, or gone from the list after it was seen running (it ended a while ago). A job not
 // listed yet is waited for.
 import { watch } from "vue";

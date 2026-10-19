@@ -1,4 +1,4 @@
-<!-- The sidebar (DD-258): wordmark and server, the six sections with their counts and, at the foot, the resources
+<!-- The sidebar (DD-258): wordmark and server, the seven sections with their counts and, at the foot, the resources
      card (the CPU, the memory, the disk of the user area, whose path Dosyalar → Depolama names; DD-287) and the server card (the Tailscale connection, the system, how long
      it has been up, its Tailscale and internet addresses, the Obhut version; DD-286). The phone shows the same
      content in the "Daha fazla" sheet. An open session on the

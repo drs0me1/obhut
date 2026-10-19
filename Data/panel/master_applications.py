@@ -90,12 +90,12 @@ TAILS = (100, 200, 500, 1000)
 FETCH_SECONDS = 10.0
 FETCH_REDIRECTS = 3
 UPDATE_ORDER = ("yeni", "denetlenemedi", "bilinmiyor", "guncel", "sabit")
-# Folder sizes (Dosyalar → Depolama, Gelişmiş's cleanup): one read spends at most SIZE_SECONDS walking the folders it
+# Folder sizes (Dosyalar → Depolama, Podman's cleanup): one read spends at most SIZE_SECONDS walking the folders it
 # has not measured; a measurement is kept SIZE_TTL seconds, a walk that ran out of time or could not read SIZE_FAIL_TTL.
 SIZE_SECONDS = 5.0
 SIZE_TTL = 300
 SIZE_FAIL_TTL = 60
-# Gelişmiş's cleanup (K8): at most this many items in one job; Podman's default network is never offered.
+# Podman's cleanup (K8): at most this many items in one job; Podman's default network is never offered.
 CLEANUP_LIMIT = 200
 CLEANUP_KINDS = {"imajlar": "imaj", "aglar": "ag", "birimler": "birim", "klasorler": "klasor"}
 DEFAULT_NETWORK = "podman"
@@ -599,7 +599,7 @@ def record_images(record):
 
 
 def resource_uses(records):
-    """What the application records use, whether their applications run or not (Gelişmiş's cleanup and the
+    """What the application records use, whether their applications run or not (Podman's cleanup and the
     inventory): {"image": {reference: {apps}}, "network": {name: {apps}}, "container": {name: app}}. An image is
     named by its pinned digest and by the reference its file gives; the containers are every service's and a pod's
     infra container. A folder without yerler.json is an install that has not written its record yet and is left out
@@ -645,7 +645,7 @@ def cleanup_items(request):
     return items
 
 
-# -- folder sizes (a bounded walk; Dosyalar → Depolama and Gelişmiş's cleanup)
+# -- folder sizes (a bounded walk; Dosyalar → Depolama and Podman's cleanup)
 def tree_size(path, deadline, clock=time.monotonic):
     """The disk use of a folder tree in bytes (allocated blocks, as du counts them), walked without following a
     link and without leaving the folder's file system, a hard-linked file counted once: ({"boyut": bytes, "alt":

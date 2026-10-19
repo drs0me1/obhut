@@ -28,7 +28,8 @@ PS = [{"Id": "2073a1b2c3d4e5f6", "Names": ["deneme-medya"], "Image": "ghcr.io/ex
        "Created": 1790900000, "StartedAt": 1790900001, "ExitCode": 3, "Restarts": 0, "Labels": {}, "Networks": ["podman"],
        "Ports": [{"host_ip": "", "host_port": 8081, "container_port": 80, "protocol": "tcp", "range": 1}], "Mounts": []}]
 IMAGES = [{"Names": ["ghcr.io/example/medya:latest"], "Size": 228000000, "Created": 1790667122}, {"Names": None, "Size": 5, "Created": 1}]
-DF = [{"Type": "Images", "RawSize": 228000000}, {"Type": "Containers", "RawSize": 1000}, {"Type": "Local Volumes", "RawSize": 0}]
+DF = [{"Type": "Images", "Total": 2, "Active": 1, "RawSize": 228000000, "RawReclaimable": 5},
+      {"Type": "Containers", "Total": 2, "Active": 1, "RawSize": 1000, "RawReclaimable": 0}, {"Type": "Local Volumes", "RawSize": 0}]
 
 
 class Ctx:
@@ -78,7 +79,10 @@ class ContainerViewTests(unittest.TestCase):
         self.assertEqual(web["ports"], [{"host_ip": "0.0.0.0", "host_port": 8081, "container_port": 80, "protocol": "tcp"}])
         self.assertEqual(answer["images"], [{"name": "ghcr.io/example/medya:latest", "size": 228000000, "created": 1790667122},
                                             {"name": "<adsız>", "size": 5, "created": 1}])
-        self.assertEqual(answer["storage"], {"images": 2, "containers": 2, "size": 228001000})
+        self.assertEqual(answer["storage"], {"images": 2, "containers": 2, "size": 228001000, "types": [
+            {"type": "images", "count": 2, "active": 1, "size": 228000000, "reclaimable": 5},
+            {"type": "containers", "count": 2, "active": 1, "size": 1000, "reclaimable": 0},
+            {"type": "volumes", "count": 0, "active": 0, "size": 0, "reclaimable": None}]}, "DD-289: each kind as Podman counts it")
         self.assertNotIn("Env", json.dumps(answer))
         self.assertEqual([c[0][:2] for c in self.ctx.calls], [["podman", "version"], ["podman", "ps"], ["podman", "images"], ["podman", "system"]])
 

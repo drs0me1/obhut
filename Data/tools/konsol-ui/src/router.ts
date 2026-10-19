@@ -1,4 +1,4 @@
-// Hash routes (#/genel …), so Caddy needs no rewrite. The six sections with their tabs in the query
+// Hash routes (#/genel …), so Caddy needs no rewrite. The seven sections with their tabs in the query
 // (#/erisim?sekme=adresler, #/dosyalar?sekme=paylasimlar), an application's page by its name
 // (#/uygulamalar/notlar), Uyarılar (#/uyarilar, the page the top bar's count opens, under Genel Bakış) and
 // Uygulama ekle, a full-window page of its own (#/uygulama-ekle: under #/uygulamalar/ it would be an application
@@ -8,6 +8,7 @@ import { createRouter, createWebHashHistory } from "vue-router";
 import OverviewPage from "./pages/OverviewPage.vue";
 import ProblemsPage from "./pages/ProblemsPage.vue";
 import AppsPage from "./pages/AppsPage.vue";
+import PodmanPage from "./pages/PodmanPage.vue";
 import AppPage from "./pages/AppPage.vue";
 import AddAppPage from "./pages/AddAppPage.vue";
 import AccessPage from "./pages/AccessPage.vue";
@@ -28,6 +29,7 @@ declare module "vue-router" {
 const PAGES: Record<SectionId, Component> = {
   genel: OverviewPage,
   uygulamalar: AppsPage,
+  podman: PodmanPage,
   erisim: AccessPage,
   sistem: SystemPage,
   gelismis: AdvancedPage,

@@ -8,7 +8,7 @@ import { openSurface, ui } from "../ui";
 
 const route = useRoute();
 const shown = SECTIONS.filter((s) => s.id === "genel" || s.id === "uygulamalar" || s.id === "erisim" || s.id === "dosyalar");
-const moreActive = computed(() => route.meta.section === "sistem" || route.meta.section === "gelismis");
+const moreActive = computed(() => route.meta.section === "podman" || route.meta.section === "sistem" || route.meta.section === "gelismis");
 // The section's own page is the current page; a page below it (an application) is in the current section.
 const current = (id: SectionId) => (route.name === id ? "page" : route.meta.section === id ? "true" : undefined);
 </script>

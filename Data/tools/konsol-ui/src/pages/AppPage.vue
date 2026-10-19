@@ -369,7 +369,7 @@ onBeforeUnmount(() => {
         <span>Verileri sakla <span class="mono muted wrap">{{ detail?.veri ?? "" }}</span></span>
       </label>
       <p class="notice" role="note"><Icon name="info" class="notice-icon" /><span>Sunucu klasörlerine (/srv) hiçbir durumda dokunulmaz.</span></p>
-      <p v-if="keepData" class="meter-note">Klasör kalır; aynı adla yeniden eklenince geri bağlanır. İstemezseniz Gelişmiş → Podman'daki temizlikle silinir.</p>
+      <p v-if="keepData" class="meter-note">Klasör kalır; aynı adla yeniden eklenince geri bağlanır. İstemezseniz Podman'da kullanılmayanlar arasından kaldırılır.</p>
       <template v-else-if="app">
         <p class="meter-note">Veriler geri alınamaz biçimde silinir; onaylamak için uygulamanın adını yazın.</p>
         <ConfirmWord v-model:confirmed="deleteTyped" :word="app.ad" />

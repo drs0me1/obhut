@@ -4,12 +4,11 @@
 import { accessRoute } from "./sections";
 import type { ErisimSatiri, Hizmet, Uyari } from "./api/sema";
 
-/** Where a warning is fixed: its access row's sheet in Adresler (the target is the row id), the application's
-    page (the target is the application's name) or the Tailscale tab; without a target, Erişim itself. */
+/** Where a warning is fixed: its access row's sheet in Adresler (the target is the row id) or the application's
+    page (the target is the application's name); without a place (Tailscale itself), Erişim → Genel. */
 export function fixRoute(fix: Uyari["duzelt"]): string {
   if (!fix) return accessRoute();
   if (fix.bolum === "uygulama" && fix.hedef) return "/uygulamalar/" + encodeURIComponent(fix.hedef);
-  if (fix.bolum === "tailscale") return accessRoute("tailscale");
   return accessRoute("adresler", fix.hedef);
 }
 

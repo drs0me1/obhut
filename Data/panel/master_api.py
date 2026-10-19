@@ -97,9 +97,9 @@ SCHEMAS = {
         "web": null(obj({"tail": BOOL, "enabled": BOOL, "domain": STR})),
     }),
     # DD-265: the row a warning is about (its id; "" when none) and where it is fixed: adresler (Erişim → Adresler;
-    # hedef the row id), uygulama (an application's page; hedef its name), tailscale.
+    # hedef the row id) or uygulama (an application's page; hedef its name); null: Erişim itself (DD-288).
     "Uyari": obj({"seviye": enum("warn", "bad"), "hizmet": STR, "metin": STR,
-                  "duzelt": null(obj({"bolum": enum("adresler", "uygulama", "tailscale"), "hedef": STR}))}),
+                  "duzelt": null(obj({"bolum": enum("adresler", "uygulama"), "hedef": STR}))}),
     "OnarimAdimi": obj({"id": STR, "ad": STR, "durum": enum("ok", "onarildi", "sorun", "hata", "atlandi", "calisiyor"),
                         "detay": STR}),
     "Onarim": obj({"calisiyor": BOOL, "kurulu": BOOL, "baslatilabilir": BOOL,
@@ -120,8 +120,7 @@ SCHEMAS = {
         "read_at": INT, "alan": STR, "revizyon": STR,
         "ozet": obj({
             "tailscale": obj({"ipv4": STR, "ipv6": STR, "durum": enum("bagli", "bagli-degil", "bilinmiyor"),
-                              "anahtar_bitis": null(INT), "ad": STR, "surum": STR, "adresler": arr(STR),
-                              "cikis_dugumu": null(BOOL)}),
+                              "anahtar_bitis": null(INT), "ad": STR, "surum": STR, "cikis_dugumu": null(BOOL)}),
             "internet": obj({"ipv4": STR, "ipv6": STR,
                              "acik": arr(obj({"ad": STR, "port": INT, "proto": STR, "aileler": arr(INT),
                                               "kaynak": enum("temel", "kural")}))}),
@@ -204,7 +203,10 @@ SCHEMAS = {
         "volumes": arr(open_obj({"name": STR, "driver": STR, "size": null(INT), "used_by": arr(STR), "managed": BOOL})),
         "networks": arr(open_obj({"name": STR, "id": STR, "driver": STR, "subnets": arr(STR), "used_by": arr(STR),
                                   "managed": BOOL, "internal": BOOL})),
-        "storage": open_obj({"images": INT, "containers": INT, "size": null(INT)}),
+        # types (DD-289): `podman system df` by kind; size and reclaimable in bytes, count and active how many.
+        "storage": open_obj({"images": INT, "containers": INT, "size": null(INT),
+                             "types": arr(obj({"type": enum("images", "containers", "volumes"), "count": INT, "active": INT,
+                                               "size": INT, "reclaimable": null(INT)}))}),
         "resource_errors": open_obj({}),
     }),
     # DD-266: Sistem.
@@ -257,7 +259,7 @@ SCHEMAS = {
                         "names": arr(open_obj({"name": STR, "iface": STR, "family": null(INT), "address": STR, "source": STR})),
                         "raw": arr(ref("YapilandirmaDosyasi"))}),
     }),
-    # K8: Gelişmiş's cleanup. What nothing uses (an image by its ID with its tags; a network or volume by its name; a
+    # K8: Podman's cleanup. What nothing uses (an image by its ID with its tags; a network or volume by its name; a
     # removed application's data folder by its name, with its size) and the containers no application owns
     # (yonetici: podman — nothing else manages it, kayitsiz — an application's labels without a record, baska —
     # another manager), read-only.
@@ -629,7 +631,7 @@ ROUTES = (
     Route("GET", "/api/konsol/gelismis", "gelismis",
           "Gelişmiş: etkin Caddy ve dnsmasq yapılandırması (salt okunur); ?yenile önbelleği atlar", ref("Gelismis"),
           query={"yenile": STR}),
-    # K8: Gelişmiş's only write.
+    # K8: Podman's only write.
     Route("GET", "/api/konsol/gelismis/temizlik", "temizlik",
           "Hiçbir şeyin kullanmadığı imajlar, ağlar, birimler ve kaldırılmış uygulamaların veri klasörleri; Obhut'un "
           "yönetmediği konteynerler (salt okunur); ?yenile klasörleri yeniden ölçer", ref("Temizlik"), query={"yenile": STR}),

@@ -24,6 +24,46 @@ Konsol's single-container definitions and adoption, Yayınla and the manual
 phase 6; live entries that still mention them end with a note naming what no
 longer applies and which entry replaced it.
 
+### DD-289: Podman is a section of its own; what nothing uses is removed from its list (v2-276)
+
+- **Why:** the operator wanted Gelişmiş's Podman tab redesigned as a dashboard and moved into the sidebar as its
+  own section, and the cleanup merged into the lists it removes from: no Temizlik card and no "Temizlenebilir"
+  summary, unused images, volumes and networks marked in their own list, ticked and removed, the page compact
+  (2026-10-19, after an approved mockup).
+- **What:** `#/podman` (PodmanPage), under Uygulamalar in the sidebar and in the phone's "Daha fazla". Four
+  summaries: the runtime, the containers (running of all, unhealthy, Obhut's and the others), their CPU and memory
+  summed against the server's memory, and what Podman takes on disk by kind. Every container of
+  `konteynerler/liste` read-only (the reply carried them already, no page showed them): state with health,
+  restarts and exit code, image, CPU, memory with a bar, uptime, published ports; an application's leads to its
+  page, one Obhut does not manage says who runs it (the cleanup's `yonetici`), filtered in the address
+  (`?suzgec=`). Then the images (one row per ID with every name), volumes, networks and the folders removed
+  applications left, in tabs (`?kaynak=`): what the cleanup's read model offers carries "Kullanılmayan" and a
+  tick, the ticks stay across the tabs, and "Seçilenleri kaldır…" is K8's job unchanged (the typed word, the
+  dialog naming each item, each checked again right before it goes). An item the cleanup offers but the list did
+  not name (the list could not be read) is still offered. Gelişmiş keeps Caddy, DNS and the technical firewall and
+  has no write. The routes stay (`gelismis/temizlik` is the cleanup's path); the job and the audit kind say
+  "Podman".
+- **Storage by kind:** `storage.types` of `konteynerler/liste` is `podman system df`'s rows (Images, Containers,
+  Local Volumes) with their count, active count, size and reclaimable bytes; `storage.size` stays their sum.
+- **Tests:** the summaries, the containers' order, owners and filter, images grouped by ID, the ticks across tabs
+  and the exact body, the job's end, nothing to remove, a failed read; the backend's kinds; no Podman tab in
+  Gelişmiş and the sidebar's seven sections.
+
+### DD-288: Erişim has no Tailscale tab; its facts in Sistem → Sunucu, its key warning in Uyarılar (v2-276)
+
+- **Why:** the operator found the tab a single card (2026-10-19). Its state, addresses and the key's end were on
+  Erişim → Genel's Tailscale card already; the device's name, the client version, the exit node, the admin
+  console link and the warning under 14 days were nowhere else, and the operator chose where they go.
+- **What:** Sistem → Sunucu lists "Tailscale adı", "Tailscale istemcisi" and "Çıkış düğümü" beside the server's
+  Tailscale addresses (Erişim's summary, read every minute). A device key ending within 14 days is a warning of
+  the read model ("bad" once it has ended), so it reaches the top bar's count and Uyarılar instead of waiting on a
+  tab. Genel's Tailscale card leads to the Tailscale admin console (a new tab), where devices, ACLs, the key and
+  exit-node approval change. Tailscale's warnings (not connected, the key) name no place, so Uyarılar leads to
+  Erişim → Genel; `duzelt.bolum` `tailscale` and the summary's `adresler`, which only the tab read, are removed
+  (rebuild ground rule 2). `?sekme=tailscale` opens Genel like any unknown tab.
+- **Tests:** the card's link and target, the Sunucu facts, the key warning's levels and order, the old address
+  opening Genel.
+
 ### DD-287: Genel Bakış is the applications; resources in the sidebar; no WAN rate, each application's totals instead (v2-275)
 
 - **Why:** the operator wanted the server card aligned with the sidebar's foot, the Kaynaklar meters beside it

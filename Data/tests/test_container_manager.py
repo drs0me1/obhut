@@ -95,7 +95,7 @@ class ManagerTests(unittest.TestCase):
                          [('web', 'calisiyor', 'bilinmiyor'), ('db', 'calisiyor', 'bilinmiyor')])
         self.assertEqual(item['eylemler'], ['durdur', 'yeniden-baslat', 'guncelle'])
         self.assertEqual(item['kaynak'], {'cpu': None, 'bellek': 4000}, 'memory summed over the services; one reading gives no CPU')
-        self.assertNotIn('altyapi', answer, "Podman's inventory is Gelişmiş's; the list carries none")
+        self.assertNotIn('altyapi', answer, "Podman's inventory is its own section's; the list carries none")
         # One service down: kismen; a failed unit: hata; a stopped record: durduruldu.
         self.units['konsol-notlar_db.service'] = 'inactive'
         self.inspected['notlar_db']['State']['Running'] = False
@@ -369,7 +369,7 @@ class ManagerTests(unittest.TestCase):
 
 
 class CleanupViewTests(unittest.TestCase):
-    """K8: Gelişmiş's cleanup read model offers only what is proven unused, and lists the containers no application
+    """K8: Podman's cleanup read model offers only what is proven unused, and lists the containers no application
     owns; a source that cannot be read leaves what depends on it empty."""
     A, B, Z, R = ('%064x' % n for n in (0xa, 0xb, 0xf, 0xe))
 

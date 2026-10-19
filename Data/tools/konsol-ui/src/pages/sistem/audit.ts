@@ -1,7 +1,7 @@
 // İşlem geçmişi's words (GET /api/konsol/islemler, DD-276, A7): every line the backends write, in the interface's
 // words. The root backend's own actions (the account, the update, the reboot, repair, the folder shares), the
 // settings transaction's ("ayar-<step>", its detail naming an access row, a WireGuard action or "ayarlar"; the same
-// names the pending banner uses), the applications' ("uygulama-<verb>"), Gelişmiş's cleanup ("temizlik"),
+// names the pending banner uses), the applications' ("uygulama-<verb>"), Podman's cleanup ("temizlik"),
 // WireGuard's device actions ("wireguard-<verb>") and the file backends' (source "dosya").
 import { SCOPE_TEXT } from "../../access";
 import type { KayitSatiri, WireGuardEylemi } from "../../api/sema";
@@ -98,18 +98,18 @@ const ACTION_TEXT: Record<string, Text> = {
   guncelleme: (e) => `Obhut güncellemesi başlatıldı: ${e.detail}`,
   onarim: (e) => (e.detail === "denetle" ? "Denetim başlatıldı" : "Denetim ve onarım başlatıldı"),
   "yeniden-baslat": (e) => `Sunucunun yeniden başlatılması istendi (${e.detail})`,
-  // Gelişmiş
+  // Podman
   temizlik: (e) => `Podman temizliği istendi (${e.detail})`,
 };
 
-export type Kind = "konsol" | "erisim" | "wireguard" | "paylasim" | "dosya" | "uygulama" | "gelismis";
+export type Kind = "konsol" | "erisim" | "wireguard" | "paylasim" | "dosya" | "uygulama" | "podman";
 
 const LABELS: Record<Kind, string> = {
   konsol: "Konsol", erisim: "Erişim", wireguard: "WireGuard", paylasim: "Paylaşımlar", dosya: "Dosyalar", uygulama: "Uygulamalar",
-  gelismis: "Gelişmiş",
+  podman: "Podman",
 };
 /** The kinds in the order of the filter chips. */
-export const KIND_ORDER: readonly Kind[] = ["konsol", "uygulama", "erisim", "wireguard", "paylasim", "dosya", "gelismis"];
+export const KIND_ORDER: readonly Kind[] = ["konsol", "uygulama", "podman", "erisim", "wireguard", "paylasim", "dosya"];
 
 export function kindOf(e: KayitSatiri): Kind {
   if (e.source !== "panel") return "dosya";
@@ -117,7 +117,7 @@ export function kindOf(e: KayitSatiri): Kind {
   if (e.action.startsWith("wireguard-")) return "wireguard";
   if (e.action.startsWith("ayar-")) return e.detail.startsWith("wireguard ") ? "wireguard" : "erisim";
   if (e.action.startsWith("paylasim-")) return "paylasim";
-  if (e.action === "temizlik") return "gelismis";
+  if (e.action === "temizlik") return "podman";
   return "konsol";
 }
 

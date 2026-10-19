@@ -1,7 +1,8 @@
 /* Konsol's interface, Erişim (DD-258; access rows since rebuild phase 4, the phase 5 prototype's screens): Genel,
-   Adresler, Yerel adlar, Tailscale, Güvenlik duvarı and the pending settings change in the committed build under
+   Adresler, Yerel adlar, Güvenlik duvarı and the pending settings change in the committed build under
    Data/console/yeni, with the production CSP and fixture replies for every endpoint they read or post to
-   (yeni-harness.cjs). Genel: the summaries and the matrix, each access row linking to its panel. Adresler: the
+   (yeni-harness.cjs). Genel: the summaries (Tailscale's leads to its admin console: no Tailscale tab, DD-288) and the
+   matrix, each access row linking to its panel. Adresler: the
    addresses (Konsol, Paylaşımlar, each application port with a Caddy row) with their Tailscale name, Tailscale port,
    internet name and state, and the raw ports with their scope; a row's panel opens under the row itself, one at a time
    (no sheet beside the page); a switch or a scope opens it with that change made (a closing straight to the plan,
@@ -73,7 +74,7 @@ function erisim(o = {}) {
     read_at: NOW, alan: "ev", revizyon: "rev-1", hatalar: [], uyarilar: WARNINGS, hizmetler: rows(),
     ozet: {
       tailscale: { ipv4: "100.64.0.2", ipv6: "fd7a:115c:a1e0::2", durum: "bagli", anahtar_bitis: NOW + 10 * DAY, ad: "sunucu.example-tailnet.ts.net", surum: "1.88.3",
-        adresler: ["100.64.0.2", "fd7a:115c:a1e0::2"], cikis_dugumu: true },
+        cikis_dugumu: true },
       internet: { ipv4: "203.0.113.10", ipv6: "", acik: [
         { ad: "SSH", port: 22, proto: "tcp", aileler: [4, 6], kaynak: "temel" },
         { ad: "WireGuard wg0", port: 61001, proto: "udp", aileler: [4], kaynak: "temel" },
@@ -287,7 +288,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await page.goto(url("#/erisim"));
     assert.equal(await page.locator("main h1").innerText(), "Erişim");
     const tabs = page.getByRole("tablist", { name: "Erişim bölümleri" }).getByRole("tab");
-    assert.deepEqual(await tabs.allInnerTexts(), ["Genel", "Adresler", "Yerel adlar", "Tailscale", "WireGuard", "Güvenlik duvarı"]);
+    assert.deepEqual(await tabs.allInnerTexts(), ["Genel", "Adresler", "Yerel adlar", "WireGuard", "Güvenlik duvarı"]);
     await page.getByTestId("matrix").waitFor();
     // Yayınla is gone: no button, no query parameter, no request to the old routes. Warnings are Genel Bakış'.
     assert.equal(await page.getByTestId("publish").count(), 0, "no Yayınla button");
@@ -303,7 +304,8 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
       return [await card.locator(".pill").innerText(), await summaryRows(card), await card.locator(".summary-link").innerText(), await card.locator(".summary-link").getAttribute("href")];
     };
     assert.deepEqual(await summary("sum-tailscale"), ["Bağlı", [["IPv4", "100.64.0.2"], ["IPv6", "fd7a:115c:a1e0::2"], ["Anahtar", KEY_DATE]],
-      "Tailscale", "#/erisim?sekme=tailscale"]);
+      "Yönetim paneli", "https://login.tailscale.com/admin/machines"], "DD-288: devices, ACLs and the key change in the admin console");
+    assert.deepEqual(await page.getByTestId("sum-tailscale").locator(".summary-link").evaluate((a) => [a.target, a.rel]), ["_blank", "noopener noreferrer"]);
     assert.match(await page.getByTestId("sum-tailscale").locator("dd").nth(2).getAttribute("class"), /warn-text/, "a key within 14 days is a warning");
     // The internet card holds its addresses only; how many ports are open is its state, which ones Güvenlik duvarı's.
     assert.deepEqual(await summary("sum-internet"), ["3 port açık", [["IPv4", "203.0.113.10"], ["IPv6", "yok"]], "Güvenlik duvarı", "#/erisim?sekme=guvenlik-duvari"]);
@@ -373,40 +375,29 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     assert.equal(await page.getByRole("dialog").count(), 0, "?yayinla= opens nothing");
     await page.context().close();
 
-    // ================= Tailscale: the device, its key, the exit node and the admin console
+    // ================= Tailscale has no tab of its own (DD-288): its old address opens Genel, its warnings lead there
     page = await newPage();
     await page.goto(url("#/erisim?sekme=tailscale"));
-    const device = page.getByTestId("ts-device");
-    await device.waitFor();
-    assert.equal(await device.locator("h2").innerText(), "Bu sunucu tailnet'te");
-    assert.deepEqual(await device.locator("dt").allInnerTexts(), ["Cihaz adı", "Adres", "İstemci", "Anahtar süresi", "Çıkış düğümü"]);
-    assert.equal(await page.getByTestId("ts-name").innerText(), "sunucu.example-tailnet.ts.net");
-    assert.equal(await page.getByTestId("ts-addresses").innerText(), "100.64.0.2 · fd7a:115c:a1e0::2");
-    assert.equal(await page.getByTestId("ts-version").innerText(), "1.88.3");
-    assert.match(await page.getByTestId("ts-key").innerText(), /gün kaldı$/);
-    await page.getByTestId("ts-key-warning").waitFor();
-    assert.match(await page.getByTestId("ts-exit").innerText(), /^Sunuluyor/);
-    const admin = page.getByTestId("ts-admin-link");
-    assert.deepEqual([await admin.getAttribute("href"), await admin.getAttribute("target"), await admin.getAttribute("rel")],
-      ["https://login.tailscale.com/admin/machines", "_blank", "noopener noreferrer"]);
-    assert.equal(await device.locator("button").count(), 0, "nothing changes Tailscale from Konsol");
-    await shot(page, "1440-light-erisim-tailscale.png", true);
+    await page.getByTestId("matrix").waitFor();
+    const accessTabs = page.getByRole("tablist", { name: "Erişim bölümleri" });
+    assert.equal(await accessTabs.getByRole("tab", { name: "Tailscale" }).count(), 0, "no Tailscale tab");
+    assert.equal(await accessTabs.getByRole("tab", { selected: true }).innerText(), "Genel");
     await page.context().close();
-    // Disconnected: a "bad" warning whose fix is the Tailscale tab.
+    // Disconnected: a "bad" warning with no place; Uyarılar leads to Erişim → Genel, whose card says so.
     data.erisim = erisim({ uyarilar: [{ seviye: "bad", hizmet: "", metin: "Tailscale bağlı değil; Konsol'a ve tailnet adlarına öbür cihazlardan ulaşılamaz.",
-      duzelt: { bolum: "tailscale", hedef: "" } }] });
+      duzelt: null }] });
     data.erisim.ozet.tailscale = { ...data.erisim.ozet.tailscale, durum: "bagli-degil", anahtar_bitis: null, cikis_dugumu: false };
     data.erisim.ozet.wireguard = { kurulu: false, durduruldu: true, aglar: [] };
     page = await newPage();
     await page.goto(url("#/uyarilar"));
     const overviewFix = page.locator('.problem[data-kind="erisim"]').getByRole("link", { name: "Erişim'de incele" });
-    assert.equal(await overviewFix.getAttribute("href"), "#/erisim?sekme=tailscale", "Uyarılar' link follows duzelt");
+    assert.equal(await overviewFix.getAttribute("href"), "#/erisim", "a warning with no place leads to Erişim → Genel");
     await overviewFix.click();
-    await page.waitForURL((u) => u.hash === "#/erisim?sekme=tailscale");
-    assert.equal(await page.getByTestId("ts-device").locator(".pill").innerText(), "Bağlı değil");
-    assert.match(await page.getByTestId("ts-device").locator(".card-text").innerText(), /^Konsol'a ve tailnet adlarına/);
-    assert.equal(await page.getByTestId("ts-key").innerText(), "Süresiz ya da bilinmiyor");
-    assert.equal(await page.getByTestId("ts-exit").innerText(), "Sunulmuyor.");
+    await page.waitForURL((u) => u.hash === "#/erisim");
+    const tsCard = page.getByTestId("sum-tailscale");
+    assert.equal(await tsCard.locator(".pill").innerText(), "Bağlı değil");
+    assert.deepEqual(await tsCard.locator("dt").allInnerTexts(), ["IPv4", "IPv6", "Cihaz"], "no key end: the device's name instead");
+    assert.equal(await tsCard.locator("dd").nth(2).innerText(), "sunucu.example-tailnet.ts.net");
     // WireGuard with no network: the summary says it is off.
     await page.goto(url("#/erisim"));
     assert.equal(await page.getByTestId("sum-wireguard").locator(".summary-empty").innerText(), "Ağ yok; açınca ilk ağ kurulur.");
@@ -1224,8 +1215,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
 
     // ================= 1440, 390 and 320 in both themes: no style attribute, no horizontal scroll
     const VIEWS = [["genel", "#/erisim", "[data-testid=matrix]"], ["adresler", "#/erisim?sekme=adresler", "[data-testid=raw-rows] tbody tr"],
-      ["adlar", "#/erisim?sekme=adlar", "[data-testid=names] tbody tr"], ["tailscale", "#/erisim?sekme=tailscale", "[data-testid=ts-device]"],
-      ["guvenlik", "#/erisim?sekme=guvenlik-duvari", ".fw-table"]];
+      ["adlar", "#/erisim?sekme=adlar", "[data-testid=names] tbody tr"], ["guvenlik", "#/erisim?sekme=guvenlik-duvari", ".fw-table"]];
     for (const colorScheme of ["light", "dark"]) {
       page = await newPage({ colorScheme });
       for (const [name, hash, ready] of VIEWS) {

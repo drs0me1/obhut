@@ -69,6 +69,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   beside the search is the one place that says how many, Uyarılar the one place that lists them.
 - "Geri" and "Genel Bakış" buttons before every page's title (and before an application's trail), so any page
   reached through a link has a way back inside Konsol, also when it runs without a browser bar.
+- Podman is a section of its own in the sidebar, under Uygulamalar (DD-289). At the top: whether Podman runs and
+  its version, how many containers run and how many are unhealthy, their CPU and memory against the server's, and
+  what images, containers and volumes take on disk. Then every container with its state, image, CPU, memory,
+  uptime and ports; an application's container leads to its page, and one Obhut does not manage says who runs it
+  (filter: Tümü, Çalışan, Durmuş, Obhut dışı). Then the images (one row per image with all its names), volumes,
+  networks and the folders removed applications left: what nothing uses is marked "Kullanılmayan" and can be
+  ticked, across the tabs, and removed with "Seçilenleri kaldır…" (the same cleanup, with `temizle` typed). The
+  separate Temizlik card is gone. Gelişmiş is Caddy, DNS and the technical firewall, read-only.
+- Erişim no longer has a Tailscale tab (DD-288). Erişim → Genel's Tailscale card keeps the state, the addresses
+  and the key's end, and its link opens the Tailscale admin console; Sistem → Sunucu shows the device's Tailscale
+  name, the client version and whether it is offered as an exit node. A device key that ends within 14 days is
+  now a warning in Uyarılar (and in the top bar's count), not only a line on the tab.
 
 ## [2.0.0] — 2026-10-18
 

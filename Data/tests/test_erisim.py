@@ -4,6 +4,7 @@ master_erisim.build() is fed the shapes the backend's own sources return (docume
 only); every result is checked against master_api's Erisim schema. The route test runs the real
 handler on a temporary Unix socket."""
 import copy
+import datetime
 import json
 from pathlib import Path
 import sys
@@ -134,8 +135,7 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual(result["hatalar"], [])
         self.assertEqual(result["ozet"]["tailscale"], {"ipv4": "100.64.0.2", "ipv6": "fd7a:115c:a1e0::2", "durum": "bagli",
                                                       "anahtar_bitis": 1782864000, "ad": "sunucu.tail0000.ts.net",
-                                                      "surum": "1.90.1", "adresler": ["100.64.0.2", "fd7a:115c:a1e0::2"],
-                                                      "cikis_dugumu": True})
+                                                      "surum": "1.90.1", "cikis_dugumu": True})
         self.assertEqual([(p["ad"], p["port"], p["proto"], p["aileler"]) for p in result["ozet"]["internet"]["acik"]],
                          [("SSH", 22, "tcp", [4, 6]), ("Caddy HTTPS · notlar · WAN", 443, "tcp", [4]),
                           ("Tailscale", 41641, "udp", [4, 6]), ("WireGuard wg0 · home", 61001, "udp", [4])])
@@ -276,7 +276,7 @@ class ReadModelTests(unittest.TestCase):
         result = self.build(tailscale={"BackendState": "Stopped", "Self": {"Online": False}})
         self.assertEqual(result["ozet"]["tailscale"]["durum"], "bagli-degil")
         self.assertEqual((result["uyarilar"][0]["seviye"], result["uyarilar"][0]["hizmet"], result["uyarilar"][0]["duzelt"]),
-                         ("bad", "", {"bolum": "tailscale", "hedef": ""}), "DD-265: no row; fixed on the Tailscale tab")
+                         ("bad", "", None), "DD-288: no row and no place; Erişim → Genel shows Tailscale's summary")
         self.assertIsNone(self.build(tailscale={"BackendState": "Running", "Self": {"Online": True}})["ozet"]["tailscale"]["cikis_dugumu"])
         self.assertEqual(self.build(tailscale=None)["ozet"]["tailscale"]["durum"], "bilinmiyor")
         settings = copy.deepcopy(SETTINGS)
@@ -287,6 +287,22 @@ class ReadModelTests(unittest.TestCase):
         self.assertIn("5 gün sonra doluyor", warning[0]["metin"])
         settings["manage"]["publications"][1]["expires"] = NOW - 60
         self.assertEqual([w["seviye"] for w in self.build(settings)["uyarilar"]], ["bad"])
+
+    def test_tailscale_key_expiry_is_a_warning(self):
+        """DD-288: the device key's end within 14 days is a warning of its own (it was only on the Tailscale tab)."""
+        def key(seconds, state="Running", online=True):
+            expiry = datetime.datetime.fromtimestamp(NOW + seconds, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return self.build(tailscale={"BackendState": state, "Self": {"Online": online, "KeyExpiry": expiry}})["uyarilar"]
+        self.assertEqual(key(15 * 86400), [], "more than 14 days left")
+        soon = key(5 * 86400 + 60)
+        self.assertEqual([(w["seviye"], w["hizmet"], w["duzelt"]) for w in soon], [("warn", "", None)])
+        self.assertIn("5 gün sonra doluyor", soon[0]["metin"])
+        self.assertIn("bir gün içinde doluyor", key(3600)[0]["metin"])
+        gone = key(-60, "Stopped", False)
+        self.assertEqual([(w["seviye"], w["metin"].split(";")[0]) for w in gone],
+                         [("bad", "Tailscale bağlı değil"), ("bad", "Tailscale cihaz anahtarının süresi doldu")],
+                         "not connected first, then the key")
+        self.assertEqual(self.build(tailscale={"BackendState": "Running", "Self": {"Online": True}})["uyarilar"], [], "no key end: no warning")
 
     def test_operator_rules_are_rows_and_open_ports(self):
         settings = copy.deepcopy(SETTINGS)

@@ -58,7 +58,7 @@ const data = {
   bekleyen: { bekleyen: null },
   etkinlik: { items: [] },
   erisim: { read_at: NOW, alan: "ev", revizyon: "rev-1", hizmetler: [], uyarilar: [], hatalar: [],
-    ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "", surum: "", adresler: [], cikis_dugumu: null },
+    ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "", surum: "", cikis_dugumu: null },
       internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, aglar: [] }, sertifikalar: [] } },
   uygulamalar: { read_at: NOW, hatalar: [], items: [], kaynaklar: [] },
 };

@@ -71,7 +71,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert.equal(await h1.innerText(), "Genel Bakış");
     assert.equal(await page.title(), "Genel Bakış · Konsol");
     await page.locator(".brand-host").filter({ hasText: "sunucu · panel.ev" }).waitFor();
-    assert.deepEqual(await page.locator(".sidebar .nav-item .nav-label").allInnerTexts(), ["Genel Bakış", "Uygulamalar", "Erişim", "Dosyalar", "Sistem", "Gelişmiş"]);
+    assert.deepEqual(await page.locator(".sidebar .nav-item .nav-label").allInnerTexts(), ["Genel Bakış", "Uygulamalar", "Podman", "Erişim", "Dosyalar", "Sistem", "Gelişmiş"]);
     assert.deepEqual(await page.locator('.sidebar .nav-item[aria-current="page"]').allInnerTexts(), ["Genel Bakış"]);
     await badge(page, "uygulamalar").filter({ hasText: /^2$/ }).waitFor();
     await badge(page, "sistem").filter({ hasText: /^1$/ }).waitFor();
@@ -333,7 +333,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
           row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev"]), internet: cell("acik", ["http://203.0.113.10:61010"], "", "Şifresiz HTTP"),
             web: { tail: true, enabled: false, domain: "" } }),
           row("sistem:ssh", "SSH", "sistem", { tailscale: cell("acik"), internet: cell("acik", ["203.0.113.10:22/tcp"]) })],
-        ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "sunucu", surum: "1.88.3", adresler: ["100.64.0.2"], cikis_dugumu: true },
+        ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "sunucu", surum: "1.88.3", cikis_dugumu: true },
           internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] },
           wireguard: { kurulu: true, durduruldu: false, aglar: [{ arayuz: "wg0", ad: "", etkin: true, port: 61001 }, { arayuz: "wg1", ad: "", etkin: false, port: 61002 }] },
           sertifikalar: [{ ad: "notlar.example.org", hizmet: NOTLAR, durum: "gecerli", bitis: 1791845000 + 60 * 86400 }] },
@@ -488,7 +488,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       assert.equal(await jobs.locator('.job[data-durum="calisiyor"] .job-meta').innerText(), "Uygulama · İmaj indiriliyor");
       const cleanupJob = jobs.locator('.job[data-durum="hata"]');
       assert.equal(await cleanupJob.locator(".job-name").innerText(), "Podman · Temizlik");
-      assert.match(await cleanupJob.locator(".job-meta").innerText(), /^Gelişmiş · 1 öge kaldırılmadı \(1 kaldırıldı\): eski: Birim bir konteynerde kullanılıyor\. · \d\d:\d\d$/,
+      assert.match(await cleanupJob.locator(".job-meta").innerText(), /^Podman · 1 öge kaldırılmadı \(1 kaldırıldı\): eski: Birim bir konteynerde kullanılıyor\. · \d\d:\d\d$/,
         "what stayed and why");
       assert.equal(await cleanupJob.locator(".pill").innerText(), "Hata");
       await shot(page, "1440-light-islemler-bekleyen.png");
@@ -600,7 +600,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       await more.tap();
       const sheet = page.getByRole("dialog", { name: "Menü" });
       await sheet.waitFor();
-      assert.deepEqual(await sheet.locator(".nav-label").allInnerTexts(), ["Genel Bakış", "Uygulamalar", "Erişim", "Dosyalar", "Sistem", "Gelişmiş"]);
+      assert.deepEqual(await sheet.locator(".nav-label").allInnerTexts(), ["Genel Bakış", "Uygulamalar", "Podman", "Erişim", "Dosyalar", "Sistem", "Gelişmiş"]);
       assert.equal(await sheet.getByTestId("version").innerText(), "Obhut 1.0.0 · güncel");
       await shot(page, `390-${colorScheme}-sheet.png`);
       await page.keyboard.press("Escape");
@@ -610,7 +610,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       await sheet.getByRole("link", { name: /^Sistem/ }).tap();
       await sheet.waitFor({ state: "detached" });
       await page.waitForURL((u) => u.hash === "#/sistem");
-      assert.match(await more.getAttribute("class"), /is-active/, "Daha fazla marks Sistem and Gelişmiş");
+      assert.match(await more.getAttribute("class"), /is-active/, "Daha fazla marks Podman, Sistem and Gelişmiş");
       assert.equal(await page.evaluate(() => document.activeElement.tagName), "H1", "a new page takes the focus");
       await more.tap();
       await sheet.getByRole("link", { name: /^Sistem/ }).tap();

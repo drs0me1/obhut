@@ -129,10 +129,11 @@ browser.
 |---|---|
 | **Genel Bakış** (Overview) | What needs attention, each with the way to its fix; the applications, an access summary, resources, the network and the server |
 | **Uygulamalar** (Applications) | Every application in one list; *Uygulama ekle* (a file, an `https` address, an image name, an existing container → the inspector → the plan); each application's page: Özet, Erişim, Depolama, Tanım (the file and the answers, edited as a plan), Günlük |
-| **Erişim** (Access) | Who reaches what from where; Adresler (addresses and raw ports, *Adres aç*), Yerel adlar (local names and the domain), Tailscale, WireGuard (networks and devices), Güvenlik duvarı (your rules) |
+| **Podman** | Every container with its state, CPU, memory and ports; what each kind takes on disk; images, volumes, networks and removed applications' folders, where what nothing uses is ticked and removed |
+| **Erişim** (Access) | Who reaches what from where; Adresler (addresses and raw ports, *Adres aç*), Yerel adlar (local names and the domain), WireGuard (networks and devices), Güvenlik duvarı (your rules) |
 | **Dosyalar** (Files) | Depolama, the server folders, the trash, **Paylaşımlar** (one WebDAV account per folder, Tailscale and internet access, read-only/read-write, expiry) and, on the tailnet, the whole server as root |
-| **Sistem** (System) | Health and repair (with its log), updates, the Konsol account, the server and reboot, the history of operations |
-| **Gelişmiş** (Advanced) | Read-only: effective Caddy and DNS configuration, the technical firewall rules and listeners, Podman; its one action cleans up unused images, networks, volumes and removed applications' folders |
+| **Sistem** (System) | Health and repair (with its log), updates, the Konsol account, the server (with its Tailscale device) and reboot, the history of operations |
+| **Gelişmiş** (Advanced) | Read-only: effective Caddy and DNS configuration, the technical firewall rules and listeners |
 
 The command palette (Ctrl+K or Cmd+K) finds sections, tabs, applications and access rows. Konsol asks for
 no sign-in on the tailnet; a public Konsol name requires the account you create in Sistem → Hesap over

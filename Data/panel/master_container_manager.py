@@ -24,7 +24,7 @@ from master_containers import NAME_RE, Containers, ContainerError, epoch, listen
 
 APP_ACTIONS = frozenset(('uygulama-kur', 'uygulama-baslat', 'uygulama-durdur', 'uygulama-yeniden-baslat', 'uygulama-guncelle',
                          'uygulama-tanim', 'uygulama-kaldir', 'uygulama-taslak'))
-# Gelişmiş's cleanup (K8); its job names no application (no application name has a capital letter).
+# Podman's cleanup (K8); its job names no application (no application name has a capital letter).
 CLEANUP_ACTION = 'temizlik'
 CLEANUP_TARGET = 'Podman'
 ACTIONS = APP_ACTIONS | {CLEANUP_ACTION}
@@ -486,7 +486,7 @@ class Inventory(Containers):
             raise app_error(err) from err
         return {'inceleme': inspection, 'tanim': definition, 'ozet': summary}
 
-    # -- Gelişmiş's cleanup (K8)
+    # -- Podman's cleanup (K8)
     def cleanup(self, fresh=False):
         """GET /api/konsol/gelismis/temizlik: what nothing uses, read-only. Images no container (in any state) comes
         from and no application record names; networks no container is on (never Podman's default network, never an
@@ -735,7 +735,7 @@ class Service:
         raise ContainerError(404, 'İşlem bulunamadı; konteyner durumunu yenileyin.')
 
     def submit_cleanup(self, data):
-        """Gelişmiş's cleanup job (K8): the selected items (apps.cleanup_items) on the worker's standard input."""
+        """Podman's cleanup job (K8): the selected items (apps.cleanup_items) on the worker's standard input."""
         try:
             items = apps.cleanup_items(data)
         except config.ContainerConfigError as err:

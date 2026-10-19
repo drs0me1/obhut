@@ -54,17 +54,18 @@ Konsol (tarayıcıdan)
   kapalı). Telefonda ya da bilgisayarda ana ekrana eklenebilir; kendi penceresinde, Ô simgesiyle açılır.
   İnternetten HTTPS isteğe bağlıdır: önce Sistem → Hesap'ta hesap açın, sonra Erişim → Adresler → Konsol
   satırına internet adı verin (DNS A kaydı gerekir, onayla yazılır); orada kullanıcı adı ve parola sorulur.
-  Altı bölüm vardır:
+  Yedi bölüm vardır:
     Genel Bakış   dikkat isteyen konular (her biri düzeltileceği yere gider), uygulamalar, erişim özeti
                   (Tailscale adresleri, internet adları, açık ham portlar, WireGuard), kaynaklar, ağ, sunucu
     Uygulamalar   uygulamaların listesi; Uygulama ekle; her uygulamanın sayfası (Özet, Erişim, Depolama,
                   Tanım, Günlük)
-    Erişim        kim neye nereden ulaşır: Genel, Adresler, Yerel adlar, Tailscale, WireGuard, Güvenlik duvarı
+    Podman        konteynerler, işlemci ve bellek, depolama; imajlar, birimler, ağlar ve kaldırılmış
+                  uygulamalardan kalan klasörler; tek işlemi kullanılmayanları seçip kaldırmak (temizle yazılır)
+    Erişim        kim neye nereden ulaşır: Genel, Adresler, Yerel adlar, WireGuard, Güvenlik duvarı
     Dosyalar      Depolama, Sunucu klasörleri, Çöp kutusu, Paylaşımlar, Sistem dosyaları (yalnız Tailscale)
-    Sistem        Sağlık (Onarım kaydı ile), Güncellemeler, Hesap, Sunucu (yeniden başlat), İşlem geçmişi
-    Gelişmiş      salt okunur: Caddy ve DNS yapılandırması, teknik güvenlik duvarı kuralları ve dinleyiciler,
-                  Podman; tek işlemi kullanılmayan imaj, ağ, birim ve kaldırılmış uygulama klasörlerinin
-                  temizliği (temizle yazılır)
+    Sistem        Sağlık (Onarım kaydı ile), Güncellemeler, Hesap, Sunucu (Tailscale cihazı, yeniden başlat),
+                  İşlem geçmişi
+    Gelişmiş      salt okunur: Caddy ve DNS yapılandırması, teknik güvenlik duvarı kuralları ve dinleyiciler
   Ctrl+K (Mac'te Cmd+K) bölümleri, sekmeleri, uygulamaları, erişim satırlarını ve işlemleri arar.
   Tema (sistem, açık, koyu) üst çubuktaki düğmededir.
   Uzun işler (uygulama kurma, güncelleme, temizlik) sayfa kapansa da sürer; üst çubuktaki İşlemler'de görünür.
@@ -112,7 +113,7 @@ Uygulama ekle (Compose ya da Kubernetes dosyasından)
               uygulamada "Kaynaktan yenile" dosyanın yeni sürümünü getirir; yalnız yeni satırlar sorulur.
     Günlük    her servisin günlüğü; "Canlı" ile 5 sn'de bir yenilenir
   Kaldır: uygulamanın verisi varsayılan olarak kalır; silmek için uygulamanın adını yazarsınız. /srv altındaki
-    dosyalara hiç dokunulmaz. İmajlar Gelişmiş → Podman'ın temizliğine kalır.
+    dosyalara hiç dokunulmaz. İmajlar Podman'daki temizliğe kalır.
   Güncellemeler: imaj güncellemesi hiçbir zaman kendiliğinden olmaz. Sistem → Güncellemeler kaç uygulamada
     yeni imaj olduğunu gösterir; her biri kendi sayfasında onaylanır.
 

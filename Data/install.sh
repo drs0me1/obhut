@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-275"
+V2_VERSION="2026.08.06-v2-276"
 # DD-260: insanların gördüğü sürüm (anlamlı sürümleme; yalnız bir yayında değişir, vX.Y.Z etiketlenir).
 # V2_VERSION yapı numarasıdır: Konsol güncelleme önerirken sunucular onu karşılaştırır.
 OBHUT_SURUM="2.0.0"
@@ -858,6 +858,7 @@ stage_4() {
     done
     # DD-226: bir uygulama konteynerinin birimi her açılışta bağlanan klasörlerini bununla sabitler.
     atomic_write "$SBIN_DIR/master_container_binds.py" 0755 <"$V2_ROOT/panel/master_container_binds.py"
+    [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     install -d -m 0700 "$KONTEYNER_STATE_DIR" "$UYGULAMA_STATE_DIR" "$UYGULAMA_VERI_DIR"
     atomic_write "$SBIN_DIR/master-konsol" 0755 <"$V2_ROOT/scripts/master-konsol"
     atomic_write "$SBIN_DIR/master_webdav.py" 0755 <"$V2_ROOT/panel/master_webdav.py"
@@ -1607,7 +1608,7 @@ Konsol: http://panel.${LOCAL_DOMAIN} (Genel Bakış, Uygulamalar, Erişim, Dosya
   sonra Erişim → Adresler → Konsol → İnternet adı (DNS A kaydı gerekir).
   Uygulama eklemek: Uygulamalar → Uygulama ekle; adresleri Erişim → Adresler'de.
   Sağlık, güncellemeler ve işlem geçmişi Sistem'de.
-Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Gelişmiş → Podman)
+Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Podman)
 Yerleşikler:
   Dosyalar: $SERVER_ROOT
   Paylaşım: Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni

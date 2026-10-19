@@ -1,6 +1,6 @@
-<!-- Gelişmiş (DD-258; K8): the technical views, read-only; the only write is Podman's cleanup. Tabs in the address
-     (?sekme=): Caddy (the effective sites and the raw files), DNS (dnsmasq's names and files), Güvenlik duvarı (the
-     technical rules and the listeners) and Podman (the inventory and the cleanup). Caddy and DNS share one read of
+<!-- Gelişmiş (DD-258; K8): the technical views, read-only (Podman and its cleanup are a section of their own,
+     DD-289). Tabs in the address (?sekme=): Caddy (the effective sites and the raw files), DNS (dnsmasq's names and
+     files) and Güvenlik duvarı (the technical rules and the listeners). Caddy and DNS share one read of
      GET /api/konsol/gelismis; "Yenile" asks past its cache. Each view leads to where its source is changed. -->
 <script setup lang="ts">
 import { ref, watch } from "vue";
@@ -9,7 +9,6 @@ import EmptyState from "../components/ui/EmptyState.vue";
 import Tabs from "../components/ui/Tabs.vue";
 import CaddyTab from "./gelismis/CaddyTab.vue";
 import DnsTab from "./gelismis/DnsTab.vue";
-import PodmanTab from "./gelismis/PodmanTab.vue";
 import RulesTab from "./gelismis/RulesTab.vue";
 import { readAdvanced, type Advanced } from "../api/gelismis";
 import { ADVANCED_TABS, type AdvancedTab } from "../sections";
@@ -63,7 +62,6 @@ watch(tab, (id) => {
           </section>
         </template>
         <RulesTab v-else-if="active === 'guvenlik-duvari'" />
-        <PodmanTab v-else-if="active === 'podman'" />
       </template>
     </Tabs>
   </div>

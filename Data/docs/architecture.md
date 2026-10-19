@@ -146,7 +146,7 @@ Bare paths are relative to `Data/`. Keys in capitals are declared once in `confi
 | `panel/master_permissions.py` | The installer's descriptor-pinned folder creation and selective owner/mode repair (run from the tree) | Symlinks, special or multiply linked files |
 | `files-panel/master-files-panel` | The file API for `SERVER_ROOT` as the Files account; with `--sistem` the same API for `/` as root on a socket | Shares, credentials, WireGuard |
 | `console/giris.*` | The internet name's sign-in page, in Konsol's colours with `/tema.js` | Any other data |
-| `console/yeni/`, `tools/konsol-ui/` | Konsol's interface: six sections, palette, İşlemler, the pending banner, the new-build notice (`src/build.ts`: its own files' ETag looked at again when the build number changes or the tab comes back, **DD-280**); `kaynak.sha256` ties the build to the sources | Inline code, external loads, application names |
+| `console/yeni/`, `tools/konsol-ui/` | Konsol's interface: seven sections, palette, İşlemler, the pending banner, the new-build notice (`src/build.ts`: its own files' ETag looked at again when the build number changes or the tab comes back, **DD-280**); `kaynak.sha256` ties the build to the sources | Inline code, external loads, application names |
 | `console/duzenleyici.js`, `tools/duzenleyici/` | The text editor, loaded when the first file opens | Requests of its own |
 | `systemd/` | Ordering, coupling, restart and schedules | The scripts they start |
 

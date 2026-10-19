@@ -21,8 +21,9 @@ on but not working; "not" says why, and is empty otherwise). "adresler" are the 
 DD-265: a warning names the row it is about by the row's id ("panel", "paylasim",
 "uygulama:<app>:<service>:<port>/<proto>", "konteyner:x"; "" when it is about no row) and where it is
 fixed: "duzelt" = {bolum, hedef}, bolum one of adresler (Erişim → Adresler; hedef is the row id),
-uygulama (an application's page; hedef is the application's name), tailscale. A container of no
-application has no page: its warning names no place.
+uygulama (an application's page; hedef is the application's name). A warning about Tailscale itself
+(not connected, the device key about to expire) and one about a container of no application name no
+place: Erişim → Genel shows the Tailscale summary, and a container of no application has no page.
 """
 import copy
 import datetime
@@ -30,6 +31,7 @@ import datetime
 import master_generator
 
 CERT_WARN_DAYS = 14
+TAILSCALE_KEY_WARN_DAYS = 14
 
 
 def cell(durum="yok", adresler=(), note="", uyari=""):
@@ -177,7 +179,7 @@ def add_container(row, item, env, warnings):
             warnings.append(warning("warn", row["id"], "%s: %s doğrudan internete açık; şifreleme ve giriş uygulamanın kendisinde."
                                     % (row["ad"], text), *fix))
         else:
-            warnings.append(warning("warn", row["id"], "%s: %s adresindeki yayın tanınmıyor; Gelişmiş → Podman'dan denetleyin."
+            warnings.append(warning("warn", row["id"], "%s: %s adresindeki yayın tanınmıyor; Podman'dan denetleyin."
                                     % (row["ad"], text), *fix))
 
 
@@ -213,16 +215,16 @@ def share_row(env, pub, shares, wireguard, warnings):
 
 
 def tailscale_summary(env, status):
-    """`tailscale status --json --peers=false` as the Erişim page shows it. DD-265 adds the device's
-    name, the client version, its addresses and whether it is offered as an exit node."""
+    """`tailscale status --json --peers=false` as Konsol shows it: the state, the addresses and the key's end on
+    Erişim → Genel; the device's name, the client version and whether it is offered as an exit node on
+    Sistem → Sunucu (DD-265, DD-288)."""
     out = {"ipv4": env.get("TAILSCALE_IPV4", ""), "ipv6": env.get("TAILSCALE_IPV6", ""),
-           "durum": "bilinmiyor", "anahtar_bitis": None, "ad": "", "surum": "", "adresler": [], "cikis_dugumu": None}
+           "durum": "bilinmiyor", "anahtar_bitis": None, "ad": "", "surum": "", "cikis_dugumu": None}
     if isinstance(status, dict) and isinstance(status.get("Self"), dict):
         me = status["Self"]
         out["durum"] = "bagli" if status.get("BackendState") == "Running" and me.get("Online") is True else "bagli-degil"
         out["ad"] = str(me.get("DNSName") or "").rstrip(".")
         out["surum"] = str(status.get("Version") or "").split("-")[0]
-        out["adresler"] = [str(a) for a in me.get("TailscaleIPs") or [] if isinstance(a, str)]
         routes = me.get("AllowedIPs") if isinstance(me.get("AllowedIPs"), list) else []
         if isinstance(me.get("ExitNodeOption"), bool):
             out["cikis_dugumu"] = me["ExitNodeOption"]
@@ -341,9 +343,20 @@ def build(env, settings, shares, containers, tailscale, networks, wg_stopped, no
                 warnings.append(warning("warn", row["id"], "%s: %s" % (row["ad"], row[scope]["not"]), *place))
 
     summary = tailscale_summary(env, tailscale)
+    # Tailscale itself first: not connected, then the device key's end (DD-288: the warning the Tailscale tab gave).
+    first = []
     if summary["durum"] == "bagli-degil":
-        warnings.insert(0, warning("bad", "", "Tailscale bağlı değil; Konsol'a ve tailnet adlarına öbür cihazlardan ulaşılamaz.",
-                                   "tailscale"))
+        first.append(warning("bad", "", "Tailscale bağlı değil; Konsol'a ve tailnet adlarına öbür cihazlardan ulaşılamaz.", None))
+    key_end = summary["anahtar_bitis"]
+    if key_end is not None and key_end - now <= TAILSCALE_KEY_WARN_DAYS * 86400:
+        days = int((key_end - now) // 86400)
+        when = "%d gün sonra" % days if days else "bir gün içinde"
+        first.append(warning("bad" if key_end <= now else "warn", "",
+                             "Tailscale cihaz anahtarının süresi doldu; sunucu tailnet'ten düştü." if key_end <= now else
+                             "Tailscale cihaz anahtarının süresi %s doluyor; dolunca sunucu tailnet'ten düşer. "
+                             "Tailscale yönetim panelinden anahtarı yenileyin ya da süresini kapatın." % when,
+                             None))
+    warnings[:0] = first
     certificates = []
     for pub in pubs.values():
         if not (pub.get("enabled") and pub.get("domain")):

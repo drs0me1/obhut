@@ -1,6 +1,5 @@
 /* Sistem (DD-258, DD-266; A7: health and repair, updates with the applications' image updates, the account, the
-   server, İşlem geçmişi) and Gelişmiş (K8: Caddy, DNS, the firewall's technical rules, Podman's inventory and its
-   cleanup), and the shell's "Çıkış yap". Shared pieces are in ui.css and pages.css; colours only from tokens.css. */
+   server, İşlem geçmişi) and Gelişmiş (K8: Caddy, DNS, the firewall's technical rules), and the shell's "Çıkış yap". Shared pieces are in ui.css and pages.css; colours only from tokens.css. */
 
 /* ---- the pages */
 .system-page,
@@ -269,81 +268,6 @@
 .raw-text {
   max-height: 420px;
   white-space: pre;
-}
-
-/* ---- Podman */
-.podman-facts {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.resource-card {
-  gap: 12px;
-}
-
-/* the cleanup (K8): groups of ticked items, the bar with the count and "Temizle…", the run and its result */
-.cleanup-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.cleanup-legend {
-  padding: 0;
-  font-weight: 600;
-}
-
-.cleanup-items {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.cleanup-item {
-  min-width: 0;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-}
-
-.cleanup-item .check-row {
-  align-items: flex-start;
-  min-height: 0;
-}
-
-.cleanup-item .check-row input {
-  margin-top: 2px;
-}
-
-.cleanup-item .cell-stack,
-.cleanup-list .cell-stack {
-  min-width: 0;
-}
-
-.cleanup-bar,
-.cleanup-run {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.cleanup-run {
-  justify-content: flex-start;
-  font-size: 14.5px;
-}
-
-.cleanup-list {
-  max-height: 40vh;
-  overflow-y: auto;
 }
 
 .badges {

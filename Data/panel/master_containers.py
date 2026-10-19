@@ -18,6 +18,8 @@ import sys
 import time
 
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
+# `podman system df`'s kinds as Konsol's Podman section names them (DD-289).
+DF_TYPES = {"Images": "images", "Containers": "containers", "Local Volumes": "volumes"}
 
 
 def epoch(value):
@@ -327,7 +329,7 @@ class Containers:
             image_id = str(c.get("ImageID") or "")
             result.append({
                 "id": str(c.get("Id", ""))[:12], "name": name, "image": c.get("Image", ""),
-                # The full ID of the image it was made from (whether an image is unused, Gelişmiş's cleanup).
+                # The full ID of the image it was made from (whether an image is unused, Podman's cleanup).
                 "image_id": image_id[7:] if image_id.startswith("sha256:") else image_id, "state": c.get("State") or "unknown",
                 "status": c.get("Status", ""), "created": epoch(c.get("Created")), "started": epoch(c.get("StartedAt")),
                 "exit_code": c.get("ExitCode", 0) if isinstance(c.get("ExitCode"), int) else 0,
@@ -342,7 +344,8 @@ class Containers:
 
     def liste(self):
         runtime = self.runtime()
-        answer = {"read_at": int(time.time()), "runtime": runtime, "containers": [], "images": [], "storage": {"images": 0, "containers": 0, "size": None}}
+        answer = {"read_at": int(time.time()), "runtime": runtime, "containers": [], "images": [],
+                  "storage": {"images": 0, "containers": 0, "size": None, "types": []}}
         if not runtime["ok"]:
             return answer
         ok, rows, message = self.ps()
@@ -365,5 +368,12 @@ class Containers:
                 size = row.get("RawSize") if isinstance(row, dict) else None
                 if isinstance(size, int):
                     total += size
+                    # DD-289: each kind's size, how many there are, how many are in use and what is unused (Podman).
+                    kind = DF_TYPES.get(row.get("Type"))
+                    if kind:
+                        count = lambda key: row[key] if isinstance(row.get(key), int) and not isinstance(row[key], bool) else 0
+                        free = row.get("RawReclaimable")
+                        answer["storage"]["types"].append({"type": kind, "count": count("Total"), "active": count("Active"), "size": size,
+                                                           "reclaimable": free if isinstance(free, int) and not isinstance(free, bool) else None})
             answer["storage"]["size"] = total
         return answer

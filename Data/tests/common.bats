@@ -3275,7 +3275,7 @@ PY
     run ! grep -qE '/api/konsol/konteynerler/(guncellemeler|ayrinti)' "$V2_ROOT/panel/master_api.py"
     grep -qF 'return self.panel.containers.view()' "$V2_ROOT/panel/master-panel"
     [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 0 ]
-    # K8: Gelişmiş's only write, the cleanup, is declared in the route table and goes to the same broker as every
+    # K8: Podman's only write, the cleanup, is declared in the route table and goes to the same broker as every
     # application job (DD-271): one transient unit per job, the request on its standard input. The Podman resource
     # actions (pull, create, remove) and their route are gone.
     grep -qF 'Route("POST", "/api/konsol/gelismis/temizlik", "temizle",' "$V2_ROOT/panel/master_api.py"
@@ -4443,7 +4443,7 @@ PY
     run summary_wireguard
     [ "$output" = 'durduruldu (1 ağ)' ]
     # DD-208: Podman is base infrastructure, printed with its version.
-    grep -qF 'Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Gelişmiş → Podman)' "$V2_ROOT/install.sh"
+    grep -qF 'Podman:       ${PODMAN_VERSION:-?} (konteyner ortamı; Konsol → Podman)' "$V2_ROOT/install.sh"
     body="$(awk '/^print_summary\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -qx '  Dosyalar: $SERVER_ROOT' <<<"$body"
     grep -qx '  Paylaşım: Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni' <<<"$body"

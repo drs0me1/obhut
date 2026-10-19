@@ -1,7 +1,8 @@
 <!-- A summary card: one fixed template, so the cards of a row line up (Erişim → Genel). The title with its state
      beside it; at most three one-line rows, a label and its value (a longer list shows two and how many more; a long
      value is shortened, whole on hover), or one line saying there is nothing; and at its foot a link to the tab
-     where the details are and change. Cards of a row are as tall as the tallest; the link keeps to the foot. -->
+     where the details are and change (or, `external`, to a page elsewhere, in a new tab). Cards of a row are as
+     tall as the tallest; the link keeps to the foot. -->
 <script setup lang="ts">
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
@@ -24,7 +25,7 @@ const props = defineProps<{
   state: { text: string; tone: Tone; dot?: boolean };
   rows: readonly SummaryRow[];
   empty: string;
-  link: { to: string; text: string };
+  link: { to: string; text: string; external?: boolean };
 }>();
 
 const MAX = 3;
@@ -43,6 +44,7 @@ const shown = computed<SummaryRow[]>(() =>
       </template>
     </dl>
     <p v-else class="meter-note summary-empty">{{ empty }}</p>
-    <RouterLink :to="link.to" class="summary-link">{{ link.text }}<Icon name="chevron" :size="14" /></RouterLink>
+    <a v-if="link.external" :href="link.to" target="_blank" rel="noopener noreferrer" class="summary-link">{{ link.text }}<Icon name="open" :size="14" /></a>
+    <RouterLink v-else :to="link.to" class="summary-link">{{ link.text }}<Icon name="chevron" :size="14" /></RouterLink>
   </Card>
 </template>

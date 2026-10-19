@@ -1,5 +1,6 @@
 <!-- Sistem → Sunucu: the server's facts (live.kaynaklar: name, system, kernel, Obhut's version and build,
-     uptime, Tailscale and internet addresses, Konsol's address, the user area) and "Yeniden başlat" (DD-246),
+     uptime, Tailscale and internet addresses, Konsol's address, the user area; Erişim's Tailscale summary: the
+     device's name, the client version, whether it is offered as an exit node, DD-288) and "Yeniden başlat" (DD-246),
      after the typed word and only from the tailnet. The server reboots a few seconds after answering; the
      page then waits, asks for the server's facts every 2 s and loads itself again once the server answers
      after it went away (or with a shorter uptime). -->
@@ -21,6 +22,10 @@ void loadSession();
 const k = computed(() => live.kaynaklar);
 const text = (v: unknown) => (typeof v === "string" && v ? v : UNKNOWN);
 const join = (...values: unknown[]) => values.filter((v): v is string => typeof v === "string" && v !== "").join(" · ") || UNKNOWN;
+const ts = computed(() => live.erisim?.ozet.tailscale ?? null);
+/** Whether this server is offered as an exit node; approving it is the Tailscale admin console's. */
+const exitNode = (v: boolean | null | undefined) =>
+  v === true ? "Sunuluyor (yönetim panelinde onaylanınca kullanılır)" : v === false ? "Sunulmuyor" : UNKNOWN;
 const facts = computed(() => {
   const s = k.value;
   if (!s) return null;
@@ -32,6 +37,9 @@ const facts = computed(() => {
     { id: "build", label: "Yapı", value: text(s.version), mono: true },
     { id: "uptime", label: "Açık kalma", value: uptime(s.uptime), mono: false },
     { id: "tailscale", label: "Tailscale", value: join(s.net?.tailscale, s.net?.tailscale6), mono: true },
+    { id: "ts-name", label: "Tailscale adı", value: text(ts.value?.ad), mono: true },
+    { id: "ts-version", label: "Tailscale istemcisi", value: text(ts.value?.surum), mono: false },
+    { id: "ts-exit", label: "Çıkış düğümü", value: exitNode(ts.value?.cikis_dugumu), mono: false },
     { id: "wan", label: "İnternet", value: join(s.net?.wan, s.net?.wan6) + (s.net?.iface ? ` (${s.net.iface})` : ""), mono: true },
     { id: "panel", label: "Konsol adresi", value: s.domain ? "panel." + s.domain : UNKNOWN, mono: true },
     { id: "root", label: "Kullanıcı alanı", value: text(s.root), mono: true },

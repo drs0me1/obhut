@@ -1,7 +1,7 @@
 <!-- Erişim (DD-258; rebuild phase 5, A7): who reaches what, from where. Tabs in the address (?sekme=): Genel (the
      summaries and the reachability matrix), Adresler (every access row with its sheet, ?satir=<row id>), Yerel adlar
-     (the local names, the upstream DNS and the local domain), Tailscale, WireGuard and Güvenlik duvarı (the
-     operator's port rules beside the locked rows). "Adres aç" beside the tabs gives an application's raw TCP port a
+     (the local names, the upstream DNS and the local domain), WireGuard and Güvenlik duvarı (the operator's port
+     rules beside the locked rows). "Adres aç" beside the tabs gives an application's raw TCP port a
      Tailscale name: it opens the first such port's sheet on Adresler, where another port can be chosen. -->
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
@@ -11,7 +11,6 @@ import Tabs from "../components/ui/Tabs.vue";
 import OverviewTab from "./erisim/OverviewTab.vue";
 import AddressesTab from "./erisim/AddressesTab.vue";
 import NamesTab from "./erisim/NamesTab.vue";
-import TailscaleTab from "./erisim/TailscaleTab.vue";
 import WireGuardTab from "./erisim/WireGuardTab.vue";
 import FirewallTab from "./erisim/FirewallTab.vue";
 import { ACCESS_TABS, accessRoute } from "../sections";
@@ -61,7 +60,6 @@ onMounted(() => void refreshAccess());
         <OverviewTab v-if="active === 'genel'" />
         <AddressesTab v-else-if="active === 'adresler'" />
         <NamesTab v-else-if="active === 'adlar'" />
-        <TailscaleTab v-else-if="active === 'tailscale'" />
         <WireGuardTab v-else-if="active === 'wireguard'" />
         <FirewallTab v-else-if="active === 'guvenlik-duvari'" />
       </template>

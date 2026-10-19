@@ -124,7 +124,7 @@ export interface Uyari {
   hizmet: string;
   metin: string;
   duzelt: {
-    bolum: "adresler" | "uygulama" | "tailscale";
+    bolum: "adresler" | "uygulama";
     hedef: string;
   } | null;
 }
@@ -197,7 +197,6 @@ export interface Erisim {
       anahtar_bitis: number | null;
       ad: string;
       surum: string;
-      adresler: string[];
       cikis_dugumu: boolean | null;
     };
     internet: {
@@ -490,6 +489,13 @@ export interface KonteynerListesi {
     images?: number;
     containers?: number;
     size?: number | null;
+    types?: ({
+      type: "images" | "containers" | "volumes";
+      count: number;
+      active: number;
+      size: number;
+      reclaimable: number | null;
+    })[];
     [key: string]: unknown;
   };
   resource_errors?: {

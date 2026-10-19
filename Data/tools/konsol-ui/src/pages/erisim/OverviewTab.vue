@@ -1,5 +1,6 @@
 <!-- Erişim → Genel (rebuild phase 5): four summaries in one template (SummaryCard: the state, at most three
-     one-line rows, the tab where the details are): Tailscale (its addresses, the key's end), the internet (its
+     one-line rows, the tab where the details are): Tailscale (its addresses, the key's end; its link the Tailscale
+     admin console, where devices, ACLs and the key change, DD-288), the internet (its
      addresses only; how many ports are open is its state, what they are is Güvenlik duvarı's), WireGuard (its
      networks), the certificates (each name with its end). Then every service with its four cells: the addresses and
      ports it is reached on there, or that it is closed; a warning (a raw port open on the internet, unencrypted
@@ -17,6 +18,7 @@ import { Icon } from "../../components/icons";
 import { CELL_TEXT, addressPieces, cellTone } from "../../apps";
 import { isAccessRow, portKey } from "../../access";
 import { accessRoute } from "../../sections";
+import { tailscaleAdmin } from "../../links";
 import { appRoute } from "../../router";
 import { live, serverNow } from "../../live";
 import { UNKNOWN, date, dayMonth, daysUntil } from "../../format";
@@ -107,6 +109,7 @@ const tsState = computed(() => {
   return { ...s, dot: ts.value?.durum === "bagli" };
 });
 const keyLeft = computed(() => (ts.value?.anahtar_bitis ? daysUntil(ts.value.anahtar_bitis, serverNow()) : null));
+const tsAdmin = tailscaleAdmin("machines");
 /** An address row: the address, or "yok" for a family the server has none of. */
 const addressRow = (label: string, value: string | undefined | null): SummaryRow =>
   value ? { label, value, mono: true } : { label, value: "yok", tone: "muted" };
@@ -181,7 +184,7 @@ const certState = computed<{ text: string; tone: Tone; dot?: boolean }>(() => {
 
     <template v-if="e">
       <div class="summary-grid">
-        <SummaryCard title="Tailscale" :state="tsState" :rows="tsRows" empty="Tailscale okunamadı." :link="{ to: accessRoute('tailscale'), text: 'Tailscale' }"
+        <SummaryCard title="Tailscale" :state="tsState" :rows="tsRows" empty="Tailscale okunamadı." :link="{ to: tsAdmin, text: 'Yönetim paneli', external: true }"
           data-testid="sum-tailscale" />
         <SummaryCard title="İnternet" :state="netState" :rows="netRows" empty="İnternet adresi okunamadı."
           :link="{ to: accessRoute('guvenlik-duvari'), text: 'Güvenlik duvarı' }" data-testid="sum-internet" />

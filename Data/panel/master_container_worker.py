@@ -3,7 +3,7 @@
 
 The broker (master_container_manager) runs every job as its own transient unit and hands it here with
 the request on standard input only. This module owns every container write: the application lifecycle (rebuild
-DD-271, phase 3) and Gelişmiş's cleanup of what nothing uses (K8). Each action is a job with steps
+DD-271, phase 3) and Podman's cleanup of what nothing uses (K8). Each action is a job with steps
 and a durable record (KONTEYNER_STATE_DIR/operations/<id>.json) that never holds the request; a failure
 undoes what the job did, in reverse, and names the failed step. The record carries the job's log (gunluk):
 each step and fact with its time, and for an install whose container does not come up that container's own last
@@ -347,7 +347,7 @@ class Manager:
         cfg.require(p.returncode in (0, 1), 'Podman envanteri okunamadı.', 502)
         return p.returncode == 0
 
-    # -- Gelişmiş's cleanup (K8): unused images, networks, volumes and the data folders of removed applications
+    # -- Podman's cleanup (K8): unused images, networks, volumes and the data folders of removed applications
     def resource_users(self, kind, target):
         """Whether any container, in any state, uses an image (ancestor), a network or a volume (Podman's filters)."""
         rows = self.json_call(['podman', 'ps', '-a', '--filter', ('ancestor' if kind == 'image' else kind) + '=' + target,
@@ -870,7 +870,7 @@ class Manager:
             undo.published = True
             if old:
                 self.step('Eski konteyner kaldırılıyor')
-                # Never --volumes: the old named volumes stay until Gelişmiş's cleanup.
+                # Never --volumes: the old named volumes stay until Podman's cleanup.
                 self.call(['podman', 'rm', old['name']], timeout=120)
             return {'ok': True, 'ad': app, 'revizyon': places['revision']}
         except Exception as original:
@@ -884,7 +884,7 @@ class Manager:
             error = cfg.ContainerConfigError(
                 original.status if isinstance(original, cfg.ContainerConfigError) else 502,
                 ('Kurulum başarısız (%s): %s Yapılan her şey geri alındı.' if recovered else
-                 'Kurulum başarısız (%s): %s Geri alma da tamamlanamadı; Gelişmiş → Podman ve İşlem geçmişine bakın.')
+                 'Kurulum başarısız (%s): %s Geri alma da tamamlanamadı; Podman bölümüne ve İşlem geçmişine bakın.')
                 % (failed, cause))
             error.failed_step = failed
             error.question = getattr(original, 'question', None)
@@ -1216,7 +1216,7 @@ class Manager:
     def remove_images(self, images):
         """A removed application's images, each unless another record names it or any container comes from it
         (cleanup_one's checks, made after the record went). One that stays is a line of the job's log, never its
-        failure: the application is gone either way, and Gelişmiş's cleanup offers the image later."""
+        failure: the application is gone either way, and Podman's cleanup offers the image later."""
         refs = sorted({ref for ref in images.values() if isinstance(ref, str) and ref})
         if refs:
             self.step('İmajlar kaldırılıyor')

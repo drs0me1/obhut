@@ -1,5 +1,5 @@
 """Independent inventory edge reproductions; no server or real Podman calls. The inventory offers no action:
-an application is managed on its own page (DD-271, phase 3), Gelişmiş's resources by their jobs."""
+an application is managed on its own page (DD-271, phase 3), Podman's resources by their jobs."""
 import json
 from pathlib import Path
 import sys
