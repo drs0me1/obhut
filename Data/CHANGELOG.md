@@ -81,6 +81,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and the key's end, and its link opens the Tailscale admin console; Sistem → Sunucu shows the device's Tailscale
   name, the client version and whether it is offered as an exit node. A device key that ends within 14 days is
   now a warning in Uyarılar (and in the top bar's count), not only a line on the tab.
+- Genel Bakış' line under its title says what the page now holds, "Uygulamalar bir bakışta: durumları ve
+  adresleri.", instead of naming health, access and the server, which moved to Uyarılar, Erişim and the sidebar.
 
 ## [2.0.0] — 2026-10-18
 

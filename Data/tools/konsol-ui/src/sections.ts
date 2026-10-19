@@ -20,7 +20,7 @@ export const SECTIONS: readonly Section[] = [
     id: "genel",
     title: "Genel Bakış",
     short: "Genel",
-    description: "Sağlık, uygulamalar, erişim ve sunucu bir bakışta.",
+    description: "Uygulamalar bir bakışta: durumları ve adresleri.",
     icon: "home",
     keywords: "ana menü özet durum sağlık dikkat kaynaklar ağ erişim özeti",
   },

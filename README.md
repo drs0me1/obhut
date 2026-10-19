@@ -127,7 +127,7 @@ browser.
 
 | Section | What you do there |
 |---|---|
-| **Genel Bakış** (Overview) | What needs attention, each with the way to its fix; the applications, an access summary, resources, the network and the server |
+| **Genel Bakış** (Overview) | The applications, each with its state and address (*Aç*, *Ayrıntı*). What needs attention is on *Uyarılar*, which the count in the top bar opens, each with the way to its fix; the resources and the server are cards at the sidebar's foot |
 | **Uygulamalar** (Applications) | Every application in one list; *Uygulama ekle* (a file, an `https` address, an image name, an existing container → the inspector → the plan); each application's page: Özet, Erişim, Depolama, Tanım (the file and the answers, edited as a plan), Günlük |
 | **Podman** | Every container with its state, CPU, memory and ports; what each kind takes on disk; images, volumes, networks and removed applications' folders, where what nothing uses is ticked and removed |
 | **Erişim** (Access) | Who reaches what from where; Adresler (addresses and raw ports, *Adres aç*), Yerel adlar (local names and the domain), WireGuard (networks and devices), Güvenlik duvarı (your rules) |

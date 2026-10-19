@@ -55,8 +55,8 @@ Konsol (tarayıcıdan)
   İnternetten HTTPS isteğe bağlıdır: önce Sistem → Hesap'ta hesap açın, sonra Erişim → Adresler → Konsol
   satırına internet adı verin (DNS A kaydı gerekir, onayla yazılır); orada kullanıcı adı ve parola sorulur.
   Yedi bölüm vardır:
-    Genel Bakış   dikkat isteyen konular (her biri düzeltileceği yere gider), uygulamalar, erişim özeti
-                  (Tailscale adresleri, internet adları, açık ham portlar, WireGuard), kaynaklar, ağ, sunucu
+    Genel Bakış   uygulamalar (durumu, adresi; Aç, Ayrıntı). Dikkat isteyen konular Uyarılar'dadır: üst
+                  çubuktaki sayı açar, her biri düzeltileceği yere gider. Kaynaklar ve sunucu yan menünün altında
     Uygulamalar   uygulamaların listesi; Uygulama ekle; her uygulamanın sayfası (Özet, Erişim, Depolama,
                   Tanım, Günlük)
     Podman        konteynerler, işlemci ve bellek, depolama; imajlar, birimler, ağlar ve kaldırılmış
@@ -112,8 +112,9 @@ Uygulama ekle (Compose ya da Kubernetes dosyasından)
               değiştirmezseniz korunur. Kalan bir portun kullanımı Erişim'den değişir. Adresten gelen
               uygulamada "Kaynaktan yenile" dosyanın yeni sürümünü getirir; yalnız yeni satırlar sorulur.
     Günlük    her servisin günlüğü; "Canlı" ile 5 sn'de bir yenilenir
-  Kaldır: uygulamanın verisi varsayılan olarak kalır; silmek için uygulamanın adını yazarsınız. /srv altındaki
-    dosyalara hiç dokunulmaz. İmajlar Podman'daki temizliğe kalır.
+  Kaldır: uygulamanın adını yazarsınız; verisi de silinir ("Verileri sakla" seçilirse klasör kalır ve Podman'daki
+    temizlikte görünür). Başka bir uygulamanın ya da konteynerin kullanmadığı imajları da gider. /srv altındaki
+    dosyalara hiç dokunulmaz.
   Güncellemeler: imaj güncellemesi hiçbir zaman kendiliğinden olmaz. Sistem → Güncellemeler kaç uygulamada
     yeni imaj olduğunu gösterir; her biri kendi sayfasında onaylanır.
 

@@ -985,7 +985,7 @@ copy that differs fails the tests. By area:
 
 | Area | Routes (under `/api/konsol/`) |
 |---|---|
-| Overview and live state | `kaynaklar`, `saglik`, `ag`, `etkinlik`, `bekleyen`, `olaylar` (§6.6) |
+| Overview and live state | `kaynaklar`, `saglik`, `etkinlik`, `bekleyen`, `olaylar` (§6.6) |
 | Applications | `uygulamalar` (list), `uygulamalar/{app}` (detail), `…/{app}/gunluk`, `POST uygulamalar/denetle` (dry run), `…/kaynak` (drafts), `…/kur` (install or its plan, 202), `…/{app}/islem` (start, stop, restart, update; 202), `…/{app}/tanim` (plan or apply), `…/{app}/yenile`, `…/{app}/kaldir` (202); `konteynerler/liste`, `konteynerler/islem` (a job's record) |
 | Access | `erisim`, `guvenlik-duvari`, `adlar`, `POST ayarlar/plan`, `ayarlar/uygula`, `ayarlar/onayla`, `ayarlar/geri-al`, `ayarlar/birak` |
 | WireGuard | `wireguard/state`; per network `nets/{iface}/ayarlar`, `nets/{iface}/peers`; per device `…/peers/{name}/remove`, `dns`, `keepalive`, `durum`, `profile` (download), `qr.png` |
