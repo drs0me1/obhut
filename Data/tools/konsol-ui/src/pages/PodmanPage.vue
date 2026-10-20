@@ -134,24 +134,22 @@ const storageParts = computed(() => {
 });
 
 // ---- the containers
-type Filter = "tumu" | "calisan" | "durmus" | "disari";
+type Filter = "tumu" | "calisan" | "durmus";
 const FILTERS: readonly { id: Filter; label: string }[] = [
   { id: "tumu", label: "Tümü" },
   { id: "calisan", label: "Çalışan" },
   { id: "durmus", label: "Durmuş" },
-  { id: "disari", label: "Obhut dışı" },
 ];
 const TESTS: Record<Filter, (c: Container) => boolean> = {
   tumu: () => true,
   calisan: (c) => c.state === "running",
   durmus: (c) => c.state !== "running",
-  disari: (c) => !c.app,
 };
 const filter = useQueryParam<Filter>("suzgec", FILTERS.map((f) => f.id), "tumu");
 const filterCount = (f: Filter) => containers.value.filter(TESTS[f]).length;
 
 const MANAGER: Record<Temizlik["konteynerler"][number]["yonetici"], { pill: string; tone: Tone; text: string }> = {
-  podman: { pill: "Obhut dışı", tone: "neutral", text: "Yalnız Podman; Uygulama ekle'de var olan konteyner olarak seçilebilir" },
+  podman: { pill: "Obhut dışı", tone: "neutral", text: "Yalnız Podman çalıştırıyor" },
   kayitsiz: { pill: "Kaydı yok", tone: "warning", text: "Bir uygulamanın etiketini taşıyor ama kaydı yok" },
   baska: { pill: "Obhut dışı", tone: "neutral", text: "Başka bir yönetici çalıştırıyor" },
 };
@@ -405,7 +403,6 @@ onBeforeUnmount(() => stopWatch?.());
           </svg>
           <dl class="summary-rows">
             <dt>Obhut'un</dt><dd>{{ owned.length }} · {{ ownedApps }} uygulama</dd>
-            <dt>Obhut dışı</dt><dd>{{ containers.length - owned.length }}</dd>
           </dl>
         </template>
         <p v-else-if="list" class="meter-note">{{ collectionError("containers") }}</p>

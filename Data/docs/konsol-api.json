@@ -282,7 +282,7 @@
     "/api/konsol/uygulamalar": {
       "get": {
         "operationId": "uygulamalar",
-        "summary": "Uygulamalar: kayıtlarından, her servisin canlı durumuyla; uygulamaya alınabilecek konteynerler; ?yenile imaj güncellemelerini yeniden sorar (en çok dakikada bir)",
+        "summary": "Uygulamalar: kayıtlarından, her servisin canlı durumuyla; ?yenile imaj güncellemelerini yeniden sorar (en çok dakikada bir)",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -447,7 +447,7 @@
     "/api/konsol/uygulamalar/kaynak": {
       "post": {
         "operationId": "uygulama_kaynak",
-        "summary": "Taslak dosya: bir https adresinden ya da bir konteynerden hemen, bir imajdan iş olarak (indirir); hiçbir şey kurulmaz",
+        "summary": "Taslak dosya: bir https adresinden hemen, bir imajdan iş olarak (indirir); hiçbir şey kurulmaz",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -8323,8 +8323,7 @@
         "enum": [
           "dosya",
           "adres",
-          "imaj",
-          "konteyner"
+          "imaj"
         ]
       },
       "UygulamaServisi": {
@@ -8509,26 +8508,6 @@
         ],
         "additionalProperties": false
       },
-      "UygulamaKaynagi": {
-        "type": "object",
-        "properties": {
-          "ad": {
-            "type": "string"
-          },
-          "imaj": {
-            "type": "string"
-          },
-          "durum": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "ad",
-          "imaj",
-          "durum"
-        ],
-        "additionalProperties": false
-      },
       "Uygulamalar": {
         "type": "object",
         "properties": {
@@ -8541,12 +8520,6 @@
               "$ref": "#/components/schemas/Uygulama"
             }
           },
-          "kaynaklar": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/UygulamaKaynagi"
-            }
-          },
           "hatalar": {
             "type": "array",
             "items": {
@@ -8557,7 +8530,6 @@
         "required": [
           "read_at",
           "items",
-          "kaynaklar",
           "hatalar"
         ],
         "additionalProperties": false
@@ -9028,16 +9000,6 @@
                   }
                 ]
               },
-              "konteyner": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
               "alindi": {
                 "type": "integer"
               },
@@ -9049,7 +9011,6 @@
               "tur",
               "adres",
               "imaj",
-              "konteyner",
               "alindi",
               "sha256"
             ],
@@ -9182,25 +9143,6 @@
         ],
         "additionalProperties": false
       },
-      "KaynakKonteyner": {
-        "type": "object",
-        "properties": {
-          "tur": {
-            "type": "string",
-            "enum": [
-              "konteyner"
-            ]
-          },
-          "konteyner": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "tur",
-          "konteyner"
-        ],
-        "additionalProperties": false
-      },
       "KaynakIstegi": {
         "anyOf": [
           {
@@ -9208,9 +9150,6 @@
           },
           {
             "$ref": "#/components/schemas/KaynakImaj"
-          },
-          {
-            "$ref": "#/components/schemas/KaynakKonteyner"
           }
         ]
       },
@@ -9227,9 +9166,6 @@
               },
               {
                 "$ref": "#/components/schemas/KaynakImaj"
-              },
-              {
-                "$ref": "#/components/schemas/KaynakKonteyner"
               }
             ]
           }
@@ -9281,9 +9217,6 @@
               },
               {
                 "$ref": "#/components/schemas/KaynakImaj"
-              },
-              {
-                "$ref": "#/components/schemas/KaynakKonteyner"
               }
             ]
           },

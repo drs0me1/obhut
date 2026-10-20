@@ -53,7 +53,7 @@ must be reinstalled from scratch.
   applications' names) are served by Caddy and dnsmasq on the Tailscale address only, behind a firewall
   that admits listed services alone.
 - **Applications from their own files.** Paste or upload a Compose or Kubernetes file, give an `https`
-  address, an image name or an existing container; review the inspector's questions and the plan; Obhut
+  address or an image name; review the inspector's questions and the plan; Obhut
   installs, starts, health-checks and rolls back on failure. Each application gets its own network, a
   visible data folder and a page with its state, access, storage, definition and log.
 - **Files and sharing.** Storage at a glance (with each application's data), the server folders with a
@@ -128,7 +128,7 @@ browser.
 | Section | What you do there |
 |---|---|
 | **Genel Bakış** (Overview) | The applications, each with its state and address (*Aç*, *Ayrıntı*). What needs attention is on *Uyarılar*, which the count in the top bar opens, each with the way to its fix; the resources and the server are cards at the sidebar's foot |
-| **Uygulamalar** (Applications) | Every application in one list; *Uygulama ekle* (a file, an `https` address, an image name, an existing container → the inspector → the plan); each application's page: Özet, Erişim, Depolama, Tanım (the file and the answers, edited as a plan), Günlük |
+| **Uygulamalar** (Applications) | Every application in one list; *Uygulama ekle* (a file, an `https` address or an image name → the inspector → the plan); each application's page: Özet, Erişim, Depolama, Tanım (the file and the answers, edited as a plan), Günlük |
 | **Podman** | Every container with its state, CPU, memory and ports; what each kind takes on disk; images, volumes, networks and removed applications' folders, where what nothing uses is ticked and removed |
 | **Erişim** (Access) | Who reaches what from where; Adresler (addresses and raw ports, *Adres aç*), Yerel adlar (local names and the domain), WireGuard (networks and devices), Güvenlik duvarı (your rules) |
 | **Dosyalar** (Files) | Depolama, the server folders, the trash, **Paylaşımlar** (one WebDAV account per folder, Tailscale and internet access, read-only/read-write, expiry) and, on the tailnet, the whole server as root |

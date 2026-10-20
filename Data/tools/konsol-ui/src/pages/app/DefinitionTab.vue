@@ -380,9 +380,9 @@ onBeforeUnmount(() => {
           <dd>{{ FORMAT_TEXT[detail.uygulama.bicim] ?? detail.uygulama.bicim }}</dd>
           <dt>Kaynak</dt>
           <dd data-testid="source-kind">{{ SOURCE_TEXT[source.tur] ?? source.tur }}</dd>
-          <template v-if="source.adres || source.imaj || source.konteyner">
-            <dt>{{ source.adres ? "Adres" : source.imaj ? "İmaj" : "Konteyner" }}</dt>
-            <dd class="mono wrap" data-testid="source-where">{{ source.adres ?? source.imaj ?? source.konteyner }}</dd>
+          <template v-if="source.adres || source.imaj">
+            <dt>{{ source.adres ? "Adres" : "İmaj" }}</dt>
+            <dd class="mono wrap" data-testid="source-where">{{ source.adres ?? source.imaj }}</dd>
           </template>
           <dt>Son okuma</dt>
           <dd data-testid="source-read">{{ dateTime(source.alindi) }} · {{ since(source.alindi, serverNow()) }}</dd>

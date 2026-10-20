@@ -2145,20 +2145,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                                       query.get("satir", ["200"])[0]))
 
     def api_uygulama_kaynak(self, user, data):
-        """K2's drafts: an https address (fetched here, every address checked public) and a standalone container
-        answer with the text; an image is a job (it pulls). Nothing is installed."""
+        """K2's drafts: an https address (fetched here, every address checked public) answers with the text; an
+        image is a job (it pulls). Nothing is installed."""
         tur = data["tur"]
         try:
             if tur == "imaj":
                 reference = master_applications.image_ref(data["imaj"])
                 self.app_job(user, "uygulama-taslak", reference, {"imaj": reference}, {}, "imaj " + reference)
                 return
-            if tur == "adres":
-                text = master_applications.fetch(data["adres"], read_env(self.panel.args.state))
-                detail = "adres " + (urllib.parse.urlsplit(data["adres"]).hostname or "")
-            else:
-                text = self.app_view().container_draft(data["konteyner"])
-                detail = "konteyner " + data["konteyner"]
+            text = master_applications.fetch(data["adres"], read_env(self.panel.args.state))
+            detail = "adres " + (urllib.parse.urlsplit(data["adres"]).hostname or "")
         except APP_ERRORS as err:
             self.error(err.status, str(err))
             return

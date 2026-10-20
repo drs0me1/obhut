@@ -20,7 +20,7 @@ import uuid
 import master_applications as apps
 import master_settings as settings
 import master_container_config as config
-from master_containers import NAME_RE, Containers, ContainerError, epoch, listening, name_of, process_users, update_status
+from master_containers import NAME_RE, Containers, ContainerError, epoch, listening, process_users, update_status
 
 APP_ACTIONS = frozenset(('uygulama-kur', 'uygulama-baslat', 'uygulama-durdur', 'uygulama-yeniden-baslat', 'uygulama-guncelle',
                          'uygulama-tanim', 'uygulama-kaldir', 'uygulama-taslak'))
@@ -49,7 +49,7 @@ CPU_MIN_INTERVAL = 2.0
 CPU_SAMPLES = 256
 # The install plan runs the worker's checks in this process: only these read-only commands (prefixes) may run.
 PLAN_COMMANDS = (('podman', 'version'), ('podman', 'container', 'exists'), ('podman', 'network', 'exists'),
-                 ('podman', 'pod', 'exists'), ('podman', 'inspect'), ('podman', 'volume', 'inspect'))
+                 ('podman', 'pod', 'exists'))
 
 
 def port_scope(ip, env):
@@ -349,20 +349,6 @@ class Inventory(Containers):
                     usage[container] = self.usage(container, self.inspect(container))
         return {'containers': rows, 'units': units, 'usage': usage, 'ag': self.service.rates()}
 
-    def sources(self):
-        """Standalone containers an application can be made from (K2): nothing but Podman manages them."""
-        if not self.runtime()['ok']:
-            return []
-        ok, found, _ = self.ps()
-        out = []
-        for row in found if ok else []:
-            if row.get('uygulama'):
-                continue
-            raw = self.inspect(row['name'])
-            if raw and config.ownership(raw) == 'standalone':
-                out.append({'ad': row['name'], 'imaj': str(row.get('image') or ''), 'durum': str(row.get('state') or '')})
-        return sorted(out, key=lambda r: r['ad'])
-
     def applications(self):
         """GET /api/konsol/uygulamalar: every application from its record with its live state."""
         errors = []
@@ -376,7 +362,7 @@ class Inventory(Containers):
                               domain) for record, objects in loaded]
         if self.unread:
             errors.append('Kaynak kullanımı okunamadı: ' + ', '.join(sorted(self.unread)) + '.')
-        return {'read_at': int(time.time()), 'items': items, 'kaynaklar': self.sources(), 'hatalar': errors}
+        return {'read_at': int(time.time()), 'items': items, 'hatalar': errors}
 
     def application(self, app):
         """GET /api/konsol/uygulamalar/{app}."""
@@ -481,7 +467,7 @@ class Inventory(Containers):
             if errors:
                 return {'inceleme': inspection, 'hatalar': errors}
             summary = apps.install_summary(self.env, checks['app'], definition, checks['rows'], checks['objects'],
-                                           checks['draft'], checks['old'])
+                                           checks['draft'])
         except config.ContainerConfigError as err:
             raise app_error(err) from err
         return {'inceleme': inspection, 'tanim': definition, 'ozet': summary}
@@ -602,20 +588,6 @@ class Inventory(Containers):
                 found.append(entry)
         sizes = self.service.sizes.measure([e.path for e in found], fresh=fresh)
         return [{'ad': e.name, 'yol': e.path, 'boyut': sizes[e.path]['boyut'], 'neden': sizes[e.path]['neden']} for e in found]
-
-    def container_draft(self, name):
-        """POST …/kaynak {"tur": "konteyner"}: the draft of a standalone container; nothing is written."""
-        raw = self.inspect(name_of(name))
-        if raw is None:
-            raise ContainerError(404, 'Konteyner bulunamadı.')
-        if config.ownership(raw) != 'standalone':
-            raise ContainerError(409, 'Bu konteyner başka bir yöneticiye ait; taslak çıkarılamaz.')
-        ok, image, _ = self.podman('image', 'inspect', str(raw.get('Image') or raw.get('ImageName') or ''))
-        try:
-            base = json.loads(image)[0] if ok else {}
-        except (ValueError, TypeError, IndexError):
-            base = {}
-        return apps.container_draft(raw, base)
 
 
 class Service:

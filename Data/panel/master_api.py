@@ -396,7 +396,7 @@ SCHEMAS = {
     # DD-271 (phase 3): applications. Each is read from its record (master_applications) with its live state.
     "UygulamaDurumu": enum("calisiyor", "durduruldu", "kismen", "hata", "islemde"),
     "GuncellemeDurumu": enum("guncel", "yeni", "denetlenemedi", "bilinmiyor", "sabit"),
-    "KaynakTuru": enum("dosya", "adres", "imaj", "konteyner"),
+    "KaynakTuru": enum("dosya", "adres", "imaj"),
     "UygulamaServisi": obj({"ad": STR, "durum": ref("UygulamaDurumu"), "imaj": STR, "guncelleme": ref("GuncellemeDurumu")}),
     # kaynak: resource use summed over the running containers; koken: where the file came from; uyari: how
     # many warnings its definition carries; ag: its own bridge's live rate in bytes/s (null while it has none, e.g.
@@ -408,11 +408,7 @@ SCHEMAS = {
         "revizyon": STR, "is": null(STR), "koken": ref("KaynakTuru"), "durduruldu": BOOL, "uyari": INT,
         "ag": null(obj({"indirme": INT, "yukleme": INT, "toplam": obj({"indirme": INT, "yukleme": INT})})), "adres": null(STR),
     }),
-    # A standalone container an application can be made from (K2).
-    "UygulamaKaynagi": obj({"ad": STR, "imaj": STR, "durum": STR}),
-    "Uygulamalar": obj({
-        "read_at": INT, "items": arr(ref("Uygulama")), "kaynaklar": arr(ref("UygulamaKaynagi")), "hatalar": arr(STR),
-    }),
+    "Uygulamalar": obj({"read_at": INT, "items": arr(ref("Uygulama")), "hatalar": arr(STR)}),
     # A secret answer as stored: never its value.
     "YanitSakli": obj({"set": BOOL}),
     "KayitliYanitlar": obj({"name": STR, "answers": map_of(one_of(ref("Yanit"), ref("YanitSakli")))}),
@@ -446,8 +442,7 @@ SCHEMAS = {
     "UygulamaAyrinti": obj({
         "uygulama": ref("Uygulama"), "servisler": arr(ref("UygulamaServisAyrintisi")),
         "gizliler": arr(obj({"ad": STR, "servisler": arr(STR)})), "uyarilar": arr(ref("UygulamaUyarisi")),
-        "koken": obj({"tur": ref("KaynakTuru"), "adres": null(STR), "imaj": null(STR), "konteyner": null(STR), "alindi": INT,
-                      "sha256": STR}),
+        "koken": obj({"tur": ref("KaynakTuru"), "adres": null(STR), "imaj": null(STR), "alindi": INT, "sha256": STR}),
         "metin": STR, "yanitlar": ref("KayitliYanitlar"), "birimler": arr(STR), "veri": STR, "ag": STR, "pod": null(STR),
         "guncelleme_denetlendi": null(INT),
     }),
@@ -455,16 +450,15 @@ SCHEMAS = {
     "KaynakDosya": obj({"tur": enum("dosya")}),
     "KaynakAdres": obj({"tur": enum("adres"), "adres": STR}),
     "KaynakImaj": obj({"tur": enum("imaj"), "imaj": STR}),
-    "KaynakKonteyner": obj({"tur": enum("konteyner"), "konteyner": STR}),
-    "KaynakIstegi": one_of(ref("KaynakAdres"), ref("KaynakImaj"), ref("KaynakKonteyner")),
-    # An address or a container answers at once with the draft; an image is a job (it pulls) whose result
+    "KaynakIstegi": one_of(ref("KaynakAdres"), ref("KaynakImaj")),
+    # An address answers at once with the draft; an image is a job (it pulls) whose result
     # (GET /api/konsol/konteynerler/islem) is the draft.
-    "Taslak": obj({"metin": STR, "kaynak": one_of(ref("KaynakAdres"), ref("KaynakImaj"), ref("KaynakKonteyner"))}),
+    "Taslak": obj({"metin": STR, "kaynak": one_of(ref("KaynakAdres"), ref("KaynakImaj"))}),
     "TaslakIsi": obj({"is": STR}),
     "KaynakYaniti": one_of(ref("Taslak"), ref("TaslakIsi")),
     # plan: the dry run (KurPlani) instead of the job.
     "KurIstegi": obj({"metin": STR, "yanitlar": ref("Yanitlar"),
-                      "kaynak": one_of(ref("KaynakDosya"), ref("KaynakAdres"), ref("KaynakImaj"), ref("KaynakKonteyner")),
+                      "kaynak": one_of(ref("KaynakDosya"), ref("KaynakAdres"), ref("KaynakImaj")),
                       "plan": BOOL}, optional=("plan",)),
     # What an install creates (its plan): services with start mode, user, image, folders and secret names; the access
     # rows it seeds (an address with its URL); the data folders it makes; secrets by name; warnings; images it pulls.
@@ -541,7 +535,7 @@ ROUTES = (
     # DD-271 (phase 3): applications, each managed on its own page; every write is a job (İşlemler) and an audit
     # line uygulama-<verb>. A whole file of up to 256 KiB arrives JSON-escaped beside the answers.
     Route("GET", "/api/konsol/uygulamalar", "uygulamalar",
-          "Uygulamalar: kayıtlarından, her servisin canlı durumuyla; uygulamaya alınabilecek konteynerler; "
+          "Uygulamalar: kayıtlarından, her servisin canlı durumuyla; "
           "?yenile imaj güncellemelerini yeniden sorar (en çok dakikada bir)", ref("Uygulamalar"), query={"yenile": STR}),
     Route("GET", "/api/konsol/uygulamalar/{app}", "uygulama",
           "Bir uygulama: servisleri, portları, klasörleri, gizli değerlerin adları, uyarılar, kaynağı, dosyası ve "
@@ -549,8 +543,7 @@ ROUTES = (
     Route("GET", "/api/konsol/uygulamalar/{app}/gunluk", "uygulama_gunlugu",
           "Bir servisin günlüğü: biriminin journal'ı, son satırlar", ref("UygulamaGunlugu"), query={"servis": STR, "satir": INT}),
     Route("POST", "/api/konsol/uygulamalar/kaynak", "uygulama_kaynak",
-          "Taslak dosya: bir https adresinden ya da bir konteynerden hemen, bir imajdan iş olarak (indirir); hiçbir "
-          "şey kurulmaz", ref("KaynakYaniti"), request=ref("KaynakIstegi")),
+          "Taslak dosya: bir https adresinden hemen, bir imajdan iş olarak (indirir); hiçbir şey kurulmaz", ref("KaynakYaniti"), request=ref("KaynakIstegi")),
     Route("POST", "/api/konsol/uygulamalar/kur", "uygulama_kur",
           "Uygulamayı dosyasından ve yanıtlardan kurar; iş arka planda, ilerleme olay akışında. plan istenirse (200) "
           "kurulumun ilk yazmadan önceki bütün denetimleri ve kurulacaklar; hiçbir şey yazılmaz, indirilmez",

@@ -1,8 +1,8 @@
 <!-- Uygulama ekle (K2; rebuild.md 4.2, 4.5; DD-279): a full-window page of its own (#/uygulama-ekle) in four steps,
      with its head (the way back to Uygulamalar and the steps) and its bar of actions in sight while the steps scroll.
-     Kaynak — a file pasted, uploaded or dropped (read here, at most 256 KiB of UTF-8), an https address, an image name
-     (a job that pulls it; its log shows here) or an existing standalone container (Uygulamalar.kaynaklar); each of
-     the last three becomes a draft file first (POST …/uygulamalar/kaynak).
+     Kaynak — a file pasted, uploaded or dropped (read here, at most 256 KiB of UTF-8), an https address or an image
+     name (a job that pulls it; its log shows here); each of the last two becomes a draft file first
+     (POST …/uygulamalar/kaynak).
      Denetçi — on a wide screen the file beside the questions, on a phone one of the two: the file with its line
      numbers and the inspector's marks (it can be corrected here; the question in hand lights its line and a click on
      a marked line shows its question), the refusals that stop the flow with their lines, the notes, the
@@ -56,7 +56,6 @@ const SOURCES: readonly { id: KaynakTuru; icon: IconName; title: string; text: s
   { id: "dosya", icon: "file", title: "Dosya", text: "Compose ya da Kubernetes YAML: yapıştır, yükle ya da sürükle", go: "Denetle", busy: "Denetleniyor…" },
   { id: "adres", icon: "globe", title: "Adresten", text: "https ile bir Compose ya da Kubernetes dosyası", go: "İndir ve denetle", busy: "İndiriliyor…" },
   { id: "imaj", icon: "box", title: "İmaj adından", text: "Obhut taslak bir dosya üretir", go: "Taslak üret", busy: "Taslak üretiliyor…" },
-  { id: "konteyner", icon: "server", title: "Var olan konteyner", text: "Elle başlatılmış bir konteyner yönetime alınır", go: "Dosyaya çevir", busy: "Çevriliyor…" },
 ];
 const STEPS = ["Kaynak", "Denetçi", "Plan", "Kurulum"] as const;
 const HTTPS = address("https", "", "");
@@ -80,7 +79,6 @@ const pasted = ref("");
 const uploaded = ref("");
 const url = ref("");
 const image = ref("");
-const container = ref("");
 const sourceError = ref("");
 const fetching = ref(false);
 const draftLog = ref<IsSatiri[]>([]);
@@ -123,7 +121,6 @@ const page = ref<HTMLElement | null>(null);
 
 const root = computed(() => live.kaynaklar?.root ?? "");
 const domain = computed(() => live.erisim?.alan || live.kaynaklar?.domain || "");
-const containers = computed(() => live.uygulamalar?.kaynaklar ?? []);
 /** Tailscale names other rows hold (Konsol's and Paylaşımlar' are reserved anyway). */
 const taken = computed(() => (live.erisim?.hizmetler ?? []).flatMap((h) => (h.satir?.tur === "adres" ? [h.satir.ad] : [])));
 const chosen = computed(() => SOURCES.find((s) => s.id === source.value) ?? null);
@@ -141,7 +138,7 @@ function reset(): void {
   stopTimers();
   step.value = 1;
   source.value = "";
-  pasted.value = uploaded.value = url.value = image.value = container.value = "";
+  pasted.value = uploaded.value = url.value = image.value = "";
   sourceError.value = "";
   fetching.value = false;
   draftLog.value = [];
@@ -203,7 +200,6 @@ const sourceReady = computed(() => {
   if (source.value === "dosya") return pasted.value.trim() !== "";
   if (source.value === "adres") return url.value.trim() !== "";
   if (source.value === "imaj") return image.value.trim() !== "";
-  if (source.value === "konteyner") return container.value !== "";
   return false;
 });
 
@@ -270,9 +266,7 @@ async function nextFromSource(): Promise<void> {
   fetching.value = true;
   try {
     const request =
-      source.value === "adres" ? ({ tur: "adres", adres: url.value.trim() } as const)
-      : source.value === "imaj" ? ({ tur: "imaj", imaj: image.value.trim() } as const)
-      : ({ tur: "konteyner", konteyner: container.value } as const);
+      source.value === "adres" ? ({ tur: "adres", adres: url.value.trim() } as const) : ({ tur: "imaj", imaj: image.value.trim() } as const);
     const reply = await fetchDraft(request);
     if ("is" in reply) {
       followDraft(reply.is, request.tur === "imaj" ? request.imaj : "");
@@ -287,7 +281,7 @@ async function nextFromSource(): Promise<void> {
 }
 
 const whereOf = (k: KurIstegi["kaynak"]): string =>
-  k.tur === "adres" ? k.adres : k.tur === "imaj" ? `İmaj adından taslak · ${k.imaj}` : k.tur === "konteyner" ? `${k.konteyner} konteynerinden taslak` : "Yapıştırılan dosya";
+  k.tur === "adres" ? k.adres : k.tur === "imaj" ? `İmaj adından taslak · ${k.imaj}` : "Yapıştırılan dosya";
 
 /** An image's draft is a job (it pulls the image): its log shows here until its result is the draft. */
 function followDraft(id: string, ref: string): void {
@@ -457,7 +451,7 @@ function back(): void {
 
 // ---- Plan
 let planSeq = 0;
-const PARTS: Record<string, string> = { dosya: "Dosya", name: "Uygulama adı", podman: "Podman", portlar: "Portlar", kaynak: "Kaynak konteyner" };
+const PARTS: Record<string, string> = { dosya: "Dosya", name: "Uygulama adı", podman: "Podman", portlar: "Portlar" };
 const planProblems = computed(() =>
   Object.entries(plan.value?.hatalar ?? {}).map(([id, text]) => {
     const q = inspection.value?.questions.find((x) => x.id === id && x.kind !== "name");
@@ -649,20 +643,6 @@ const barText = computed(() => {
               :aria-describedby="describedby" :disabled="fetching" data-testid="src-image" @keydown.enter.prevent="nextFromSource" />
           </Field>
           <JobLog v-if="fetching || draftLog.length" :lines="draftLog" label="Taslak günlüğü" data-testid="draft-progress" />
-        </template>
-        <template v-else-if="source === 'konteyner'">
-          <fieldset v-if="containers.length" class="choice-list" data-testid="src-containers">
-            <legend class="field-label">Konteyner</legend>
-            <label v-for="c in containers" :key="c.ad" class="choice-item" :data-konteyner="c.ad">
-              <input v-model="container" type="radio" name="uygulama-konteyner" :value="c.ad" :disabled="fetching" />
-              <span class="choice-text">
-                <span class="choice-head"><strong>{{ c.ad }}</strong><span class="muted">{{ c.durum }}</span></span>
-                <span class="choice-sub mono">{{ c.imaj }}</span>
-              </span>
-            </label>
-          </fieldset>
-          <p v-else class="meter-note" data-testid="src-containers-empty">Elle başlatılmış, Obhut'un yönetmediği bir konteyner yok.</p>
-          <p class="meter-note">Taslak bir Compose dosyasına çevrilir. Kurulum bitince eski konteyner kaldırılır; adlı birimlerindeki veri uygulamanın klasörüne kopyalanır, birimlerin kendisine dokunulmaz.</p>
         </template>
         <p v-else class="add-hint">Uygulamanın nereden geldiğini seçin. Kurulumu dosya anlatır; denetçi yalnız dosyanın bilemediğini sorar, Obhut kendi birimlerini üretir.</p>
         <p v-if="sourceError" class="form-error" role="alert" data-testid="source-error">{{ sourceError }}</p>

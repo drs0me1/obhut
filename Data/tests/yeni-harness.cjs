@@ -292,7 +292,7 @@ const uygulama = (ad, o = {}) => ({ ad, durum: "calisiyor", bicim: "compose", se
   guncelleme: "sabit", eylemler: ["durdur", "yeniden-baslat"], revizyon: "rev-" + ad, is: null, koken: "dosya", durduruldu: false, uyari: 0, ag: null,
   adres: null, ...o });
 
-const uygulamalar = (items, o = {}) => ({ read_at: 1791845000, items, kaynaklar: [], hatalar: [], ...o });
+const uygulamalar = (items, o = {}) => ({ read_at: 1791845000, items, hatalar: [], ...o });
 
 /** An application's detail from its list item; `servisler` overrides each service's detail by name. */
 function ayrinti(item, o = {}, servisler = {}) {
@@ -300,7 +300,7 @@ function ayrinti(item, o = {}, servisler = {}) {
     konteyner: `${item.ad}_${s.ad}`, birim: `konsol-${item.ad}_${s.ad}.service`, calisma: null, saglik: "", yeniden_baslama: 0, portlar: [], baglamalar: [],
     gizliler: [], surecler: null, ...(servisler[s.ad] || {}) });
   return { uygulama: item, servisler: item.servisler.map(svc), gizliler: [], uyarilar: [],
-    koken: { tur: item.koken, adres: null, imaj: null, konteyner: null, alindi: 1791700000, sha256: "0".repeat(64) },
+    koken: { tur: item.koken, adres: null, imaj: null, alindi: 1791700000, sha256: "0".repeat(64) },
     metin: "services:\n" + item.servisler.map((s) => `  ${s.ad}:\n    image: ${s.imaj}\n`).join(""), yanitlar: { name: item.ad, answers: {} },
     birimler: [`konsol-${item.ad}.network`, ...item.servisler.map((s) => `konsol-${item.ad}_${s.ad}.container`)].sort(),
     veri: `/var/lib/master-stack/uygulamalar/${item.ad}`, ag: `ksl-${item.ad}`, pod: null, guncelleme_denetlendi: null, ...o };

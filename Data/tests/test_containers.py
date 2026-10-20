@@ -99,12 +99,7 @@ class ContainerViewTests(unittest.TestCase):
         self.ctx.version = "weird; rm -rf"
         self.assertFalse(self.call("liste")[1]["runtime"]["ok"])
 
-    def test_names_methods_and_paths(self):
-        for bad in ("", "-x", "a b", "x" * 129, "../etc", "a;b"):
-            with self.subTest(bad=bad), self.assertRaises(containers.ContainerError) as err:
-                containers.name_of(bad)
-            self.assertEqual(err.exception.status, 400)
-        self.assertEqual(containers.name_of("deneme-medya"), "deneme-medya")
+    def test_methods_and_paths(self):
         with self.assertRaises(RuntimeError) as err:
             self.call("liste", method="POST")
         self.assertIn("404", str(err.exception), "the backend has no write route for containers")

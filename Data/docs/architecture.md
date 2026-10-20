@@ -299,13 +299,13 @@ forward chain lets in exactly that publication.
 
 ```
 Konsol "Uygulama ekle"
-  POST uygulamalar/kaynak         (address: fetched and checked here; image: a draft job; container: a draft)
+  POST uygulamalar/kaynak         (address: fetched and checked here; image: a draft job)
   POST uygulamalar/denetle        inspector: refusals, questions, the checked definition (nothing written)
   POST uygulamalar/kur {plan}     the worker's install checks in the backend, read-only commands only
   POST uygulamalar/kur            checks again → broker → systemd-run master-container-<id> (request on stdin)
      worker (install.lock + KONTEYNER_LOCK): record → guard apply → folders → pull and pin → Podman secrets
        → generator → env files → Quadlet dry run → units → daemon-reload → start in order → ready (300 s)
-       → master_shares publish (Caddy sites, DNS names, firewall, Caddy reload) → [takeover: old container removed]
+       → master_shares publish (Caddy sites, DNS names, firewall, Caddy reload)
      every step and fact is a line of the job's log; a container that does not come up adds its own last lines
      (journalctl CONTAINER_NAME=…, the job's secret values masked) before the rollback
      on failure: everything the job made is undone in reverse; the job record names the step (and a direct

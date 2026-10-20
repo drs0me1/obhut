@@ -53,7 +53,6 @@ LOCK_WAIT = 5.0
 # Every unit active, every container running and healthy: within this many seconds of the last start.
 READY_SECONDS = 300
 PULL_SECONDS = 600
-COPY_SECONDS = 1200
 # The job's log: the newest LOG_LINES lines, each at most LINE_CHARS; a failed install keeps OUTPUT_LINES of its
 # container's own output.
 LOG_LINES = 300
@@ -740,52 +739,15 @@ class Manager:
         cfg.require(not self.exists('network', objects['network']), 'Bu adla bir ağ zaten var: %s' % objects['network'], 409)
         cfg.require(not self.exists('pod', app), 'Bu adla bir pod zaten var: %s' % app, 409)
 
-    # -- taking a standalone container over (source "konteyner")
-    def takeover(self, name, app, inspection, answers):
-        """The standalone container a draft came from and its named volumes that a to: app mount takes."""
-        info = self.inspect(name)
-        cfg.require(info is not None, 'Kaynak konteyner bulunamadı: %s' % name, 404)
-        cfg.require(cfg.ownership(info) == 'standalone', 'Kaynak konteyner başka bir yöneticiye ait; devralınamaz.', 409)
-        given = (answers or {}).get('answers') or {}
-        wanted = {}
-        for q in inspection.get('questions', []):
-            if q.get('kind') == 'mount' and q.get('source_kind') == 'named' and given.get(q['id']) == {'to': 'app'}:
-                wanted.setdefault(q['source'], q['folder'])
-        copies = []
-        mounted = {m.get('Name') for m in info.get('Mounts') or [] if isinstance(m, dict) and m.get('Type') == 'volume'}
-        for volume, folder in sorted(wanted.items()):
-            if volume not in mounted:
-                continue
-            data = self.json_call(['podman', 'volume', 'inspect', volume])
-            cfg.require(isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict), 'Birim bilgisi okunamadı.', 502)
-            point = data[0].get('Mountpoint')
-            cfg.require(data[0].get('Driver') == 'local' and not data[0].get('Options') and isinstance(point, str)
-                        and point.startswith('/') and '..' not in Path(point).parts,
-                        'Birim %s yerel bir birim değil; kopyalanamaz.' % volume, 409)
-            # Copied once, into a folder this job makes (so a failed takeover takes the copy back with it).
-            target = apps.data_dir(self.env, app) / folder
-            cfg.require(not os.path.lexists(target), 'Uygulamanın %s klasörü zaten var; birim kopyalanmadı.' % target, 409)
-            copies.append((point, target))
-        return {'name': name, 'running': (info.get('State') or {}).get('Running') is True, 'copies': copies}
-
-    def copy_volumes(self, old):
-        if old['running']:
-            self.step('Eski konteyner durduruluyor')
-            self.call(['podman', 'stop', '--time', '60', old['name']], timeout=120)
-        for point, target in old['copies']:
-            self.step('Birim kopyalanıyor: %s' % target.name)
-            apps.make_dir(target)
-            self.call(['cp', '-a', '--', point.rstrip('/') + '/.', str(target) + '/'], timeout=COPY_SECONDS)
-
     # -- uygulama-kur
     def install_checks(self, request, errors=None):
         """Every check an install makes before its first write, in its order: the file and the answers again on the
         server, the name free everywhere (record, units, containers, network, pod), the Tailscale names free, the /srv
-        folders (DD-226), a takeover's source container, the pool ports, and a preliminary render (what the generator
-        cannot express, and what needs Podman 5). Nothing is written, pulled or created. The install (errors None)
-        stops at the first refusal; the install plan (POST …/kur with plan, run in the backend with read-only commands)
-        passes a dict that collects every refusal under its question id or part (podman, name, kaynak, portlar, dosya)
-        and gets None back when there was one. Otherwise the install's context."""
+        folders (DD-226), the pool ports, and a preliminary render (what the generator cannot express, and what needs
+        Podman 5). Nothing is written, pulled or created. The install (errors None) stops at the first refusal; the
+        install plan (POST …/kur with plan, run in the backend with read-only commands) passes a dict that collects
+        every refusal under its question id or part (podman, name, portlar, dosya) and gets None back when there was
+        one. Otherwise the install's context."""
         def attempt(key, check):
             if errors is None:
                 return check()
@@ -807,8 +769,6 @@ class Manager:
         attempt('name', lambda: self.name_free(app, objects))
         self.names_free(app, definition, errors=errors)
         self.srv_paths(definition, errors=errors)
-        old = attempt('kaynak', lambda: self.takeover(source['konteyner'], app, inspection, answers)) \
-            if source['tur'] == 'konteyner' else None
         # The rows are the home of how each port is reached; the stored definition keeps the ports' numbers only.
         rows, stored = apps.next_rows(definition), apps.stored_definition(definition)
         ports = attempt('portlar', lambda: apps.allocate(self.env, app, apps.address_keys(rows), {}, self.records))
@@ -824,14 +784,14 @@ class Manager:
         if errors:
             return None
         return {'text': text, 'answers': answers, 'source': source, 'inspection': inspection, 'definition': definition,
-                'values': values, 'app': app, 'version': version, 'objects': objects, 'old': old, 'rows': rows,
+                'values': values, 'app': app, 'version': version, 'objects': objects, 'rows': rows,
                 'stored': stored, 'places': places, 'draft': draft}
 
     def app_install(self, request):
         checks = self.install_checks(request)
         text, answers, source, inspection = checks['text'], checks['answers'], checks['source'], checks['inspection']
         definition, values, app, version = checks['definition'], checks['values'], checks['app'], checks['version']
-        objects, old, rows, stored, places = checks['objects'], checks['old'], checks['rows'], checks['stored'], checks['places']
+        objects, rows, stored, places = checks['objects'], checks['rows'], checks['stored'], checks['places']
         draft = checks['draft']
         undo, plan = Undo(), draft
         try:
@@ -854,8 +814,6 @@ class Manager:
             plan = self.render(app, stored, places, version, rows)
             self.records.write_env(app, plan['environment'])
             self.dryrun(plan)
-            if old:
-                self.copy_volumes(old)
             self.step('Birimler yazılıyor')
             undo.units = self.unit_snapshot(plan['units'])
             self.write_units(plan)
@@ -868,10 +826,6 @@ class Manager:
             self.step('Adresler yayımlanıyor')
             self.publish()
             undo.published = True
-            if old:
-                self.step('Eski konteyner kaldırılıyor')
-                # Never --volumes: the old named volumes stay until Podman's cleanup.
-                self.call(['podman', 'rm', old['name']], timeout=120)
             return {'ok': True, 'ad': app, 'revizyon': places['revision']}
         except Exception as original:
             failed = self.operation['step'] if self.operation else 'Kurulum'
@@ -879,7 +833,7 @@ class Manager:
             # The log says why before the rollback's own steps.
             self.note(cause, 'hata')
             self.step('Geri alınıyor')
-            recovered = self.undo_install(app, plan, objects, undo, old)
+            recovered = self.undo_install(app, plan, objects, undo)
             self.note('Yapılan her şey geri alındı.' if recovered else 'Geri alma tamamlanamadı.', 'bilgi' if recovered else 'hata')
             error = cfg.ContainerConfigError(
                 original.status if isinstance(original, cfg.ContainerConfigError) else 502,
@@ -890,7 +844,7 @@ class Manager:
             error.question = getattr(original, 'question', None)
             raise error from original
 
-    def undo_install(self, app, plan, objects, undo, old):
+    def undo_install(self, app, plan, objects, undo):
         ok = True
 
         def attempt(action):
@@ -919,8 +873,6 @@ class Manager:
             attempt(lambda: self.net_call('apply'))
         if undo.published:
             attempt(self.publish)
-        if old and old['running']:
-            attempt(lambda: self.call(['podman', 'start', old['name']], timeout=120))
         return ok
 
     # -- uygulama-baslat, -durdur, -yeniden-baslat

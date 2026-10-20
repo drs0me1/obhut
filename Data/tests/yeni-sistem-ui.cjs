@@ -808,12 +808,12 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
       card.querySelector(".stat-big")?.textContent.replace(/\s+/g, " ").trim() ?? "",
       [...card.querySelectorAll(".summary-rows dt")].map((dt) => [dt.textContent, dt.nextElementSibling.textContent])]);
     assert.deepEqual(await stat("podman-runtime"), ["Çalışıyor", "Podman 5.4.2", [["Kip", "rootful · systemd (Quadlet)"], ["Ağ", "uygulama başına köprü"]]]);
-    assert.deepEqual(await stat("podman-containers"), ["1 sağlıksız", "4 / 5 çalışıyor", [["Obhut'un", "2 · 2 uygulama"], ["Obhut dışı", "3"]]]);
+    assert.deepEqual(await stat("podman-containers"), ["1 sağlıksız", "4 / 5 çalışıyor", [["Obhut'un", "2 · 2 uygulama"]]]);
     assert.deepEqual(await stat("podman-usage"), ["4 konteyner", "502 MB bellek", [["Bellek payı", "%6"], ["İşlemci", "%2"]]], "summed over what runs, against the server's memory");
     assert.deepEqual(await stat("podman-storage"), ["6 kullanılmayan", "432 MB", [["İmajlar", "391 MB · 3 imaj"], ["Konteynerler", "1 MB · 5 konteyner"], ["Birimler", "40 MB · 3 birim"]]],
       "each kind as podman system df counts it");
     assert.deepEqual((await podman.getByRole("button").allInnerTexts()).map((t) => t.replace(/\s+/g, " ")),
-      ["Yenile", "Tümü 5", "Çalışan 4", "Durmuş 1", "Obhut dışı 3", "Seçilenleri kaldır…"], "nothing to pull, create, start, stop or adopt");
+      ["Yenile", "Tümü 5", "Çalışan 4", "Durmuş 1", "Seçilenleri kaldır…"], "nothing to pull, create, start, stop or adopt");
     // The containers: running first by memory; an application's lead to its page, the others say who runs them.
     const containers = podman.getByTestId("containers");
     const ctr = (name) => containers.locator(`tr[data-konteyner="${name}"]`);
@@ -828,16 +828,14 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.equal(await cell("ornek_app", "Portlar"), "100.64.0.2:9001 → 9000/udp");
     assert.equal(await ctr("ornek_app").locator('td[data-label="İmaj"] .sr-only').innerText(), "registry.example/ornek@sha256:" + ID("2"));
     const owner = (name) => ctr(name).locator("th").evaluate((th) => [th.querySelector(".pill")?.textContent ?? "", th.querySelector(".cell-note")?.textContent ?? ""]);
-    assert.deepEqual(await owner("deneme"), ["Obhut dışı", "Yalnız Podman; Uygulama ekle'de var olan konteyner olarak seçilebilir"]);
+    assert.deepEqual(await owner("deneme"), ["Obhut dışı", "Yalnız Podman çalıştırıyor"]);
     assert.deepEqual(await owner("baskasi"), ["Obhut dışı", "Başka bir yönetici çalıştırıyor"]);
     assert.equal(await ctr("yetim").locator("th .pill").innerText(), "Kaydı yok");
     assert.deepEqual(await Promise.all(["Durum", "İşlemci", "Bellek", "Çalışma", "Portlar"].map((l) => cell("yetim", l))),
       ["Durdu\nçıkış kodu 137 · 1 kez yeniden başladı", "—", "—", "—", "yok"]);
     assert.equal(await containers.locator("tbody button, tbody input").count(), 0, "no action on a container");
-    await containers.getByRole("button", { name: /Obhut dışı/ }).click();
-    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("suzgec") === "disari");
-    assert.deepEqual(await containers.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.konteyner)), ["deneme", "baskasi", "yetim"]);
     await containers.getByRole("button", { name: /Durmuş/ }).click();
+    await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("suzgec") === "durmus");
     assert.deepEqual(await containers.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.konteyner)), ["yetim"]);
     await containers.getByRole("button", { name: /Tümü/ }).click();
     await page.waitForURL((u) => !u.hash.includes("suzgec="));

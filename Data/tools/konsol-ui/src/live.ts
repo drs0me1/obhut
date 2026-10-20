@@ -112,7 +112,6 @@ const apply: Record<Key, (data: unknown) => void> = {
     live.uygulamalar = {
       ...value,
       items: value.items.filter(isApp).map(cleanApp),
-      kaynaklar: Array.isArray(value.kaynaklar) ? value.kaynaklar.filter((k) => isObject(k) && isText(k.ad)) : [],
       hatalar: Array.isArray(value.hatalar) ? value.hatalar.filter(isText) : [],
     };
   },

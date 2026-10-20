@@ -517,12 +517,10 @@ the units; Quadlet and systemd are the only runtime (no Compose runtime, no `pod
   the checked address with the certificate verified, at most three redirects (each checked again),
   256 KiB, 10 s, uncompressed UTF-8 text; nothing is installed;
 - **an image name**, as a job: the image is pulled and a Compose draft with its exposed ports and volumes
-  is written;
-- **a standalone container** (one no application or other manager owns): a Compose draft from
-  `podman inspect`; secret-looking variables are left empty and refused settings are written as they are,
-  so the inspector shows them.
+  is written.
 
-A draft is only text for the inspector; the operator reads it, answers and installs.
+A draft is only text for the inspector; the operator reads it, answers and installs. A container Obhut did
+not install is never a source: it does not become an application (**DD-290**).
 
 ### 4.2 Reading the file
 
@@ -672,8 +670,7 @@ jobs run at once and one per target; a job takes `install.lock` and `KONTEYNER_L
 and is refused while a settings change is pending. Each write is a line `uygulama-<verb>` in İşlem geçmişi.
 
 - **Install:** first every check the install makes before writing (the file and answers again on the
-  server, the name free everywhere, the Tailscale names free, the `/srv` folders, a takeover's source, the
-  pool ports, a preliminary render, Podman 5); then the record, the guard, the folders, the pulls and
+  server, the name free everywhere, the Tailscale names free, the `/srv` folders, the pool ports, a preliminary render, Podman 5); then the record, the guard, the folders, the pulls and
   digests, the secrets, Quadlet's dry run, the units, the start in order and the wait (300 s) until each
   unit is active and each container is its own, running and healthy; then the access projection. Any
   failure takes back everything the job made and names the step. A container that does not come up leaves
@@ -682,8 +679,6 @@ and is refused while a settings change is pending. Each write is a line `uygulam
   stopped at once says the usual reason (an image that switches to its own user from root) and its record
   names that start question (`soru`). `kur` with `plan: true` runs every check and writes, pulls and creates
   nothing.
-- **Takeover:** installing from a standalone container copies its named volumes into the new folders and
-  removes the old container (never its volumes) once the application is ready.
 - **Start, stop, restart:** stop removes `[Install]`, so a stopped application stays stopped across
   reboots; restart only for a running application.
 - **Update the image** (**DD-214**): on the operator's confirmation, the same tags are pulled; nothing

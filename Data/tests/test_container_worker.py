@@ -11,7 +11,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -42,15 +41,6 @@ spec:
     - containerPort: 8080
   - name: cache
     image: registry.example/ikili/cache:2
-"""
-TAKEOVER = """name: devir
-services:
-  app:
-    image: registry.example/devir:3
-    volumes:
-      - veri:/data
-volumes:
-  veri:
 """
 
 
@@ -184,17 +174,8 @@ class FakeHost:
             self.pods.discard(argv[-1])
         elif argv[:3] == ['podman', 'network', 'rm']:
             self.networks.discard(argv[-1])
-        elif argv[:2] == ['podman', 'stop']:
-            self.containers[argv[-1]]['State'].update(Running=False, Status='exited')
-        elif argv[:2] == ['podman', 'start']:
-            self.containers[argv[-1]]['State'].update(Running=True, Status='running')
         elif argv[:3] == ['podman', 'volume', 'create']:
             pass
-        elif argv[:3] == ['podman', 'volume', 'inspect']:
-            out = json.dumps([self.volumes[argv[-1]]])
-        elif argv[0] == 'cp':
-            source, target = argv[-2].rstrip('.'), argv[-1]
-            shutil.copytree(source, target, dirs_exist_ok=True)
         elif argv[0] == 'journalctl' and argv[1].startswith('CONTAINER_NAME='):
             out = self.journal.get(argv[1].split('=', 1)[1], '')
         elif argv[:2] == ['systemctl', 'daemon-reload']:
@@ -600,56 +581,6 @@ class InstallTests(WorkerCase):
         with self.assertRaises(cfg.ContainerConfigError) as err:
             self.install()
         self.assertIn('Geri alma da tamamlanamadı', str(err.exception))
-
-
-class TakeoverTests(WorkerCase):
-    def old(self, running=True):
-        point = self.root / 'volumes/veri/_data'
-        point.mkdir(parents=True)
-        (point / 'kayit.txt').write_text('eski veri')
-        self.host.volumes['veri'] = {'Name': 'veri', 'Driver': 'local', 'Options': {}, 'Mountpoint': str(point)}
-        self.host.containers['eski'] = {'Id': 'a' * 64, 'Name': 'eski', 'State': {'Running': running, 'Status': 'running'},
-                                        'Config': {'Labels': {}}, 'Mounts': [{'Type': 'volume', 'Name': 'veri', 'Destination': '/data'}]}
-
-    def request(self):
-        return {'name': 'devir', 'metin': TAKEOVER, 'yanitlar': auto_answers(TAKEOVER, 'devir'),
-                'kaynak': {'tur': 'konteyner', 'konteyner': 'eski'}}
-
-    def test_the_old_container_stops_its_volume_is_copied_and_it_goes_only_when_the_application_is_ready(self):
-        self.old()
-        self.execute('uygulama-kur', self.request())
-        copied = Path(self.env['UYGULAMA_VERI_DIR']) / 'devir/veri/kayit.txt'
-        self.assertEqual(copied.read_text(), 'eski veri')
-        order = [' '.join(c[:2]) + ' ' + c[-1] for c in self.host.calls if c[:2] in (['podman', 'stop'], ['systemctl', 'start'], ['podman', 'rm'])]
-        self.assertEqual(order, ['podman stop eski', 'systemctl start konsol-devir_app.service', 'podman rm eski'])
-        rm = next(c for c in self.host.calls if c[:2] == ['podman', 'rm'])
-        self.assertNotIn('--volumes', rm, 'the old named volume stays')
-        self.assertEqual(self.record('devir')['source'], dict(self.record('devir')['source'], tur='konteyner', konteyner='eski'))
-
-    def test_a_failed_takeover_starts_the_old_container_again(self):
-        self.old()
-        self.host.fails('systemctl start konsol-devir_app.service')
-        with self.assertRaises(cfg.ContainerConfigError):
-            self.execute('uygulama-kur', self.request())
-        self.assertTrue(self.host.containers['eski']['State']['Running'])
-        self.assertFalse((Path(self.env['UYGULAMA_VERI_DIR']) / 'devir').exists())
-        self.assert_nothing_left('devir')
-
-    def test_a_volume_is_copied_only_into_a_new_folder(self):
-        self.old()
-        (Path(self.env['UYGULAMA_VERI_DIR']) / 'devir/veri').mkdir(parents=True)
-        with self.assertRaises(cfg.ContainerConfigError) as err:
-            self.execute('uygulama-kur', self.request())
-        self.assertIn('zaten var', str(err.exception))
-        self.assertTrue(self.host.containers['eski']['State']['Running'], 'refused before the old container stopped')
-
-    def test_only_a_standalone_container_is_taken_over(self):
-        self.old()
-        self.host.containers['eski']['Config']['Labels'] = {'PODMAN_SYSTEMD_UNIT': 'baskasi.service'}
-        with self.assertRaises(cfg.ContainerConfigError) as err:
-            self.execute('uygulama-kur', self.request())
-        self.assertEqual(err.exception.status, 409)
-        self.assertEqual(self.host.containers['eski']['State']['Running'], True, 'nothing was stopped')
 
 
 class LifecycleTests(WorkerCase):

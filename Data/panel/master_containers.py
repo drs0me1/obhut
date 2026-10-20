@@ -278,12 +278,6 @@ class ContainerError(Exception):
         self.status = status
 
 
-def name_of(value):
-    if not isinstance(value, str) or not NAME_RE.fullmatch(value):
-        raise ContainerError(400, "Konteyner adı geçersiz.")
-    return value
-
-
 class Containers:
     """run(argv, timeout) → (returncode, stdout text, last stderr line); the backend's run_tool."""
 

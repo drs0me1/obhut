@@ -49,7 +49,6 @@ export const SOURCE_SHORT: Record<KaynakTuru, string> = {
   dosya: "dosyadan",
   adres: "adresten",
   imaj: "imajdan",
-  konteyner: "konteynerden",
 };
 
 /** Where the application's file came from (K2), as a fact. */
@@ -57,7 +56,6 @@ export const SOURCE_TEXT: Record<KaynakTuru, string> = {
   dosya: "Dosya",
   adres: "Adres",
   imaj: "İmaj adından taslak",
-  konteyner: "Var olan konteynerden taslak",
 };
 
 /** How a service starts (A4): its definition, before anything runs. */

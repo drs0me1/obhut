@@ -1,7 +1,7 @@
 /* Konsol's Uygulama ekle, a full-window page (DD-279), and an application's Tanım edit (rebuild phase 5; K2, K3) in
    the committed build under Data/console/yeni, with the production CSP and fixture replies for every endpoint they
-   read or post to (yeni-harness.cjs): the four sources (a pasted, uploaded or dropped file, an https address, an image
-   name as a job with its log, an existing container), the inspector (the file beside the questions, its line marks,
+   read or post to (yeni-harness.cjs): the three sources (a pasted, uploaded or dropped file, an https address, an
+   image name as a job with its log), the inspector (the file beside the questions, its line marks,
    the question in hand lighting its line, refusals with their lines, every question kind by service, the answers
    checked again as they change), the install's plan (a refusal leading back to its question), the install job's log
    (a finished one staying, a failed one leading back to the question it names) and leaving with something entered;
@@ -67,9 +67,6 @@ const ADRES_INSPECTION = inceleme({ name: "pano", questions: [soru.ad("pano"), s
 const IMAGE = "registry.example/ornek:2";
 const IMAGE_FILE = `# Taslak: ${IMAGE}\nservices:\n  ornek:\n    image: ${IMAGE}\n    ports: ["80"]\n`;
 const IMAGE_INSPECTION = inceleme({ name: "ornek", questions: [soru.ad("ornek", { line: 3 }), soru.port("ornek", 80, { line: 5, suggest: "ornek" }), soru.baslangic("ornek", { line: 3 })] });
-const CONTAINER_FILE = "services:\n  eski-redis:\n    image: registry.example/redis:7\n    volumes: [\"redis-veri:/data\"]\n";
-const CONTAINER_INSPECTION = inceleme({ name: "eski-redis", questions: [soru.ad("eski-redis"), soru.klasor("eski-redis", "/data", { line: 4, source: "redis-veri", folder: "redis-veri" }),
-  soru.baslangic("eski-redis")] });
 
 // notlar, whose Tanım is edited: its stored file, answers and the inspection of its file (with a new port: 7000).
 const NOTLAR_FILE = [
@@ -133,7 +130,7 @@ function details() {
   const out = {};
   if (items.notlar) {
     out.notlar = ayrinti(items.notlar, { metin: NOTLAR_FILE, yanitlar: NOTLAR_ANSWERS, gizliler: [{ ad: "notlar-db-password", servisler: ["web"] }],
-      koken: { tur: "dosya", adres: null, imaj: null, konteyner: null, alindi: 1791700000, sha256: D("e") } }, {
+      koken: { tur: "dosya", adres: null, imaj: null, alindi: 1791700000, sha256: D("e") } }, {
       web: { baslangic: "root", gizliler: ["notlar-db-password"],
         portlar: [{ port: 8080, protokol: "tcp", id: NOTLAR_WEB, erisim: NOTLAR_ROW, kullanim: "caddy", tailscale_adi: "notlar", yerel_port: 62001 },
           { port: 9000, protokol: "udp", id: NOTLAR_UDP, erisim: { tur: "ham", kapsam: "kapali", port: 9000 }, kullanim: "raw", tailscale_adi: null, yerel_port: null }],
@@ -141,7 +138,7 @@ function details() {
   }
   if (items.pano) {
     out.pano = ayrinti(items.pano, { metin: PANO_FILE, yanitlar: { name: "pano", answers: { "start:web": { mode: "root" } } },
-      koken: { tur: "adres", adres: "https://files.example.org/pano/compose.yaml", imaj: null, konteyner: null, alindi: 1791710000, sha256: D("f") } }, {
+      koken: { tur: "adres", adres: "https://files.example.org/pano/compose.yaml", imaj: null, alindi: 1791710000, sha256: D("f") } }, {
       web: { baslangic: "root", portlar: [{ port: 3000, protokol: "tcp", id: "uygulama:pano:web:3000/tcp", erisim: { tur: "adres", ad: "pano", tailscale_portu: null, internet: "" },
         kullanim: "caddy", tailscale_adi: "pano", yerel_port: 62002 }] } });
   }
@@ -161,7 +158,7 @@ const data = {
   erisim: { read_at: 1791845000, alan: "ev", revizyon: "rev-1", hizmetler: [accessRow(NOTLAR_WEB, NOTLAR_ROW)], hatalar: [], uyarilar: [],
     ozet: { tailscale: { ipv4: "100.64.0.2", ipv6: "", durum: "bagli", anahtar_bitis: null, ad: "sunucu", surum: "1.80.0", cikis_dugumu: true },
       internet: { ipv4: "203.0.113.10", ipv6: "", acik: [] }, wireguard: { kurulu: true, durduruldu: false, aglar: [] }, sertifikalar: [] } },
-  uygulamalar: uygulamalar(apps(), { kaynaklar: [{ ad: "eski-redis", imaj: "registry.example/redis:7", durum: "running" }] }),
+  uygulamalar: uygulamalar(apps()),
 };
 
 let expectedFailures = [];
@@ -175,7 +172,6 @@ function inspectionOf(text) {
   if (text === ORNEK_FILE) return ORNEK_INSPECTION;
   if (text === ADRES_FILE) return ADRES_INSPECTION;
   if (text === IMAGE_FILE) return IMAGE_INSPECTION;
-  if (text === CONTAINER_FILE) return CONTAINER_INSPECTION;
   if (text === NOTLAR_FILE || text === NOTLAR_NEW) return notlarInspection(text === NOTLAR_NEW);
   if (text === PANO_FILE || text === PANO_NEW) return panoInspection(text === PANO_NEW);
   return inceleme({ format: null, name: "", refusals: [{ line: 1, key: "dosya", text: "Dosya Compose ya da Kubernetes değil." }] });
@@ -193,7 +189,7 @@ h.handlers["/api/konsol/uygulamalar/denetle"] = ({ method, body }) => {
   const errors = check(inspection, body.yanitlar);
   return { body: Object.keys(errors).length ? { inceleme: inspection, hatalar: errors } : { inceleme: inspection, tanim: { name: body.yanitlar.name } } };
 };
-// The drafts: an address and a container at once; an image is a job whose record ends in the draft.
+// The drafts: an address at once; an image is a job whose record ends in the draft.
 let imageReads = 0;
 h.handlers["/api/konsol/uygulamalar/kaynak"] = ({ method, body }) => {
   if (method !== "POST") return undefined;
@@ -202,7 +198,7 @@ h.handlers["/api/konsol/uygulamalar/kaynak"] = ({ method, body }) => {
     return { body: { metin: ADRES_FILE, kaynak: body } };
   }
   if (body.tur === "imaj") return { body: { is: JOB(50) } };
-  return { body: { metin: CONTAINER_FILE, kaynak: body } };
+  return undefined;
 };
 const L = (t, tur, ileti) => ({ t: 1791845200 + t, tur, ileti });
 const IMAGE_LOG = [L(0, "adim", "Doğrulanıyor"), L(1, "adim", `İmaj indiriliyor: ${IMAGE}`)];
@@ -321,7 +317,7 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     const sources = flow.locator(".src-card");
     assert.deepEqual(await sources.evaluateAll((els) => els.map((e) => [e.dataset.kaynak, e.querySelector("strong").textContent, e.querySelector(".src-text span").textContent])), [
       ["dosya", "Dosya", "Compose ya da Kubernetes YAML: yapıştır, yükle ya da sürükle"], ["adres", "Adresten", "https ile bir Compose ya da Kubernetes dosyası"],
-      ["imaj", "İmaj adından", "Obhut taslak bir dosya üretir"], ["konteyner", "Var olan konteyner", "Elle başlatılmış bir konteyner yönetime alınır"]]);
+      ["imaj", "İmaj adından", "Obhut taslak bir dosya üretir"]]);
     assert.match(await flow.locator(".add-hint").innerText(), /^Uygulamanın nereden geldiğini seçin\./);
     const next = flow.locator('[data-eylem="ileri"]');
     assert.equal(await next.innerText(), "Devam");
@@ -570,7 +566,6 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     assert.equal(await page.locator(".sidebar").count(), 1, "the shell is back");
     await noSecrets(page, [adminSecret, tokenSecret], "the new application's page");
     await page.context().close();
-    data.uygulamalar = uygulamalar(apps(), { kaynaklar: [{ ad: "eski-redis", imaj: "registry.example/redis:7", durum: "running" }] });
 
     // ================= a failed install: why, the container's own lines, back to the question it names; leaving asks
     page = await newPage();
@@ -682,31 +677,6 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     assert.equal(await flow4.locator(".add-file").getByRole("textbox", { name: "Kurulum dosyası" }).inputValue(), IMAGE_FILE);
     await page.context().close();
 
-    // ================= Var olan konteyner: the standalone containers; the draft from one
-    page = await newPage();
-    await page.goto(url("#/uygulama-ekle"));
-    const flow5 = page.getByTestId("add-flow");
-    await flow5.getByRole("radio", { name: /Var olan konteyner/ }).check();
-    const containers = flow5.getByTestId("src-containers");
-    await containers.waitFor();
-    assert.equal(await containers.locator(".choice-item").innerText(), "eski-redis\nrunning\nregistry.example/redis:7");
-    assert(await flow5.locator('[data-eylem="ileri"]').isDisabled());
-    await containers.getByRole("radio", { name: /eski-redis/ }).check();
-    assert.equal(await flow5.locator('[data-eylem="ileri"]').innerText(), "Dosyaya çevir");
-    await shot(page, "1440-light-ekle-konteyner.png");
-    await flow5.locator('[data-eylem="ileri"]').click();
-    await flow5.getByTestId("questions").waitFor();
-    assert.deepEqual(lastPost(KAYNAK), { tur: "konteyner", konteyner: "eski-redis" });
-    assert.equal(await flow5.locator(".add-file .add-pane-head .wrap").innerText(), "eski-redis konteynerinden taslak");
-    await page.context().close();
-    // No standalone container: it says so.
-    data.uygulamalar = uygulamalar(apps());
-    page = await newPage();
-    await page.goto(url("#/uygulama-ekle"));
-    await page.getByTestId("add-flow").getByRole("radio", { name: /Var olan konteyner/ }).check();
-    await page.getByTestId("src-containers-empty").filter({ hasText: "Elle başlatılmış, Obhut'un yönetmediği bir konteyner yok." }).waitFor();
-    await page.context().close();
-
     // ================= Tanım: edit the file and the answers; the plan's difference; apply as a job
     const TANIM = "/api/konsol/uygulamalar/notlar/tanim";
     page = await newPage();
@@ -815,7 +785,6 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
     await page.context().close();
 
     // ================= 1440, 390 and 320 in both themes: each step of the page, the edit
-    data.uygulamalar = uygulamalar(apps(), { kaynaklar: [{ ad: "eski-redis", imaj: "registry.example/redis:7", durum: "running" }] });
     for (const colorScheme of ["light", "dark"]) {
       for (const [width, height] of [[1440, 900], [390, 844], [320, 640]]) {
         const phone = width < 768;
@@ -886,8 +855,8 @@ const questionIds = (scope) => scope.locator("[data-soru]").evaluateAll((els) =>
 
     assert.deepEqual(h.errors, []);
     console.log("PASS: Konsol's Uygulama ekle (a full-window page, #/uygulama-ekle) and Tanım under the production CSP — the shell giving " +
-      "the page the window, the four sources (a pasted file, an upload and a drop read in the browser with their size and UTF-8 checks, an https " +
-      "address with its refusal and a server error, an image name as a job with its log, an existing container and none), leaving with input " +
+      "the page the window, the three sources (a pasted file, an upload and a drop read in the browser with their size and UTF-8 checks, an https " +
+      "address with its refusal and a server error, an image name as a job with its log), leaving with input " +
       "asking first, Denetçi (the file beside the questions with no page scroll at 1440, a refused line stopping the flow and corrected in the " +
       "editor, the marks, notes, the questions grouped by service, Bekleyene git, the question in hand lighting its line and a click on a line " +
       "showing its question, every question kind: name, TCP ports with nothing chosen and the guess, a UDP port, a variable with its default and " +

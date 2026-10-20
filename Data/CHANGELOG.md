@@ -73,7 +73,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   its version, how many containers run and how many are unhealthy, their CPU and memory against the server's, and
   what images, containers and volumes take on disk. Then every container with its state, image, CPU, memory,
   uptime and ports; an application's container leads to its page, and one Obhut does not manage says who runs it
-  (filter: Tümü, Çalışan, Durmuş, Obhut dışı). Then the images (one row per image with all its names), volumes,
+  (filter: Tümü, Çalışan, Durmuş). Then the images (one row per image with all its names), volumes,
   networks and the folders removed applications left: what nothing uses is marked "Kullanılmayan" and can be
   ticked, across the tabs, and removed with "Seçilenleri kaldır…" (the same cleanup, with `temizle` typed). The
   separate Temizlik card is gone. Gelişmiş is Caddy, DNS and the technical firewall, read-only.
@@ -83,6 +83,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   now a warning in Uyarılar (and in the top bar's count), not only a line on the tab.
 - Genel Bakış' line under its title says what the page now holds, "Uygulamalar bir bakışta: durumları ve
   adresleri.", instead of naming health, access and the server, which moved to Uyarılar, Erişim and the sidebar.
+- Uygulama ekle no longer takes over an existing container (DD-290): an application comes only from a file, an
+  `https` address or an image name. A container Obhut did not install still shows in Podman, read-only, with who
+  runs it, but has no filter of its own; Obhut never starts, stops, removes or adopts it. A server with an
+  application installed from an existing container needs that application removed before this update.
 - Podman's containers table is readable again: a long image name no longer pushes the other columns narrow (or
   the table past its card on a 1180–1366 px window). The image takes only the room left, on one line cut with
   "…" (the whole name on hover), and a narrower table leaves it out; each port stays on one line and the

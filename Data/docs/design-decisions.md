@@ -24,6 +24,29 @@ Konsol's single-container definitions and adoption, Yayınla and the manual
 phase 6; live entries that still mention them end with a note naming what no
 longer applies and which entry replaced it.
 
+### DD-290: No container is taken over; Podman lists the others without a filter of their own (v2-279)
+
+- **Why:** the operator asked what "Obhut dışı" in the Podman section means and wanted applications installed
+  only from within Obhut: the "Var olan konteyner" source of Uygulama ekle and the section's "Obhut dışı"
+  filter removed (2026-10-20).
+- **What:** Uygulama ekle has three sources: a file, an `https` address, an image name (K2 without its fourth).
+  Removed (rebuild ground rule 2): the source kind `konteyner` (`KaynakTuru`, `KaynakKonteyner`, `kaynak.json`'s
+  and the detail's `koken.konteyner`), the list's `kaynaklar` (`UygulamaKaynagi`), the draft from
+  `podman inspect`, the worker's takeover (stopping the old container, copying its named volumes into the new
+  folders, removing it once the application was ready, starting it again on a rollback), the plan's `kaynak`
+  refusal and its warning, and `podman inspect` and `podman volume inspect` from the commands the install plan
+  may run (only the takeover ran them). A request naming `konteyner` is refused by the route table (400); a
+  record holding it fails closed like any unknown kind (no migration, K1). The test host's two applications
+  came from files (checked 2026-10-20).
+- **Podman:** a container Obhut did not install stays in the list, read-only, with who runs it ("Yalnız Podman
+  çalıştırıyor", "Başka bir yönetici çalıştırıyor", "Kaydı yok"): it takes CPU, memory and disk, and hiding it
+  would hide that. The containers summary keeps "Obhut'un" alone and the "Obhut dışı" filter (`?suzgec=disari`)
+  is gone; an old address opens Tümü. Obhut still never starts, stops or removes such a container. The rule is
+  Konsol's: root can still run `podman run` on the server.
+- **Amends:** K2 (DD-274, DD-276) and DD-289.
+- **Tests:** a request and a draft naming `konteyner` refused; the list carries no sources; the add page's three
+  sources; the Podman summary, filters and owner text.
+
 ### DD-289: Podman is a section of its own; what nothing uses is removed from its list (v2-276)
 
 - **Why:** the operator wanted Gelişmiş's Podman tab redesigned as a dashboard and moved into the sidebar as its
@@ -48,6 +71,7 @@ longer applies and which entry replaced it.
 - **Tests:** the summaries, the containers' order, owners and filter, images grouped by ID, the ticks across tabs
   and the exact body, the job's end, nothing to remove, a failed read; the backend's kinds; no Podman tab in
   Gelişmiş and the sidebar's seven sections.
+- **Note (DD-290):** the "Obhut dışı" filter and summary row are removed; such containers stay in the list.
 
 ### DD-288: Erişim has no Tailscale tab; its facts in Sistem → Sunucu, its key warning in Uyarılar (v2-276)
 
@@ -421,6 +445,7 @@ longer applies and which entry replaced it.
   line written.
 - **Note (DD-279):** "Uygulama ekle" is no longer a sheet at `#/uygulamalar?ekle=1` but a full-window page at
   `#/uygulama-ekle` with a fourth step, Kurulum, that shows the install job's log.
+- **Note (DD-290):** Uygulama ekle has three sources; "Var olan konteyner" is removed.
 
 ### DD-275: The rebuild's phase 4: access rows (v2-258)
 
@@ -609,6 +634,8 @@ longer applies and which entry replaced it.
   1440 px.
 - **Note (DD-281):** a removal now deletes the data by default once the name is typed ("sakla" keeps it), takes
   the images nothing else uses, and with the data the application's job records.
+- **Note (DD-290):** the standalone container source and its takeover are removed; drafts come from an `https`
+  address or an image name.
 
 ### DD-273: The rebuild's phase 2: reading and inspecting application files (v2-256)
 

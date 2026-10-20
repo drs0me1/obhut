@@ -108,7 +108,7 @@ class RouteTests(Fixture):
     def test_the_list_and_the_detail(self):
         _, answer = self.call("uygulamalar", code=200)
         self.assertEqual([(i["ad"], i["durum"]) for i in answer["items"]], [("notlar", "calisiyor")])
-        self.assertEqual(answer["kaynaklar"], [{"ad": "eski", "imaj": "registry.example/x:1", "durum": "running"}])
+        self.assertNotIn("kaynaklar", answer, "a container Obhut did not install is never offered")
         _, detail = self.call("uygulama", "/api/konsol/uygulamalar/notlar", code=200)
         self.assertEqual([s["ad"] for s in detail["servisler"]], ["web", "db"])
         self.assertEqual(detail["yanitlar"]["answers"]["var:DB_PASSWORD"], {"set": True})
@@ -238,12 +238,8 @@ class RouteTests(Fixture):
         with patch.object(apps, "bindable", return_value=False):
             _, plan = self.call("uygulama_kur", data=simple, code=200)
         self.assertEqual(plan["hatalar"], {"portlar": "Yerel port aralığında boş port kalmadı."})
-        # A takeover's container must exist and be standalone; the plan says what happens to it.
-        _, plan = self.call("uygulama_kur", data=dict(simple, kaynak={"tur": "konteyner", "konteyner": "yok"}), code=200)
-        self.assertEqual(plan["hatalar"], {"kaynak": "Kaynak konteyner bulunamadı: yok"})
-        _, plan = self.call("uygulama_kur", data=dict(simple, kaynak={"tur": "konteyner", "konteyner": "eski"}), code=200)
-        self.assertEqual(plan["ozet"]["uyarilar"], [{"servis": "", "metin": "eski konteyneri uygulama hazır olunca kaldırılır; "
-                                                                           "birimleri silinmez. Kurulum sırasında durdurulur."}])
+        # An existing container is no source: applications come only from a file, an address or an image.
+        self.call("uygulama_kur", data=dict(simple, kaynak={"tur": "konteyner", "konteyner": "eski"}), code=400)
         self.assertEqual((self.launched, self.audits), ([], []))
 
     def test_the_list_and_the_detail_carry_the_bridge_rate_and_the_first_address(self):
@@ -327,17 +323,13 @@ class RouteTests(Fixture):
         self.assertEqual(self.launched, [("uygulama-kaldir", {"veri": "sil", "revizyon": self.revision(), "onay": "notlar", "name": "notlar"})])
         self.assertEqual(self.audits, [("uygulama-kaldir", "notlar (veri: sil)", True)])
 
-    def test_drafts_from_an_address_a_container_and_an_image(self):
+    def test_drafts_from_an_address_and_an_image(self):
         with patch.object(apps, "fetch", return_value="services: {}\n"):
             _, draft = self.call("uygulama_kaynak", data={"tur": "adres", "adres": "https://dosya.example.org/c.yaml?token=abc"},
                                  code=200)
         self.assertEqual(draft, {"metin": "services: {}\n", "kaynak": {"tur": "adres", "adres": "https://dosya.example.org/c.yaml?token=abc"}})
         self.assertEqual(self.audits[-1], ("uygulama-taslak", "adres dosya.example.org", True), "the address's query is not logged")
-        _, draft = self.call("uygulama_kaynak", data={"tur": "konteyner", "konteyner": "eski"}, code=200)
-        self.assertIn("MODE: \"prod\"", draft["metin"])
-        self.assertIn("DB_PASSWORD: \"\"", draft["metin"])
-        self.call("uygulama_kaynak", data={"tur": "konteyner", "konteyner": "notlar_web"}, code=409)
-        self.call("uygulama_kaynak", data={"tur": "konteyner", "konteyner": "yok"}, code=404)
+        self.call("uygulama_kaynak", data={"tur": "konteyner", "konteyner": "eski"}, code=400)
         _, job = self.call("uygulama_kaynak", data={"tur": "imaj", "imaj": "registry.example/sayac:2"}, code=200)
         self.assertEqual(self.launched, [("uygulama-taslak", {"imaj": "registry.example/sayac:2", "name": "registry.example/sayac:2"})])
         self.assertEqual(set(job), {"is"})

@@ -23,7 +23,7 @@ const state = computed(() => appState(props.app));
 const unmeasured = computed(() => props.app.kaynak.cpu === null && props.app.kaynak.bellek === null);
 const source = computed(() => {
   const k = props.detail.koken;
-  return k.adres ?? k.imaj ?? k.konteyner ?? "";
+  return k.adres ?? k.imaj ?? "";
 });
 
 const HEALTH: Record<string, string> = { healthy: "Sağlıklı", unhealthy: "Sağlıksız", starting: "Başlıyor" };

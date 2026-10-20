@@ -95,7 +95,7 @@ function details() {
       guncelleme_denetlendi: 1791844400,
       gizliler: [{ ad: "notlar-db-password", servisler: ["web", "db"] }],
       uyarilar: [{ servis: "web", metin: ROOT_WARNING, simdi: notlarRoot ? NOW_ROOT : NOW_SWITCHED, cozuldu: !notlarRoot }],
-      koken: { tur: "dosya", adres: null, imaj: null, konteyner: null, alindi: 1791700000, sha256: D("e") },
+      koken: { tur: "dosya", adres: null, imaj: null, alindi: 1791700000, sha256: D("e") },
       metin: NOTLAR_FILE,
       yanitlar: { name: "notlar", answers: {
         "mount:web:/data": { to: "app" }, "mount:web:/belgeler": { to: "srv", path: "/srv/Belgeler", read_only: true },
@@ -122,12 +122,12 @@ function details() {
     });
   }
   if (items.pano) {
-    out.pano = ayrinti(items.pano, { koken: { tur: "adres", adres: "https://files.example.org/pano/compose.yaml", imaj: null, konteyner: null, alindi: 1791710000, sha256: D("f") } },
+    out.pano = ayrinti(items.pano, { koken: { tur: "adres", adres: "https://files.example.org/pano/compose.yaml", imaj: null, alindi: 1791710000, sha256: D("f") } },
       { web: { calisma: 1791760000, portlar: [{ port: 3000, protokol: "tcp", id: "uygulama:pano:web:3000/tcp", erisim: { tur: "adres", ad: "pano", tailscale_portu: null, internet: "" },
         kullanim: "caddy", tailscale_adi: "pano", yerel_port: 62002 }] } });
   }
   if (items.yedek) {
-    out.yedek = ayrinti(items.yedek, { koken: { tur: "imaj", adres: null, imaj: "registry.example/yedek:1.0", konteyner: null, alindi: 1791720000, sha256: D("d") },
+    out.yedek = ayrinti(items.yedek, { koken: { tur: "imaj", adres: null, imaj: "registry.example/yedek:1.0", alindi: 1791720000, sha256: D("d") },
       metin: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: yedek\nspec:\n  containers:\n    - name: yedekle\n      image: registry.example/yedek:1.0\n" },
     { yedekle: { kanal: "", ozet: "registry.example/yedek@sha256:" + D("c") } });
   }

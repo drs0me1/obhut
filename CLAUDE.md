@@ -139,7 +139,7 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 | `Data/config/defaults.env` | Ports, paths and chain names of the base, WireGuard's `WG_*` keys, the application folders (`UYGULAMA_STATE_DIR`, `UYGULAMA_VERI_DIR`), the loopback pool (`UYGULAMA_PORT_ILK`–`UYGULAMA_PORT_SON`), the generation gate's `NESIL_FILE` and `ESKI_NESIL_IZLERI`; `VPN_BLOCK_DEST4/6` is the firewall's and the container guard's vocabulary |
 | `Data/panel/master_yaml.py`, `master_compose.py`, `master_kube.py`, `master_inspector.py` | Reading and inspecting (**DD-273**, pure): the YAML subset reader (K4; anchors, aliases, tags and the like stop with their line), Compose and Kubernetes YAML into one model, the inspector (refusals with their lines, guesses, questions; `check()` turns the answers into the checked definition and the secret values) |
 | `Data/panel/master_generator.py` | The generator (**DD-274**, pure): definition + allocations → Quadlet units (`konsol-<app>.network`, `konsol-<app>_<service>.container`, `konsol-<app>.pod`), env files, folders, `/srv` binds, start order, publications; every key checked against Podman 4.9's Quadlet, what needs Podman 5 named |
-| `Data/panel/master_applications.py` | Applications (**DD-274**, **DD-275**): the record and its access rows, the loopback pool, the container guard's input, the read model, the cleanup's items, folder sizes and the drafts (K2: an `https` address, an image name, a standalone container) |
+| `Data/panel/master_applications.py` | Applications (**DD-274**, **DD-275**): the record and its access rows, the loopback pool, the container guard's input, the read model, the cleanup's items, folder sizes and the drafts (K2: an `https` address, an image name; no container is taken over, **DD-290**) |
 | `Data/panel/master_container_worker.py`, `master_container_manager.py` | The root worker (install, start, stop, restart, update image, edit definition, refresh from source, remove, Podman's cleanup, an access row's container side and `--adres-yenile`; each a job with a durable record and its log in `KONTEYNER_STATE_DIR/operations/`, undone in reverse on failure) and the broker (inventory, the read model with live state, jobs through `systemd-run` with the request on standard input only, image update checks, journal) |
 | `Data/panel/master_container_network.py`, `master_container_binds.py`, `master_container_config.py`, `master_containers.py` | The container guard (nft table `KONTEYNER_NFT_TABLE`: egress only to the internet, DD-224; a raw row's ingress permit, DD-275), bind anchors pinned at every start (**DD-226**), shared pieces, the read-only Podman mapper (**DD-208**) |
 | Application records | `UYGULAMA_STATE_DIR/<app>/` (0700 root, files 0600): `kaynak.yaml` (the file as given), `kaynak.json`, `yanitlar.json` (never a secret value), `tanim.json` (checked definition), `yerler.json` (pool ports, Podman secret names, pinned digests, stopped, revision), `erisim.json` (the access rows), `env/`. Units in `KONTEYNER_BIRIM_DIR`; data in `UYGULAMA_VERI_DIR/<app>/<folder>/` (A5); the bridge `ksl-<app>`. The record is the single source; nothing runs unasked |
@@ -186,17 +186,18 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
   off: the installer creates no network; Erişim → WireGuard (or `master-wg net-add`) creates them, and
   WireGuard devices reach only the internet (**DD-177**). Podman is base infrastructure (**DD-208**: no
   daemon, socket or auto-update timer); there is no Docker.
-- Applications are Podman containers only, added from a Compose or Kubernetes file (or from an image name
-  or a standalone container, both turned into a draft file first, K2). Nothing in the shipped tree names
-  an application: no mechanism, default, code path, fixture name or interface text of its own (**DD-271**,
-  **DD-273**). The supported keys and kinds and the refusals are listed in rebuild.md 4.2 and the
-  contract. Every TCP port is answered by the operator (A1), UDP ports are raw and closed (A2), each
-  container's start mode is asked (A4; privileged mode never), binds come only from `/srv` folders and the
-  application's own folder (A5), secret values become Podman secrets on standard input and never reach a
-  file, log or reply, images are pinned by digest (`Pull=never`) and updated only on the operator's
-  confirmation (**DD-214**), each application has its own bridge and its containers reach only the
-  internet (**DD-224**). Removing an application deletes its data and its job records once its name is typed, unless the
-  operator keeps the data, and its images when nothing else uses them (K9 as amended by **DD-281**).
+- Applications are Podman containers only, added from a Compose or Kubernetes file (or from an image name,
+  turned into a draft file first, K2); a container Obhut did not install never becomes one (**DD-290**).
+  Nothing in the shipped tree names an application: no mechanism, default, code path, fixture name or
+  interface text of its own (**DD-271**, **DD-273**). The supported keys and kinds and the refusals are
+  listed in rebuild.md 4.2 and the contract. Every TCP port is answered by the operator (A1), UDP ports
+  are raw and closed (A2), each container's start mode is asked (A4; privileged mode never), binds come
+  only from `/srv` folders and the application's own folder (A5), secret values become Podman secrets on
+  standard input and never reach a file, log or reply, images are pinned by digest (`Pull=never`) and
+  updated only on the operator's confirmation (**DD-214**), each application has its own bridge and its
+  containers reach only the internet (**DD-224**). Removing an application deletes its data and its job
+  records once its name is typed, unless the operator keeps the data, and its images when nothing else
+  uses them (K9 as amended by **DD-281**).
 - A container port reaches outside only through its access row (**DD-275**): an address (a Caddy row to a
   `127.0.0.1` pool port: Tailscale name, optional Tailscale port, optional internet name) or a raw port
   (closed, Tailscale or internet; the internet needs an extra consent; published on the Tailscale or WAN

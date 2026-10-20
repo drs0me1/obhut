@@ -9,7 +9,7 @@ Record, UYGULAMA_STATE_DIR/<app>/ (0700 root; every file 0600, written atomicall
 a link, its owner, mode and size checked):
 
   kaynak.yaml    the file exactly as the operator gave it
-  kaynak.json    {"tur": dosya|adres|imaj|konteyner, "adres"?, "imaj"?, "konteyner"?, "alindi": epoch, "sha256": hex}
+  kaynak.json    {"tur": dosya|adres|imaj, "adres"?, "imaj"?, "alindi": epoch, "sha256": hex}
   yanitlar.json  the answers as given, without the port answers; every secret answer is {"set": true}
   tanim.json     the checked definition (master_inspector.check), each port only {"port", "protocol"}
   yerler.json    {"revision", "stopped", "ports": {"<service>:<port>/<proto>": pool port},
@@ -34,8 +34,8 @@ answers (an address with the answered name, no Tailscale port, no internet name;
 number); an edit keeps the row of a port that stays, seeds a new port's and drops a gone port's (and its pool
 port); removal takes them with the record. Anything unexpected in the file stops its reader (fail closed).
 
-Drafts (K2) turn an https address, an image or a standalone container into a Compose text for the
-inspector; nothing is written. Python standard library only.
+Drafts (K2) turn an https address or an image into a Compose text for the inspector; nothing is
+written. Python standard library only.
 """
 import copy
 import datetime
@@ -71,7 +71,7 @@ PORT_KEY_RE = re.compile(r"([^:]+):([1-9][0-9]{0,4})/(tcp|udp)\Z")
 SHA_RE = re.compile(r"[0-9a-f]{64}\Z")
 URL_LIMIT = 2048
 TEXT_LIMIT = 262144  # master_yaml.LIMIT_BYTES (a test keeps the two equal)
-SOURCES = ("dosya", "adres", "imaj", "konteyner")
+SOURCES = ("dosya", "adres", "imaj")
 ROWS_FILE = "erisim.json"
 FILES = ("kaynak.yaml", "kaynak.json", "yanitlar.json", "tanim.json", "yerler.json", ROWS_FILE)
 ROW_KINDS = ("adres", "ham")
@@ -909,7 +909,7 @@ def check_url(value):
 
 
 def request_source(value):
-    """The kaynak of an install request: {"tur": dosya} or one of adres, imaj, konteyner with its value."""
+    """The kaynak of an install request: {"tur": dosya} or one of adres, imaj with its value."""
     require(isinstance(value, dict) and value.get("tur") in SOURCES, "Uygulamanın kaynağı geçersiz.")
     tur = value["tur"]
     require(set(value) == ({"tur"} if tur == "dosya" else {"tur", tur}), "Uygulamanın kaynağı geçersiz.")
@@ -917,9 +917,6 @@ def request_source(value):
         check_url(value["adres"])
     elif tur == "imaj":
         image_ref(value["imaj"])
-    elif tur == "konteyner":
-        require(isinstance(value["konteyner"], str) and cfg.NAME_RE.fullmatch(value["konteyner"]) is not None,
-                "Konteyner adı geçersiz.")
     return dict(value)
 
 
@@ -1254,7 +1251,7 @@ def detail(env, record, objects, live, busy, updates, inspected, size=None, chec
         "gizliler": [{"ad": s["name"], "servisler": list(s.get("services") or [])} for s in definition["secrets"]],
         "uyarilar": warnings,
         "koken": {"tur": source["tur"], "adres": source.get("adres"), "imaj": source.get("imaj"),
-                  "konteyner": source.get("konteyner"), "alindi": source["alindi"], "sha256": source["sha256"]},
+                  "alindi": source["alindi"], "sha256": source["sha256"]},
         "metin": record["text"], "yanitlar": record["answers"], "birimler": list(objects["files"]),
         "veri": str(data_dir(env, record["name"])), "ag": objects["network"], "pod": objects["pod"],
         "guncelleme_denetlendi": checked,
@@ -1262,12 +1259,11 @@ def detail(env, record, objects, live, busy, updates, inspected, size=None, chec
 
 
 # -- an install's plan (POST …/kur with plan): what it creates, nothing written
-def install_summary(env, app, definition, rows, objects, plan, takeover=None):
+def install_summary(env, app, definition, rows, objects, plan):
     """KurOzeti: what installing a checked definition creates: each service with its start mode, user, image, folders
     and secret names; the access rows it seeds (an address with its URL); the data folders it makes; its secrets by
-    name; the definition's warnings (and the takeover of a standalone container); the images it pulls; its unit files,
-    network and pod. plan: the install's preliminary render (its folders); takeover: the worker's takeover() result.
-    No secret value."""
+    name; the definition's warnings; the images it pulls; its unit files, network and pod. plan: the install's
+    preliminary render (its folders). No secret value."""
     domain = known_domain(env)
     services, access = [], []
     for svc in definition["services"]:
@@ -1280,13 +1276,6 @@ def install_summary(env, app, definition, rows, objects, plan, takeover=None):
                            "protokol": port["protocol"], "satir": copy.deepcopy(rows[key]),
                            "adres": address_url(domain, rows[key])})
     warnings = [{"servis": w.get("service", ""), "metin": w.get("text", "")} for w in definition.get("warnings") or []]
-    if takeover:
-        text = "%s konteyneri uygulama hazır olunca kaldırılır; birimleri silinmez." % takeover["name"]
-        if takeover["running"]:
-            text += " Kurulum sırasında durdurulur."
-        if takeover["copies"]:
-            text += " Kopyalanacak klasörler: %s." % ", ".join(sorted(Path(target).name for _point, target in takeover["copies"]))
-        warnings.append({"servis": "", "metin": text})
     return {"ad": app, "veri": str(data_dir(env, app)), "ag": objects["network"], "pod": objects["pod"],
             "birimler": list(objects["files"]), "servisler": services, "erisim": access, "klasorler": list(plan["folders"]),
             "gizliler": [{"ad": s["name"], "servisler": list(s.get("services") or [])} for s in definition["secrets"]],
@@ -1503,121 +1492,6 @@ def image_draft(image, info):
     if named:
         document["volumes"] = named
     return compose_text("%s imajından (podman image inspect)" % image, document)
-
-
-PODMAN_ENV = ("container", "HOSTNAME")
-
-
-def _env_map(entries):
-    out = {}
-    for entry in entries or []:
-        key, sep, value = str(entry).partition("=")
-        if sep:
-            out[key] = value
-    return out
-
-
-def _words(value):
-    if value is None:
-        return None
-    if isinstance(value, list):
-        return [str(v) for v in value]
-    return str(value)
-
-
-def container_draft(info, image_info):
-    """POST …/kaynak {"tur": "konteyner"}: a Compose draft from `podman inspect` of a standalone container.
-    Settings that differ from the image's, the environment without the image's own entries (every
-    secret-looking name left empty, never a value), ports, mounts, restart, capabilities, and every
-    setting the inspector refuses written as it is, so that the inspector shows why."""
-    import master_inspector
-    config, host = info.get("Config") or {}, info.get("HostConfig") or {}
-    base = (image_info or {}).get("Config") or {}
-    name = str(info.get("Name", "")).lstrip("/")
-    service = service_name(name)
-    body = {"image": str(info.get("ImageName") or config.get("Image") or "")}
-    for key, field in (("command", "Cmd"), ("entrypoint", "Entrypoint")):
-        mine, theirs = _words(config.get(field)), _words(base.get(field))
-        if mine not in (None, "", []) and mine != theirs:
-            body[key] = mine
-    for key, field in (("working_dir", "WorkingDir"), ("user", "User")):
-        mine = str(config.get(field) or "")
-        if mine and mine != str(base.get(field) or "") and not (key == "working_dir" and mine == "/"):
-            body[key] = mine
-    image_env = _env_map(base.get("Env"))
-    environment = {}
-    for key, value in _env_map(config.get("Env")).items():
-        if key in PODMAN_ENV or image_env.get(key) == value:
-            continue
-        environment[key] = "" if master_inspector.secret_name(key) else value
-    if environment:
-        body["environment"] = dict(sorted(environment.items()))
-    ports = set((host.get("PortBindings") or {}).keys()) | set((config.get("ExposedPorts") or {}).keys())
-    if ports:
-        body["ports"] = _ports(ports)
-    volumes, named = [], {}
-    for m in sorted(info.get("Mounts") or [], key=lambda m: str(m.get("Destination", ""))):
-        if not isinstance(m, dict) or not isinstance(m.get("Destination"), str):
-            continue
-        row = {"target": m["Destination"]}
-        if m.get("Type") == "volume" and m.get("Name"):
-            row = {"type": "volume", "source": m["Name"], **row}
-            named[m["Name"]] = {}
-        elif m.get("Type") == "bind":
-            row = {"type": "bind", "source": str(m.get("Source") or ""), **row}
-        else:
-            continue
-        if m.get("RW") is False:
-            row["read_only"] = True
-        volumes.append(row)
-    if volumes:
-        body["volumes"] = volumes
-    tmpfs = sorted(str(k) for k in (host.get("Tmpfs") or {}))
-    if tmpfs:
-        body["tmpfs"] = tmpfs
-    policy = host.get("RestartPolicy") or {}
-    restart = str(policy.get("Name") or "")
-    if restart and restart != "no":
-        retries = policy.get("MaximumRetryCount")
-        body["restart"] = "%s:%d" % (restart, retries) if restart == "on-failure" and type(retries) is int and retries > 0 else restart
-    import master_compose
-    added = [str(c) for c in host.get("CapAdd") or []]
-    if added:
-        body["cap_add"] = added
-    # Podman lists the capabilities its default set already lacks (MKNOD, NET_RAW, …) as dropped; only a drop
-    # from the default set says something.
-    dropped = [str(c) for c in host.get("CapDrop") or [] if master_compose.capability(c) in master_compose.DEFAULT_CAPS]
-    if dropped:
-        body["cap_drop"] = dropped
-    if host.get("ReadonlyRootfs") is True:
-        body["read_only"] = True
-    if host.get("Init") is True:
-        body["init"] = True
-    # Refused settings, as the container has them.
-    if host.get("Privileged") is True:
-        body["privileged"] = True
-    devices = ["%s:%s%s" % (d.get("PathOnHost", ""), d.get("PathInContainer", ""),
-                            ":" + d["CgroupPermissions"] if d.get("CgroupPermissions") else "")
-               for d in host.get("Devices") or [] if isinstance(d, dict)]
-    if devices:
-        body["devices"] = devices
-    mode = str(host.get("NetworkMode") or "")
-    if mode == "host" or mode.startswith(("container:", "ns:")):
-        body["network_mode"] = mode
-    for key, field in (("pid", "PidMode"), ("ipc", "IpcMode")):
-        if str(host.get(field) or "") == "host":
-            body[key] = "host"
-    for key, field in (("security_opt", "SecurityOpt"), ("dns", "Dns"), ("extra_hosts", "ExtraHosts"),
-                       ("group_add", "GroupAdd")):
-        values = [str(v) for v in host.get(field) or []]
-        if values:
-            body[key] = values
-    if host.get("Sysctls"):
-        body["sysctls"] = {str(k): str(v) for k, v in sorted(host["Sysctls"].items())}
-    document = {"name": project_name(name) or "uygulama", "services": {service: body}}
-    if named:
-        document["volumes"] = named
-    return compose_text("%s konteynerinden (podman inspect)" % name, document)
 
 
 # -- the address draft

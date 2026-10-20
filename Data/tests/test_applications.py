@@ -103,11 +103,11 @@ class RecordTests(Case):
 
     def test_a_request_names_its_source_exactly(self):
         for good in ({"tur": "dosya"}, {"tur": "adres", "adres": "https://example.org/compose.yaml"},
-                     {"tur": "imaj", "imaj": "nginx:alpine"}, {"tur": "konteyner", "konteyner": "eski"}):
+                     {"tur": "imaj", "imaj": "nginx:alpine"}):
             self.assertEqual(apps.request_source(good), good)
         for bad in ({"tur": "dosya", "adres": "x"}, {"tur": "adres", "adres": "http://example.org/x"},
                     {"tur": "adres", "adres": "https://user:pass@example.org/x"}, {"tur": "imaj", "imaj": "Bad Image"},
-                    {"tur": "konteyner", "konteyner": "../x"}, {"tur": "kod"}, []):
+                    {"tur": "konteyner", "konteyner": "eski"}, {"tur": "kod"}, []):
             with self.subTest(bad=bad), self.assertRaises(cfg.ContainerConfigError):
                 apps.request_source(bad)
 
@@ -516,40 +516,6 @@ class DraftTests(unittest.TestCase):
         self.assertEqual([(m["kind"], m["source"], m["target"]) for m in svc["mounts"]],
                          [("named", "web-app-data", "/data"), ("named", "web-app-x", "/var/cache/x")])
         self.assertEqual(svc["command"], None, "the image's own command stays")
-
-    def container(self, **host):
-        return {"Name": "eski-uygulama", "ImageName": "registry.example/team/web-app:1.2",
-                "Config": {"Env": ["PATH=/usr/bin", "container=podman", "HOSTNAME=abc", "DB_PASSWORD=cok-gizli", "MODE=prod",
-                                   "API_TOKEN=tok-123"],
-                           "Cmd": ["serve", "--fast"], "WorkingDir": "/app", "User": "1000", "ExposedPorts": {"8080/tcp": {}}},
-                "HostConfig": dict({"PortBindings": {"8080/tcp": [{"HostPort": "18080"}]}, "RestartPolicy": {"Name": "always"},
-                                    "CapDrop": ["CAP_MKNOD", "CAP_NET_RAW", "CAP_AUDIT_WRITE", "CAP_SETFCAP"]}, **host),
-                "Mounts": [{"Type": "volume", "Name": "veri", "Destination": "/data", "RW": True},
-                           {"Type": "bind", "Source": "/srv/media", "Destination": "/media", "RW": False}]}
-
-    def test_a_container_draft_carries_what_differs_and_never_a_secret_value(self):
-        text = apps.container_draft(self.container(), self.IMAGE)
-        self.assertNotIn("cok-gizli", text)
-        self.assertNotIn("tok-123", text)
-        inspection = master_inspector.inspect(text)
-        self.assertEqual(inspection["refusals"], [])
-        [svc] = inspection["services"]
-        env = {e["name"]: e["value"] for e in svc["environment"]}
-        self.assertEqual(env, {"API_TOKEN": "", "DB_PASSWORD": "", "MODE": "prod"}, "no image or Podman entry; secrets empty")
-        self.assertEqual((svc["command"], svc["user"], svc["restart"]), (["serve", "--fast"], "1000", "always"))
-        self.assertEqual(svc["workdir"], None, "the image's own working folder is not repeated")
-        self.assertEqual([(m["kind"], m["source"], m["target"], m["read_only"]) for m in svc["mounts"]],
-                         [("named", "veri", "/data", False), ("absolute", "/srv/media", "/media", True)])
-        self.assertEqual([p["port"] for p in svc["ports"]], [8080])
-        self.assertEqual(svc["caps_drop"], ["SETFCAP"], "only a drop from Podman's default set is written")
-        self.assertIn("secret:eski-uygulama:DB_PASSWORD", [q["id"] for q in inspection["questions"]])
-
-    def test_refused_settings_are_written_as_they_are_so_the_inspector_says_why(self):
-        host = {"Privileged": True, "NetworkMode": "host", "PidMode": "host", "Devices": [{"PathOnHost": "/dev/fuse",
-                "PathInContainer": "/dev/fuse", "CgroupPermissions": "rwm"}], "Sysctls": {"net.ipv4.ip_forward": "1"}}
-        inspection = master_inspector.inspect(apps.container_draft(self.container(**host), self.IMAGE))
-        keys = {r["key"] for r in inspection["refusals"]}
-        self.assertLessEqual({"privileged", "network_mode", "pid", "devices", "sysctls"}, keys)
 
 
 class Response:

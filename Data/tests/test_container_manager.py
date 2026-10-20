@@ -115,11 +115,10 @@ class ManagerTests(unittest.TestCase):
         item = self.s.view().applications()['items'][0]
         self.assertEqual((item['durum'], item['is'], item['eylemler']), ('islemde', 'b' * 32, []))
 
-    def test_standalone_containers_are_offered_as_sources_and_nothing_else(self):
+    def test_the_list_offers_no_container_to_take_over(self):
         self.running_app()
         self.container('eski', image='registry.example/eski:1')
-        self.container('baskasi', unit='foreign-owner.service')
-        self.assertEqual(self.s.view().applications()['kaynaklar'], [{'ad': 'eski', 'imaj': 'registry.example/eski:1', 'durum': 'running'}])
+        self.assertEqual(sorted(self.s.view().applications()), ['hatalar', 'items', 'read_at'])
 
     def test_the_detail_names_every_part_and_no_secret_value(self):
         record = self.running_app()

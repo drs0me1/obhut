@@ -73,12 +73,11 @@ Konsol (tarayıcıdan)
 
 Uygulama ekle (Compose ya da Kubernetes dosyasından)
   Uygulamalar → Uygulama ekle. Üç adım: Kaynak → Denetçi → Plan, sonra Kur.
-  Kaynak (dördünden biri):
+  Kaynak (üçünden biri):
     Dosya              Compose ya da Kubernetes YAML'ı yapıştırın ya da yükleyin (en çok 256 KiB, UTF-8)
     Adresten           https ile bir dosya adresi; Obhut dosyayı indirir ve adresi saklar ("Kaynaktan yenile")
     İmaj adından       imaj indirilir; kendi bildirdiği portlar ve klasörlerden taslak bir Compose dosyası olur
-    Var olan konteyner elle başlatılmış bir konteyner taslak dosyaya çevrilir; adlı birimleri yeni klasörlere
-                       kopyalanır, eski konteyner yalnız uygulama hazır olunca kaldırılır (birimleri silinmez)
+  Obhut'un kurmadığı bir konteyner uygulamaya çevrilmez; Podman bölümünde salt okunur görünür.
   Denetçi: dosya satır numaralarıyla görünür. Desteklenmeyen ya da güvensiz bir şey (ör. build, privileged,
     network_mode, devices, extra_hosts, env_file, Kubernetes'te hostNetwork, ConfigMap) satırıyla reddedilir
     ve akışı durdurur; dosyayı orada düzeltebilirsiniz. x- ile başlayan anahtarlar yok sayılır. Sorular:

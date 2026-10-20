@@ -1166,7 +1166,7 @@ export type UygulamaDurumu = "calisiyor" | "durduruldu" | "kismen" | "hata" | "i
 
 export type GuncellemeDurumu = "guncel" | "yeni" | "denetlenemedi" | "bilinmiyor" | "sabit";
 
-export type KaynakTuru = "dosya" | "adres" | "imaj" | "konteyner";
+export type KaynakTuru = "dosya" | "adres" | "imaj";
 
 export interface UygulamaServisi {
   ad: string;
@@ -1202,16 +1202,9 @@ export interface Uygulama {
   adres: string | null;
 }
 
-export interface UygulamaKaynagi {
-  ad: string;
-  imaj: string;
-  durum: string;
-}
-
 export interface Uygulamalar {
   read_at: number;
   items: Uygulama[];
-  kaynaklar: UygulamaKaynagi[];
   hatalar: string[];
 }
 
@@ -1305,7 +1298,6 @@ export interface UygulamaAyrinti {
     tur: KaynakTuru;
     adres: string | null;
     imaj: string | null;
-    konteyner: string | null;
     alindi: number;
     sha256: string;
   };
@@ -1337,16 +1329,11 @@ export interface KaynakImaj {
   imaj: string;
 }
 
-export interface KaynakKonteyner {
-  tur: "konteyner";
-  konteyner: string;
-}
-
-export type KaynakIstegi = KaynakAdres | KaynakImaj | KaynakKonteyner;
+export type KaynakIstegi = KaynakAdres | KaynakImaj;
 
 export interface Taslak {
   metin: string;
-  kaynak: KaynakAdres | KaynakImaj | KaynakKonteyner;
+  kaynak: KaynakAdres | KaynakImaj;
 }
 
 export interface TaslakIsi {
@@ -1358,7 +1345,7 @@ export type KaynakYaniti = Taslak | TaslakIsi;
 export interface KurIstegi {
   metin: string;
   yanitlar: Yanitlar;
-  kaynak: KaynakDosya | KaynakAdres | KaynakImaj | KaynakKonteyner;
+  kaynak: KaynakDosya | KaynakAdres | KaynakImaj;
   plan?: boolean;
 }
 
