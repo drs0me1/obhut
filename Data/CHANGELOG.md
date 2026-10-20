@@ -83,6 +83,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   now a warning in Uyarılar (and in the top bar's count), not only a line on the tab.
 - Genel Bakış' line under its title says what the page now holds, "Uygulamalar bir bakışta: durumları ve
   adresleri.", instead of naming health, access and the server, which moved to Uyarılar, Erişim and the sidebar.
+- Podman's containers table is readable again: a long image name no longer pushes the other columns narrow (or
+  the table past its card on a 1180–1366 px window). The image takes only the room left, on one line cut with
+  "…" (the whole name on hover), and a narrower table leaves it out; each port stays on one line and the
+  container's name gets its full width.
 
 ## [2.0.0] — 2026-10-18
 

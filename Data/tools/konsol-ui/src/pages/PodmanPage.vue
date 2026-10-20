@@ -466,7 +466,7 @@ onBeforeUnmount(() => stopWatch?.());
         <div v-if="rows.length" class="table-wrap">
           <table class="data-table resource-table container-table">
             <thead>
-              <tr><th scope="col">Konteyner</th><th scope="col">Durum</th><th scope="col">İmaj</th><th scope="col">İşlemci</th><th scope="col">Bellek</th><th scope="col">Çalışma</th><th scope="col">Portlar</th></tr>
+              <tr><th scope="col">Konteyner</th><th scope="col">Durum</th><th scope="col" class="col-image">İmaj</th><th scope="col">İşlemci</th><th scope="col">Bellek</th><th scope="col">Çalışma</th><th scope="col">Portlar</th></tr>
             </thead>
             <tbody>
               <tr v-for="r in rows" :key="r.c.name" :data-konteyner="r.c.name">
@@ -478,18 +478,18 @@ onBeforeUnmount(() => stopWatch?.());
                     <span v-if="r.manager" class="cell-note">{{ r.manager.text }}</span>
                   </span>
                 </th>
-                <td data-label="Durum">
+                <td data-label="Durum" class="col-state">
                   <StatusPill :tone="r.state.tone" :dot="r.state.dot">{{ r.state.text }}</StatusPill>
                   <span v-if="r.state.note" class="cell-note">{{ r.state.note }}</span>
                 </td>
-                <td data-label="İmaj" class="mono wrap"><span aria-hidden="true">{{ shortImage(r.c.image) || UNKNOWN }}</span><span class="sr-only">{{ r.c.image }}</span></td>
+                <td data-label="İmaj" class="mono wrap col-image"><span class="image-cut" aria-hidden="true" :title="r.c.image">{{ shortImage(r.c.image) || UNKNOWN }}</span><span class="sr-only">{{ r.c.image }}</span></td>
                 <td data-label="İşlemci" class="nowrap num">{{ r.c.state === "running" ? percent(r.c.cpu) : UNKNOWN }}</td>
                 <td data-label="Bellek" class="nowrap">
                   <span v-if="r.c.state === 'running' && r.c.memory !== null" class="bar-cell"><span class="num">{{ bytes(r.c.memory) }}</span><UsageBar :value="r.bar" /></span>
                   <span v-else>{{ UNKNOWN }}</span>
                 </td>
                 <td data-label="Çalışma" class="nowrap">{{ r.uptime }}</td>
-                <td data-label="Portlar" class="mono wrap">
+                <td data-label="Portlar" class="mono col-ports">
                   <template v-if="r.c.ports.length"><span v-for="(p, i) in r.c.ports" :key="i" class="port-line">{{ portText(p) }}</span></template>
                   <span v-else class="muted">yok</span>
                 </td>

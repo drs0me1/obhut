@@ -103,6 +103,44 @@
   display: block;
 }
 
+/* The image matters least in a row: a wide table gives it only what the other columns leave, on one line cut with
+   an ellipsis (the whole name is read out and shown on hover); a narrower one leaves it out. Each port stays on one
+   line. The cards (760 px and narrower, ui.css) are as before. */
+@container (width > 760px) {
+  .container-table .col-state {
+    width: 9rem;
+    min-width: 9rem;
+  }
+
+  .container-table .col-ports {
+    white-space: nowrap;
+  }
+}
+
+@container (width > 1000px) {
+  .container-table .col-main {
+    min-width: 15rem;
+  }
+
+  .container-table .col-image {
+    width: 100%;
+  }
+
+  .container-table .image-cut {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    contain: inline-size;
+  }
+}
+
+@container (760px < width <= 1000px) {
+  .container-table .col-image {
+    display: none;
+  }
+}
+
 /* ---- images, volumes, networks, folders: what nothing uses carries a tick */
 .resource-pane {
   display: flex;
