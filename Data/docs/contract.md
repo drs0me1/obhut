@@ -169,14 +169,15 @@ Addresses are detected once, in stage 3, into `state.env`; every later stage rea
 - The installer owns only its own files (**DD-96**): it does not hunt for earlier units, users, packages
   or data, and never runs a global `apt purge` or `userdel`.
 
-### 2.6 The update path (DD-233, DD-260)
+### 2.6 The update path (DD-233, DD-260, DD-292)
 
 - **Offer.** Konsol's backend reads the tip commit of `GUNCELLEME_DAL` on `GUNCELLEME_REPO` (the GitHub
   API) and that commit's `Data/install.sh`: `V2_VERSION`, `OBHUT_SURUM` and `OBHUT_NESIL` (a file without
   it is generation 1). A build is offered only when its generation equals `state.env`'s `OBHUT_NESIL` and
   its build number (`v2-<n>`) is higher; another generation is reported as needing a clean installation.
   The answer is cached six hours, a failed check is retried after 15 minutes, a manual check runs at most
-  once a minute. `OBHUT_SURUM` is the version people see; only the build number decides.
+  once a minute. `OBHUT_SURUM` is the version people see and rises with every build (**DD-292**); only
+  the build number decides. A newer build that carries the installed version is named with its build.
 - **Start.** Sistem → Güncellemeler or `sudo obhut guncelle`, only from a Tailscale device or the socket's
   local caller, only for the commit and version shown, never while an update runs or a settings change is
   pending. The backend starts `master-guncelle uygula <commit> <version>` as the transient unit
@@ -931,7 +932,7 @@ its countdown and Onayla/Geri al.
 | Erişim | Genel (Tailscale's card leads to its admin console), Adresler (Konsol, Paylaşımlar, every application row; "Adres aç"), Yerel adlar (the managed names read-only, records, forwarding, the local domain), Güvenlik duvarı (the operator's rules and the locked application rows); no Tailscale tab (**DD-288**), no WireGuard tab (**DD-291**) |
 | WireGuard | A section of its own (`#/wireguard`, **DD-291**; under Erişim in the sidebar, in the phone's "Daha fazla"): off after install ("Aç" creates the first network) or turned off as a whole; the networks as tabs (`?ag=`) with "Ağ ekle" and "WireGuard'ı kapat"; the chosen network's card (state, switch, port, addresses, DNS, "Ağ ayarları") and its devices (on/off, state, address, last seen, traffic, QR, profile, edit, delete) (§3.10) |
 | Dosyalar | Depolama (the disk, who uses which folder, Uygulama verileri with a bounded cached walk), Sunucu klasörleri, Çöp kutusu, Paylaşımlar, Sistem dosyaları (tailnet only) |
-| Sistem | Sağlık (with Onarım kaydı), Güncellemeler (Obhut and the count of application updates), Hesap, Sunucu (facts with the Tailscale device's name, client and exit node, and "Yeniden başlat"), İşlem geçmişi |
+| Sistem | Sağlık (only what needs attention: the checks with a problem, the last repair's steps with a problem or a repair; every check and step behind "Tüm denetimler" and "Tüm adımlar", **DD-293**; with Onarım kaydı), Güncellemeler (Obhut and the count of application updates), Hesap, Sunucu (facts with the Tailscale device's name, client and exit node, and "Yeniden başlat"), İşlem geçmişi |
 | Gelişmiş | Caddy, DNS, Güvenlik duvarı (technical rules and listeners); read-only |
 
 The interface names no application, loads no script of anyone else's, inserts names as text only and

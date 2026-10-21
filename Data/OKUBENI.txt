@@ -228,7 +228,8 @@ Güncelleme (aynı nesil içinde)
   Uygulamaların imajları ayrıdır: her biri kendi sayfasında onaylanır.
 
 Sağlık ve onarım
-  Sistem → Sağlık: her denetim, sorunlar önce; "Denetle" hiçbir şeyi değiştirmez, "Onar" bozukları kurulumun
+  Sistem → Sağlık: yalnız dikkat isteyenler (sorunlu denetimler, son onarımın sorunlu ya da onarılan adımları);
+  hepsi "Tüm denetimler" ve "Tüm adımlar" ile açılır. "Denetle" hiçbir şeyi değiştirmez, "Onar" bozukları kurulumun
   kendi ayarlarıyla düzeltir (servisler, güvenlik duvarı, zamanlayıcılar, izinler…). Onarım kaydı son 72 saatin
   ya da 7 günün kaydını gösterir. Güvenlik duvarı ayrıca saatte bir denetlenir.
   Konsol açılmıyorsa: sudo obhut onar (SSH) ya da Mac'te onar.command (1) denetle ve onar, 2) yalnız denetle).

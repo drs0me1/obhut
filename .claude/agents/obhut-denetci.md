@@ -23,9 +23,10 @@ Check each rule and report only real findings, each with its file and line, the 
    stay neutral (`registry.example`, `notlar`, `ornek`). Behaviour follows the file's own words only.
 3. **Languages:** operator-facing strings (installer output, Konsol, helpers) Turkish; Markdown documentation,
    code comments and commit messages English; `@test` names in `tests/*.bats` English.
-4. **Bookkeeping:** a behavioural change to the installer tree bumps `V2_VERSION` in `Data/install.sh`;
-   `OBHUT_SURUM` changes only for a release the user asked for; user-facing changes appear under
-   `[Unreleased]` in `Data/CHANGELOG.md`; non-obvious rationale has a `DD-*` entry in
+4. **Bookkeeping:** a behavioural change to the installer tree bumps `V2_VERSION` in `Data/install.sh`
+   and `OBHUT_SURUM` with it (DD-292: a fix the last number, a new or changed behaviour the middle one; the
+   first is `OBHUT_NESIL`), unless a build since the last push on `origin/main` already did; user-facing
+   changes appear under that version's section, the newest in `Data/CHANGELOG.md`, which names the build; non-obvious rationale has a `DD-*` entry in
    `Data/docs/design-decisions.md` with its line in `Data/docs/decisions-index.md`; documents that describe the
    changed behaviour (`contract.md`, `architecture.md`, `tests/README.md`, `CLAUDE.md`) say what the code does now.
 5. **Generated files:** `python3 Data/panel/master_api.py openapi` equals `Data/docs/konsol-api.json`, the

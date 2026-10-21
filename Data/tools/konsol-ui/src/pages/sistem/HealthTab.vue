@@ -1,8 +1,10 @@
-<!-- Sistem → Sağlık: every health check (live.saglik, cached 30 s by the server) with its state, name and
-     detail, problems first; then "Denetle ve onar" (DD-239): the last report (who ran it, which mode, when,
-     each step), "Denetle" at once and "Onar" after a confirmation, both only from the tailnet. While a run
-     goes on its report is read every 2 s (the run may restart Caddy or Konsol: a failed read just waits)
-     and the steps appear as they finish. "Onarım kaydı" (A7) opens master-onar's log (?kayit=72s|7g). -->
+<!-- Sistem → Sağlık (DD-293): only what needs attention. The health checks (live.saglik, cached 30 s by the
+     server) as one line of counts, the ones with a problem listed under it; "Tüm denetimler" shows every check
+     in a table, problems first. Then "Denetle ve onar" (DD-239): the last report in one line (which mode, when,
+     who ran it) with its state, the steps with a problem or a repair listed; "Tüm adımlar" shows every step with
+     the run's facts. "Denetle" starts at once and "Onar" after a confirmation, both only from the tailnet. While
+     a run goes on its report is read every 2 s (the run may restart Caddy or Konsol: a failed read just waits)
+     and the line says how far it got. "Onarım kaydı" (A7) opens master-onar's log (?kayit=72s|7g). -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Icon } from "../../components/icons";
@@ -38,6 +40,9 @@ const overall = computed(() => {
   const { danger, warning } = counts.value;
   return danger ? LEVEL.danger : warning ? LEVEL.warning : { ...LEVEL.ok, text: "Sağlıklı" };
 });
+// Only the checks that need attention are listed; the toggle shows them all.
+const attention = computed(() => checks.value.filter((x) => x.level.rank < LEVEL.ok.rank));
+const allChecks = ref(false);
 const countLine = computed(() => {
   const { danger, warning, ok } = counts.value;
   return [danger ? `${danger} sorun` : "", warning ? `${warning} uyarı` : "", `${ok} sorunsuz`].filter(Boolean).join(" · ");
@@ -145,7 +150,25 @@ const head = computed(() => {
   const r = report.value;
   if (running.value && (!r || r.durum === "calisiyor")) return r?.kip === "denetle" ? "Denetim sürüyor…" : "Denetim ve onarım sürüyor…";
   if (!r) return repair.value ? "Henüz denetim yapılmadı." : repairFailed.value ? "Onarım durumu okunamadı." : "Okunuyor…";
-  return `Son ${r.kip === "denetle" ? "denetim" : "onarım"}: ${dateTime(r.bitis || r.baslangic)}`;
+  return `Son ${r.kip === "denetle" ? "denetim" : "onarım"}: ${dateTime(r.bitis || r.baslangic)} · ${SOURCE[r.kaynak] ?? r.kaynak ?? UNKNOWN}`;
+});
+// The steps with a problem or a repair are listed; the toggle shows every step with the run's facts.
+const OPEN = new Set<OnarimAdimi["durum"]>(["hata", "sorun", "onarildi"]);
+const openSteps = computed(() => (report.value?.adimlar ?? []).filter((s) => OPEN.has(s.durum)));
+const allSteps = ref(false);
+const stepLine = computed(() => {
+  const r = report.value;
+  if (!r) return "";
+  const steps = r.adimlar;
+  if (r.durum === "calisiyor") {
+    const current = steps.find((s) => s.durum === "calisiyor");
+    const done = steps.length - (current ? 1 : 0);
+    return [done ? `${done} adım bitti` : "İlk adım başlıyor", current ? `şimdi: ${current.ad}` : ""].filter(Boolean).join(" · ");
+  }
+  const n = (d: OnarimAdimi["durum"]) => steps.filter((s) => s.durum === d).length;
+  if (steps.length && n("ok") === steps.length) return `${steps.length} adımın hepsi sorunsuz`;
+  return [`${steps.length} adım`, n("ok") ? `${n("ok")} sorunsuz` : "", n("onarildi") ? `${n("onarildi")} onarıldı` : "",
+    n("atlandi") ? `${n("atlandi")} atlandı` : ""].filter(Boolean).join(" · ");
 });
 
 // ---- the repair log's sheet (Onarım kaydı)
@@ -167,31 +190,47 @@ watch(() => live.offset, () => (now.value = serverNow()));
   <div class="system-tab" data-testid="health-tab">
     <section class="card" aria-labelledby="denetim-baslik" data-testid="checks">
       <div class="card-head">
-        <h2 id="denetim-baslik" class="card-title">Sağlık denetimleri</h2>
+        <div class="health-head">
+          <h2 id="denetim-baslik" class="card-title">Sağlık denetimleri</h2>
+          <p v-if="live.saglik" class="meter-note" data-testid="checks-read">
+            {{ countLine }} · son denetim {{ clock(live.saglik.read_at) }} ({{ since(live.saglik.read_at, now) }})
+          </p>
+        </div>
         <div v-if="overall" class="card-actions"><StatusPill :tone="overall.tone" :dot="overall.tone === 'ok'">{{ overall.text }}</StatusPill></div>
       </div>
       <template v-if="live.saglik">
-        <p class="meter-note" data-testid="checks-read">
-          {{ countLine }} · son denetim {{ clock(live.saglik.read_at) }} ({{ since(live.saglik.read_at, now) }})
-        </p>
-        <div v-if="checks.length" class="table-wrap">
-          <table class="data-table check-table">
-            <thead>
-              <tr>
-                <th scope="col">Denetim</th>
-                <th scope="col">Durum</th>
-                <th scope="col">Ayrıntı</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="x in checks" :key="x.c.id" :data-denetim="x.c.id" :data-durum="x.c.status">
-                <th scope="row" class="col-main"><strong>{{ x.c.name || x.c.id }}</strong></th>
-                <td data-label="Durum"><StatusPill :tone="x.level.tone">{{ x.level.text }}</StatusPill></td>
-                <td data-label="Ayrıntı" class="wrap">{{ x.c.detail || UNKNOWN }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <template v-if="checks.length">
+          <div v-if="allChecks" id="saglik-tum-denetimler" class="table-wrap" data-testid="checks-all">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Denetim</th>
+                  <th scope="col">Durum</th>
+                  <th scope="col">Ayrıntı</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="x in checks" :key="x.c.id" :data-denetim="x.c.id" :data-durum="x.c.status">
+                  <th scope="row" class="col-main"><strong>{{ x.c.name || x.c.id }}</strong></th>
+                  <td data-label="Durum"><StatusPill :tone="x.level.tone">{{ x.level.text }}</StatusPill></td>
+                  <td data-label="Ayrıntı" class="wrap">{{ x.c.detail || UNKNOWN }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <ul v-else-if="attention.length" class="health-list" aria-label="Dikkat isteyen denetimler" data-testid="check-problems">
+            <li v-for="x in attention" :key="x.c.id" class="health-item" :data-denetim="x.c.id" :data-durum="x.c.status">
+              <StatusPill :tone="x.level.tone">{{ x.level.text }}</StatusPill>
+              <span class="health-item-text">
+                <strong>{{ x.c.name || x.c.id }}</strong>
+                <span class="cell-note">{{ x.c.detail || UNKNOWN }}</span>
+              </span>
+            </li>
+          </ul>
+          <button type="button" class="btn btn-secondary btn-sm fit" :aria-expanded="allChecks" aria-controls="saglik-tum-denetimler" data-testid="checks-toggle" @click="allChecks = !allChecks">
+            {{ allChecks ? "Daha az göster" : `Tüm denetimler (${checks.length})` }}
+          </button>
+        </template>
         <EmptyState v-else title="Denetim yok" text="Sunucu bir sağlık denetimi bildirmedi." icon="pulse" />
       </template>
       <EmptyState v-else title="Sağlık denetimleri henüz okunamadı" text="Sunucu yanıt verince burada görünür." icon="pulse" />
@@ -199,7 +238,7 @@ watch(() => live.offset, () => (now.value = serverNow()));
 
     <section class="card repair" aria-labelledby="onarim-baslik" :aria-busy="running" data-testid="repair">
       <div class="card-head">
-        <div class="repair-head">
+        <div class="health-head">
           <h2 id="onarim-baslik" class="card-title">Denetle ve onar</h2>
           <p class="meter-note" data-testid="repair-head">{{ head }}</p>
         </div>
@@ -223,8 +262,11 @@ watch(() => live.offset, () => (now.value = serverNow()));
       <p v-if="note" class="meter-note" aria-hidden="true" data-testid="repair-note">{{ note }}</p>
 
       <template v-if="report">
-        <div class="repair-summary">
+        <p class="repair-summary" data-testid="repair-summary">
           <StatusPill v-if="reportState" :tone="reportState.tone" :dot="report.durum === 'calisiyor'">{{ reportState.text }}</StatusPill>
+          <span class="meter-note" data-testid="repair-line">{{ stepLine }}</span>
+        </p>
+        <div v-if="allSteps" id="onarim-tum-adimlar" class="health-all" data-testid="repair-all">
           <dl class="facts" data-testid="repair-facts">
             <dt>Tür</dt>
             <dd>{{ report.kip === "denetle" ? "Yalnız denetim" : "Denetim ve onarım" }}</dd>
@@ -235,22 +277,34 @@ watch(() => live.offset, () => (now.value = serverNow()));
             <dt>Bitiş</dt>
             <dd>{{ report.bitis ? dateTime(report.bitis) : report.durum === "calisiyor" ? "sürüyor" : UNKNOWN }}</dd>
           </dl>
+          <ol v-if="report.adimlar.length" class="health-list" aria-label="Adımlar" data-testid="repair-steps">
+            <li v-for="s in report.adimlar" :key="s.id" class="health-item" :data-adim="s.id" :data-durum="s.durum">
+              <StatusPill :tone="step(s).tone">{{ step(s).text }}</StatusPill>
+              <span class="health-item-text">
+                <strong>{{ s.ad }}</strong>
+                <span v-if="s.detay" class="cell-note">{{ s.detay }}</span>
+              </span>
+            </li>
+          </ol>
+          <p class="meter-note">
+            Arka planda sürekli çalışan bir denetim yok: adres denetimi açılışta ve her gece 03–04 arası, onarım bir servis çökünce ve burada
+            istenince çalışır; güvenlik duvarı saatte bir ayrıca denetlenir.
+          </p>
         </div>
-        <ol v-if="report.adimlar.length" class="repair-steps" aria-label="Adımlar" data-testid="repair-steps">
-          <li v-for="s in report.adimlar" :key="s.id" class="repair-step" :data-adim="s.id" :data-durum="s.durum">
+        <ul v-else-if="openSteps.length" class="health-list" aria-label="Dikkat isteyen adımlar" data-testid="repair-problems">
+          <li v-for="s in openSteps" :key="s.id" class="health-item" :data-adim="s.id" :data-durum="s.durum">
             <StatusPill :tone="step(s).tone">{{ step(s).text }}</StatusPill>
-            <span class="repair-step-text">
+            <span class="health-item-text">
               <strong>{{ s.ad }}</strong>
               <span v-if="s.detay" class="cell-note">{{ s.detay }}</span>
             </span>
           </li>
-        </ol>
-        <p v-else class="meter-note">Adımlar başlayınca burada görünür.</p>
+        </ul>
+        <button v-if="report.adimlar.length" type="button" class="btn btn-secondary btn-sm fit" :aria-expanded="allSteps" aria-controls="onarim-tum-adimlar" data-testid="repair-toggle" @click="allSteps = !allSteps">
+          {{ allSteps ? "Daha az göster" : `Tüm adımlar (${report.adimlar.length})` }}
+        </button>
       </template>
-      <p class="meter-note">
-        Arka planda sürekli çalışan bir denetim yok: adres denetimi açılışta ve her gece 03–04 arası, onarım bir servis çökünce ve burada
-        istenince çalışır; güvenlik duvarı saatte bir ayrıca denetlenir. Konsol'a ulaşılamazsa SSH ile: <code class="mono">sudo master-onar</code>
-      </p>
+      <p class="meter-note">Konsol'a ulaşılamazsa SSH ile: <code class="mono">sudo master-onar</code></p>
     </section>
 
     <Modal :open="askOpen" title="Denetim ve onarım başlasın mı?" @close="askOpen = false">

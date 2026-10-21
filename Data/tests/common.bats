@@ -4864,9 +4864,11 @@ PY
     awk '/\.wg-table td\[data-label\] \{/,/\}/' "$V2_ROOT/tools/konsol-ui/src/styles/wireguard.css" | grep -q 'overflow-wrap: anywhere;'
 }
 
-@test "the release version people see sits beside the build number servers compare (DD-260)" {
-    local install="$V2_ROOT/install.sh" surum
+@test "the release version people see sits beside the build number servers compare (DD-260, DD-292)" {
+    local install="$V2_ROOT/install.sh" surum build section
     surum="$(sed -n 's/^OBHUT_SURUM="\(.*\)"$/\1/p' "$install")"
+    build="$(sed -n 's/^V2_VERSION="[0-9.]*-\(v2-[0-9]*\)"$/\1/p' "$install")"
+    [ -n "$build" ]
     # A semantic version, defined once, right after the build number.
     grep -qxE '[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}' <<<"$surum"
     [ "$(grep -c '^OBHUT_SURUM="' "$install")" -eq 1 ]
@@ -4886,8 +4888,12 @@ assert mu.number(mu.INSTALL_LINE_RE.search(text).group(1)) is not None
 PY
     # Konsol shows it and falls back to the build number from an older backend.
     grep -qF 'live.kaynaklar?.surum || live.guncelleme?.kurulu_surum || shortVersion(' "$V2_ROOT/tools/konsol-ui/src/components/SideNav.vue"
-    # The changelog has this release's section.
-    grep -qE "^## \[$surum\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$V2_ROOT/CHANGELOG.md"
+    # DD-292: the version rises with every build and its first number is the generation. The changelog's newest
+    # section is this version's and names this build, so a new build without a new version stands out.
+    [ "${surum%%.*}" = "$(sed -n 's/^OBHUT_NESIL="\(.*\)"$/\1/p' "$install")" ]
+    grep -m1 '^## ' "$V2_ROOT/CHANGELOG.md" | grep -qxE "## \[${surum//./\\.}\] — [0-9]{4}-[0-9]{2}-[0-9]{2}"
+    section="$(awk '/^## /{n++} n==1' "$V2_ROOT/CHANGELOG.md")"
+    grep -qwF "$build" <<<"$section"
 }
 
 @test "obhut: the root CLI is installed beside master-onar and speaks to Konsol's own socket (DD-268)" {

@@ -1,4 +1,4 @@
-/* Sistem (DD-258, DD-266; A7: health and repair, updates with the applications' image updates, the account, the
+/* Sistem (DD-258, DD-266; A7, DD-293: health and repair, updates with the applications' image updates, the account, the
    server, İşlem geçmişi) and Gelişmiş (K8: Caddy, DNS, the firewall's technical rules), and the shell's "Çıkış yap". Shared pieces are in ui.css and pages.css; colours only from tokens.css. */
 
 /* ---- the pages */
@@ -70,8 +70,9 @@
   color: var(--warn-ink);
 }
 
-/* ---- Sağlık: the repair card */
-.repair-head {
+/* ---- Sağlık (DD-293): each card's title with its one line, the state with its counts, the rows that need
+   attention (a state, then the name and its detail), every check or step behind the toggle */
+.health-head {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -84,12 +85,20 @@
 
 .repair-summary {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 0;
 }
 
-.repair-steps {
+.health-all {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.health-list {
   display: flex;
   flex-direction: column;
   margin: 0;
@@ -98,7 +107,7 @@
   list-style: none;
 }
 
-.repair-step {
+.health-item {
   display: grid;
   grid-template-columns: 128px minmax(0, 1fr);
   align-items: start;
@@ -108,11 +117,11 @@
   font-size: 14px;
 }
 
-.repair-step .pill {
+.health-item .pill {
   justify-self: start;
 }
 
-.repair-step-text {
+.health-item-text {
   display: flex;
   flex-direction: column;
   gap: 2px;

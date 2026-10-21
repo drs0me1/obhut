@@ -40,7 +40,9 @@ async function load(fresh = false): Promise<Guncelleme | null> {
 }
 
 const installed = (r: Guncelleme) => r.kurulu_surum || shortVersion(r.kurulu);
-const offered = (r: Guncelleme) => r.son_surum || shortVersion(r.son);
+// DD-292: a newer build that kept the installed version (one from before the rule) is named by its build too.
+const offered = (r: Guncelleme) =>
+  r.son_surum && r.son_surum === r.kurulu_surum && r.son !== r.kurulu ? `${r.son_surum} · ${shortVersion(r.son)}` : r.son_surum || shortVersion(r.son);
 
 async function recheck(): Promise<void> {
   note.value = "";
@@ -170,7 +172,7 @@ onBeforeUnmount(() => {
           <dt>Kurulu</dt>
           <dd><strong>{{ installed(g) }}</strong> <span class="muted">yapı <span class="mono">{{ g.kurulu || UNKNOWN }}</span></span></dd>
           <dt>En yeni</dt>
-          <dd v-if="g.son"><strong>{{ offered(g) }}</strong> <span class="muted">yapı <span class="mono">{{ g.son }}<template v-if="g.commit"> · {{ g.commit.slice(0, 7) }}</template></span></span></dd>
+          <dd v-if="g.son"><strong>{{ g.son_surum || shortVersion(g.son) }}</strong> <span class="muted">yapı <span class="mono">{{ g.son }}<template v-if="g.commit"> · {{ g.commit.slice(0, 7) }}</template></span></span></dd>
           <dd v-else>{{ UNKNOWN }}</dd>
           <dt>Son denetim</dt>
           <dd>{{ g.denetlendi ? `${dateTime(g.denetlendi)} (${since(g.denetlendi, serverNow())})` : UNKNOWN }}</dd>

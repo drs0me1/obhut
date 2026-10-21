@@ -197,9 +197,10 @@ shellcheck -x -s bash ../kur.sh install.sh common.sh scripts/*
 python3.13 -m unittest discover -s tests -p 'test_*.py'
 ```
 
-Releases follow semantic versioning and are tagged `vX.Y.Z` (`OBHUT_SURUM` in `Data/install.sh`);
-every behavioural change also raises the build number (`V2_VERSION`) that servers compare when
-Konsol offers an update. Browser, Linux and live suites are described in
+Versions follow semantic versioning and are tagged `vX.Y.Z` (`OBHUT_SURUM` in `Data/install.sh`):
+every behavioural change raises the build number (`V2_VERSION`) that servers compare when Konsol
+offers an update, and the version with it (a fix the last number, a new or changed behaviour the
+middle one; the first is the generation). Browser, Linux and live suites are described in
 [`Data/tests/README.md`](Data/tests/README.md). Konsol's interface is rebuilt with
 `npm ci && npm run derle` in `Data/tools/konsol-ui`; a test checks that the committed build matches
 its sources. `kur.sh` installs whatever `main` holds, so `main` stays installable after every push.

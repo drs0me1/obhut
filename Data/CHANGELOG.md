@@ -4,8 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.1.0] — 2026-10-21
 
+The first version under DD-292: every build now raises the version people see (a fix the last number, a new or
+changed behaviour the middle one), so Konsol's update offer names a newer version instead of 2.0.0 again. Since
+2.0.0: Uygulama ekle as a full-window page with the install's log, removal that leaves nothing behind, Uyarılar behind
+the top bar's count, Genel Bakış as the applications with the resources and the server in the sidebar, Podman and
+WireGuard as sections of their own, Erişim's rows opening under themselves, and a shorter Sistem → Sağlık. Builds
+v2-264 to v2-281.
+
+- The version rises with every build (DD-292): a build that only fixes raises the last number (2.1.0 → 2.1.1),
+  one that adds or changes what you see or do raises the middle one (2.1.1 → 2.2.0); the first number is the
+  generation. Sistem → Güncellemeler, the sidebar, `sudo obhut durum` and the installer's lines show it as before.
+  Should a newer build still carry the installed version (a server offered a build from before this rule),
+  Güncellemeler names its build beside it ("2.0.0 · v2-280") instead of offering "2.0.0" again.
+- Sistem → Sağlık shows only what needs attention (DD-293). Sağlık denetimleri is one line of counts with the
+  overall state, and only the checks with a problem are listed under it; "Tüm denetimler" opens the full table.
+  Denetle ve onar names the last run in one line (when, who started it), its state with the step counts, and only
+  the steps with a problem or a repair; while a run goes on the line says how far it got. "Tüm adımlar" opens
+  every step with the run's start and end. When all is well each card is one line and its button.
 - Uygulama ekle is a page of its own that fills the window (DD-279): the source list beside the chosen source (a
   file can also be dropped on it), the file beside the inspector's questions, grouped by service, with the line of
   the question in hand lit and "Bekleyene git" for the next unanswered one; the plan beside the install's order.
@@ -2123,7 +2140,7 @@ builds that make up 1.0.0; earlier builds are in
 
 Older entries (v2-144 and earlier) are archived verbatim in [`docs/archive/CHANGELOG-before-v2-145.md`](docs/archive/CHANGELOG-before-v2-145.md).
 
-[Unreleased]: https://github.com/drs0me1/obhut/compare/v2.0.0...HEAD
+[2.1.0]: https://github.com/drs0me1/obhut/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/drs0me1/obhut/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/drs0me1/obhut/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/drs0me1/obhut/compare/v1.0.0...v1.1.0

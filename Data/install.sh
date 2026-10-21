@@ -5,10 +5,10 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-280"
-# DD-260: insanların gördüğü sürüm (anlamlı sürümleme; yalnız bir yayında değişir, vX.Y.Z etiketlenir).
-# V2_VERSION yapı numarasıdır: Konsol güncelleme önerirken sunucular onu karşılaştırır.
-OBHUT_SURUM="2.0.0"
+V2_VERSION="2026.08.06-v2-281"
+# DD-260, DD-292: insanların gördüğü sürüm; her yeni yapıyla artar (yalnız düzeltme → son hane, yeni ya da değişen
+# davranış → orta hane; ilk hane nesildir). V2_VERSION yapı numarasıdır: sunucular güncellemede onu karşılaştırır.
+OBHUT_SURUM="2.1.0"
 # DD-271: kurulumun nesli. Bu nesil yalnız temiz bir işletim sistemine kurulur (aşama 0'ın kapısı);
 # Konsol yalnız aynı nesildeki yapıları güncelleme olarak önerir.
 OBHUT_NESIL="2"

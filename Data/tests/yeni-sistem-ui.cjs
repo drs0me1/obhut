@@ -258,7 +258,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
   h.checkBuild();
   await h.start();
   try {
-    // ================= Sistem → Sağlık: every check, the last repair report, Denetle, Onar, the log
+    // ================= Sistem → Sağlık (DD-293): what needs attention, everything behind the toggles; Denetle, Onar, the log
     let page = await newPage({ permissions: ["clipboard-read", "clipboard-write"] });
     await page.goto(url("#/sistem"));
     assert.equal(await page.locator("main h1").innerText(), "Sistem");
@@ -266,23 +266,52 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.deepEqual(await tabs.allInnerTexts(), ["Sağlık", "Güncellemeler", "Hesap", "Sunucu", "İşlem geçmişi"], "no Görünüm: the theme is the top bar's");
     assert.equal(await page.getByTestId("page-desc").innerText(), "Obhut'un kendisi: sağlık, sürüm, hesap ve sunucu.");
     assert.deepEqual(await page.locator('.sidebar .nav-item[aria-current="page"] .nav-label').allInnerTexts(), ["Sistem"]);
+    // Only the checks that need attention are listed under the counts; the healthy ones wait behind the toggle.
     const checks = page.getByTestId("checks");
-    await checks.locator("tbody tr").first().waitFor();
+    const problems = checks.getByTestId("check-problems");
+    await problems.waitFor();
+    assert.deepEqual(await problems.locator(".health-item").evaluateAll((rows) => rows.map((r) => r.dataset.denetim)), ["units", "disk"], "problems first");
+    assert.deepEqual(await problems.locator(".pill").allInnerTexts(), ["Sorun var", "Dikkat"]);
+    assert.equal(await problems.locator('[data-denetim="units"] .cell-note').innerText(), "Çalışmayan: master-files-panel.service");
+    assert.equal(await checks.locator(".card-actions .pill").innerText(), "Sorun var");
+    assert.match(await page.getByTestId("checks-read").innerText(), /^1 sorun · 1 uyarı · 2 sorunsuz · son denetim \d\d:\d\d \(\d+ dakika önce\)$/);
+    assert.equal(await checks.locator("table").count(), 0);
+    const checksToggle = page.getByTestId("checks-toggle");
+    assert.equal(await checksToggle.innerText(), "Tüm denetimler (4)");
+    assert.equal(await checksToggle.getAttribute("aria-expanded"), "false");
+    // The last report in one line (run over SSH), its state and counts, and only the steps repaired or with a problem.
+    const repair = page.getByTestId("repair");
+    await page.getByTestId("repair-summary").waitFor();
+    assert.equal(await page.getByTestId("repair-head").innerText(), `Son onarım: ${dateTime(REPORT.bitis)} · SSH (sudo master-onar)`);
+    assert.equal(await repair.locator(".repair-summary .pill").innerText(), "Tamamlandı · 1 sorun");
+    assert.equal(await page.getByTestId("repair-line").innerText(), "4 adım · 1 sorunsuz · 1 onarıldı · 1 atlandı");
+    const openSteps = page.getByTestId("repair-problems");
+    assert.deepEqual(await openSteps.locator(".health-item").evaluateAll((rows) => rows.map((r) => r.dataset.adim)), ["units", "tailscale"]);
+    assert.deepEqual(await openSteps.locator(".pill").allInnerTexts(), ["Onarıldı", "Sorun var"]);
+    assert.equal(await openSteps.locator('[data-adim="units"] .cell-note').innerText(), STEPS[1].detay);
+    assert.equal(await page.getByTestId("repair-facts").count(), 0);
+    assert.equal(await page.getByTestId("repair-lock").count(), 0, "the tailnet may start it");
+    await shot(page, "1440-light-saglik.png", true);
+    // The toggles show everything: every check in a table, problems first; every step with the run's facts.
+    await checksToggle.click();
+    assert.equal(await checksToggle.getAttribute("aria-expanded"), "true");
+    assert.equal(await checksToggle.innerText(), "Daha az göster");
     assert.deepEqual(await checks.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.denetim)), ["units", "disk", "firewall", "tailscale"], "problems first");
     assert.deepEqual(await checks.locator("tbody tr .pill").allInnerTexts(), ["Sorun var", "Dikkat", "Sorunsuz", "Sorunsuz"]);
     assert.equal(await checks.locator('tr[data-denetim="units"] td[data-label="Ayrıntı"]').innerText(), "Çalışmayan: master-files-panel.service");
-    assert.equal(await checks.locator(".card-actions .pill").innerText(), "Sorun var");
-    assert.match(await page.getByTestId("checks-read").innerText(), /^1 sorun · 1 uyarı · 2 sorunsuz · son denetim \d\d:\d\d \(\d+ dakika önce\)$/);
-    // The last report: run over SSH, each step with its state.
-    const repair = page.getByTestId("repair");
-    await page.getByTestId("repair-facts").waitFor();
-    assert.equal(await page.getByTestId("repair-head").innerText(), "Son onarım: " + dateTime(REPORT.bitis));
+    assert.equal(await problems.count(), 0, "the table takes the short list's place");
+    const stepsToggle = page.getByTestId("repair-toggle");
+    assert.equal(await stepsToggle.innerText(), "Tüm adımlar (4)");
+    await stepsToggle.click();
+    assert.equal(await stepsToggle.getAttribute("aria-expanded"), "true");
     assert.deepEqual(await page.getByTestId("repair-facts").locator("dd").allInnerTexts(), ["Denetim ve onarım", "SSH (sudo master-onar)", dateTime(REPORT.baslangic), dateTime(REPORT.bitis)]);
-    assert.equal(await repair.locator(".repair-summary .pill").innerText(), "Tamamlandı · 1 sorun");
-    assert.deepEqual(await page.getByTestId("repair-steps").locator(".repair-step .pill").allInnerTexts(), ["Sorunsuz", "Onarıldı", "Sorun var", "Atlandı"]);
-    assert.equal(await page.getByTestId("repair-steps").locator('[data-adim="units"] .cell-note').innerText(), STEPS[1].detay);
-    assert.equal(await page.getByTestId("repair-lock").count(), 0, "the tailnet may start it");
-    await shot(page, "1440-light-saglik.png", true);
+    assert.deepEqual(await page.getByTestId("repair-steps").locator(".health-item .pill").allInnerTexts(), ["Sorunsuz", "Onarıldı", "Sorun var", "Atlandı"]);
+    assert.equal(await openSteps.count(), 0);
+    await shot(page, "1440-light-saglik-tumu.png", true);
+    await checksToggle.click();
+    await stepsToggle.click();
+    await problems.waitFor();
+    await openSteps.waitFor();
 
     // Denetle starts at once (a check changes nothing); the report is read every 2 s while it runs.
     data.onarim = repairState({ calisiyor: true, rapor: { durum: "calisiyor", kip: "denetle", kaynak: "konsol", baslangic: NOW + 10, bitis: null, adimlar: [STEPS[0]] } });
@@ -293,17 +322,24 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     await page.getByTestId("repair-head").filter({ hasText: "Denetim sürüyor…" }).waitFor();
     assert(await page.getByTestId("repair-check").isDisabled() && await page.getByTestId("repair-fix").isDisabled(), "one run at a time");
     assert.equal(await repair.getAttribute("aria-busy"), "true");
-    await page.getByTestId("repair-steps").locator('[data-adim="firewall"]').waitFor();
+    // The line says how far the run got; a step with nothing to attend to is not listed.
+    await page.getByTestId("repair-line").filter({ hasText: /^1 adım bitti$/ }).waitFor();
+    assert.equal(await repair.locator(".repair-summary .pill").innerText(), "Sürüyor");
+    assert.equal(await openSteps.count(), 0);
     const reads = gets("onarim").length;
     data.onarim.rapor.adimlar.push({ id: "units", ad: "Servisler", durum: "calisiyor", detay: "" });
-    await page.getByTestId("repair-steps").locator('[data-adim="units"] .pill').filter({ hasText: "Denetleniyor…" }).waitFor({ timeout: 5000 });
+    await page.getByTestId("repair-line").filter({ hasText: "1 adım bitti · şimdi: Servisler" }).waitFor({ timeout: 5000 });
     assert(gets("onarim").length > reads, "read again while it runs");
     push("islemler", { items: [job({ tur: "onarim", id: "onarim", ad: "Denetle", adim: "Servisler" })] });
     data.onarim = repairState({ rapor: { durum: "tamam", kip: "denetle", kaynak: "konsol", baslangic: NOW + 10, bitis: NOW + 30,
       adimlar: [STEPS[0], { id: "units", ad: "Servisler", durum: "sorun", detay: "Çalışmayan: master-files-panel.service" }] } });
     push("islemler", { items: [job({ tur: "onarim", id: "onarim", ad: "Denetle", durum: "tamam", bitis: NOW + 30 })] });
-    await page.getByTestId("repair-head").filter({ hasText: "Son denetim: " + dateTime(NOW + 30) }).waitFor();
+    await page.getByTestId("repair-head").filter({ hasText: `Son denetim: ${dateTime(NOW + 30)} · Konsol` }).waitFor();
+    assert.equal(await page.getByTestId("repair-line").innerText(), "2 adım · 1 sorunsuz");
+    assert.deepEqual(await openSteps.locator(".health-item").evaluateAll((rows) => rows.map((r) => r.dataset.adim)), ["units"]);
+    await stepsToggle.click();
     assert.deepEqual(await page.getByTestId("repair-facts").locator("dd").allInnerTexts(), ["Yalnız denetim", "Konsol", dateTime(NOW + 10), dateTime(NOW + 30)]);
+    await stepsToggle.click();
     assert(await page.getByTestId("repair-fix").isEnabled());
     // Onar asks first; Esc keeps everything as it was and focus returns to Onar.
     await page.getByTestId("repair-fix").click();
@@ -378,6 +414,23 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     await page.keyboard.press("Home");
     await page.waitForURL((u) => u.hash === "#/sistem");
     await page.context().close();
+
+    // All well: each card is its line of counts and its state, with nothing listed.
+    const health = data.saglik;
+    data.saglik = { status: "ok", read_at: NOW - 120, checks: CHECKS.map((c) => ({ ...c, status: "ok" })) };
+    data.onarim = repairState({ rapor: { ...REPORT, kip: "denetle", kaynak: "konsol", adimlar: STEPS.map((x) => ({ ...x, durum: "ok" })) } });
+    page = await newPage();
+    await page.goto(url("#/sistem"));
+    await page.getByTestId("repair-line").filter({ hasText: "4 adımın hepsi sorunsuz" }).waitFor();
+    assert.equal(await page.getByTestId("checks").locator(".card-actions .pill").innerText(), "Sağlıklı");
+    assert.match(await page.getByTestId("checks-read").innerText(), /^4 sorunsuz · son denetim /);
+    assert.equal(await page.getByTestId("repair").locator(".repair-summary .pill").innerText(), "Tamamlandı");
+    assert.equal(await page.getByTestId("check-problems").count() + await page.getByTestId("repair-problems").count(), 0, "nothing to attend to");
+    assert.deepEqual(await page.locator("[data-testid=checks-toggle], [data-testid=repair-toggle]").allInnerTexts(), ["Tüm denetimler (4)", "Tüm adımlar (4)"]);
+    await shot(page, "1440-light-saglik-sorunsuz.png", true);
+    await page.context().close();
+    data.saglik = health;
+    data.onarim = repairState();
 
     // ================= Güncellemeler: versions, Yeniden denetle, the confirmation, the run, the reload
     page = await newPage();
@@ -461,6 +514,16 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.equal(await page.getByTestId("update-error").innerText(), "Sürüm denetlenemedi: GitHub'a ulaşılamadı.");
     assert.equal(await page.getByTestId("update-last-failure").innerText(), "Son deneme başarısız: imza doğrulanamadı");
     assert.equal(await page.getByTestId("update-start").count(), 0, "nothing to update to");
+    await page.context().close();
+    // DD-292: a newer build that kept the installed version is offered by its build too, not as the same version.
+    data.guncelleme = update({ kurulu: "2026.08.06-v2-279", kurulu_surum: "2.0.0", son: "2026.08.06-v2-280", son_surum: "2.0.0" });
+    page = await newPage();
+    await page.goto(url("#/sistem?sekme=guncellemeler"));
+    await page.getByTestId("update-start").filter({ hasText: "2.0.0 · v2-280 sürümüne güncelle" }).waitFor();
+    assert.deepEqual((await page.getByTestId("update-facts").locator("dd").allInnerTexts()).slice(0, 2),
+      ["2.0.0 yapı 2026.08.06-v2-279", "2.0.0 yapı 2026.08.06-v2-280 · abcdef1"]);
+    await page.getByTestId("update-start").click();
+    await page.getByRole("dialog", { name: "Sunucu 2.0.0 · v2-280 sürümüne güncellensin mi?" }).locator(".modal-desc").filter({ hasText: "Kurulu: 2.0.0 → 2.0.0 · v2-280" }).waitFor();
     await page.context().close();
     // Applications never checked yet.
     data.guncelleme = update({ uygulamalar: { sayi: 0, adlar: [], denetlendi: null } });
@@ -1006,7 +1069,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
 
     // ================= 1440, 390 and 320 in both themes: no style attribute, no horizontal scroll
     const VIEWS = [
-      ["saglik", "#/sistem", "[data-testid=repair-steps]"],
+      ["saglik", "#/sistem", "[data-testid=repair-problems]"],
       ["guncellemeler", "#/sistem?sekme=guncellemeler", "[data-testid=update-facts]"],
       ["hesap", "#/sistem?sekme=hesap&parola=1", "[data-testid=password]"],
       ["sunucu", "#/sistem?sekme=sunucu", "[data-bilgi=root]"],
@@ -1031,9 +1094,17 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
           assert(await noHorizontalScroll(page), `${width} ${colorScheme} ${name}`);
           await shot(page, `${width}-${colorScheme}-${name}.png`, !SHEETS.some((s) => s[0] === name));
         }
+        // Sağlık with both toggles open: every check and every step with the run's facts.
+        await page.goto(url("#/sistem"));
+        await page.reload();
+        await page.getByTestId("checks-toggle").click();
+        await page.getByTestId("repair-toggle").click();
+        await page.getByTestId("repair-steps").waitFor();
+        await noStyles(page, `${width} ${colorScheme} saglik-tumu`);
+        assert(await noHorizontalScroll(page), `${width} ${colorScheme} saglik-tumu`);
+        await shot(page, `${width}-${colorScheme}-saglik-tumu.png`, true);
         if (width === 390) {
-          await page.goto(url("#/sistem"));
-          assert.equal(await page.locator(".check-table tbody tr").first().evaluate((el) => getComputedStyle(el).display), "grid", "cards on a phone");
+          assert.equal(await page.getByTestId("checks-all").locator("tbody tr").first().evaluate((el) => getComputedStyle(el).display), "grid", "cards on a phone");
           await page.goto(url("#/sistem?kayit=72s"));
           const box = await page.getByRole("dialog", { name: "Onarım kaydı" }).boundingBox();
           assert(Math.abs(box.y + box.height - height) <= 1 && box.width === width, "a bottom sheet on a phone");
@@ -1043,11 +1114,11 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     }
 
     assert.deepEqual(h.errors, []);
-    console.log("PASS: Konsol's Sistem, Gelişmiş and Podman under the production CSP — Sağlık (every check with problems first, the last " +
-      "repair report with its source and steps, Denetle at once, Onar after a confirmation, a refusal, the report read every 2 s while a run " +
+    console.log("PASS: Konsol's Sistem, Gelişmiş and Podman under the production CSP — Sağlık (only the checks and steps that need attention, " +
+      "the last repair report in one line with its source and counts, every check and step behind the toggles, all well with nothing listed, Denetle at once, Onar after a confirmation, a refusal, the report read every 2 s while a run " +
       "goes on, its end through islemler, Onarım kaydı as plain text in a sheet: 72 h / 1 week in the address, newest line, copy, a failed " +
       "read, an empty log), Güncellemeler (Obhut's versions and builds, Yeniden denetle with ?yenile=1, the confirmation's words, a refusal, " +
-      "the run's stage through islemler, an earlier run ignored, the reload after success, a failed run without reload, a failed check; the " +
+      "the run's stage through islemler, an earlier run ignored, the reload after success, a failed run without reload, a failed check, a newer build with the same version named by its build; the " +
       "applications' image updates with their links, none, never checked), Hesap (create on the tailnet with master_auth's rules, a refusal, " +
       "the tailnet password without the current one, the internet password with it, a wrong current password shown on the form, an ended " +
       "session's 401 to sign-in, the leave guard), Sunucu (facts with the Tailscale device, the reboot's typed word, a refusal, the wait, the server going away and " +

@@ -24,6 +24,46 @@ Konsol's single-container definitions and adoption, Yayınla and the manual
 phase 6; live entries that still mention them end with a note naming what no
 longer applies and which entry replaced it.
 
+### DD-293: Sistem → Sağlık shows only what needs attention (v2-281, 2.1.0)
+
+- **Why:** the operator found the tab a long list going down and asked for only the notices that need to be
+  seen (2026-10-21). On a server the two cards listed every health check and all 21 steps of the last repair, most
+  of them "Sorunsuz", under four rows of the run's facts and a paragraph about when checks run.
+- **What:** "Sağlık denetimleri" is its line of counts and last check time with the overall state; only the checks
+  with a problem or a warning are listed under it. "Tüm denetimler (n)" shows every check in the table as before
+  (problems first) in the short list's place; "Daha az göster" closes it. "Denetle ve onar" names the last run in
+  one line (its kind, when it ended, who started it), then its state with the step counts ("4 adım · 1 sorunsuz ·
+  1 onarıldı · 1 atlandı", or "21 adımın hepsi sorunsuz"); only the steps with a problem, an error or a repair are
+  listed. While a run goes on the line says how far it got ("7 adım bitti · şimdi: Servisler"). "Tüm adımlar (n)"
+  shows the run's facts, every step and the sentence on when checks run; the hint for SSH stays at the card's foot.
+  The toggles are not kept in the address: the tab always opens short. Nothing changes on the server: the same
+  reads, the same buttons, the same confirmation.
+- **Rejected:** dropping the full lists (a check or step that is fine is still worth reading when something
+  else is not); a third card for problems only (Uyarılar already is that page, DD-285).
+- **Tests:** the Sistem suite: the short lists with their states and details, the counts line, both toggles with
+  the full table and steps, the line while a run goes on, the all-well state with nothing listed, and the expanded
+  tab in the layout audit at 1440, 390 and 320 in both themes.
+
+### DD-292: The version rises with every build (v2-281, 2.1.0)
+
+- **Why:** the operator saw Konsol offer an update while the version stayed 2.0.0 on both sides: under DD-260
+  `OBHUT_SURUM` changed only at a release, so every build after 2.0.0 was offered as "2.0.0 sürümüne güncelle". They
+  asked for the lower numbers to rise with the interim updates, by the rule (2026-10-21).
+- **Rule:** every build that changes behaviour raises `OBHUT_SURUM` as well as `V2_VERSION`: a build that only
+  fixes (behaviour back to what the contract already says, a text or layout fix) raises the last number (2.1.0 →
+  2.1.1); one that adds or changes what the operator sees or uses raises the middle one and resets the last (2.1.1
+  → 2.2.0). The first number is the generation (`OBHUT_NESIL`) and changes only with it. Several builds before one
+  push may share one new version. The build number still alone decides what is offered (DD-233, DD-260).
+- **Changelog and tags:** each version has its section `## [X.Y.Z] — <date>` at the top of `CHANGELOG.md`, which
+  names its build; there is no `[Unreleased]` section any more. A version is tagged `vX.Y.Z` when it is pushed; a
+  GitHub release with notes is published only when the operator asks for one.
+- **Güncellemeler:** should a newer build still carry the installed version (any build before this rule), the offer
+  names its build beside it ("2.0.0 · v2-280 sürümüne güncelle"); the facts keep the version and the build apart.
+- **Amends:** DD-260 (`OBHUT_SURUM` only at a release). 2.1.0 is the first version under the rule; it gathers the
+  builds v2-264 to v2-281 since 2.0.0.
+- **Tests:** bats checks that the version's first number is the generation and that the changelog's newest
+  section is this version's and names this build; the Sistem suite checks the build beside an unchanged version.
+
 ### DD-291: WireGuard is a section of its own, under Erişim (v2-280)
 
 - **Why:** the operator asked for Erişim's WireGuard tab to become a section of the sidebar (2026-10-21).
@@ -1236,6 +1276,7 @@ longer applies and which entry replaced it.
   backend's `--version`).
 - **Rejected:** switching `V2_VERSION` itself to semantic versioning (strands installed servers);
   2.0.0 or 3.0.0 (the user chose 1.0.0).
+- **Amended by DD-292 (2.1.0):** `OBHUT_SURUM` rises with every build, not only at a release.
 
 ### DD-259: The redesign's first phase: route table, Erişim read model, live events, the shell at /yeni/ (v2-243)
 

@@ -110,13 +110,16 @@ The installer is destructive: firewall, systemd, network state. Treat every chan
 - Keep version history in Git. `kur.sh` installs whatever `main` holds (**DD-228**):
   every push to `main` reaches the next install, so `main` must stay installable.
   There is no exported installer to rebuild.
-- Releases (**DD-260**): `OBHUT_SURUM` in `install.sh` is the semantic version people see; change it
-  only when the user asks for a release, then turn `[Unreleased]` into `## [X.Y.Z] — <date>` in
-  `CHANGELOG.md`, tag `vX.Y.Z` and publish the GitHub release. `V2_VERSION` stays the build number
-  that servers compare.
+- Versions (**DD-260**, **DD-292**): `OBHUT_SURUM` in `install.sh` is the semantic version people see
+  and rises with every build: a build that only fixes raises the last number (2.1.0 → 2.1.1), one that
+  adds or changes behaviour the operator sees or uses raises the middle one (2.1.1 → 2.2.0); the first
+  number is `OBHUT_NESIL`. Each version has its section `## [X.Y.Z] — <date>` at the top of
+  `CHANGELOG.md` naming its build, and is tagged `vX.Y.Z` when it is pushed; a GitHub release is
+  published only when the user asks. `V2_VERSION` stays the build number that servers compare.
 - Bump `V2_VERSION` in `install.sh` on every behavioural change to the
-  installer tree. Record user-facing changes under `[Unreleased]` in
-  `CHANGELOG.md` and add a `DD-*` entry when rationale is non-obvious.
+  installer tree, and `OBHUT_SURUM` with it, unless the build since the last push already did. Record
+  user-facing changes under the version's section in `CHANGELOG.md` and add a `DD-*` entry when
+  rationale is non-obvious.
 - Preserve idempotency: re-runs against a provisioned host must stay safe.
 - Prefer security over convenience when both achieve the same result; flag
   the trade-off.
