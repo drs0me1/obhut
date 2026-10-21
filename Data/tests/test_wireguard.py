@@ -309,7 +309,7 @@ class ReadTests(Fixture):
         self.assertEqual(master_wireguard.suggest_port(env, [], {61001}), 61020)
         self.assertEqual(master_wireguard.suggest_port(env, [{"iface": "wg0"}], {61001, 61020, 61021}), 61022)
         self.assertEqual(master_wireguard.suggest_port(dict(env, WG_PORT_NEXT="65535"), [{"iface": "wg0"}], {65535}), 0)
-        self.assertNotIn("61020", (Path(__file__).resolve().parents[1] / "tools/konsol-ui/src/pages/erisim/wg.ts").read_text())
+        self.assertNotIn("61020", (Path(__file__).resolve().parents[1] / "tools/konsol-ui/src/pages/wireguard/wg.ts").read_text())
 
     def test_networks_carry_public_fields_only_and_none_while_stopped(self):
         self.networks.write_text(NET + "\n")

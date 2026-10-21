@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-279"
+V2_VERSION="2026.08.06-v2-280"
 # DD-260: insanların gördüğü sürüm (anlamlı sürümleme; yalnız bir yayında değişir, vX.Y.Z etiketlenir).
 # V2_VERSION yapı numarasıdır: Konsol güncelleme önerirken sunucular onu karşılaştırır.
 OBHUT_SURUM="2.0.0"
@@ -473,7 +473,7 @@ stage_0() {
 Kurulum girdileri:
   Alan adı:      $LOCAL_DOMAIN
   Kullanıcı alanı: $SERVER_ROOT (sabit; indirmeler $DOWNLOADS_PATH)
-  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları, WireGuard (kapalı; ilk ağı Konsol → Erişim → WireGuard → Aç kurar) ve Podman (konteyner ortamı)
+  Yerleşik:     Dosyalar, klasör WebDAV paylaşımları, WireGuard (kapalı; ilk ağı Konsol → WireGuard → Aç kurar) ve Podman (konteyner ortamı)
   Konsol:        Tailscale'den girişsiz; isteğe bağlı internet adı (HTTPS) yalnız Sistem → Hesap'ta açılan hesapla (DD-205, DD-195)
   Tailscale:     $ts_note
   full-upgrade:  evet
@@ -730,7 +730,7 @@ FILES_PANEL_SCRIPT_CHANGED=0
 SHARE_HELPERS_CHANGED=0
 
 # DD-271 (K6): WireGuard tabanın parçasıdır ve kurulumdan sonra kapalıdır: kurulum hiçbir ağ
-# oluşturmaz, ilk ağı Konsol (Erişim → WireGuard) kurar. Araç SBIN_DIR'de; wg-quick@ birim eki bir ağı
+# oluşturmaz, ilk ağı Konsol'un WireGuard bölümü kurar. Araç SBIN_DIR'de; wg-quick@ birim eki bir ağı
 # güvenlik duvarı denetimi geçmeden açmaz (DD-180); ağların klasörü yalnız root'a açıktır ve çekirdek
 # modülü her açılışta yüklenir.
 ensure_wireguard() {
@@ -756,7 +756,7 @@ wireguard_networks_up() {
         [[ "$iface" =~ ^wg[0-9]$ ]] || continue
         systemctl is-enabled --quiet "wg-quick@$iface.service" 2>/dev/null || continue
         systemctl start --quiet "wg-quick@$iface.service" >/dev/null 2>&1 ||
-            log WARN "WireGuard: $iface açılamadı; Konsol → Erişim → WireGuard'dan bakın"
+            log WARN "WireGuard: $iface açılamadı; Konsol → WireGuard'dan bakın"
     done <"$WG_NETWORKS_FILE"
 }
 
@@ -1581,7 +1581,7 @@ summary_wireguard() {
     if [[ -e "$WG_STOPPED_FILE" ]]; then
         printf 'durduruldu (%s ağ)' "$nets"
     elif [[ "$nets" -eq 0 ]]; then
-        printf 'ağ yok; ilk ağı Konsol → Erişim → WireGuard → Aç kurar'
+        printf 'ağ yok; ilk ağı Konsol → WireGuard → Aç kurar'
     else
         printf '%s ağ, %s peer' "$nets" "$peers"
     fi
@@ -1603,7 +1603,7 @@ Manuel Tailscale Admin:
   2) Restrict to domain: $LOCAL_DOMAIN
   3) Exit node olarak bu makineyi onayla
 
-Konsol: http://panel.${LOCAL_DOMAIN} (Genel Bakış, Uygulamalar, Erişim, Dosyalar, Sistem, Gelişmiş; Tailscale'den parolasız)
+Konsol: http://panel.${LOCAL_DOMAIN} (Genel Bakış, Uygulamalar, Podman, Erişim, WireGuard, Dosyalar, Sistem, Gelişmiş; Tailscale'den parolasız)
   İnternetten HTTPS isteğe bağlı: önce Sistem → Hesap (kullanıcı adı + parola),
   sonra Erişim → Adresler → Konsol → İnternet adı (DNS A kaydı gerekir).
   Uygulama eklemek: Uygulamalar → Uygulama ekle; adresleri Erişim → Adresler'de.
@@ -1614,7 +1614,7 @@ Yerleşikler:
   Paylaşım: Dosyalar → Paylaşımlar: klasör başına adres, kullanıcı ve erişim izni
   WireGuard: $(summary_wireguard)
   WireGuard cihazları yalnız internete çıkar; sunucu servisleri ve diğer ağlara erişemez.
-  Cihazlar ve QR: Konsol → Erişim → WireGuard ya da Mac'te wireguard.command.
+  Cihazlar ve QR: Konsol → WireGuard ya da Mac'te wireguard.command.
 Tailscale IP: refresh-tailnet-config → Caddy
 EOF
 }

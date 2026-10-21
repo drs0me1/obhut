@@ -203,7 +203,7 @@ select_only_net() {
         names="${names}${names:+ }$name"
     done < <(net_names)
     [[ -n "$names" ]] ||
-        die "sunucuda WireGuard ağı yok; Konsol'da Erişim → WireGuard → Aç ile oluşturun"
+        die "sunucuda WireGuard ağı yok; Konsol'da WireGuard → Aç ile oluşturun"
     [[ "$names" != *" "* ]] ||
         die "birden çok ağ var ($names); ağı seçin: master-wg --if wgN KOMUT"
     select_net "$names"
@@ -259,7 +259,7 @@ net_teardown() {
 # DD-229: WireGuard bütünüyle kapalıyken ağ açılmaz ve eklenmez; önce Aç.
 not_stopped() {
     [[ ! -e "$WG_STOPPED_FILE" ]] ||
-        die "WireGuard kapalı; önce Konsol → Erişim → WireGuard'dan açın"
+        die "WireGuard kapalı; önce Konsol → WireGuard'dan açın"
 }
 
 cmd_net_add() {

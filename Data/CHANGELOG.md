@@ -91,6 +91,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the table past its card on a 1180–1366 px window). The image takes only the room left, on one line cut with
   "…" (the whole name on hover), and a narrower table leaves it out; each port stays on one line and the
   container's name gets its full width.
+- WireGuard is a section of its own in the sidebar, right under Erişim (DD-291), at `#/wireguard` and on a phone
+  under "Daha fazla". It is what Erişim → WireGuard was, unchanged: the networks as tabs with "Ağ ekle" and
+  "WireGuard'ı kapat", each network's card and its devices with their QR codes and profiles. Erişim keeps Genel
+  (its WireGuard card now leads to the section), Adresler, Yerel adlar and Güvenlik duvarı. The installer, `master-wg`,
+  `wireguard.command` and the settings messages now say "Konsol → WireGuard", and the installer's closing summary
+  names every section, Podman included. The sidebar's spacing is a little tighter, so the eight sections and the
+  Kaynaklar and server cards still fit a 900 px tall window.
 
 ## [2.0.0] — 2026-10-18
 

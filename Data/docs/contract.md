@@ -453,7 +453,7 @@ tests are in [folder-shares.md](folder-shares.md); the contract in short:
 - **Installed with the base, off** (**DD-271** K6, **DD-272**): stage 1 installs `wireguard-tools` and
   `qrencode`, stage 4 installs `master-wg` into `SBIN_DIR`, the `wg-quick@` drop-in, the kernel module
   (and `WG_MODULES_LOAD_FILE`) and an empty `WG_CONF_DIR` (0700). No network is created; the first one
-  is created in Erişim → WireGuard.
+  is created in Konsol's WireGuard section (**DD-291**).
 - **The server is the source of truth** (**DD-124**, **DD-143**): `WG_CONF_DIR/wgN.conf` (0600) holds a
   network's key and one `# peer: <name>` block per device; device profiles live in `WG_CLIENTS_DIR-wgN/`
   (0600 in 0700); `WG_NETWORKS_FILE` holds one tab-separated line per network (interface, UDP port, the
@@ -917,7 +917,7 @@ WireGuard profiles carry the endpoint they were made with (**DD-138**).
 
 ### 6.2 Sections (DD-276)
 
-The sidebar (a bottom bar on phones) lists seven sections; the top bar holds the problem chip (it leads to
+The sidebar (a bottom bar on phones) lists eight sections; the top bar holds the problem chip (it leads to
 the problem), the theme switch and İşlemler; a command palette (⌘K / Ctrl+K) finds sections, tabs,
 applications, access rows, Uygulama ekle, Adres aç and the themes; a timed change shows as a banner with
 its countdown and Onayla/Geri al.
@@ -928,7 +928,8 @@ its countdown and Onayla/Geri al.
 | Uyarılar | Behind the top bar's count (`#/uyarilar`, **DD-285**): every problem, most serious first, each with its place (Sistem → Sağlık, an access row, an application); news (a newer image) listed, not counted; or "Her şey yolunda" |
 | Uygulamalar | The list (state, each access row as server → container, resources, live rate; **DD-284**); "Uygulama ekle" (a full-window page of its own, `#/uygulama-ekle`: Kaynak, Denetçi with the file beside the questions, Plan, Kurulum with the job's log; leaving with something entered asks, **DD-279**); an application's page with Özet (actions, update card, what each running service's processes run as and a /srv warning settled or not by it, **DD-282**), Erişim (its rows, read-only, linking to Adresler), Depolama (folders with sizes), Tanım (the file and answers, the difference as a plan) and Günlük (its units' journal, 100–1000 lines, unfiltered, **DD-251**) |
 | Podman | Four summaries (the runtime, the containers, their CPU and memory, what each kind takes on disk as `podman system df` counts it); every container read-only (state, image, resources, uptime, ports; an application's leads to its page, one Obhut does not manage says who runs it); images (one row per ID), volumes, networks and removed applications' folders, what nothing uses ticked and removed with the typed word (§4.11, **DD-289**) |
-| Erişim | Genel (Tailscale's card leads to its admin console), Adresler (Konsol, Paylaşımlar, every application row; "Adres aç"), Yerel adlar (the managed names read-only, records, forwarding, the local domain), WireGuard, Güvenlik duvarı (the operator's rules and the locked application rows); no Tailscale tab (**DD-288**) |
+| Erişim | Genel (Tailscale's card leads to its admin console), Adresler (Konsol, Paylaşımlar, every application row; "Adres aç"), Yerel adlar (the managed names read-only, records, forwarding, the local domain), Güvenlik duvarı (the operator's rules and the locked application rows); no Tailscale tab (**DD-288**), no WireGuard tab (**DD-291**) |
+| WireGuard | A section of its own (`#/wireguard`, **DD-291**; under Erişim in the sidebar, in the phone's "Daha fazla"): off after install ("Aç" creates the first network) or turned off as a whole; the networks as tabs (`?ag=`) with "Ağ ekle" and "WireGuard'ı kapat"; the chosen network's card (state, switch, port, addresses, DNS, "Ağ ayarları") and its devices (on/off, state, address, last seen, traffic, QR, profile, edit, delete) (§3.10) |
 | Dosyalar | Depolama (the disk, who uses which folder, Uygulama verileri with a bounded cached walk), Sunucu klasörleri, Çöp kutusu, Paylaşımlar, Sistem dosyaları (tailnet only) |
 | Sistem | Sağlık (with Onarım kaydı), Güncellemeler (Obhut and the count of application updates), Hesap, Sunucu (facts with the Tailscale device's name, client and exit node, and "Yeniden başlat"), İşlem geçmişi |
 | Gelişmiş | Caddy, DNS, Güvenlik duvarı (technical rules and listeners); read-only |

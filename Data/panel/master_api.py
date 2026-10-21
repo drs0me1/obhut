@@ -631,7 +631,7 @@ ROUTES = (
     Route("POST", "/api/konsol/gelismis/temizlik", "temizle",
           "Seçilenleri kaldırır; her öge kaldırılmadan hemen önce yeniden denetlenir; iş arka planda, ilerleme olay "
           "akışında", ref("TemizlikIsi"), request=ref("TemizlikIstegi"), status=202),
-    # DD-271: WireGuard (Erişim → WireGuard); every change through master-wg, the audit line wireguard-<verb>.
+    # DD-271: WireGuard (Konsol's WireGuard section, DD-291); every change through master-wg, the audit line wireguard-<verb>.
     # DD-275: starting, stopping, adding, removing, opening, closing and regenerating a network are settings
     # actions (ayarlar/plan, ayarlar/uygula with "wireguard"); devices and a network's DNS and name stay here.
     Route("GET", "/api/konsol/wireguard/state", "wireguard",

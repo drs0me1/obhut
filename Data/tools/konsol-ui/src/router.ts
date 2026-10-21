@@ -1,4 +1,4 @@
-// Hash routes (#/genel …), so Caddy needs no rewrite. The seven sections with their tabs in the query
+// Hash routes (#/genel …), so Caddy needs no rewrite. The eight sections with their tabs in the query
 // (#/erisim?sekme=adresler, #/dosyalar?sekme=paylasimlar), an application's page by its name
 // (#/uygulamalar/notlar), Uyarılar (#/uyarilar, the page the top bar's count opens, under Genel Bakış) and
 // Uygulama ekle, a full-window page of its own (#/uygulama-ekle: under #/uygulamalar/ it would be an application
@@ -12,6 +12,7 @@ import PodmanPage from "./pages/PodmanPage.vue";
 import AppPage from "./pages/AppPage.vue";
 import AddAppPage from "./pages/AddAppPage.vue";
 import AccessPage from "./pages/AccessPage.vue";
+import WireGuardPage from "./pages/WireGuardPage.vue";
 import SystemPage from "./pages/SystemPage.vue";
 import AdvancedPage from "./pages/AdvancedPage.vue";
 import FilesPage from "./pages/FilesPage.vue";
@@ -31,6 +32,7 @@ const PAGES: Record<SectionId, Component> = {
   uygulamalar: AppsPage,
   podman: PodmanPage,
   erisim: AccessPage,
+  wireguard: WireGuardPage,
   sistem: SystemPage,
   gelismis: AdvancedPage,
   dosyalar: FilesPage,

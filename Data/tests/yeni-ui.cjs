@@ -71,7 +71,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
     assert.equal(await h1.innerText(), "Genel Bakış");
     assert.equal(await page.title(), "Genel Bakış · Konsol");
     await page.locator(".brand-host").filter({ hasText: "sunucu · panel.ev" }).waitFor();
-    assert.deepEqual(await page.locator(".sidebar .nav-item .nav-label").allInnerTexts(), ["Genel Bakış", "Uygulamalar", "Podman", "Erişim", "Dosyalar", "Sistem", "Gelişmiş"]);
+    assert.deepEqual(await page.locator(".sidebar .nav-item .nav-label").allInnerTexts(), ["Genel Bakış", "Uygulamalar", "Podman", "Erişim", "WireGuard", "Dosyalar", "Sistem", "Gelişmiş"]);
     assert.deepEqual(await page.locator('.sidebar .nav-item[aria-current="page"]').allInnerTexts(), ["Genel Bakış"]);
     await badge(page, "uygulamalar").filter({ hasText: /^2$/ }).waitFor();
     await badge(page, "sistem").filter({ hasText: /^1$/ }).waitFor();
@@ -600,7 +600,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       await more.tap();
       const sheet = page.getByRole("dialog", { name: "Menü" });
       await sheet.waitFor();
-      assert.deepEqual(await sheet.locator(".nav-label").allInnerTexts(), ["Genel Bakış", "Uygulamalar", "Podman", "Erişim", "Dosyalar", "Sistem", "Gelişmiş"]);
+      assert.deepEqual(await sheet.locator(".nav-label").allInnerTexts(), ["Genel Bakış", "Uygulamalar", "Podman", "Erişim", "WireGuard", "Dosyalar", "Sistem", "Gelişmiş"]);
       assert.equal(await sheet.getByTestId("version").innerText(), "Obhut 1.0.0 · güncel");
       await shot(page, `390-${colorScheme}-sheet.png`);
       await page.keyboard.press("Escape");
@@ -610,7 +610,7 @@ const optionLabels = (page) => page.locator(".palette-option .palette-label").al
       await sheet.getByRole("link", { name: /^Sistem/ }).tap();
       await sheet.waitFor({ state: "detached" });
       await page.waitForURL((u) => u.hash === "#/sistem");
-      assert.match(await more.getAttribute("class"), /is-active/, "Daha fazla marks Podman, Sistem and Gelişmiş");
+      assert.match(await more.getAttribute("class"), /is-active/, "Daha fazla marks Podman, WireGuard, Sistem and Gelişmiş");
       assert.equal(await page.evaluate(() => document.activeElement.tagName), "H1", "a new page takes the focus");
       await more.tap();
       await sheet.getByRole("link", { name: /^Sistem/ }).tap();

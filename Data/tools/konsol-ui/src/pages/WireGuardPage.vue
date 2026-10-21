@@ -1,43 +1,42 @@
-<!-- Erişim → WireGuard (a built-in of the base, DD-271; the phase 5 prototype's layout): off after install (K6),
-     so with no network the tab says "WireGuard kapalı" and "Aç" opens the first network's creation, which turns
-     it on. Running, it offers "WireGuard'ı kapat" (every network goes down, DD-229); turned off with its networks
-     kept, it says so and "Aç" brings back the networks that were on. The networks as tabs (?ag=wg0) with "Ağ
-     ekle"; for the chosen network a card with its state, its on/off switch, its port, addresses and DNS, and a
-     card of its devices (on/off, state, DNS and keepalive, addresses, last seen, traffic, QR, profile, edit,
-     delete); one side panel for adding a device, a device's DNS and keepalive, the network's name and default
-     DNS, regenerating its key, removing it and adding a network. Turning WireGuard on and off, adding, opening,
-     closing, removing and regenerating a network are settings changes
-     (DD-275): each goes through the settings plan with the state's `revizyon`; an opening (Başlat, a network
-     added or opened) waits for the 60 s confirmation in the pending banner, the rest commit at once, and
-     removing or regenerating needs the typed word ("onayla", sent as `onay`). Devices, their DNS and
-     keepalive, and the network's name and DNS change at once as before. When master-wg does not answer
-     (`kurulu` false) the tab points to Sistem → Sağlık. GET /state is read every 10 s while this tab is shown
-     and the browser tab visible. QR codes and profiles carry a private key: fetched only on a click, never
-     cached, their object URL revoked after use. -->
+<!-- WireGuard (a built-in of the base, DD-271; the phase 5 prototype's layout), a section of its own at #/wireguard
+     (DD-291; Erişim's tab before): off after install (K6), so with no network the page says "WireGuard kapalı" and
+     "Aç" opens the first network's creation, which turns it on. Running, it offers "WireGuard'ı kapat" (every
+     network goes down, DD-229); turned off with its networks kept, it says so and "Aç" brings back the networks that
+     were on. The networks as tabs (?ag=wg0) with "Ağ ekle"; for the chosen network a card with its state, its on/off
+     switch, its port, addresses and DNS, and a card of its devices (on/off, state, DNS and keepalive, addresses,
+     last seen, traffic, QR, profile, edit, delete); one side panel for adding a device, a device's DNS and
+     keepalive, the network's name and default DNS, regenerating its key, removing it and adding a network. Turning
+     WireGuard on and off, adding, opening, closing, removing and regenerating a network are settings changes
+     (DD-275): each goes through the settings plan with the state's `revizyon`; an opening (Başlat, a network added
+     or opened) waits for the 60 s confirmation in the pending banner, the rest commit at once, and removing or
+     regenerating needs the typed word ("onayla", sent as `onay`). Devices, their DNS and keepalive, and the
+     network's name and DNS change at once as before. When master-wg does not answer (`kurulu` false) the page points
+     to Sistem → Sağlık. GET /state is read every 10 s while this page is shown and the browser tab visible. QR codes
+     and profiles carry a private key: fetched only on a click, never cached, their object URL revoked after use. -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
-import { Icon } from "../../components/icons";
-import ConfirmWord from "../../components/ui/ConfirmWord.vue";
-import EmptyState from "../../components/ui/EmptyState.vue";
-import Field from "../../components/ui/Field.vue";
-import Modal from "../../components/ui/Modal.vue";
-import StatusPill from "../../components/ui/StatusPill.vue";
-import Switch from "../../components/ui/Switch.vue";
-import Tabs from "../../components/ui/Tabs.vue";
-import type { Tone } from "../../components/ui/types";
-import DnsChoice from "./DnsChoice.vue";
-import SettingsPlanSheet from "./SettingsPlanSheet.vue";
+import { Icon } from "../components/icons";
+import ConfirmWord from "../components/ui/ConfirmWord.vue";
+import EmptyState from "../components/ui/EmptyState.vue";
+import Field from "../components/ui/Field.vue";
+import Modal from "../components/ui/Modal.vue";
+import StatusPill from "../components/ui/StatusPill.vue";
+import Switch from "../components/ui/Switch.vue";
+import Tabs from "../components/ui/Tabs.vue";
+import type { Tone } from "../components/ui/types";
+import DnsChoice from "./wireguard/DnsChoice.vue";
+import SettingsPlanSheet from "./erisim/SettingsPlanSheet.vue";
 import {
   DEVICE_STATE, DNS_PRESETS, NAME_RE, deviceState, keepaliveProblem, keepaliveText, labelOf, labelProblem, nextNetwork, onlineCount, portProblem,
   providerOf, suggestPort, type DeviceState,
-} from "./wg";
-import { addDevice, fetchProfile, fetchQr, readWgState, removeDevice, saveNetworkSettings, setDevice, setDeviceDns, setDeviceKeepalive } from "../../api/wireguard";
-import type { AyarIstegi, AyarSonucu, WireGuard as WgState, WireGuardAgi as WgNetwork, WireGuardCihazi as WgPeer, WireGuardIstegi } from "../../api/sema";
-import { live, refreshAccess } from "../../live";
-import { updateQuery, useQueryParam } from "../../query";
-import { systemRoute } from "../../sections";
-import { UNKNOWN, bytes, since } from "../../format";
+} from "./wireguard/wg";
+import { addDevice, fetchProfile, fetchQr, readWgState, removeDevice, saveNetworkSettings, setDevice, setDeviceDns, setDeviceKeepalive } from "../api/wireguard";
+import type { AyarIstegi, AyarSonucu, WireGuard as WgState, WireGuardAgi as WgNetwork, WireGuardCihazi as WgPeer, WireGuardIstegi } from "../api/sema";
+import { live, refreshAccess } from "../live";
+import { updateQuery, useQueryParam } from "../query";
+import { systemRoute } from "../sections";
+import { UNKNOWN, bytes, since } from "../format";
 
 const POLL_MS = 10000;
 const router = useRouter();
@@ -523,7 +522,7 @@ const newBadge = (ips: string | null) => (ips === DNS_PRESETS[0].ips ? "önerile
 </script>
 
 <template>
-  <div class="access-tab wireguard" data-testid="wireguard">
+  <div class="page-body wireguard-page" data-testid="wireguard">
     <section v-if="broken" class="card" aria-label="WireGuard" data-testid="wg-broken">
       <EmptyState title="WireGuard aracı yanıt vermiyor" text="Sunucudaki master-wg çalışmıyor; ağlar ve cihazlar okunamıyor. Sistem → Sağlık'tan denetleyip onarın." icon="alert">
         <RouterLink :to="systemRoute('saglik')" class="btn btn-secondary" data-testid="wg-health">Sistem → Sağlık</RouterLink>

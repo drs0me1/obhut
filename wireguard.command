@@ -5,7 +5,7 @@
 # İstenirse profil kurulum/wireguard/<ad>.conf ve QR resmi <ad>.png olarak indirilir
 # (DD-132) — bu yalnız kolaylıktır, kurulum o klasöre bakmaz. "DNS değiştir" yalnız
 # profildeki DNS satırını, "Ağı yeniden üret" sunucu anahtarını ve o ağdaki bütün
-# peer'ları sıfırlar (DD-130). Networks are created only in Konsol (panel.<alan>, Erişim → WireGuard → Aç);
+# peer'ları sıfırlar (DD-130). Networks are created only in Konsol (panel.<alan>, WireGuard → Aç);
 # this menu picks one of them.
 # Finder bu dosyayı macOS /bin/bash 3.2 ile çalıştırır.
 set -Eeuo pipefail
@@ -216,7 +216,7 @@ select_net() {
     if [[ -z "$out" ]]; then
         echo
         echo "Sunucuda WireGuard ağı yok."
-        echo "Konsol'u açın (http://panel.<alan adı>) → Erişim → WireGuard → Aç ile ilk ağı kurun."
+        echo "Konsol'u açın (http://panel.<alan adı>) → WireGuard → Aç ile ilk ağı kurun."
         return 1
     fi
     lines=""

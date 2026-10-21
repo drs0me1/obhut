@@ -1,8 +1,9 @@
-// The seven sections of Konsol (DD-258, docs/archive/redesign.md): Genel Bakış and Uygulamalar (phase 2), Erişim
-// (phase 3), Sistem and Gelişmiş (phase 4a), Dosyalar (phase 4b), Podman (DD-289); each section's tabs and add flows.
+// The eight sections of Konsol (DD-258, docs/archive/redesign.md): Genel Bakış and Uygulamalar (phase 2), Erişim
+// (phase 3), Sistem and Gelişmiş (phase 4a), Dosyalar (phase 4b), Podman (DD-289), WireGuard (DD-291); each section's
+// tabs and add flows.
 import type { IconName } from "./components/icons";
 
-export type SectionId = "genel" | "uygulamalar" | "podman" | "erisim" | "dosyalar" | "sistem" | "gelismis";
+export type SectionId = "genel" | "uygulamalar" | "podman" | "erisim" | "wireguard" | "dosyalar" | "sistem" | "gelismis";
 
 export interface Section {
   id: SectionId;
@@ -46,7 +47,15 @@ export const SECTIONS: readonly Section[] = [
     short: "Erişim",
     description: "Kim, neye, nereden erişir.",
     icon: "globe",
-    keywords: "adres doğrudan port alan adı tailscale wireguard internet https sertifika caddy dns güvenlik duvarı",
+    keywords: "adres doğrudan port alan adı tailscale internet https sertifika caddy dns güvenlik duvarı",
+  },
+  {
+    id: "wireguard",
+    title: "WireGuard",
+    short: "WireGuard",
+    description: "Tailscale kurulamayan cihazlar için ağlar ve cihazlar.",
+    icon: "shield",
+    keywords: "vpn ağ cihaz peer qr profil anahtar",
   },
   {
     id: "dosyalar",
@@ -82,7 +91,6 @@ export const ACCESS_TABS = [
   { id: "genel", label: "Genel", keywords: "erişim matris kim nereden sertifika özet" },
   { id: "adresler", label: "Adresler", keywords: "adres aç doğrudan port tailscale adı tailscale portu internet adı caddy https sertifika" },
   { id: "adlar", label: "Yerel adlar", keywords: "yerel ad dns dnsmasq kayıt yönlendirme üst dns yerel alan adı" },
-  { id: "wireguard", label: "WireGuard", keywords: "vpn ağ cihaz peer qr profil" },
   { id: "guvenlik-duvari", label: "Güvenlik duvarı", keywords: "firewall port kural izin" },
 ] as const;
 

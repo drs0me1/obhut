@@ -50,7 +50,7 @@ TYPED = ("ag-kaldir", "yeniden-uret")
 NETWORK_ACTIONS = ("ag-kaldir", "ag-ac", "ag-kapat", "yeniden-uret")
 SECTION_KEYS = ("SBIN_DIR", "WG_NETWORKS_FILE", "WG_STOPPED_FILE", "WG_NETWORKS_MAX", "WG_CONF_DIR", "WG_ADDR_BASE4")
 TYPED_TEXT = "Bu işlem geri alınamaz; uygulamak için %s yazın." % CONFIRM_WORD
-STOPPED_TEXT = "WireGuard kapalı; önce Konsol → Erişim → WireGuard'dan açın"
+STOPPED_TEXT = "WireGuard kapalı; önce Konsol → WireGuard'dan açın"
 # master-wg's message when it gives none.
 FAILED = {"baslat": "WireGuard açılamadı.", "durdur": "WireGuard kapatılamadı.", "ag-ekle": "Ağ eklenemedi.",
           "ag-kaldir": "Ağ kaldırılamadı.", "ag-ac": "Ağ açılamadı.", "ag-kapat": "Ağ kapatılamadı.",

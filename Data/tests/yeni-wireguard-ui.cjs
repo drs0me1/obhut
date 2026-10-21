@@ -1,6 +1,6 @@
-/* Konsol's interface (DD-258): Erişim's WireGuard tab in the committed build under Data/console/yeni, with
-   the production CSP and a fixture of WireGuard's built-in routes (/api/konsol/wireguard, DD-271;
-   panel/master_wireguard.py) and of the settings transaction (DD-275) that change as the page asks
+/* Konsol's interface (DD-258): the WireGuard section (#/wireguard, DD-291) in the committed build under
+   Data/console/yeni, with the production CSP and a fixture of WireGuard's built-in routes (/api/konsol/wireguard,
+   DD-271; panel/master_wireguard.py) and of the settings transaction (DD-275) that change as the page asks
    (yeni-harness.cjs). Networks as tabs, devices (on/off, QR, profile, DNS and keepalive, delete), adding a
    device (numbers sent as integers), the network's name and default DNS with its revision: immediate as
    before. Starting and stopping WireGuard, adding, opening, closing, removing and regenerating a network go
@@ -252,8 +252,12 @@ const panel = (page) => page.locator(".modal-sheet");
   try {
     // ================= networks as tabs, the network card and its devices
     let page = await open();
-    await page.goto(url("#/erisim?sekme=wireguard"));
+    await page.goto(url("#/wireguard"));
     const tab = page.getByTestId("wireguard");
+    // A section of its own (DD-291): the head names it and its sidebar entry is the current page.
+    assert.equal(await page.locator("main h1").innerText(), "WireGuard");
+    assert.equal(await page.getByTestId("page-desc").innerText(), "Tailscale kurulamayan cihazlar için ağlar ve cihazlar.");
+    assert.deepEqual(await page.locator('.sidebar .nav-item[aria-current="page"] .nav-label').allInnerTexts(), ["WireGuard"]);
     const netTabs = tab.getByRole("tablist", { name: "WireGuard ağları" }).getByRole("tab");
     await netTabs.first().waitFor();
     assert.deepEqual(await netTabs.evaluateAll((ts) => ts.map((t) => [t.querySelector(".tab-label").textContent, t.querySelector(".tab-hint").textContent])),
@@ -294,7 +298,7 @@ const panel = (page) => page.locator(".modal-sheet");
     await shot(page, "1440-light-wireguard.png", true);
     // The selected network is in the address and survives a reload.
     await netTabs.nth(1).click();
-    await page.waitForURL((u) => u.hash === "#/erisim?sekme=wireguard&ag=wg1");
+    await page.waitForURL((u) => u.hash === "#/wireguard?ag=wg1");
     await card.locator("h2").filter({ hasText: "wg1 · Misafir" }).waitFor();
     await card.getByTestId("wg-off").waitFor();
     assert.equal(await card.getByTestId("wg-net-state").innerText(), "Kapalı");
@@ -554,7 +558,7 @@ const panel = (page) => page.locator(".modal-sheet");
     await sheet.getByTestId("apply").click();
     await sheet.waitFor({ state: "detached" });
     assert.deepEqual(lastSettings("uygula"), body);
-    await page.waitForURL((u) => u.hash === "#/erisim?sekme=wireguard&ag=wg2");
+    await page.waitForURL((u) => u.hash === "#/wireguard?ag=wg2");
     await card.locator("h2").filter({ hasText: "wg2 · İş" }).waitFor();
     await tab.getByTestId("wg-note").filter({ hasText: "wg2 oluşturuldu: UDP 61030 açık; 60 saniye içinde yukarıdaki banttan onaylayın." }).waitFor();
     await page.locator(".pending").getByTestId("pending-confirm").click();
@@ -575,7 +579,7 @@ const panel = (page) => page.locator(".modal-sheet");
     await sheet.getByTestId("apply").click();
     await sheet.waitFor({ state: "detached" });
     assert.deepEqual(lastSettings("uygula"), body);
-    await page.waitForURL((u) => u.hash === "#/erisim?sekme=wireguard");
+    await page.waitForURL((u) => u.hash === "#/wireguard");
     await tab.getByTestId("wg-note").filter({ hasText: "wg2 kaldırıldı: 0 cihaz silindi, UDP 61030 kapandı." }).waitFor();
     assert.deepEqual(await netTabs.evaluateAll((ts) => ts.map((t) => t.dataset.sekme)), ["wg0", "wg1"]);
     // The last network: the removal says what follows.
@@ -593,7 +597,7 @@ const panel = (page) => page.locator(".modal-sheet");
     // ================= the limit, no network yet, a refused write
     reset({ max: 2 });
     page = await open();
-    await page.goto(url("#/erisim?sekme=wireguard"));
+    await page.goto(url("#/wireguard"));
     await page.getByTestId("wg-add-net").waitFor();
     assert(await page.getByTestId("wg-add-net").isDisabled(), "at the limit");
     assert.equal(await page.locator("#wg-sinir").innerText(), "En çok 2 ağ");
@@ -612,7 +616,7 @@ const panel = (page) => page.locator(".modal-sheet");
     // ================= off after install (K6): no network; "Aç" plans the first one, which turns WireGuard on
     reset({ networks: [] });
     page = await open();
-    await page.goto(url("#/erisim?sekme=wireguard"));
+    await page.goto(url("#/wireguard"));
     const empty = page.getByTestId("wg-empty");
     await empty.getByText("WireGuard kapalı", { exact: true }).waitFor();
     assert.equal(await empty.locator(".empty-text").innerText(),
@@ -644,7 +648,7 @@ const panel = (page) => page.locator(".modal-sheet");
     // Turned off with no network: its own Aç first; the first network waits for it.
     reset({ networks: [], durduruldu: true });
     page = await open();
-    await page.goto(url("#/erisim?sekme=wireguard"));
+    await page.goto(url("#/wireguard"));
     await page.getByTestId("wg-stopped").getByTestId("wg-start").waitFor();
     assert(await page.getByTestId("wg-setup").isDisabled(), "a stopped WireGuard adds no network");
     await page.context().close();
@@ -652,7 +656,7 @@ const panel = (page) => page.locator(".modal-sheet");
     // ================= running: "WireGuard'ı kapat" through the plan, at once; every network goes down
     reset();
     page = await open();
-    await page.goto(url("#/erisim?sekme=wireguard"));
+    await page.goto(url("#/wireguard"));
     await page.locator('tr[data-cihaz="iphone"]').waitFor();
     await page.getByTestId("wg-stop").click();
     assert.equal(await page.getByTestId("wg-stop").innerText(), "WireGuard'ı kapat");
@@ -712,14 +716,14 @@ const panel = (page) => page.locator(".modal-sheet");
     // A stopped server read on a fresh page shows the banner at once.
     reset({ durduruldu: true });
     page = await open();
-    await page.goto(url("#/erisim?sekme=wireguard"));
+    await page.goto(url("#/wireguard"));
     await page.getByTestId("wg-stopped").getByTestId("wg-start").waitFor();
     await page.context().close();
 
     // ================= master-wg does not answer: no networks to show, a way to the repair
     reset({ kurulu: false, networks: [] });
     page = await open();
-    await page.goto(url("#/erisim?sekme=wireguard"));
+    await page.goto(url("#/wireguard"));
     const broken = page.getByTestId("wg-broken");
     await broken.getByText("WireGuard aracı yanıt vermiyor").waitFor();
     assert.equal(await broken.getByTestId("wg-health").getAttribute("href"), "#/sistem");
@@ -730,7 +734,7 @@ const panel = (page) => page.locator(".modal-sheet");
     // ================= polling: every 10 s while the tab is shown and the browser tab visible
     reset();
     page = await open({}, true);
-    await page.goto(url("#/erisim?sekme=wireguard"));
+    await page.goto(url("#/wireguard"));
     await page.locator('tr[data-cihaz="iphone"]').waitFor();
     await page.waitForTimeout(100);
     const s0 = states();
@@ -762,28 +766,29 @@ const panel = (page) => page.locator(".modal-sheet");
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await waitFor(() => states() === s1 + 1, "read when visible again");
-    await page.getByRole("tab", { name: "Genel" }).click();
+    await page.locator('.sidebar [data-nav="erisim"]').click();
     await page.waitForURL((u) => u.hash === "#/erisim");
     const s2 = states();
     await page.clock.runFor(30000);
     await page.waitForTimeout(150);
-    assert.equal(states(), s2, "no reads once another tab is shown");
+    assert.equal(states(), s2, "no reads once another page is shown");
     await page.context().close();
 
     // ================= 1440, 390 and 320 in both themes
     for (const colorScheme of ["light", "dark"]) {
       reset();
       page = await open({ colorScheme });
-      await page.goto(url("#/erisim?sekme=wireguard"));
+      await page.goto(url("#/wireguard"));
       await page.locator('tr[data-cihaz="iphone"]').waitFor();
       await noStyles(page, `1440 ${colorScheme}`);
       assert(await noHorizontalScroll(page), `1440 ${colorScheme}`);
       await shot(page, `1440-${colorScheme}-wireguard.png`, true);
       await page.context().close();
       page = await open({ colorScheme, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
-      await page.goto(url("#/erisim?sekme=wireguard"));
+      await page.goto(url("#/wireguard"));
       await page.locator('tr[data-cihaz="iphone"]').waitFor();
       assert.equal(await page.locator('tr[data-cihaz="iphone"]').evaluate((el) => getComputedStyle(el).display), "grid", "devices as cards");
+      assert.match(await page.locator(".bottom-bar").getByRole("button", { name: "Daha fazla" }).getAttribute("class"), /is-active/, "Daha fazla marks WireGuard");
       await noStyles(page, `390 ${colorScheme}`);
       assert(await noHorizontalScroll(page), `390 ${colorScheme}`);
       await shot(page, `390-${colorScheme}-wireguard.png`, true);

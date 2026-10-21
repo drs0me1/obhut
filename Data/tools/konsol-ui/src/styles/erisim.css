@@ -13,8 +13,7 @@
   min-width: 0;
 }
 
-.access-tab > .card,
-.wg-view > .card {
+.access-tab > .card {
   padding: 18px 20px;
   border-radius: var(--r-lg);
 }
@@ -310,14 +309,11 @@ a.matrix-name:hover {
 
 @container (max-width: 920px) {
   .fw-table,
-  .fw-table tbody,
-  .wg-table,
-  .wg-table tbody {
+  .fw-table tbody {
     display: block;
   }
 
-  .fw-table thead,
-  .wg-table thead {
+  .fw-table thead {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -326,8 +322,7 @@ a.matrix-name:hover {
     white-space: nowrap;
   }
 
-  .fw-table tbody tr,
-  .wg-table tbody tr {
+  .fw-table tbody tr {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
     gap: 10px 16px;
@@ -341,15 +336,12 @@ a.matrix-name:hover {
     background: var(--warn-tint);
   }
 
-  .fw-table tbody tr:last-child,
-  .wg-table tbody tr:last-child {
+  .fw-table tbody tr:last-child {
     border-bottom: 0;
   }
 
   .fw-table td,
-  .fw-table tbody th,
-  .wg-table td,
-  .wg-table tbody th {
+  .fw-table tbody th {
     min-width: 0;
     padding: 0;
     border: 0;
@@ -357,14 +349,11 @@ a.matrix-name:hover {
   }
 
   .fw-table .col-main,
-  .fw-table .col-act,
-  .wg-table .col-main,
-  .wg-table .col-act {
+  .fw-table .col-act {
     grid-column: 1 / -1;
   }
 
-  .fw-table .col-act,
-  .wg-table .col-act {
+  .fw-table .col-act {
     width: auto;
     white-space: normal;
   }
@@ -373,8 +362,7 @@ a.matrix-name:hover {
     display: none;
   }
 
-  .fw-table td[data-label],
-  .wg-table td[data-label] {
+  .fw-table td[data-label] {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -382,84 +370,20 @@ a.matrix-name:hover {
     overflow-wrap: anywhere;
   }
 
-  .fw-table td[data-label]::before,
-  .wg-table td[data-label]::before {
+  .fw-table td[data-label]::before {
     content: attr(data-label);
     color: var(--muted);
     font-size: 12px;
     font-weight: 600;
   }
 
-  .fw-table .row-actions,
-  .wg-table .row-actions {
+  .fw-table .row-actions {
     flex-wrap: wrap;
     justify-content: flex-start;
   }
 }
 
-/* ---- WireGuard */
-.wg-stopped-text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.wg-net {
-  gap: 14px;
-}
-
-.wg-net-title {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.wg-net-title .card-title {
-  overflow-wrap: anywhere;
-}
-
-.wg-view {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
-}
-
-.wg-net-off .facts {
-  opacity: 0.75;
-}
-
-.wg-net .card-actions {
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.wg-net,
-.wg-devices {
-  gap: 12px;
-}
-
-.row-off > :not(.col-act) {
-  opacity: 0.6;
-}
-
-.traffic {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  white-space: nowrap;
-}
-
-.ka-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 10px;
-}
-
-.ka-input {
-  width: 110px;
-}
-
+/* ---- the danger zone (WireGuard's network settings, a share's sheet) */
 .danger-zone {
   display: flex;
   flex-direction: column;
@@ -468,99 +392,6 @@ a.matrix-name:hover {
   border: 1px solid var(--danger-line);
   border-radius: var(--r-md);
   background: var(--danger-tint);
-}
-
-.wg-ident {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 14px;
-  padding: 12px 14px;
-  border-radius: var(--r-md);
-  background: var(--sunken);
-  font-size: 14px;
-}
-
-.wg-ident strong {
-  font-family: var(--font-head);
-  font-size: 22px;
-}
-
-.qr-box {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 240px;
-  padding: 12px;
-  border-radius: var(--r-md);
-  background: #ffffff;
-}
-
-.qr-box img {
-  display: block;
-  width: 240px;
-  max-width: 100%;
-  height: auto;
-  image-rendering: pixelated;
-}
-
-.qr-box .meter-note {
-  color: #52616d;
-}
-
-/* the DNS choice */
-.dns-choices {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.dns-choice {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  cursor: pointer;
-}
-
-.dns-choice:has(input:checked) {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.dns-choice input {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  margin: 2px 0 0;
-  accent-color: var(--accent);
-}
-
-.dns-choice-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.dns-choice-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  font-size: 14px;
-}
-
-.dns-choice-meta {
-  color: var(--muted);
-  font-size: 12.5px;
-  overflow-wrap: anywhere;
-}
-
-.dns-custom {
-  margin-top: 2px;
 }
 
 /* ---- choices (Uygulama ekle's questions too) */
@@ -780,7 +611,6 @@ a.matrix-name:hover {
   }
 
   .access-tab > .card,
-  .wg-view > .card,
   .names-grid .card {
     padding: 16px;
   }

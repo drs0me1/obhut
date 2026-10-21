@@ -10,6 +10,7 @@ import "./styles/shell.css";
 import "./styles/ui.css";
 import "./styles/pages.css";
 import "./styles/erisim.css";
+import "./styles/wireguard.css";
 import "./styles/sistem.css";
 import "./styles/podman.css";
 import "./styles/uygulama.css";

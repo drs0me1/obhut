@@ -130,7 +130,8 @@ browser.
 | **Genel Bakış** (Overview) | The applications, each with its state and address (*Aç*, *Ayrıntı*). What needs attention is on *Uyarılar*, which the count in the top bar opens, each with the way to its fix; the resources and the server are cards at the sidebar's foot |
 | **Uygulamalar** (Applications) | Every application in one list; *Uygulama ekle* (a file, an `https` address or an image name → the inspector → the plan); each application's page: Özet, Erişim, Depolama, Tanım (the file and the answers, edited as a plan), Günlük |
 | **Podman** | Every container with its state, CPU, memory and ports; what each kind takes on disk; images, volumes, networks and removed applications' folders, where what nothing uses is ticked and removed |
-| **Erişim** (Access) | Who reaches what from where; Adresler (addresses and raw ports, *Adres aç*), Yerel adlar (local names and the domain), WireGuard (networks and devices), Güvenlik duvarı (your rules) |
+| **Erişim** (Access) | Who reaches what from where; Adresler (addresses and raw ports, *Adres aç*), Yerel adlar (local names and the domain), Güvenlik duvarı (your rules) |
+| **WireGuard** | The networks as tabs (turn WireGuard on, add a network, open or close one) and each network's devices with their QR codes and profiles |
 | **Dosyalar** (Files) | Depolama, the server folders, the trash, **Paylaşımlar** (one WebDAV account per folder, Tailscale and internet access, read-only/read-write, expiry) and, on the tailnet, the whole server as root |
 | **Sistem** (System) | Health and repair (with its log), updates, the Konsol account, the server (with its Tailscale device) and reboot, the history of operations |
 | **Gelişmiş** (Advanced) | Read-only: effective Caddy and DNS configuration, the technical firewall rules and listeners |

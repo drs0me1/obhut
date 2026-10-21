@@ -963,7 +963,7 @@ class Manager:
                 return "Şu anki durum: WireGuard ağı yok."
             return "Şu anki durum: %s." % ", ".join("%s %s" % (n, "açık" if self.wireguard_unit(n)[1] else "kapalı") for n in names)
         except (SettingsError, OSError, ValueError):
-            return "Şu anki durum okunamadı; Erişim → WireGuard'ı yenileyin."
+            return "Şu anki durum okunamadı; Konsol'da WireGuard sayfasını yenileyin."
 
     def wireguard_rollback(self, p):
         """DD-275: an opening that was not confirmed (or failed) is undone: baslat by putting the marker

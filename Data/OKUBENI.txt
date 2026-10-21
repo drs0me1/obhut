@@ -54,14 +54,15 @@ Konsol (tarayıcıdan)
   kapalı). Telefonda ya da bilgisayarda ana ekrana eklenebilir; kendi penceresinde, Ô simgesiyle açılır.
   İnternetten HTTPS isteğe bağlıdır: önce Sistem → Hesap'ta hesap açın, sonra Erişim → Adresler → Konsol
   satırına internet adı verin (DNS A kaydı gerekir, onayla yazılır); orada kullanıcı adı ve parola sorulur.
-  Yedi bölüm vardır:
+  Sekiz bölüm vardır:
     Genel Bakış   uygulamalar (durumu, adresi; Aç, Ayrıntı). Dikkat isteyen konular Uyarılar'dadır: üst
                   çubuktaki sayı açar, her biri düzeltileceği yere gider. Kaynaklar ve sunucu yan menünün altında
     Uygulamalar   uygulamaların listesi; Uygulama ekle; her uygulamanın sayfası (Özet, Erişim, Depolama,
                   Tanım, Günlük)
     Podman        konteynerler, işlemci ve bellek, depolama; imajlar, birimler, ağlar ve kaldırılmış
                   uygulamalardan kalan klasörler; tek işlemi kullanılmayanları seçip kaldırmak (temizle yazılır)
-    Erişim        kim neye nereden ulaşır: Genel, Adresler, Yerel adlar, WireGuard, Güvenlik duvarı
+    Erişim        kim neye nereden ulaşır: Genel, Adresler, Yerel adlar, Güvenlik duvarı
+    WireGuard     ağlar sekme olarak (aç, ağ ekle, kapat) ve her ağın cihazları: QR, profil, DNS, keepalive
     Dosyalar      Depolama, Sunucu klasörleri, Çöp kutusu, Paylaşımlar, Sistem dosyaları (yalnız Tailscale)
     Sistem        Sağlık (Onarım kaydı ile), Güncellemeler, Hesap, Sunucu (Tailscale cihazı, yeniden başlat),
                   İşlem geçmişi
@@ -151,7 +152,7 @@ Erişim satırları (Erişim → Adresler)
   SSH'den hepsini kapatmak için: sudo obhut erisim kapat --hepsi (internet tarafı hemen kapanır).
 
 WireGuard (yerleşik, kurulumdan sonra kapalı)
-  Konsol → Erişim → WireGuard → Aç: ilk ağı kurar (wg0, 10.8.0.0/24, UDP 61001 önerilir). Ağ eklemek ya da
+  Konsol → WireGuard → Aç: ilk ağı kurar (wg0, 10.8.0.0/24, UDP 61001 önerilir). Ağ eklemek ya da
     açmak internette bir UDP portu açtığı için planla yürür ve 60 saniye içinde onaylanır; kapatmak ve
     kaldırmak hemen olur. Kapatılan ağın UDP portu da güvenlik duvarında kapanır; kurulumun yeniden
     çalışması onu açmaz. "WireGuard'ı kapat" bütün ağları kapatır (yeniden başlatmada da kapalı kalır);

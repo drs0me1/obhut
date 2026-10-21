@@ -24,6 +24,33 @@ Konsol's single-container definitions and adoption, Yayınla and the manual
 phase 6; live entries that still mention them end with a note naming what no
 longer applies and which entry replaced it.
 
+### DD-291: WireGuard is a section of its own, under Erişim (v2-280)
+
+- **Why:** the operator asked for Erişim's WireGuard tab to become a section of the sidebar (2026-10-21).
+  WireGuard is a built-in with its own networks, devices and secrets rather than a view of who reaches what, and
+  as a tab its network tabs were a second strip nested under Erişim's.
+- **What:** `#/wireguard` (`WireGuardPage`, formerly `pages/erisim/WireGuardTab.vue`; its vocabulary and DNS choice
+  in `pages/wireguard/`, its styles in `wireguard.css`), after Erişim in the sidebar and in the phone's "Daha
+  fazla", which is marked while the page is open. The page is the tab unchanged: off after install, the networks
+  as tabs (`?ag=`), the planned actions through the settings plan, the devices, QR codes and profiles fetched only
+  on a click, the state read only while the page is shown. Erişim's tabs are Genel, Adresler, Yerel adlar and
+  Güvenlik duvarı. Genel's WireGuard card and the services table's WireGuard column stay (who reaches what from a
+  WireGuard network) and the card leads to the section; Güvenlik duvarı keeps its WireGuard scope. The palette
+  lists the section and no Erişim tab. No route, reply or setting changes. An old `#/erisim?sekme=wireguard`
+  opens Erişim → Genel, as any unknown tab does; no redirect is kept.
+- **The sidebar's spacing (the operator's choice, 2026-10-21):** an eighth row made the sidebar 40 px taller than
+  a 900 px window, so the two cards no longer sat at its foot (DD-287). The blocks are 16 px apart instead of 22,
+  the divider before Gelişmiş 10 px from the lists, the sidebar's top and bottom padding 20 px instead of 24 and the
+  two cards stay 10 px apart; the rows keep their 44 px height. Rejected: Gelişmiş as an ordinary row without the
+  divider, and letting the sidebar scroll below 940 px.
+- **Texts:** every operator-facing "Konsol → Erişim → WireGuard" (the installer's summary and warnings,
+  `master-wg`, the settings worker, `master_wireguard`'s stopped text, `wireguard.command`, OKUBENI) reads
+  "Konsol → WireGuard". The installer's closing line names all eight sections; it had missed Podman since DD-289.
+- **Amends:** DD-276 (A7: Erişim's tabs).
+- **Tests:** the sidebar's and the menu sheet's eight sections, Erişim's four tabs, Genel's card link, the
+  palette's "wireguard", the WireGuard suite at `#/wireguard` (its head and sidebar entry, "Daha fazla" marked on
+  a phone, no reads once another page is shown) and the bats checks of the texts.
+
 ### DD-290: No container is taken over; Podman lists the others without a filter of their own (v2-279)
 
 - **Why:** the operator asked what "Obhut dışı" in the Podman section means and wanted applications installed
@@ -446,6 +473,7 @@ longer applies and which entry replaced it.
 - **Note (DD-279):** "Uygulama ekle" is no longer a sheet at `#/uygulamalar?ekle=1` but a full-window page at
   `#/uygulama-ekle` with a fourth step, Kurulum, that shows the install job's log.
 - **Note (DD-290):** Uygulama ekle has three sources; "Var olan konteyner" is removed.
+- **Note (DD-291):** WireGuard is a section of its own (`#/wireguard`), no longer Erişim's tab.
 
 ### DD-275: The rebuild's phase 4: access rows (v2-258)
 

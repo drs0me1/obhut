@@ -288,7 +288,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await page.goto(url("#/erisim"));
     assert.equal(await page.locator("main h1").innerText(), "Erişim");
     const tabs = page.getByRole("tablist", { name: "Erişim bölümleri" }).getByRole("tab");
-    assert.deepEqual(await tabs.allInnerTexts(), ["Genel", "Adresler", "Yerel adlar", "WireGuard", "Güvenlik duvarı"]);
+    assert.deepEqual(await tabs.allInnerTexts(), ["Genel", "Adresler", "Yerel adlar", "Güvenlik duvarı"], "WireGuard is a section of its own (DD-291)");
     await page.getByTestId("matrix").waitFor();
     // Yayınla is gone: no button, no query parameter, no request to the old routes. Warnings are Genel Bakış'.
     assert.equal(await page.getByTestId("publish").count(), 0, "no Yayınla button");
@@ -309,7 +309,7 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     assert.match(await page.getByTestId("sum-tailscale").locator("dd").nth(2).getAttribute("class"), /warn-text/, "a key within 14 days is a warning");
     // The internet card holds its addresses only; how many ports are open is its state, which ones Güvenlik duvarı's.
     assert.deepEqual(await summary("sum-internet"), ["3 port açık", [["IPv4", "203.0.113.10"], ["IPv6", "yok"]], "Güvenlik duvarı", "#/erisim?sekme=guvenlik-duvari"]);
-    assert.deepEqual(await summary("sum-wireguard"), ["Açık", [["wg0", "Ana ağ · UDP 61001"]], "WireGuard", "#/erisim?sekme=wireguard"]);
+    assert.deepEqual(await summary("sum-wireguard"), ["Açık", [["wg0", "Ana ağ · UDP 61001"]], "WireGuard", "#/wireguard"]);
     assert.deepEqual(await summary("sum-certs"), ["Yakında doluyor", [[KEY_DAY, "notlar.example.org"]], "Adresler", "#/erisim?sekme=adresler"]);
     assert.equal(await page.getByTestId("sum-certs").locator("dd").getAttribute("title"), `notlar.example.org: ${KEY_DATE} tarihine kadar`);
     // The cards of a row are as tall as each other and their links share one line.
@@ -1208,6 +1208,8 @@ const rowsOf = (card) => card.locator("tbody tr").evaluateAll((trs) => trs.map((
     await input.fill("doğrudan port");
     assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(),
       ["Erişim", "Erişim → Adresler", "medya · 8096/TCP", "medya · 1900/UDP", "kutu · 9000/TCP", "Adres aç"], "each raw port by its application and port");
+    await input.fill("wireguard");
+    assert.deepEqual(await palette.locator(".palette-option .palette-label").allInnerTexts(), ["WireGuard"], "WireGuard is a section, not Erişim's tab (DD-291)");
     await input.fill("dnsmasq");
     await page.keyboard.press("Enter");
     await page.waitForURL((u) => u.hash === "#/erisim?sekme=adlar");

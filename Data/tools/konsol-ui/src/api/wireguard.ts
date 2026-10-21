@@ -1,6 +1,6 @@
-// WireGuard, a built-in of the base (DD-271): Erişim → WireGuard's reads and immediate writes under
+// WireGuard, a built-in of the base (DD-271): the WireGuard section's reads and immediate writes under
 // /api/konsol/wireguard. Starting or stopping WireGuard and adding, removing, opening, closing or regenerating
-// a network are settings changes (DD-275): the tab sends them through the settings plan with the state's
+// a network are settings changes (DD-275): the page sends them through the settings plan with the state's
 // `revizyon`, not from here. Paths and shapes come from sema.ts (generated from panel/master_api.py); a path's
 // {iface} and {name} are filled in encoded. Every change goes through master-wg on the server; numbers go
 // as integers. QR codes and device profiles carry a device's private key: they are fetched only on an

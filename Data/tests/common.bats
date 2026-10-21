@@ -1935,9 +1935,9 @@ EOF
     grep -q 'Ağı yeniden üret' "$cmd"
     grep -q 'master-wg ile --if' <<<"$(grep -A2 'NET=""' "$cmd" | head -5)" || grep -q '"$MASTER_WG" --if "$NET"' "$cmd"
     # Ağ yoksa kullanıcı Konsol'a yönlendirilir: its button is "Aç" now (rebuild phase 5).
-    grep -qF 'Erişim → WireGuard → Aç ile ilk ağı kurun' "$cmd"
+    grep -qF '(http://panel.<alan adı>) → WireGuard → Aç ile ilk ağı kurun' "$cmd"
     run ! grep -q 'Yapılandır ile' "$cmd" "$V2_ROOT/scripts/master-wg"
-    grep -qF "Konsol'da Erişim → WireGuard → Aç ile oluşturun" "$V2_ROOT/scripts/master-wg"
+    grep -qF "Konsol'da WireGuard → Aç ile oluşturun" "$V2_ROOT/scripts/master-wg"
     # An update is started in Sistem → Güncellemeler.
     [ "$(grep -cF 'Konsol → Sistem → Güncellemeler → Güncelle ile güncelleyin' "$cmd")" -eq 2 ]
     # Sunucuya hiçbir dosya gönderilmez.
@@ -2126,7 +2126,7 @@ EOF
     # While stopped, master-wg refuses to open or add a network.
     run master_wg --if wg0 net ac
     [ "$status" -ne 0 ]
-    case "$output" in *"WireGuard kapalı; önce Konsol → Erişim → WireGuard'dan açın"*) ;; *) false ;; esac
+    case "$output" in *"WireGuard kapalı; önce Konsol → WireGuard'dan açın"*) ;; *) false ;; esac
     run master_wg net-add 61031 1.1.1.1 x
     [ "$status" -ne 0 ]
     [ "$(grep -c '^    not_stopped$' "$V2_ROOT/scripts/master-wg")" -eq 2 ]
@@ -2866,7 +2866,7 @@ EOF
     # Stage 7 checks it; the confirmation screen and the summary name it as a built-in.
     s7="$(awk '/^stage_7\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -qx '    check_wireguard' <<<"$s7"
-    grep -qF 'WireGuard (kapalı; ilk ağı Konsol → Erişim → WireGuard → Aç kurar)' <<<"$(awk '/^stage_0\(\)/,/^}$/' "$V2_ROOT/install.sh")"
+    grep -qF 'WireGuard (kapalı; ilk ağı Konsol → WireGuard → Aç kurar)' <<<"$(awk '/^stage_0\(\)/,/^}$/' "$V2_ROOT/install.sh")"
     grep -qF '  WireGuard: $(summary_wireguard)' "$V2_ROOT/install.sh"
     # Caddy no longer dumps state.env into the journal.
     awk '/caddy.service.d\/master-stack.conf/,/^EOF$/' "$V2_ROOT/install.sh" | grep -qxF 'ExecStart=/usr/bin/caddy run --config $CADDYFILE --adapter caddyfile'
@@ -4435,7 +4435,7 @@ PY
     WG_NETWORKS_FILE="$TMP/networks" WG_STOPPED_FILE="$TMP/.durduruldu"
     wg() { printf 'peer-a\npeer-b\n'; }
     run summary_wireguard
-    [ "$output" = 'ağ yok; ilk ağı Konsol → Erişim → WireGuard → Aç kurar' ]
+    [ "$output" = 'ağ yok; ilk ağı Konsol → WireGuard → Aç kurar' ]
     printf 'wg0\t61001\tinet\t10.8.0.1\t10.8.0.0/24\tfd00::1\tfd00::/112\t1.1.1.1\tA\n' >"$WG_NETWORKS_FILE"
     run summary_wireguard
     [ "$output" = '1 ağ, 2 peer' ]
@@ -4451,7 +4451,7 @@ PY
     run ! grep -qE 'summary_modules|summary_notes|App Store|paket_' <<<"$body"
     # Konsol's six sections and today's places (rebuild phase 5): Uygulama ekle, the access rows in Erişim → Adresler,
     # the local domain in Erişim → Yerel adlar.
-    grep -qF '(Genel Bakış, Uygulamalar, Erişim, Dosyalar, Sistem, Gelişmiş; ' <<<"$body"
+    grep -qF '(Genel Bakış, Uygulamalar, Podman, Erişim, WireGuard, Dosyalar, Sistem, Gelişmiş; ' <<<"$body"
     grep -qF 'Uygulamalar → Uygulama ekle' <<<"$body"
     grep -qF 'Erişim → Adresler → Konsol → İnternet adı' <<<"$body"
     grep -qF '(değiştirmek için Konsol → Erişim → Yerel adlar)' "$V2_ROOT/install.sh"
@@ -4860,7 +4860,8 @@ PY
     # On a phone a card cell is a flex column; a long address breaks inside it instead of running over the next.
     awk '/@container \(max-width: 760px\)/,0' "$V2_ROOT/tools/konsol-ui/src/styles/ui.css" |
         awk '/\.data-table td\[data-label\] \{/,/\}/' | grep -q 'overflow-wrap: anywhere;'
-    awk '/\.fw-table td\[data-label\],/,/\}/' "$V2_ROOT/tools/konsol-ui/src/styles/erisim.css" | grep -q 'overflow-wrap: anywhere;'
+    awk '/\.fw-table td\[data-label\] \{/,/\}/' "$V2_ROOT/tools/konsol-ui/src/styles/erisim.css" | grep -q 'overflow-wrap: anywhere;'
+    awk '/\.wg-table td\[data-label\] \{/,/\}/' "$V2_ROOT/tools/konsol-ui/src/styles/wireguard.css" | grep -q 'overflow-wrap: anywhere;'
 }
 
 @test "the release version people see sits beside the build number servers compare (DD-260)" {

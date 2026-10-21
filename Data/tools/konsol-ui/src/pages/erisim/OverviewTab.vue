@@ -2,7 +2,7 @@
      one-line rows, the tab where the details are): Tailscale (its addresses, the key's end; its link the Tailscale
      admin console, where devices, ACLs and the key change, DD-288), the internet (its
      addresses only; how many ports are open is its state, what they are is Güvenlik duvarı's), WireGuard (its
-     networks), the certificates (each name with its end). Then every service with its four cells: the addresses and
+     networks; its link the WireGuard section, DD-291), the certificates (each name with its end). Then every service with its four cells: the addresses and
      ports it is reached on there, or that it is closed; a warning (a raw port open on the internet, unencrypted
      WebDAV) or a fault is the cell's colour, never a sentence in the table: the words are Genel Bakış' Dikkat. An
      application is one row whatever its ports: its ports under its name, each cell every port's addresses (a
@@ -188,7 +188,7 @@ const certState = computed<{ text: string; tone: Tone; dot?: boolean }>(() => {
           data-testid="sum-tailscale" />
         <SummaryCard title="İnternet" :state="netState" :rows="netRows" empty="İnternet adresi okunamadı."
           :link="{ to: accessRoute('guvenlik-duvari'), text: 'Güvenlik duvarı' }" data-testid="sum-internet" />
-        <SummaryCard title="WireGuard" :state="wgState" :rows="wgRows" empty="Ağ yok; açınca ilk ağ kurulur." :link="{ to: accessRoute('wireguard'), text: 'WireGuard' }"
+        <SummaryCard title="WireGuard" :state="wgState" :rows="wgRows" empty="Ağ yok; açınca ilk ağ kurulur." :link="{ to: '/wireguard', text: 'WireGuard' }"
           data-testid="sum-wireguard" />
         <SummaryCard title="Sertifikalar" :state="certState" :rows="certRows" empty="İnternet adı yok." :link="{ to: accessRoute('adresler'), text: 'Adresler' }"
           data-testid="sum-certs" />

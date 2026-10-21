@@ -1,4 +1,4 @@
-// The WireGuard tab's vocabulary: the DNS providers, a device's state, a network's name and the checks a
+// The WireGuard page's vocabulary: the DNS providers, a device's state, a network's name and the checks a
 // form makes before asking the server.
 import type { WireGuard as WgState, WireGuardAgi as WgNetwork, WireGuardCihazi as WgPeer } from "../../api/sema";
 
