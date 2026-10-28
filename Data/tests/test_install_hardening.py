@@ -1,0 +1,302 @@
+"""Installer permission regressions using private, physical temporary paths.
+
+Run: python3 -m unittest discover -s Data/tests -p test_install_hardening.py -v
+Real Linux ownership and flock coverage lives in install-hardening-linux.py.
+"""
+import errno
+import importlib.util
+import os
+from pathlib import Path
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+DATA = Path(__file__).resolve().parents[1]
+HELPER = DATA / "panel/master_permissions.py"
+spec = importlib.util.spec_from_file_location("installer_permissions", HELPER)
+permissions = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(permissions)
+
+
+def metadata(path):
+    st = path.lstat()
+    return (st.st_dev, st.st_ino, st.st_mode, st.st_uid, st.st_gid,
+            st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+class PermissionRepairTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="installer-permissions-")
+        self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name).resolve()
+        self.root = self.base / "data"
+        self.root.mkdir(mode=0o775)
+        self.root.chmod(0o775)
+        self.outside = self.base / "outside"
+        self.outside.mkdir(mode=0o700)
+        self.target = self.file(self.outside / "private", 0o600)
+        self.uid, self.gid = os.getuid(), os.getgid()
+
+    def file(self, path, mode=0o600):
+        path.write_bytes(b"private fixture\n")
+        path.chmod(mode)
+        return path
+
+    def repair(self):
+        return permissions.repair(self.root, self.uid, self.gid)
+
+    def test_regular_files_directories_and_counts_are_selective(self):
+        folder = self.root / "folder"
+        folder.mkdir(mode=0o700)
+        bad = self.file(folder / "bad")
+        good = self.file(folder / "good", 0o664)
+        before = metadata(good)
+        with mock.patch.object(permissions.os, "fchmod", wraps=os.fchmod) as chmod, \
+                mock.patch.object(permissions.os, "fchown", wraps=os.fchown) as chown:
+            self.assertEqual(self.repair(), 2)
+            self.assertEqual(chmod.call_count, 2)
+            chown.assert_not_called()
+        self.assertEqual(stat.S_IMODE(folder.stat().st_mode), 0o775)
+        self.assertEqual(stat.S_IMODE(bad.stat().st_mode), 0o664)
+        self.assertEqual(metadata(good), before)
+        entries = (self.root, folder, bad, good)
+        before = [metadata(p) for p in entries]
+        with mock.patch.object(permissions.os, "fchmod", wraps=os.fchmod) as chmod, \
+                mock.patch.object(permissions.os, "fchown", wraps=os.fchown) as chown:
+            self.assertEqual(self.repair(), 0)
+            chmod.assert_not_called()
+            chown.assert_not_called()
+        self.assertEqual([metadata(p) for p in entries], before)
+
+    def test_count_includes_root_and_each_newline_name_once(self):
+        self.root.chmod(0o700)
+        self.file(self.root / "line\nbreak")
+        self.file(self.root / "space name")
+        self.assertEqual(self.repair(), 3)
+        self.assertEqual(self.repair(), 0)
+
+    def test_symlinks_and_hardlinks_keep_targets_and_metadata(self):
+        (self.root / "file-link").symlink_to(self.target)
+        (self.root / "parent-link").symlink_to(self.outside, target_is_directory=True)
+        (self.root / "dangling").symlink_to(self.base / "missing")
+        os.link(self.target, self.root / "hardlink")
+        # Even two names entirely inside the data area share an inode and are excluded.
+        inside = self.file(self.root / "linked-a")
+        os.link(inside, self.root / "linked-b")
+        watched = list(self.root.iterdir()) + [self.target, self.outside]
+        before = [metadata(p) for p in watched]
+        self.assertEqual(self.repair(), 0)
+        self.assertEqual([metadata(p) for p in watched], before)
+        self.assertEqual(self.target.read_bytes(), b"private fixture\n")
+
+    def test_fifo_and_unix_socket_are_untouched_without_blocking(self):
+        fifo = self.root / "fifo"
+        os.mkfifo(fifo, 0o600)
+        # AF_UNIX paths must also fit macOS's short pathname limit.
+        with tempfile.TemporaryDirectory(prefix="iperm-", dir="/tmp") as short:
+            sockpath = Path(short).resolve() / "sock"
+            sock = socket.socket(socket.AF_UNIX)
+            try:
+                sock.bind(str(sockpath))
+                destination = self.root / "socket"
+                sockpath.rename(destination)
+                watched = (fifo, destination)
+                before = [metadata(p) for p in watched]
+                result = subprocess.run([sys.executable, str(HELPER), str(self.root),
+                                         str(self.uid), str(self.gid)],
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "0\n")
+                self.assertEqual([metadata(p) for p in watched], before)
+            finally:
+                sock.close()
+
+    def test_root_and_parent_symlinks_fail_before_any_repair(self):
+        direct = self.base / "root-link"
+        direct.symlink_to(self.root, target_is_directory=True)
+        parent = self.base / "parent-link"
+        parent.symlink_to(self.base, target_is_directory=True)
+        before = metadata(self.target), metadata(self.root)
+        for path in (direct, parent / "data", self.root / "../outside", Path("relative")):
+            with self.subTest(path=path), self.assertRaises((OSError, ValueError)):
+                permissions.repair(path, self.uid, self.gid)
+        self.assertEqual((metadata(self.target), metadata(self.root)), before)
+
+    def test_cli_reports_unsafe_root_without_success_count(self):
+        link = self.base / "link"
+        link.symlink_to(self.outside, target_is_directory=True)
+        before = metadata(self.target)
+        result = subprocess.run([sys.executable, str(HELPER), str(link),
+                                 str(self.uid), str(self.gid)],
+                                capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("güvenli onarılamadı", result.stderr)
+        self.assertEqual(metadata(self.target), before)
+
+    def test_entry_replaced_before_open_cannot_redirect_repairs(self):
+        real_open = os.open
+        # Deterministically change the entry after its lstat and before openat.
+        # Inode changes, no-follow failures and nonblocking special-file opens
+        # must all preserve the replacement, with no counted repair.
+        for kind in ("symlink", "parent-symlink", "regular", "directory", "fifo", "hardlink", "missing"):
+            with self.subTest(kind=kind):
+                victim = self.root / "victim"
+                if kind == "parent-symlink":
+                    victim.mkdir(mode=0o700)
+                else:
+                    self.file(victim)
+                parked = self.base / ("parked-" + kind)
+                fired, replacement = [], []
+                before = metadata(self.target)
+
+                def swap(path, flags, *args, **kwargs):
+                    if path == "victim" and kwargs.get("dir_fd") is not None and not fired:
+                        fired.append(flags)
+                        victim.rename(parked)
+                        if kind in ("symlink", "parent-symlink"):
+                            victim.symlink_to(self.outside if kind == "parent-symlink" else self.target)
+                        elif kind == "regular":
+                            self.file(victim)
+                        elif kind == "directory":
+                            victim.mkdir(mode=0o700)
+                        elif kind == "fifo":
+                            os.mkfifo(victim, 0o600)
+                            self.assertTrue(flags & os.O_NONBLOCK)
+                        elif kind == "hardlink":
+                            os.link(self.target, victim)
+                        if kind != "missing":
+                            replacement.append(metadata(victim))
+                    return real_open(path, flags, *args, **kwargs)
+
+                with mock.patch.object(permissions.os, "open", side_effect=swap):
+                    self.assertEqual(self.repair(), 0)
+                self.assertEqual(len(fired), 1)
+                self.assertTrue(fired[0] & os.O_NOFOLLOW)
+                if replacement:
+                    self.assertEqual(metadata(victim), replacement[0])
+                # Creating a hardlink itself changes the target's ctime.
+                if kind != "hardlink":
+                    self.assertEqual(metadata(self.target), before)
+                else:
+                    self.assertEqual(metadata(self.target)[2:5], before[2:5])
+                if victim.is_dir() and not victim.is_symlink():
+                    victim.rmdir()
+                elif victim.is_symlink() or victim.exists():
+                    victim.unlink()
+
+    def test_new_hardlink_between_stat_and_open_is_not_repaired(self):
+        victim = self.file(self.root / "victim")
+        real_open = os.open
+        fired = []
+
+        def link(path, flags, *args, **kwargs):
+            if path == "victim" and not fired:
+                os.link(victim, self.outside / "new-link")
+                fired.append(metadata(victim))
+            return real_open(path, flags, *args, **kwargs)
+
+        with mock.patch.object(permissions.os, "open", side_effect=link):
+            self.assertEqual(self.repair(), 0)
+        self.assertEqual(metadata(victim), fired[0])
+
+    def test_path_replaced_after_open_keeps_repairs_on_the_original_descriptor(self):
+        victim = self.file(self.root / "victim")
+        parked = self.base / "parked"
+        real_open = os.open
+        before = metadata(self.target)
+        fired = []
+
+        def swap(path, flags, *args, **kwargs):
+            fd = real_open(path, flags, *args, **kwargs)
+            if path == "victim" and not fired:
+                victim.rename(parked)
+                victim.symlink_to(self.target)
+                fired.append(True)
+            return fd
+
+        with mock.patch.object(permissions.os, "open", side_effect=swap):
+            self.assertEqual(self.repair(), 1)
+        self.assertEqual(fired, [True])
+        self.assertTrue(victim.is_symlink())
+        self.assertEqual(metadata(self.target), before)
+        self.assertEqual(stat.S_IMODE(parked.stat().st_mode), 0o664)
+
+    def test_non_race_io_failures_are_not_silently_ignored(self):
+        self.file(self.root / "victim")
+        real_open = os.open
+
+        def fail(path, flags, *args, **kwargs):
+            if path == "victim":
+                raise OSError(errno.EIO, "injected read failure")
+            return real_open(path, flags, *args, **kwargs)
+
+        with mock.patch.object(permissions.os, "open", side_effect=fail), \
+                self.assertRaises(OSError) as raised:
+            self.repair()
+        self.assertEqual(raised.exception.errno, errno.EIO)
+
+    def test_mkdir_creates_nested_tree_without_rewriting_existing_metadata(self):
+        existing = self.root / "existing"
+        existing.mkdir(mode=0o700)
+        before = metadata(existing)
+        permissions.prepare_directory(existing)
+        self.assertEqual(metadata(existing), before)
+        destination = existing / "new/media/movies"
+        permissions.prepare_directory(destination)
+        self.assertTrue(destination.is_dir())
+        self.assertEqual(stat.S_IMODE(existing.stat().st_mode), 0o700)
+        before = metadata(destination)
+        permissions.prepare_directory(destination)
+        self.assertEqual(metadata(destination), before)
+
+    def test_mkdir_rejects_symlink_parent_without_creating_outside_children(self):
+        parent = self.root / "media"
+        parent.symlink_to(self.outside, target_is_directory=True)
+        before = metadata(self.outside), metadata(self.target)
+        with self.assertRaises(OSError):
+            permissions.prepare_directory(parent / "movies/new")
+        self.assertFalse((self.outside / "movies").exists())
+        self.assertEqual((metadata(self.outside), metadata(self.target)), before)
+
+    def test_mkdir_parent_swapped_after_mkdir_before_open_cannot_escape(self):
+        real_mkdir = os.mkdir
+        fired = []
+        before = metadata(self.outside)
+
+        def swap(path, *args, **kwargs):
+            result = real_mkdir(path, *args, **kwargs)
+            if path == "new-parent" and not fired:
+                parent = self.root / "new-parent"
+                parent.rename(self.root / "parked-parent")
+                parent.symlink_to(self.outside, target_is_directory=True)
+                fired.append(True)
+            return result
+
+        with mock.patch.object(permissions.os, "mkdir", side_effect=swap), self.assertRaises(OSError):
+            permissions.prepare_directory(self.root / "new-parent/child")
+        self.assertEqual(fired, [True])
+        self.assertFalse((self.outside / "child").exists())
+        self.assertEqual(metadata(self.outside), before)
+
+    def test_mkdir_refuses_a_symlink_or_fifo_target(self):
+        link = self.root / "folder-link"
+        link.symlink_to(self.outside, target_is_directory=True)
+        fifo = self.root / "folder-fifo"
+        os.mkfifo(fifo, 0o600)
+        before = metadata(self.outside), metadata(self.target), metadata(fifo)
+        for path in (link, fifo):
+            with self.subTest(path=path):
+                result = subprocess.run([sys.executable, str(HELPER), "--mkdir",
+                                         str(path), str(self.uid), str(self.gid)],
+                                        capture_output=True, text=True, timeout=5)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("güvenli onarılamadı", result.stderr)
+        self.assertEqual((metadata(self.outside), metadata(self.target), metadata(fifo)), before)
+
+if __name__ == "__main__":
+    unittest.main()

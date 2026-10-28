@@ -1,0 +1,322 @@
+---
+description: Obhut refactor kuralları (Debian ve Ubuntu sunucu kurulum sistemi)
+globs: "**/*"
+alwaysApply: true
+---
+
+# Obhut Refactor Kuralları
+
+*Aktif ve düzenlenecek tek kural kaynağı bu dosyadır. Özgün RTF, içeriği değiştirilmeden `Data/docs/archive/master-stack-rules-source.rtf` altına arşivlendi; oraya yalnız tarihsel kayıt olarak bakılır, düzenlenmez ve buraya geri senkronlanmaz. Yapay zekâ yardımcısının çalışma kuralları (dil, `nrm` yetkisi, commit) `CLAUDE.md`'dedir.*
+
+Bu proje Debian 13 ve Ubuntu 24.04/26.04 LTS üzerinde çalışan kişisel bir sunucu kurulum sistemidir. Bugünkü yapı Obhut'un 2. neslidir (DD-271): sabit yerleşikler ve operatörün kendi Compose ya da Kubernetes dosyasından eklediği Podman uygulamaları. Nasıl kurulduğu `Data/docs/rebuild.md`'dedir.
+
+Ana hedef, `Data/` altındaki kurulum ağacını sade, okunabilir ve güvenli tutmak; sözleşme (`Data/docs/contract.md`) dışına taşmadan davranışı korumaktır.
+
+## Temel çalışma ilkeleri
+
+- Mevcut dosyayı tamamen okumadan kod değiştirme.
+- İlk aşamada yalnız analiz, bağımlılık haritası ve refaktör planı üret.
+- Tek seferde tüm sistemi yeniden yazma.
+- Her değişikliği küçük, doğrulanabilir ve geri alınabilir aşamalara böl.
+- Kullanıcının açıkça belirttiği gereksinimleri değiştirme.
+- Mevcut işlevlerden birini kaldırmadan önce:
+  - ne yaptığını,
+  - hangi arızayı önlediğini,
+  - yeni yapıda karşılığının ne olduğunu açıkla.
+- Gereksiz soyutlama oluşturma.
+- Tek kullanımlık üç satırlık işlemler için fonksiyon üretme.
+- Bir sabiti birden fazla dosyada tekrar etme.
+- Portlar, alan adı, yollar ve IP bilgileri için tek doğruluk kaynağı kullan.
+- Ana kurulum betiğini mümkün olduğunca orkestrasyon seviyesinde tut.
+- Uzun Bash içeriklerini heredoc içinde gömmek yerine ayrı dosyalarda tut.
+- Kullanıcı istemedikçe Bash kurulumunu Ansible, Python, Go veya başka bir altyapıya taşıma. Mevcut panel ve dosya servisleri Python stdlib kullanır.
+- Bash kullanılacaksa:
+  - `#!/usr/bin/env bash`
+  - `set -Eeuo pipefail`
+  - güvenli quoting
+  - `mktemp`
+  - atomik dosya değişimi
+  - açık hata mesajları kullanılmalı.
+- Sabit `/tmp/dosya` adları kullanma.
+- Mevcut kullanıcı dosyalarını habersizce silme veya üzerine yazma.
+- Başka yazılımların (ör. Tailscale'in ts-*) iptables zincirlerini silme ya da yeniden oluşturma. Docker yoktur (DD-152).
+- Yalnızca bu projeye ait özel zincirleri ve jump kurallarını yönet.
+- Değişen katmana uygun kontrolleri çalıştır; sunucuya özgü doğrulayıcıları desteklenen Linux hedefinde uygula. Çalıştırılmayan kontrolleri geçti diye bildirme:
+  - `bash -n`
+  - `shellcheck`
+  - `caddy validate`
+  - `dnsmasq --test`
+  - `systemd-analyze verify`
+  - `bats Data/tests`, Python birim testleri ve değişen arayüzün tarayıcı testleri (`Data/tests/README.md`)
+- Kod değiştirdikten sonra:
+  - değişen dosyaları,
+  - kaldırılan davranışları,
+  - korunan davranışları,
+  - riskleri,
+  - test komutlarını raporla.
+
+## Kesin sistem gereksinimleri
+
+### Desteklenen sistemler
+
+- Hedef sistemler Debian 13 Trixie, Ubuntu 24.04 Noble ve Ubuntu 26.04 Resolute.
+- Bu nesil yalnız temiz bir işletim sistemine kurulur: aşama 0 eski nesil bir Obhut gördüğünde hiçbir şey yazmadan durur (DD-271, DD-272). Göç kodu yoktur.
+- Ubuntu 24.04'ün Podman 4.9'u birden çok konteynerli Kubernetes Pod'unu ve Compose `service_healthy` sırasını çalıştıramaz; kurulum bunları yazmadan önce reddeder (DD-274).
+- Sistem paket listesi güncellenecek.
+- Sistem güncellenecek.
+- Yalnızca gerçekten kullanılan paketler kurulacak.
+- Tailscale, Caddy ve dnsmasq resmî paket kaynakları veya dağıtım deposu üzerinden kurulacak. Podman, WireGuard araçları ve `qrencode` dağıtım deposundan, önerileri olmadan kurulur. Docker kurulmaz (DD-152).
+- Kurulum root olarak çalışacak.
+- Kurulum tekrar çalıştırılabilir olmalı.
+
+### Tailscale
+
+- Tailscale kurulacak ve etkinleştirilecek.
+- Sunucu exit node olarak ilan edilecek.
+- Tailscale SSH etkinleştirilecek.
+- IPv4 forwarding açılacak.
+- IPv6 forwarding açılacak.
+- Resmî Tailscale Linux exit-node performans önerileri uygulanacak.
+- Varsayılan internet arabiriminde:
+  - `rx-udp-gro-forwarding on`
+  - `rx-gro-list off` uygulanacak.
+- Tailscale IPv4 değeri `TAILSCALE_IPV4` değişkenine alınacak.
+- Tailscale IPv6 değeri `TAILSCALE_IPV6` değişkenine alınacak.
+- Değerler `/etc/master-stack/state.env` içinde güvenli biçimde saklanacak.
+- WAN adresleri `WAN_IPV4` ve varsa `WAN_IPV6` olarak tespit edilip saklanacak.
+- Tailscale bağlantısı hazır olmadan sonraki ağ yapılandırmasına geçilmeyecek.
+
+### Dizinler
+
+- Aşağıdaki dizinler oluşturulacak:
+  - `/srv` (`SERVER_ROOT`)
+  - `/srv/downloads` (`DOWNLOADS_PATH`)
+  - `/srv/media`
+- Mevcut kullanıcı ağacında sahiplik/izin **seçici** onarılır (DD-84/DD-187):
+  sabit dosya tanıtıcılarıyla `fchown/fchmod`, sapmış dizin `0775` / dosya `0664`;
+  sembolik bağ, çok bağlantılı dosya ve özel dosyalar atlanır; eşleşen
+  girdilere dokunulmaz. Koşulsuz full-tree rewrite yok. `.cop` çöptür; onu veri dizini sanıp
+  yayımlama veya körlemesine silme.
+- Uygulamaların verisi `/var/lib/master-stack/uygulamalar/<uygulama>/` altındadır (`UYGULAMA_VERI_DIR`, A5);
+  kayıtları `/etc/master-stack/containers/uygulamalar/<uygulama>/` altında, yalnız root'a açık
+  (`UYGULAMA_STATE_DIR`). İndirme hesabıyla çalışan Dosyalar ve WebDAV `/var/lib`'i görmez (DD-225).
+
+### Yerleşik servisler ve uygulamalar (Docker yok)
+
+- Yerleşikler sabittir: Konsol, Tailscale, Caddy, dnsmasq, güvenlik duvarı, Dosyalar (sunucu klasörleri, çöp, Sistem dosyaları), klasör WebDAV (Paylaşımlar) ve WireGuard (DD-271, DD-272). Kaldırılamazlar; kurulum her çalışmada doğrular.
+- DD-179/190/192: her klasörün Tailscale ve WAN bağlantısı ayrı açılır/kapanır,
+  RO/RW ve süresi ayrıdır; yeni kayıtlar Tailscale açık (yayını açıksa), WAN
+  kapalı, RO, 7 gün. İnternet adı yoksa mevcut açık onaylı HTTP davranışı korunur;
+  Erişim → Adresler'de Paylaşımlar satırına internet adı verilirse WAN HTTPS kullanır.
+  İnternet adını kapatmak WAN'ı kapatır (ad hatırlanır), HTTP'ye düşürmez.
+  HTTPS dinleyicisi aktif klasör yokken de sertifika yenilemesi için kalır.
+  Parola/bağlantı sınırları ve klasör başına ağ/yetki denetimi zorunludur;
+  DD-195 Konsol için ayrı ve açık HTTPS seçimi sağlar; arka uç
+  soketleri ve dosya portu WAN'a açılmaz. Kayıt yalnız şema 4'tür; başka şema ya da bilinmeyen anahtar kapalı kalır.
+- DD-152: Docker kurulmaz (depo, paket, daemon.json, drop-in, zincir yok). DD-208: Podman tabanın parçasıdır (`podman netavark aardvark-dns catatonit`, önerisiz; daemon/soket/otomatik güncelleme açılmaz). Konteyner yalnız uygulamaların çalışma ortamıdır.
+- Uygulamalar (DD-271, DD-273, DD-274): yazılımın kendi Docker Compose ya da Kubernetes YAML dosyasından (ya da önce taslak dosyaya çevrilen bir imaj adından) Konsol → Uygulamalar → Uygulama ekle ile eklenir; Obhut'un kurmadığı bir konteyner uygulamaya çevrilmez (DD-290). Obhut'un YAML okuyucusu ve denetçisi dosyayı okur, güvensiz olanı satırıyla reddeder, yalnız operatörün yanıtlayabileceğini sorar (ad, her TCP portu, değişkenler ve gizli değerler, klasörler, her konteynerin başlangıç kipi); üreteç Quadlet birimlerini yazar, systemd başlatır, Podman çalıştırır. Compose çalışma zamanı ve `podman kube play` yoktur.
+- Obhut hiçbir uygulamayı tanımaz: hiçbir uygulamaya özel mekanizma, varsayılan, kod yolu, fikstür adı ya da arayüz metni yoktur. Her uygulama aynı yoldan, kendi dosyasından gelir.
+- Her uygulamanın kendi köprüsü vardır (`ksl-<uygulama>`); konteynerler yalnız internete çıkar (DD-224), sunucunun kendisine yalnız köprü ağ geçidindeki DNS'e ulaşır (DD-229). Ayrıcalıklı kip, aygıt ve sunucu ad alanları hiç yoktur. İmajlar özetiyle sabitlenir (`Pull=never`), yalnız operatör onaylayınca güncellenir (DD-214). Gizli değerler Podman secret'ı olur; dosyaya, günlüğe ya da yanıta yazılmaz. Bağlanan klasörler yalnız `/srv` altından ve uygulamanın kendi klasöründendir (A5); `/srv` kaynakları her açılışta tanıtıcıyla sabitlenir (DD-226).
+- Uygulamayı kaldırmak verisini varsayılan olarak korur; veriyi silmek için uygulamanın adı yazılır (K9). `/srv` altındaki kullanıcı dosyaları hiçbir uygulamanın verisi değildir.
+- Paylaşım (DD-158): Python stdlib `master_webdav.py`, `master-paylasim.service` içinde indirme UID'siyle loopback'te çalışır. Root kayıt `webdav.json` 0600, yalnız scrypt özeti, `LoadCredential`; çöp/iç alanlar erişilemez. Klasör sınırı tanıtıcı tabanlı istek denetimiyle korunur. Ayrıntı: `Data/docs/folder-shares.md`.
+
+### WireGuard (DD-120, DD-124, DD-130, DD-132, DD-133, DD-136, DD-143, DD-272)
+
+- WireGuard host çekirdeğinde ağ başına `wg-quick@wgN` olarak çalışır. İlk ağ için öneri wg0 (`10.8.0.1/24`, `fdcc:ad94:bacf:61a4::1/112`, UDP 61001); kurulum bunu kendiliğinden oluşturmaz.
+- DD-272: WireGuard tabanın parçasıdır ve kurulumdan sonra kapalıdır. Aşama 1 `wireguard-tools` ve `qrencode`'u kurar, aşama 4 `master-wg`'yi (`Data/scripts/master-wg`), `wg-quick@` birim ekini, çekirdek modülünü ve `WG_CONF_DIR`'i hazırlar. `WG_*` anahtarları `config/defaults.env`'dedir. Güvenlik duvarı ağ kaydını ve durdurma işaretini (`WG_STOPPED_FILE`) kendisi okur.
+- DD-143: kurulum WireGuard ağı yaratmaz; ağları (ilki dahil) Konsol → WireGuard ("Aç", sonra "Ağ ekle") ya da `master-wg net-add` kurar ve hepsi `/etc/wireguard/networks` kaydında yaşar. Kurulum yalnız araçları/modülü hazırlar ve kayıttaki ağları uygular; Mac'ten hiçbir dosya okunmaz, sunucuya gönderilmez.
+- DD-275: Konsol'da WireGuard'ı açmak, ağ eklemek ve bir ağı açmak (her biri WAN'da bir UDP portu açar) 60 saniyelik onaylı ayar planıdır; kapatmak ve ağ kaldırmak hemen kalıcıdır; ağ anahtarını yeniden üretmek `onayla` yazınca hemen olur. Cihazlar, DNS ve keepalive, ağın adı ve varsayılan DNS'i doğrudan yazılır.
+- Peer'lar sunucuda `master-wg` ile üretilir (Mac'te `wireguard.command`); doğru kaynak sunucudaki `wgN.conf`.
+- `wireguard.command` → 6) Ağ seç; yedek almaz. Sunucu yapılandırması Mac'ten geri yüklenmez.
+- `wireguard.command` → 7) DNS değiştir yalnız profilin `DNS =` satırını değiştirir (`master-wg dns`); 8) seçili ağı yeniden üret `onayla` onayıyla o ağ için yeni anahtar üretir, o ağın peer ve profillerini siler (`master-wg reset --onay`).
+- Her profille birlikte QR resmi `kurulum/wireguard/<ad>.png` olarak iner (`master-wg png`, sunucu üretir; izin 600, sunucuya gönderilmez).
+- Otomatik yedek yoktur. Yalnız kullanıcının indirdiği cihaz profili ve QR resmi Mac'te kalır; bunlar sunucu yedeği değildir.
+- DD-177: WireGuard yalnız internete çıkar. UI/API/CLI erişim seçeneği yoktur; WG host trafiği ilk sırada düşürülür, özel hedefler ve diğer VPN ağları engellenir. WG özel port kuralı kabul edilmez; WAN/Tailscale kuralları ayrı kalır.
+- Konsol'un root arka ucu (`Data/panel/`): `master-panel` TCP portu açmaz; yalnız `/run/master-panel/api.sock` Unix soketini dinler (root ve Caddy grubu, DD-180) ve yalnız rota tablosundaki (`Data/panel/master_api.py`) `/api/konsol/*` isteklerini, oturum denetimini (`/oturum-denetle`) ve giriş POST'unu yanıtlar (DD-272); sayfa sunmaz. Caddy `panel.<alan>` ile Tailscale'e, isteğe bağlı olarak Erişim → Adresler'deki Konsol satırının internet adıyla internete açar (DD-195). DD-194/205: Caddy `forward_auth` her korumalı istekte `/oturum-denetle` ile oturum sorar; Tailscale adresi parola sormaz, internet adı Konsol hesabını ister. Hesap `master_auth.py`/`master-konsol` ile yönetilir; operatör onu Tailscale'den Sistem → Hesap'ta açar (kurulum kodu yoktur). Host, `X-Konsol` ve değişikliklerde aynı kaynak denetimleri korunur. WireGuard işlemleri `master_wireguard.py` → `master-wg`, ayarlar `master_settings.py`, klasör hesapları `master_shares.py`, uygulamalar `master_container_manager.py` → `master_container_worker.py` üzerinden yürür.
+- Ağlar (DD-136/143): `master-wg net-add/net-remove` wg0…wg9 oluşturur (10.8.N.0/24, `…::N:0/112`), kayıt `/etc/wireguard/networks`; `master-wg --if wgN` peer komutlarını seçili ağda çalıştırır. Firewall bozuk kayıtta hiçbir zinciri değiştirmez; her ağ yalnız `wg-quick@` birimine sahiptir. `wireguard.command` da seçili ağla çalışır.
+- NAT/FORWARD kuralları `master-firewall`'dadır (`MASTER-FORWARD`, `MASTER-NAT`); wg-quick `PostUp` kullanılmaz.
+
+### Konsol ve dosya arka ucu (DD-139, DD-140)
+
+- Tailnet adresi: `panel.<alan>` (isteğe bağlı genel HTTPS adı aynı yolları kullanır, DD-195). Caddy sayfa dosyalarını kendisi sunar (DD-267: Konsol arayüzü kökte, yanında giriş sayfası, düzenleyici ve simgeler); `/api/konsol/*` root arka ucuna, `/api/sistem/*` yalnız Tailscale sitesinde Sistem dosyaları servisine, diğer dosya API'leri yetkisiz dosya arka ucuna gider. Eski adlar (`wg.`, `dosya.`, `file.`) ve eski adreslerin yönlendirmeleri yoktur. Konsol oturumunu Caddy root arka uca sorar (DD-194); iki arka uçta aynı Host ve istek güvenlik sınırları uygulanır.
+- Ayarlar planla yazılır (DD-156–165, DD-265, DD-275; Erişim, WireGuard ve Sistem'de, her yazım önce planını gösterir): DNS-only değişiklik doğrulama sonrası doğrudan kalıcılaşır. Erişimi açan, genişleten ya da adı değiştiren her değişiklik (güvenlik duvarı kuralları, uygulamaların erişim satırları, Konsol ve Paylaşımlar satırları, WireGuard'ın açılışları) 60 saniyelik onay/bağımsız geri alma korumasındadır; yalnız kapatan değişiklik hemen kalıcıdır. Alan adı değişimi yeni panel adresinden beş dakika içinde onaylanır. Üçüncü taraf ham firewall zincirleri yalnız okunur; parola özetleri istemciye verilmez.
+- DD-190: genel HTTPS alan adı yerel son ekten ayrı kaydedilir. `master_https.py`
+  DNS ve sertifika denetimini, mevcut Settings worker kalıcı pending/commit ve
+  hata/çökme geri almasını yönetir. Sertifika denetimi sunucunun
+  atanmış WAN IPv4'üne sabitlenir; internetten erişimi kanıtlamaz. Bitişe en çok
+  14 gün kaldığında uyarı verilir. Kaldırmada Caddy nazikçe reload edilir;
+  yeni WAN bağlantıları kapanır, mevcut aktarımlar tamamlanabilir.
+- Konsol arayüzü `Data/tools/konsol-ui` kaynaklarından derlenen ve `Data/console/yeni/` içinde tutulan Vue 3 + TypeScript yapısıdır (DD-258, DD-267, DD-276); kurulum onu `CONSOLE_WEB_DIR` köküne giriş sayfası (`Data/console/giris.*`), düzenleyici (`duzenleyici.js`) ve simgelerle (`obhut.*`) koyar, köktaki başka her dosyayı siler. Dış kaynak yüklemez, satır içi kod ya da biçem yoktur, adlar yalnız metin olarak eklenir. Arayüz hiçbir uygulamayı tanımaz. API biçimleri rota tablosundan üretilir (`Data/docs/konsol-api.json`, `src/api/sema.ts`).
+- Peer ve ağ aç-kapa (DD-140): `master-wg peer AD ac|kapat` bloğu `#kapali#` önekiyle yorumlar (anahtar, adres ve profil durur; yeniden başlatmada da kapalı kalır), `master-wg [--if wgN] net ac|kapat` birimi durdurur/başlatır, `master-wg keepalive AD SANİYE` yalnız profili değiştirir.
+- `Data/files-panel/master-files-panel` yerleşiktir (DD-159): kurulum birimini doğrudan `UNIT_DIR`'e yazar (DD-272). Yalnız `127.0.0.1:61009` dinler; sayfaları Caddy verir. Parolası yoktur; paylaşım hesabını hiç görmez. Arşiv işi yoktur (DD-267). Konsol'da Dosyalar → Depolama, Sunucu klasörleri, Çöp kutusu, Paylaşımlar ve yalnız Tailscale'de Sistem dosyaları (`--sistem`, DD-235) olarak görünür.
+- Sunucudaki tek WebDAV klasör paylaşımlarıdır (DD-158); indirme klasörünün tamamını yayımlayan ayrı bir WebDAV servisi yoktur.
+- DD-158: URL `/s/<id>/`; klasör başına hesap; Tailscale ve WAN için ayrı aç-kapa, RO-RW ve süre (DD-192) Dosyalar → Paylaşımlar'dan yönetilir. Düz parola saklanmaz. Paylaşımı kaldırmak dosyayı silmez; RW silme kalıcıdır. Tailscale ACL/grants otomatik değişmez; alıcı Konsol/SSH'ye erişmemeli. Yerel istemci uyumu ayrıca test edilir.
+- Dosya ve WebDAV servisleri root değil, `DOWNLOADS_UID` olarak çalışır; adı yoksa kurulum `master-downloads` sistem hesabını açar. Dosya servisi `SERVER_ROOT` altında, WebDAV yalnız tanımlı klasör sınırında çalışır.
+- Kökten çıkılmaz (`O_NOFOLLOW` ile dizin tanıtıcısından yürüme), üzerine yazılmaz (`renameat2` NOREPLACE). Silme `.cop` çöpüne taşır; kalıcı silme yalnız çöpten, boşaltma `onayla` ister.
+- Çöp (`.cop`) ve paylaşım kökü `/srv/downloads` dışındadır; indirme hesabının servisleri onları görmez, Paylaşım çöpü boş görür (DD-144, DD-152).
+
+### Port yayın politikası
+
+- Bütün web arayüzleri yalnız loopback adresinde yayınlanacak.
+- Örnek:
+  - uygulamaların adres satırları: `127.0.0.1:<havuz portu>` (`UYGULAMA_PORT_ILK`–`UYGULAMA_PORT_SON`, 62100–62899; DD-274, DD-275)
+  - WebDAV: `127.0.0.1:<webdav-port>`
+- Bir konteyner portu dışarıya yalnız Erişim → Adresler'deki satırıyla ulaşır (DD-275): adres (Caddy satırı: Tailscale adı, isteğe bağlı Tailscale portu, isteğe bağlı internet adı) ya da ham port (kapalı, Tailscale ya da internet). Dosyanın kendi host portları hiç kullanılmaz.
+- Public olarak yayınlanacak:
+  - WireGuard (host çekirdeği, ağ başına wg-quick@wgN): yalnız UDP
+  - İsteğe bağlı klasör WebDAV: DD-190 moduna göre WAN IPv4 TCP
+    `SHARE_HTTPS_PORT` veya eski onaylı HTTP için `SHARE_PORT`; yönetim yolu yok.
+  - DD-195 Konsol: yalnız açık HTTPS tercihiyle ve Konsol hesabı varken, aynı
+    `SHARE_HTTPS_PORT`; Tailscale adresiyle aynı `(konsol)` Caddy parçası ve oturum denetimi.
+  - Uygulamaların internet adları: yalnız operatör açınca, aynı `SHARE_HTTPS_PORT`; önlerinde Konsol girişi yoktur, uygulamanın kendi girişi korur.
+  - Uygulamaların internete açılan ham portları: yalnız operatörün ek onayıyla, `WAN_IPV4` üzerinde, konteyner korumasından geçerek (DD-217, DD-275).
+- Servis adları, portlar ve yollar tek bir yapılandırma kaynağından (`defaults.env`) yönetilmeli.
+
+### dnsmasq
+
+- Doğru yazım dnsmasq olmalıdır.
+- Yerel alan adı kurulum girdisinden okunur; panelde sonradan onaylanan alan adı tekrar kurulumda önceliklidir.
+- Örnek:
+  - `ayc`
+  - `ev`
+- Geçerli `LOCAL_DOMAIN` son eki tek DNS etiketidir. DD-190'daki genel HTTPS
+  alan adı ayrı bir tam addır; dnsmasq/yerel son ek kuralını değiştirmez.
+- Alan adı güvenli biçimde doğrulanacak.
+- dnsmasq yalnız DNS hizmeti verecek; DHCP hizmeti vermeyecek.
+- dnsmasq:
+  - loopback,
+  - Tailscale IPv4,
+  - gerekiyorsa Tailscale arabirimi
+
+  üzerinde kontrollü biçimde dinleyecek.
+- Bütün tanımlı servis isimleri Tailscale IPv4 adresine çözülecek:
+  - `panel.${LOCAL_DOMAIN}` (Konsol; temel, `SERVICE_NAMES`)
+  - `paylas.${LOCAL_DOMAIN}` (yerleşik WebDAV)
+  - uygulamaların adres satırlarındaki Tailscale adları, `<ad>.${LOCAL_DOMAIN}` (`modul-uygulama.conf`; Erişim → Yerel adlar'da kilitli görünür, satırından değişir)
+- `health` adı yoktur. Panel DNS adı kapatılamaz; özel alanın bilinmeyen/kapalı adları public DNS'e sızdırılmaz. Genel sorguların seçilen üst DNS'lere aktarımı panelden açılıp kapatılır.
+- Gerekli görülürse ek servis isimleri aynı açık listeye eklenebilir.
+- Wildcard davranışı varsayılan olmasın. Yalnız tanımlı servis isimleri çözülsün.
+
+### Tailscale Admin DNS
+
+- Betik Tailscale yönetim panelini otomatik değiştirmeyecek.
+- Kurulum sonunda kullanıcıya açıkça şu manuel işlem gösterilecek:
+  1. Tailscale Admin Console aç.
+  2. DNS bölümüne gir.
+  3. Custom nameserver ekle.
+  4. Nameserver IP olarak `TAILSCALE_IPV4` değerini gir.
+  5. “Restrict to domain” seçeneğini etkinleştir.
+  6. Kullanıcının seçtiği `LOCAL_DOMAIN` değerini gir.
+  7. Kaydet.
+
+### Caddy
+
+- DD-191/195/275: Erişim → Adresler'deki satırlar Konsol'u, Paylaşımlar'ı ve uygulamaların adres satırlarını
+  taşır. Panel satırında Tailscale hep açıktır; internet adı Konsol hesabı ve sayfada `onayla` yazılmasıyla açılır.
+  Genel site `import konsol internet` ile aynı yolları alır; arka uca Host `panel.<alan>` ve `X-Konsol-Kanal`
+  yalnız Caddy'den gider. Hesap internetten açılamaz (DD-205). `master_publications.py` satırları Caddy ve
+  dnsmasq dosyalarına çevirir. HTTPS adları tek TCP443 ve mevcut soket bütçelerini paylaşır. Klasörler eski
+  HTTP ile internete açıkken bir HTTPS adı açılamaz (v2-169). Tünel, `127.0.0.1` portu dışında upstream ve DNS
+  yazımı yoktur.
+- Caddy host üzerinde systemd servisi olarak çalışacak.
+- Yönetim ve yerel adlar yalnız `TAILSCALE_IPV4` üzerinde açıkça `http://`
+  kullanır; Tailscale WebDAV `SHARE_PORT` değişmez. WireGuard web dinleyicisi yoktur.
+- Genel HTTPS siteleri yalnız atanmış `WAN_IPV4:SHARE_HTTPS_PORT` dinler.
+  Alan adının DNS sonucu tam olarak bu IPv4 olmalı; AAAA veya proxy kabul edilmez.
+  Caddy Let's Encrypt sertifikasını TLS-ALPN/TCP 443 ile alır ve yeniler;
+  HTTP challenge kapalı, `auto_https disable_redirects`, WAN port 80 ve
+  Cloudflare/DNS API tokenı yoktur. `LOCAL_DOMAIN` ve özel DNS adları değişmez.
+- Örnek:
+  - `http://panel.${LOCAL_DOMAIN}`
+  - `http://<ad>.${LOCAL_DOMAIN}` (uygulamanın adres satırı; `CADDY_MODULES_DIR/uygulama-<uygulama>.caddy`), isteğe bağlı `http://<ts-ip>:<Tailscale portu>`
+  - `http://paylas.${LOCAL_DOMAIN}` + Infuse için `http://<ts-ip>:61010/s/<id>/` (yerleşik; `CADDY_MODULES_DIR/paylasim.caddy`)
+- Panel statik dosyaları Caddy'den, API'ler ve diğer servisler ilgili loopback upstream'inden sunulur. Sağlık kontrolü gerçek panel/API'lerle yapılır.
+- Örnek:
+  - `<ad>.${LOCAL_DOMAIN}` → `127.0.0.1:<havuz portu>`
+- Tüm upstream'ler loopback üzerinde düz HTTP'dir.
+
+### Firewall
+
+- Temel politika:
+  - established ve related trafik kabul edilecek,
+  - loopback kabul edilecek,
+  - `tailscale0` için yalnız SSH, Caddy, DNS, WebDAV, Self PeerAPI, kayıtlı WireGuard portları ve uygulamaların Tailscale portları izinlidir; diğer yeni host bağlantıları `ts-input` öncesinde düşürülür (DD-172), panelin onaylı izin/engel kuralları önceliklidir,
+  - public WAN üzerinden yalnız:
+    - SSH ve Tailscale UDP portu,
+    - WireGuard UDP portları kabul edilecek (uygulamaların ham portları MASTER-INPUT'ta değil, konteyner korumasında; DD-217, DD-275),
+    - DD-190/195/275 moduna göre WAN IPv4 HTTPS (WebDAV, Konsol, uygulama internet adları) veya eski onaylı HTTP WebDAV;
+      aynı HTTPS portunda tek izin, aynı bağlantı bütçesi. HTTP'de aktif WAN
+      klasörü şart, yapılandırılmış HTTPS'te yenileme için boşken de açık,
+      açıkça kapalı modda ikisi de yok. Bağlantı sınırları ve manuel engeller korunur,
+  - diğer istenmeyen inbound trafik reddedilecek veya drop edilecek.
+- Docker yoktur (DD-152): `DOCKER-USER`'a ve `MASTER-DOCKER`'a dair kural yazılmaz.
+- Proje yalnız kendi zincirlerini oluşturabilir:
+  - `MASTER-INPUT`
+  - `MASTER-SETTINGS` (onaylı panel kuralları; Tailscale kabulünden önce)
+  - `MASTER-FORWARD`, `MASTER-NAT` (WireGuard)
+  - konteyner koruması için tek nft tablosu `master_containers` (`KONTEYNER_NFT_TABLE`; DD-223, DD-224); Netavark'ın DNAT/SNAT'ına dokunulmaz
+  (tek isimler `defaults.env`’de.)
+- Firewall kuralları reboot sonrasında yeniden kurulmalı.
+- Bunu sağlamak için Tailscale sonrasında çalışan küçük bir systemd oneshot servisi kullanılmalı.
+- Servis her çalıştığında mevcut kuralları çoğaltmadan aynı sonucu üretmeli.
+
+### IP değişikliği
+
+- Tailscale IP değişirse bütün stack yeniden başlatılmamalı.
+- `watch-tailnet-addr` yok; yalnız `refresh-tailnet-config`
+  (açılıştan sonra ve gece 03–04 arası zamanlayıcı, DD-239/DD-240).
+- Küçük bir `refresh-tailnet-config` betiği:
+  - Güncel `TAILSCALE_IPV4` ve `TAILSCALE_IPV6` değerlerini okur.
+  - Önceki değerlerle karşılaştırır.
+  - Firewall kritik politikalarını denetler, gerekirse firewall servisini yeniden uygular. IP değişmese de bu kontrol ve sınırlı Caddy kurtarma yolu çalışır.
+  - Değişiklik varsa:
+    - `/etc/master-stack/state.env` dosyasını atomik günceller,
+    - yalnız Caddy’yi restart eder (dnsmasq `bind-dynamic`; firewall
+      arayüz adına bağlı).
+  - Uygulamaları yeniden başlatmaz; yalnız adresi değişen ham portların birimlerini konteyner çalışanı yeniden yazar ve o servisleri yeniden başlatır (`master_container_worker.py --adres-yenile`, DD-275).
+- Caddy drop-in `OnFailure=refresh-tailnet-config.service` (DD-87): stale
+  start fail’inde timer beklemeden aynı oneshot çalışır.
+- Bu helper küçük ve anlaşılır kalmalı. Büyük bir genel amaçlı reconcile motoruna dönüşmemeli.
+
+## İstenen mimari sonuç
+
+Tercih edilen yapı:
+
+- kısa bir `install.sh`
+- uygulama motoru (`Data/panel/`: YAML okuyucu, Compose ve Kubernetes okuyucuları, denetçi, üreteç, kayıtlar, kök çalışan); hiçbir uygulamaya ait dosya yok
+- bir dnsmasq template’i
+- bir Caddyfile template’i
+- bir Tailscale optimizasyon helper’ı
+- bir Tailnet IP refresh helper’ı
+- bir firewall helper’ı
+- en fazla birkaç küçük systemd unit
+
+Şunları ancak gerçek ve belgelenmiş bir ihtiyaç varsa koru:
+
+- canonical generation dizinleri
+- SHA manifest kopyaları
+- büyük reconcile motoru
+- restart cooldown veritabanı
+- çok katmanlı otomatik recovery
+- aynı kontrolün birden fazla yerde tekrar edilmesi
+- yüzlerce global boolean durum değişkeni
+
+Ana hedef en az satır sayısı değildir.
+
+Ana hedef:
+
+- tek doğruluk kaynağı,
+- açık veri akışı,
+- kolay denetlenebilirlik,
+- idempotent kurulum,
+- küçük arıza alanı,
+- davranışı anlaşılır güvenlik olmalıdır.
+
+## Dağıtım (DD-228)
+
+Taşınabilir `.command` ve exporter yoktur. Sunucuda tek satır:
+`curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo bash`.
+`kur.sh` `main` dalını (ya da `KUR_REF`) indirir; `main`'e giden her push bir sonraki kuruluma
+ulaşır, bu yüzden `main` her zaman kurulabilir kalmalıdır. Repo herkese açıktır: sunucu IP'si,
+gerçek alan adı, kimlik bilgisi ya da kişisel yol commit edilmez. Proje adı Obhut'tur (DD-255);
+sunucudaki yollar, birimler ve `master-*` komutları eski adlarını korur.

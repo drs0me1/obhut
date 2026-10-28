@@ -1,0 +1,850 @@
+#!/usr/bin/env bash
+# WireGuard peer yönetimi (DD-124). Sunucuda root olarak çalışır; Mac'teki
+# wireguard.command SSH ile çağırır. Anahtarlar burada `wg genkey` / `wg pubkey`
+# / `wg genpsk` ile üretilir, istemci profili root'a özel WG_CLIENTS_DIR'de
+# durur. wg0.conf'a "# peer: <ad>" ile başlayan bir [Peer] bloğu eklenir ya da
+# çıkarılır ve `wg syncconf` ile kopmadan uygulanır (DD-123).
+#
+#   master-wg version
+#   master-wg list                        ad, IPv4, son el sıkışma, rx, tx, profil
+#   master-wg info                        list + IPv6, DNS, keepalive, MTU (panel; gizli alan yok)
+#   master-wg add AD DNS KEEPALIVE MTU
+#   master-wg remove AD
+#   master-wg profile AD                  istemci profili (stdout)
+#   master-wg qr AD                       profilin QR kodu (terminal)
+#   master-wg png AD                      profilin QR kodu PNG olarak (stdout, dosyaya/boruya)
+#   master-wg dns AD DNS                  profildeki DNS satırı; anahtarlar aynı
+#   master-wg keepalive AD SANİYE         profildeki PersistentKeepalive (0 = kapalı)
+#   master-wg peer AD ac|kapat            peer'ı arayüzden düşürür ya da geri koyar
+#   master-wg reset --onay                yeni sunucu anahtarı, bütün peer'lar silinir
+#
+# Ağlar (DD-136, DD-143): bütün ağlar kayıt dosyasında yaşar, kurulumun yarattığı
+# ayrıcalıklı bir ağ yoktur. Sunucu kurulduğunda hiç ağ olmaz; ilkini de Konsol
+# (ya da bu komut) oluşturur. Tek ağ varsa peer komutları onu seçer; birden çok
+# ağ varsa "--if wgN" gerekir.
+#   master-wg nets                        ağlar: arayüz port erişim s4 n4 s6 n6 dns etiket aktif peer
+#   master-wg net-add PORT DNS ETİKET          yeni ağ (wg0-wg9); yalnız internet
+#   master-wg net-remove wgN --onay       ağı, anahtarını ve bütün peer'larını siler
+#   master-wg --if wgN net ac|kapat       ağı (ve arayüzdeki bütün peer'ları) açar/kapatır
+#   master-wg --if wgN net-settings DNS REVİZYON [ETİKET] anahtarları değiştirmeden varsayılan DNS (ve ağın adı, DD-265)
+#
+# WireGuard bütünüyle (DD-229, DD-271): Konsol'un Kapat/Aç'ı bu iki komutu çalıştırır.
+#   master-wg durdur                      açık ağları WG_STOPPED_FILE'a yazar, hepsini kapatır, duvarı yeniden uygular
+#   master-wg baslat                      durdurmadan önce açık olan ağlar (liste yoksa kayıttakilerin hepsi): birimler, duvar, arayüzler
+#
+# The settings worker's caller mode (DD-275). Konsol's settings transaction runs this tool for the
+# planned WireGuard actions (baslat, durdur, net-add, net-remove, net ac|kapat, reset) while it holds the
+# installer's lock and owns the pending change. Two environment variables, set together or not at all:
+#   OBHUT_KILIT_FD=<fd>      an inherited descriptor of RUNTIME_DIR/install.lock that the caller has
+#                            locked. The tool checks that it is that file (device and inode), that the
+#                            lock is taken (a fresh open of the file cannot lock it) and that `flock -n`
+#                            on the descriptor succeeds (only the holder's descriptor can), and then takes
+#                            no lock of its own: a second open of install.lock would wait for the caller.
+#   OBHUT_AYAR_ISLEMI=<id>   the pending change's id (32 hex). The refusal while a Konsol setting is
+#                            pending is skipped only when SETTINGS_PENDING_FILE holds this id in phase
+#                            "applying" or "rollback" (the worker applying or undoing its own change,
+#                            both under the lock it holds); any other id or phase is refused as without
+#                            the mode.
+# One variable without the other, or a value of another form, is refused. Without them every command
+# works as before.
+#
+# While a Konsol setting is pending, every verb that changes WireGuard's state or the files the settings
+# transaction snapshots and restores (WG_NETWORKS_FILE, WG_STOPPED_FILE) is refused: net-add, net-remove,
+# net ac|kapat, net-settings, reset, durdur and baslat. The peer verbs (add, remove, dns, keepalive,
+# peer ac|kapat) stay open: they write only a network's wgN.conf peer blocks and its device profiles,
+# which no plan snapshots, and they never start a network a plan closed (write_and_apply restarts only
+# an enabled unit).
+set -Eeuo pipefail
+umask 077
+
+STATE_FILE="${STATE_FILE:-/etc/master-stack/state.env}"
+
+die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
+
+[[ -r "$STATE_FILE" ]] ||
+    die "state.env okunamıyor ($STATE_FILE): kurulum yapılmamış ya da root değilsiniz"
+# shellcheck source=/dev/null
+source "$STATE_FILE"
+# DD-271: WireGuard'ın anahtarları tabanın defaults.env'indedir; kurulum state.env'e yazar. Uç nokta
+# state'teki WAN_IPV4'tür.
+: "${V2_VERSION:?}"
+: "${WG_CONF_DIR:?}"
+: "${WG_NETWORKS_FILE:?}"
+: "${WG_STOPPED_FILE:?}"
+: "${WG_CLIENTS_DIR:?}"
+: "${WG_ADDR_BASE4:?}"
+: "${WG_ADDR_BASE6:?}"
+: "${WAN_IPV4:?}"
+: "${WG_CLIENT_ALLOWED_IPS:?}"
+: "${RUNTIME_DIR:?}"
+
+KEY_RE='^[A-Za-z0-9+/]{43}=$'
+NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$'
+NET_RE='^wg[0-9]$'
+# Kapatılan peer (DD-140): bloğun satırları dosyada kalır, başlarına bu önek gelir.
+# Yorum satırını ne `wg-quick up` ne de `wg-quick strip` görür; peer arayüzden düşer
+# ve yeniden başlatmadan sonra da kapalı kalır. Adresi başkasına verilmez.
+OFF='#kapali#'
+# state.env'deki WG_* değerleri yalnız varsayılandır (adres tabanı; ilk ağın önerilen portunu
+# Konsol verir). Bir ağ seçilince WG_* o ağın kayıt satırından doldurulur.
+BASE_CONF_DIR="$WG_CONF_DIR"
+BASE_CLIENTS_DIR="$WG_CLIENTS_DIR"
+NETWORKS_FILE="$WG_NETWORKS_FILE"
+WG_INTERFACE=""
+WG_CONF_FILE=""
+WG_CLIENTS_DIR=""
+
+valid_name() {
+    [[ "$1" =~ $NAME_RE ]] || die "geçersiz peer adı '$1' (harf, rakam, . _ -; en çok 32)"
+}
+
+warn() { printf 'UYARI: %s\n' "$*" >&2; }
+
+# Kurulumla aynı kilit: ikisi aynı anda wg0.conf yazamaz.
+take_lock() {
+    mkdir -p -- "$RUNTIME_DIR"
+    if caller_mode; then
+        held_lock
+        return 0
+    fi
+    exec 9>"$RUNTIME_DIR/install.lock"
+    flock -w 10 9 || die "kurulum ya da başka bir peer işlemi sürüyor; biraz sonra yeniden deneyin"
+}
+
+# DD-275: the settings worker's caller mode (see the header); false without it.
+caller_mode() {
+    [[ -n "${OBHUT_KILIT_FD:-}${OBHUT_AYAR_ISLEMI:-}" ]] || return 1
+    [[ "${OBHUT_KILIT_FD:-}" =~ ^[1-9][0-9]{0,3}$ && "$OBHUT_KILIT_FD" -ge 3 &&
+        "${OBHUT_AYAR_ISLEMI:-}" =~ ^[a-f0-9]{32}$ ]] ||
+        die "OBHUT_KILIT_FD ve OBHUT_AYAR_ISLEMI birlikte ve geçerli biçimde verilmeli"
+}
+
+# The caller's install.lock: that file, locked, and held by this very descriptor. Python compares the
+# device and inode and tries a fresh open of the file, which must find the lock taken; flock(1) on the
+# descriptor then succeeds only for the holder's open file description.
+held_lock() {
+    local fd="$OBHUT_KILIT_FD" lock="$RUNTIME_DIR/install.lock" rc=0
+    python3 -c 'import fcntl, os, stat, sys
+fd, path = int(sys.argv[1]), sys.argv[2]
+try:
+    held, lock = os.fstat(fd), os.lstat(path)
+except OSError:
+    sys.exit(1)
+if not stat.S_ISREG(lock.st_mode) or (held.st_dev, held.st_ino) != (lock.st_dev, lock.st_ino):
+    sys.exit(1)
+with open(path, "rb") as other:
+    try:
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit(0)
+sys.exit(2)' "$fd" "$lock" || rc=$?
+    case "$rc" in
+        0) ;;
+        2) die "OBHUT_KILIT_FD=$fd kilitli değil; çağıran kurulum kilidini tutmalı" ;;
+        *) die "OBHUT_KILIT_FD=$fd kurulum kilidinin ($lock) tanıtıcısı değil" ;;
+    esac
+    flock -n "$fd" || die "OBHUT_KILIT_FD=$fd kurulum kilidini tutan tanıtıcı değil"
+}
+
+server_private() {
+    local key
+    key="$(awk -F' = ' '/^# peer: / || /^\[Peer\]$/ {exit} $1 == "PrivateKey" {print $2; exit}' "$WG_CONF_FILE")"
+    [[ "$key" =~ $KEY_RE ]] || die "$WG_CONF_FILE içinde sunucu anahtarı yok; önce kurulumu çalıştırın"
+    printf '%s' "$key"
+}
+
+# "1.1.1.1 , 2606:4700::1111" → "1.1.1.1, 2606:4700::1111"; yalnız IP adresleri.
+normalize_dns() {
+    local token tokens=() out=""
+    IFS=',' read -r -a tokens <<<"$1"
+    for token in "${tokens[@]}"; do
+        token="${token//[[:space:]]/}"
+        [[ -n "$token" ]] || continue
+        [[ "$token" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ || "$token" =~ ^[0-9A-Fa-f:]*:[0-9A-Fa-f:]*$ ]] ||
+            die "DNS virgülle ayrılmış IP adresleri olmalı ('$token')"
+        out+="${out:+, }$token"
+    done
+    [[ -n "$out" ]] || die "en az bir DNS adresi gerekli"
+    printf '%s' "$out"
+}
+
+# DD-136: panelde eklenen bir ağın kayıt satırı (sekmeyle: arayüz port erişim s4 n4 s6 n6 dns etiket).
+net_line() {
+    [[ -n "$NETWORKS_FILE" && -f "$NETWORKS_FILE" ]] || return 1
+    awk -F'\t' -v i="$1" '$1 == i {print; f = 1; exit} END {exit !f}' "$NETWORKS_FILE"
+}
+
+select_net() {
+    local iface="$1" line port _policy s4 n4 s6 n6 rest
+    [[ "$iface" =~ $NET_RE ]] || die "geçersiz arayüz '$iface' (wg0-wg9)"
+    line="$(net_line "$iface")" || die "'$iface' diye bir WireGuard ağı yok"
+    IFS=$'\t' read -r _ port _policy s4 n4 s6 n6 rest <<<"$line"
+    WG_INTERFACE="$iface"
+    WG_PUBLIC_PORT="$port"
+    WG_SERVER_IPV4="$s4"
+    WG_SUBNET4="$n4"
+    WG_SERVER_IPV6="$s6"
+    WG_SUBNET6="$n6"
+    WG_CONF_FILE="$BASE_CONF_DIR/${iface}.conf"
+    WG_CLIENTS_DIR="$BASE_CLIENTS_DIR-${iface}"
+}
+
+net_names() {
+    [[ -n "$NETWORKS_FILE" && -f "$NETWORKS_FILE" ]] || return 0
+    awk -F'\t' '$1 ~ /^wg[0-9]$/ {print $1}' "$NETWORKS_FILE"
+}
+
+# Peer komutları ağ ister: tek ağ varsa o seçilir, yoksa --if beklenir.
+select_only_net() {
+    # mapfile bash 4 ister; testler macOS'ta bash 3.2 ile koşar (DD-126).
+    local name names=""
+    while IFS= read -r name; do
+        [[ -n "$name" ]] || continue
+        names="${names}${names:+ }$name"
+    done < <(net_names)
+    [[ -n "$names" ]] ||
+        die "sunucuda WireGuard ağı yok; Konsol'da WireGuard → Aç ile oluşturun"
+    [[ "$names" != *" "* ]] ||
+        die "birden çok ağ var ($names); ağı seçin: master-wg --if wgN KOMUT"
+    select_net "$names"
+}
+
+unit_active() {
+    systemctl is-active --quiet "$1" 2>/dev/null && printf 1 || printf 0
+}
+
+peer_count() {
+    local n
+    n="$(grep -c -e '^\[Peer\]$' -e "^${OFF}\[Peer\]\$" "$1" 2>/dev/null || true)"
+    printf '%s' "${n:-0}"
+}
+
+# Satır: arayüz port sabit-inet s4 n4 s6 n6 dns etiket aktif peer. Kayıt boşsa çıktı da boştur
+# (DD-143: kurulum ağ yaratmaz; ilk ağı Konsol oluşturur).
+cmd_nets() {
+    local iface line
+    while IFS= read -r iface; do
+        line="$(net_line "$iface")"
+        printf '%s\t%s\t%s\n' "$line" "$(unit_active "wg-quick@${iface}.service")" \
+            "$(peer_count "$BASE_CONF_DIR/${iface}.conf")"
+    done < <(net_names)
+}
+
+registry_write() { # içerik stdin'den, atomik
+    local tmp
+    tmp="$(mktemp "${NETWORKS_FILE%/*}/.wg-networks-XXXXXX")"
+    cat >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$NETWORKS_FILE"
+}
+
+registry_drop() {
+    [[ -f "$NETWORKS_FILE" ]] || return 0
+    awk -F'\t' -v i="$1" '$1 != i' "$NETWORKS_FILE" | registry_write
+}
+
+# Panelde eklenen ağın bütün izleri; hata yolunda ve net-remove'da aynı sıra.
+net_teardown() {
+    local iface="$1"
+    systemctl disable --now "wg-quick@${iface}.service" >/dev/null 2>&1 || true
+    rm -f -- "$BASE_CONF_DIR/${iface}.conf"
+    rm -rf -- "${BASE_CLIENTS_DIR:?}-${iface}"
+    registry_drop "$iface"
+}
+
+# DD-136: yeni WireGuard ağı. Sıradaki boş wgN seçilir; 10.8.N.0/24 ve …::N:0/112.
+# Order: files and registry → the unit enabled (the firewall admits only enabled networks) → the firewall
+# (port, forwarding and NAT) → the unit started (its ExecStartPre checks the firewall). A failing step
+# removes every trace of the network and puts the firewall back.
+# DD-229: WireGuard bütünüyle kapalıyken ağ açılmaz ve eklenmez; önce Aç.
+not_stopped() {
+    [[ ! -e "$WG_STOPPED_FILE" ]] ||
+        die "WireGuard kapalı; önce Konsol → WireGuard'dan açın"
+}
+
+cmd_net_add() {
+    local port="$1" dns label="$3" id="" iface="" p s4 n4 s6 n6 base4 base6 priv tmp
+    [[ "$port" =~ ^[1-9][0-9]{3,4}$ && "$port" -ge 1024 && "$port" -le 65535 ]] ||
+        die "UDP portu 1024-65535 arasında olmalı"
+    dns="$(normalize_dns "$2")"
+    check_label "$label"
+
+    take_lock
+    no_pending_settings
+    not_stopped
+    # Tabanın portları (protokolü ne olursa olsun) ve kayıttaki ağların portları ayrılmıştır.
+    for p in "ssh:${SSH_PUBLIC_PORT:-}" "tailscale:${TAILSCALE_UDP_PORT:-}" \
+        "dns:${DNS_PORT:-53}" "http:${CADDY_HTTP_PORT:-80}" \
+        "Dosyalar:${FILES_PANEL_PORT:-}" "Paylaşım:${SHARE_PORT:-}" \
+        $([[ ! -f "$NETWORKS_FILE" ]] || awk -F'\t' '{print $1 ":" $2}' "$NETWORKS_FILE"); do
+        [[ "${p#*:}" != "$port" ]] || die "UDP $port kullanılıyor (${p%%:*}); başka bir port seçin"
+    done
+    ! ss -Hlun "sport = :$port" 2>/dev/null | grep -q . || die "UDP $port sunucuda başka bir program tarafından dinleniyor"
+    for p in $(seq 0 "${WG_NETWORKS_MAX:-9}"); do
+        net_line "wg$p" >/dev/null || [[ -e "$BASE_CONF_DIR/wg$p.conf" ]] || { id="$p"; break; }
+    done
+    [[ -n "$id" ]] || die "en çok $((${WG_NETWORKS_MAX:-9} + 1)) ağ oluşturulabilir"
+    iface="wg$id"
+    base4="$WG_ADDR_BASE4"
+    base6="$WG_ADDR_BASE6::"
+    s4="$base4.$id.1" n4="$base4.$id.0/24"
+    s6="$base6$id:1" n6="$base6$id:0/112"
+
+    priv="$(wg genkey)" || die "anahtar üretilemedi"
+    [[ "$priv" =~ $KEY_RE ]] || die "wg beklenmeyen biçimde anahtar üretti"
+    install -d -m 0700 "$BASE_CONF_DIR" "$BASE_CLIENTS_DIR-$iface"
+    tmp="$(mktemp "$BASE_CONF_DIR/.wg-XXXXXX")"
+    printf '# master-stack — panelde eklenen ağ (DD-136); peer'"'"'ları master-wg yönetir.\n[Interface]\nAddress = %s/24, %s/112\nListenPort = %s\nMTU = %s\nPrivateKey = %s\n' \
+        "$s4" "$s6" "$port" "${WG_MTU:-1420}" "$priv" >"$tmp"
+    priv=""
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$BASE_CONF_DIR/$iface.conf"
+    { [[ ! -f "$NETWORKS_FILE" ]] || cat -- "$NETWORKS_FILE"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$iface" "$port" inet "$s4" "$n4" "$s6" "$n6" "$dns" "$label"
+    } | registry_write
+    if ! systemctl enable --quiet "wg-quick@$iface.service" >/dev/null 2>&1; then
+        net_teardown "$iface"; systemctl restart master-firewall.service || true
+        die "$iface başlatılamadı; ağ oluşturulmadı"
+    fi
+    if ! systemctl restart master-firewall.service; then
+        net_teardown "$iface"; systemctl restart master-firewall.service || true
+        die "güvenlik duvarı yeni ağla uygulanamadı; ağ oluşturulmadı"
+    fi
+    if ! systemctl start "wg-quick@$iface.service" >/dev/null 2>&1; then
+        net_teardown "$iface"; systemctl restart master-firewall.service || true
+        die "$iface başlatılamadı; ağ oluşturulmadı"
+    fi
+    printf '%s\t%s\n' "$iface" "$port"
+}
+
+cmd_net_remove() {
+    local iface="$1" peers
+    [[ "$iface" =~ $NET_RE ]] || die "geçersiz arayüz '$iface' (wg0-wg9)"
+    [[ "${2:-}" == "--onay" ]] || die "kullanım: master-wg net-remove $iface --onay (ağ, anahtarı ve bütün peer'ları silinir)"
+    take_lock
+    no_pending_settings
+    net_line "$iface" >/dev/null || die "'$iface' diye bir WireGuard ağı yok"
+    peers="$(peer_count "$BASE_CONF_DIR/$iface.conf")"
+    net_teardown "$iface"
+    [[ "$(unit_active "wg-quick@$iface.service")" == 0 ]] || die "$iface durdurulamadı"
+    systemctl restart master-firewall.service ||
+        die "$iface kaldırıldı ama güvenlik duvarı yeniden uygulanamadı; 'systemctl status master-firewall' ile denetleyin"
+    printf '%s\t%s\n' "$iface" "$peers"
+}
+
+# DD-177: DNS only suggests defaults for future peers; keys/profiles stay untouched.
+# Ağın adı (etiket): ağ eklerken ve ad değişirken aynı kural; kayıtta sekmeyle ayrıldığı için denetim karakteri yok.
+check_label() {
+    [[ "$1" != *[[:cntrl:]]* && "$1" != " "* && "$1" != *" " ]] ||
+        die "etiket denetim karakteri ya da baş/son boşluk içeremez"
+    [[ "$(printf '%s' "$1" | wc -c)" -le 64 ]] || die "etiket çok uzun (en çok 64 bayt)"
+}
+
+cmd_net_settings() {
+    local dns expected="$2" line revision label="${3-}" relabel="$#"
+    [[ "$expected" =~ ^[a-f0-9]{64}$ ]] || die "geçerli ağ revizyonu gerekli; sayfayı yenileyin"
+    [[ "${#1}" -le 512 && "$1" != *[[:cntrl:]]* ]] || die "geçersiz DNS listesi"
+    dns="$(normalize_dns "$1")"
+    python3 -c 'import ipaddress,sys
+ips=sys.argv[1].split(", ")
+assert 1 <= len(ips) <= 8
+for ip in ips: ipaddress.ip_address(ip)' "$dns" 2>/dev/null || die "DNS için en fazla 8 geçerli IPv4/IPv6 adresi yazın"
+    [[ "$relabel" -lt 3 ]] || check_label "$label"
+    take_lock
+    no_pending_settings
+    select_net "$WG_INTERFACE"
+    [[ -f "$WG_CONF_FILE" ]] || die "WireGuard yapılandırması bulunamadı"
+    line="$(net_line "$WG_INTERFACE")"
+    revision="$(printf '%s' "$line" | sha256sum | awk '{print $1}')"
+    [[ "$revision" == "$expected" ]] || die "Ağ ayarları değişmiş; pencereyi kapatıp yeniden açın"
+    [[ "$(cut -f3 <<<"$line")" == inet ]] || die "Ağ kaydı geçersiz; kurulumu güncelleyin"
+    if [[ "$relabel" -lt 3 ]]; then
+        label="$(cut -f9 <<<"$line")"
+    fi
+    # The name goes through the environment: awk -v would read backslashes in it as escapes.
+    WG_ETIKET="$label" awk -F'\t' -v OFS='\t' -v i="$WG_INTERFACE" -v d="$dns" \
+        '$1 == i {$8=d; $9=ENVIRON["WG_ETIKET"]} {print}' "$NETWORKS_FILE" | registry_write
+    printf '%s\t%s\t%s\n' "$WG_INTERFACE" "$dns" "$label"
+}
+
+peer_exists() {
+    grep -qxF "# peer: $1" "$WG_CONF_FILE"
+}
+
+# İçerik wg0.conf'a atomik yazılır ve çalışan arayüze uygulanır. Uygulama
+# başarısız olursa önceki dosya geri konur.
+write_and_apply() {
+    local content="$1" previous stripped tmp
+    previous="$(cat -- "$WG_CONF_FILE")"
+    tmp="$(mktemp "${WG_CONF_FILE%/*}/.wg-XXXXXX")"
+    printf '%s\n' "$content" >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$WG_CONF_FILE"
+    if ! systemctl is-active --quiet "wg-quick@${WG_INTERFACE}.service"; then
+        # Ağ Konsol'dan kapatıldıysa (birim devre dışı) dosya yazılır, arayüz açılmaz.
+        systemctl is-enabled --quiet "wg-quick@${WG_INTERFACE}.service" || return 0
+        systemctl restart "wg-quick@${WG_INTERFACE}.service" && return 0
+    else
+        # Boş `wg-quick strip` syncconf'a verilirse anahtar ve bütün peer'lar
+        # silinirdi (DD-123).
+        stripped="$(wg-quick strip "$WG_INTERFACE" 2>/dev/null || true)"
+        if [[ "$stripped" == *"PrivateKey = "* ]] &&
+            wg syncconf "$WG_INTERFACE" <(printf '%s\n' "$stripped"); then
+            return 0
+        fi
+    fi
+    tmp="$(mktemp "${WG_CONF_FILE%/*}/.wg-XXXXXX")"
+    printf '%s\n' "$previous" >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$WG_CONF_FILE"
+    return 1
+}
+
+# list: ad, IPv4, el sıkışma, rx, tx, profil (wireguard.command bu altı alanı okur).
+# info (DD-133, panel): aynı alanlar + IPv6, DNS, keepalive, MTU; anahtar yok.
+cmd_list() {
+    local mode="${1:-list}" dump line name="" pub="" ips="" hs rx tx profile on=1
+    dump="$(wg show "$WG_INTERFACE" dump 2>/dev/null | tail -n +2 || true)"
+    # `line` döngünün değişkeni; burada ayrı değişken kullanılır.
+    emit() {
+        local row v6="" extra="" f
+        [[ -n "$pub" ]] || return 0
+        hs=0 rx=0 tx=0
+        row="$(awk -F'\t' -v k="$pub" '$1 == k {print $5 "\t" $6 "\t" $7}' <<<"$dump")"
+        [[ -z "$row" ]] || IFS=$'\t' read -r hs rx tx <<<"$row"
+        profile=yok
+        f="$WG_CLIENTS_DIR/${name}.conf"
+        [[ ! -f "$f" ]] || profile=var
+        if [[ "$mode" == list ]]; then
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${name:-?}" "${ips%%/*}" "$hs" "$rx" "$tx" "$profile"
+            return 0
+        fi
+        [[ "$ips" != *", "* ]] || { v6="${ips#*, }"; v6="${v6%%/*}"; }
+        # Profildeki DNS, keepalive (yoksa 0) ve MTU; boş alanlar sekmede kaybolmasın diye awk yazar.
+        [[ ! -f "$f" ]] || extra="$(awk -F' = ' '/^\[/ {sec = $0}
+            sec == "[Interface]" && $1 == "DNS" {d = $2}
+            sec == "[Interface]" && $1 == "MTU" {m = $2}
+            sec == "[Peer]" && $1 == "PersistentKeepalive" {k = $2}
+            END {printf "%s\t%s\t%s", d, (k == "" ? 0 : k), m}' "$f")"
+        [[ -n "$extra" ]] || extra=$'\t\t'
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${name:-?}" "${ips%%/*}" "$v6" "$hs" "$rx" "$tx" "$profile" "$extra" "$on"
+    }
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        case "$line" in
+            "# peer: "*) emit; name="${line#\# peer: }" pub="" ips="" on=1 ;;
+            "[Peer]") [[ -z "$pub" ]] || { emit; name="" on=1; }; pub="" ips="" ;;
+            "PublicKey = "*) pub="${line#PublicKey = }" ;;
+            "AllowedIPs = "*) ips="${line#AllowedIPs = }" ;;
+            "${OFF}PublicKey = "*) pub="${line#"${OFF}"PublicKey = }" on=0 ;;
+            "${OFF}AllowedIPs = "*) ips="${line#"${OFF}"AllowedIPs = }" on=0 ;;
+        esac
+    done <"$WG_CONF_FILE"
+    emit
+}
+
+cmd_add() {
+    local name="$1" dns="$2" keepalive="$3" mtu="$4" dns_out
+    local used4 used6 host v4="" v6="" prefix4 prefix6 priv pub psk spub content profile tmp
+    valid_name "$name"
+    dns_out="$(normalize_dns "$dns")"
+    [[ "$keepalive" =~ ^(0|[1-9][0-9]{0,4})$ && "$keepalive" -le 65535 ]] ||
+        die "keepalive 0-65535 arasında bir sayı olmalı (0 = kapalı)"
+    [[ "$mtu" =~ ^[0-9]{4}$ && "$mtu" -ge 1280 && "$mtu" -le 1500 ]] ||
+        die "MTU 1280-1500 arasında olmalı"
+    [[ "${WG_SUBNET4#*/}" == 24 && "${WG_SUBNET6#*/}" == 112 ]] ||
+        die "adres dağıtımı /24 ve /112 alt ağ bekler ($WG_SUBNET4, $WG_SUBNET6)"
+
+    take_lock
+    [[ -f "$WG_CONF_FILE" ]] || die "$WG_CONF_FILE yok; önce kurulumu çalıştırın"
+    ! peer_exists "$name" || die "'$name' adında bir peer zaten var"
+    [[ ! -e "$WG_CLIENTS_DIR/${name}.conf" ]] || die "'$name' için profil zaten var: $WG_CLIENTS_DIR/${name}.conf"
+    spub="$(server_private | wg pubkey)" || die "sunucu public key'i türetilemedi"
+
+    # Sıradaki boş adres: .2'den başlar; sunucu ve kullanılanlar atlanır.
+    used4=" $(awk -F' = ' -v p="$OFF" '$1 == "AllowedIPs" || $1 == p "AllowedIPs" {print $2}' "$WG_CONF_FILE" | tr ',' '\n' |
+        awk '{gsub(/ /, ""); sub(/\/.*/, ""); print}' | tr '\n' ' ')"
+    prefix4="${WG_SERVER_IPV4%.*}"
+    prefix6="${WG_SERVER_IPV6%:*}"
+    for host in $(seq 2 254); do
+        [[ "$prefix4.$host" != "$WG_SERVER_IPV4" && "$used4" != *" $prefix4.$host "* ]] || continue
+        used6="$prefix6:$(printf '%x' "$host")"
+        [[ "$used6" != "$WG_SERVER_IPV6" && "$used4" != *" $used6 "* ]] || continue
+        v4="$prefix4.$host"
+        v6="$used6"
+        break
+    done
+    [[ -n "$v4" ]] || die "$WG_SUBNET4 içinde boş adres kalmadı"
+
+    priv="$(wg genkey)" || die "anahtar üretilemedi"
+    pub="$(printf '%s' "$priv" | wg pubkey)" || die "public key türetilemedi"
+    psk="$(wg genpsk)" || die "PSK üretilemedi"
+    [[ "$priv" =~ $KEY_RE && "$pub" =~ $KEY_RE && "$psk" =~ $KEY_RE ]] ||
+        die "wg beklenmeyen biçimde anahtar üretti"
+
+    profile="[Interface]
+PrivateKey = ${priv}
+Address = ${v4}/32, ${v6}/128
+MTU = ${mtu}
+DNS = ${dns_out}
+
+[Peer]
+PublicKey = ${spub}
+PresharedKey = ${psk}
+AllowedIPs = ${WG_CLIENT_ALLOWED_IPS}
+PersistentKeepalive = ${keepalive}
+Endpoint = ${WAN_IPV4}:${WG_PUBLIC_PORT}"
+    content="$(cat -- "$WG_CONF_FILE")
+
+# peer: ${name}
+[Peer]
+PublicKey = ${pub}
+PresharedKey = ${psk}
+AllowedIPs = ${v4}/32, ${v6}/128"
+    priv=""
+
+    install -d -m 0700 "$WG_CLIENTS_DIR"
+    tmp="$(mktemp "$WG_CLIENTS_DIR/.peer-XXXXXX")"
+    printf '%s\n' "$profile" >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$WG_CLIENTS_DIR/${name}.conf"
+    profile=""
+    if ! write_and_apply "$content"; then
+        rm -f -- "$WG_CLIENTS_DIR/${name}.conf"
+        die "peer uygulanamadı; ${WG_INTERFACE}.conf geri alındı"
+    fi
+    printf '%s\t%s\n' "$name" "$v4"
+}
+
+cmd_remove() {
+    local name="$1" content
+    valid_name "$name"
+    take_lock
+    peer_exists "$name" || die "'$name' adında bir peer yok"
+    # Blok "# peer: <ad>" satırından bir sonraki "# peer: " ya da [Peer]
+    # satırına kadar; aradaki boş satırlar tek boşluğa iner.
+    content="$(awk -v t="# peer: $name" '
+        $0 == t { skip = 1; head = 1; next }
+        skip && head && $0 == "[Peer]" { head = 0; next }
+        skip && (/^# peer: / || $0 == "[Peer]") { skip = 0 }
+        !skip { print }
+    ' "$WG_CONF_FILE" | cat -s)"
+    write_and_apply "$content" || die "peer kaldırılamadı; ${WG_INTERFACE}.conf geri alındı"
+    rm -f -- "$WG_CLIENTS_DIR/${name}.conf"
+    printf '%s\n' "$name"
+}
+
+# DNS yalnız istemci profilinin ayarıdır: wg0.conf ve çalışan arayüz değişmez,
+# anahtarlar aynı kalır. Cihaz yeni profili (QR) içe aktarınca geçerli olur.
+cmd_dns() {
+    local name="$1" dns profile tmp
+    valid_name "$name"
+    dns="$(normalize_dns "$2")"
+    take_lock
+    peer_exists "$name" || die "'$name' adında bir peer yok"
+    profile="$WG_CLIENTS_DIR/${name}.conf"
+    [[ -f "$profile" ]] || die "'$name' için sunucuda profil yok"
+    grep -q '^DNS = ' "$profile" || die "'$name' profilinde DNS satırı yok"
+    tmp="$(mktemp "$WG_CLIENTS_DIR/.peer-XXXXXX")"
+    awk -v dns="$dns" '/^\[/ {sec = $0} sec == "[Interface]" && index($0, "DNS = ") == 1 {print "DNS = " dns; next} {print}' \
+        "$profile" >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$profile"
+    printf '%s\t%s\n' "$name" "$dns"
+}
+
+# Keepalive de DNS gibi yalnız istemci profilinin ayarıdır: sunucu tarafı ve
+# anahtarlar değişmez. Cihaz yeni profili içe aktarınca geçerli olur.
+cmd_keepalive() {
+    local name="$1" value="$2" profile tmp
+    valid_name "$name"
+    [[ "$value" =~ ^(0|[1-9][0-9]{0,4})$ && "$value" -le 65535 ]] ||
+        die "keepalive 0-65535 arasında bir sayı olmalı (0 = kapalı)"
+    take_lock
+    peer_exists "$name" || die "'$name' adında bir peer yok"
+    profile="$WG_CLIENTS_DIR/${name}.conf"
+    [[ -f "$profile" ]] || die "'$name' için sunucuda profil yok"
+    grep -q '^PersistentKeepalive = ' "$profile" || die "'$name' profilinde PersistentKeepalive satırı yok"
+    tmp="$(mktemp "$WG_CLIENTS_DIR/.peer-XXXXXX")"
+    awk -v v="$value" '/^\[/ {sec = $0}
+        sec == "[Peer]" && index($0, "PersistentKeepalive = ") == 1 {print "PersistentKeepalive = " v; next} {print}' \
+        "$profile" >"$tmp"
+    chmod 0600 "$tmp"
+    mv -f -- "$tmp" "$profile"
+    printf '%s\t%s\n' "$name" "$value"
+}
+
+# DD-140: peer'ı arayüzden düşürür (kapat) ya da geri koyar (ac). Blok dosyada
+# kalır, satırları yorumlanır: anahtar, PSK ve adres korunur, cihazın profili
+# değişmez. Kapalı peer yeniden başlatmadan sonra da kapalıdır.
+cmd_peer() {
+    local name="$1" want="$2" content
+    valid_name "$name"
+    [[ "$want" == ac || "$want" == kapat ]] || die "kullanım: master-wg peer AD ac|kapat"
+    take_lock
+    peer_exists "$name" || die "'$name' adında bir peer yok"
+    if [[ "$want" == kapat ]]; then
+        content="$(awk -v t="# peer: $name" -v p="$OFF" '
+            $0 == t { blk = 1; head = 1; print; next }
+            blk && head && $0 == "[Peer]" { head = 0; print p $0; next }
+            blk && (/^# peer: / || $0 == "[Peer]") { blk = 0 }
+            blk && $0 != "" && index($0, p) != 1 { print p $0; next }
+            { print }
+        ' "$WG_CONF_FILE")"
+    else
+        content="$(awk -v t="# peer: $name" -v p="$OFF" '
+            $0 == t { blk = 1; print; next }
+            blk && index($0, p) == 1 { print substr($0, length(p) + 1); next }
+            blk && $0 != "" { blk = 0 }
+            { print }
+        ' "$WG_CONF_FILE")"
+    fi
+    write_and_apply "$content" || die "'$name' için durum değiştirilemedi; ${WG_INTERFACE}.conf geri alındı"
+    printf '%s\t%s\n' "$name" "$want"
+}
+
+# DD-140: ağın arayüzünü kapatır ya da açar; üzerindeki bütün peer'lar birlikte
+# düşer. Yapılandırma, kayıt ve anahtarlar durur. The unit's enablement is the one source of "open": the
+# firewall admits a network's UDP port, forwarding and NAT only while its unit is enabled, so both
+# directions apply the firewall again. Opening enables the unit first, then the firewall, then starts the
+# interface (its ExecStartPre checks the firewall); a failure undoes what this call enabled.
+cmd_net() {
+    local want="$1" unit="wg-quick@${WG_INTERFACE}.service" was=0
+    [[ "$want" == ac || "$want" == kapat ]] || die "kullanım: master-wg [--if wgN] net ac|kapat"
+    [[ -f "$WG_CONF_FILE" ]] || die "$WG_CONF_FILE yok; önce kurulumu çalıştırın"
+    # DD-229: Konsol'un Kapat'ı (durdur) bu kilitle durdurulmuş listesini yazar; kilitsiz "ac" onu geçebilirdi.
+    take_lock
+    no_pending_settings
+    not_stopped
+    if [[ "$want" == kapat ]]; then
+        systemctl disable --now "$unit" >/dev/null 2>&1 || die "$WG_INTERFACE kapatılamadı"
+        [[ "$(unit_active "$unit")" == 0 ]] || die "$WG_INTERFACE hâlâ çalışıyor"
+        systemctl restart master-firewall.service ||
+            die "$WG_INTERFACE kapatıldı ama güvenlik duvarı yeniden uygulanamadı; 'systemctl status master-firewall' ile denetleyin"
+    else
+        ! systemctl is-enabled --quiet "$unit" 2>/dev/null || was=1
+        systemctl enable --quiet "$unit" >/dev/null 2>&1 || die "$WG_INTERFACE açılamadı"
+        if ! systemctl restart master-firewall.service; then
+            [[ "$was" -eq 1 ]] || systemctl disable --quiet "$unit" >/dev/null 2>&1 || true
+            systemctl restart master-firewall.service || true
+            die "güvenlik duvarı uygulanamadı; $WG_INTERFACE açılmadı"
+        fi
+        if ! systemctl start "$unit" >/dev/null 2>&1 || [[ "$(unit_active "$unit")" != 1 ]]; then
+            if [[ "$was" -eq 0 ]]; then
+                systemctl disable --now --quiet "$unit" >/dev/null 2>&1 || true
+                systemctl restart master-firewall.service || true
+            fi
+            die "$WG_INTERFACE açılamadı"
+        fi
+    fi
+    printf '%s\t%s\n' "$WG_INTERFACE" "$(unit_active "$unit")"
+}
+
+# While a Konsol setting is pending, neither WireGuard's state nor the files the settings transaction
+# restores change (the verbs listed in the header). DD-275: the settings worker's own pending change (its
+# id, phase "applying" while it applies, "rollback" while it undoes the change) is the one exception.
+no_pending_settings() {
+    [[ -n "${SETTINGS_PENDING_FILE:-}" && -e "$SETTINGS_PENDING_FILE" ]] || return 0
+    if caller_mode && python3 -c 'import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        p = json.load(fh)
+except (OSError, ValueError):
+    sys.exit(1)
+sys.exit(0 if isinstance(p, dict) and p.get("id") == sys.argv[2] and p.get("phase") in ("applying", "rollback") else 1)' \
+        "$SETTINGS_PENDING_FILE" "$OBHUT_AYAR_ISLEMI"; then
+        return 0
+    fi
+    die "Önce Konsol'daki bekleyen ayar işlemini onaylayın veya geri alın"
+}
+
+# Kayıttaki ağların ve sistemde kalmış wg-quick@wgN birimlerinin hepsi kapatılır (devre dışı:
+# açılışta da kapalı kalırlar). Kapatılamayan uyarıdır.
+wg_networks_down() {
+    local unit
+    # systemctl exits 1 when a listing matches nothing; with set -e and pipefail that ended the
+    # process substitution before the registry was read, so no network was closed (found on a
+    # real host in v2-170). Each source is read on its own and may be empty.
+    while IFS= read -r unit; do
+        [[ "$unit" =~ ^wg-quick@wg[0-9]\.service$ ]] || continue
+        systemctl disable --now --quiet "$unit" >/dev/null 2>&1 || warn "$unit kapatılamadı"
+    done < <(
+        { systemctl list-unit-files --no-legend --plain 'wg-quick@wg*.service' 2>/dev/null || true; } | awk '{print $1}'
+        { systemctl list-units --all --no-legend --plain 'wg-quick@wg*.service' 2>/dev/null || true; } | awk '{print $1}'
+        net_names | awk '{print "wg-quick@" $1 ".service"}'
+        true
+    )
+}
+
+# DD-229: bütün WireGuard'ı durdurur. O an açık (enabled) ağlar WG_STOPPED_FILE'a yazılır ki baslat
+# yalnız onları açsın (Konsol'dan tek tek kapatılmış ağ kapalı kalır). Liste önce yazılır: bu sırada
+# ağ açılamaz ve güvenlik duvarı WireGuard'ın portlarını, yönlendirmesini ve NAT'ını kaldırır. Zaten
+# durdurulmuşsa eski liste korunur. Çıktı: "durduruldu<TAB><listedeki ağ sayısı>".
+cmd_durdur() {
+    local iface tmp
+    take_lock
+    no_pending_settings
+    install -d -m 0700 "$BASE_CONF_DIR"
+    if [[ ! -e "$WG_STOPPED_FILE" ]]; then
+        tmp="$(mktemp "${WG_STOPPED_FILE%/*}/.durdur.XXXXXX")"
+        while IFS= read -r iface; do
+            ! systemctl is-enabled --quiet "wg-quick@$iface.service" 2>/dev/null || printf '%s\n' "$iface"
+        done < <(net_names) >"$tmp"
+        chmod 0600 "$tmp"
+        mv -f -- "$tmp" "$WG_STOPPED_FILE"
+    fi
+    wg_networks_down
+    systemctl restart master-firewall.service ||
+        die "WireGuard kapatıldı ama güvenlik duvarı yeniden uygulanamadı; 'systemctl status master-firewall' ile denetleyin"
+    printf 'durduruldu\t%s\n' "$(grep -c . "$WG_STOPPED_FILE" || true)"
+}
+
+# Aç (baslat): durdurmadan önce açık olan ağlar; durdurulmamışsa kayıttaki bütün ağlar. Durmuşken silinen ağ
+# atlanır. The networks are enabled first (the firewall admits only enabled networks), then the firewall
+# (ports, forwarding, NAT), then each interface starts. If the firewall cannot be applied, the units this
+# call enabled are disabled again and the list is written back: WireGuard stays stopped.
+# Çıktı: "calisiyor<TAB><açılan ağ sayısı>".
+cmd_baslat() {
+    local list stopped=0 iface n=0 tmp open="" enabled=""
+    take_lock
+    no_pending_settings
+    install -d -m 0700 "$BASE_CONF_DIR"
+    if [[ -e "$WG_STOPPED_FILE" ]]; then
+        stopped=1
+        list="$(cat -- "$WG_STOPPED_FILE")"
+        rm -f -- "$WG_STOPPED_FILE"
+    else
+        list="$(net_names)"
+    fi
+    while IFS= read -r iface; do
+        [[ "$iface" =~ $NET_RE ]] || continue
+        net_line "$iface" >/dev/null || continue
+        if systemctl is-enabled --quiet "wg-quick@$iface.service" 2>/dev/null; then
+            open="${open}${open:+ }$iface"
+        elif systemctl enable --quiet "wg-quick@$iface.service" >/dev/null 2>&1; then
+            open="${open}${open:+ }$iface" enabled="${enabled}${enabled:+ }$iface"
+        else
+            warn "$iface açılamadı"
+        fi
+    done <<<"$list"
+    if ! systemctl restart master-firewall.service; then
+        for iface in $enabled; do
+            systemctl disable --quiet "wg-quick@$iface.service" >/dev/null 2>&1 || warn "$iface kapatılamadı"
+        done
+        if [[ "$stopped" -eq 1 ]]; then
+            tmp="$(mktemp "${WG_STOPPED_FILE%/*}/.durdur.XXXXXX")"
+            [[ -z "$list" ]] || printf '%s\n' "$list" >"$tmp"
+            chmod 0600 "$tmp"
+            mv -f -- "$tmp" "$WG_STOPPED_FILE"
+        fi
+        systemctl restart master-firewall.service || true
+        die "güvenlik duvarı uygulanamadı; WireGuard açılmadı"
+    fi
+    for iface in $open; do
+        if systemctl start "wg-quick@$iface.service" >/dev/null 2>&1; then
+            n=$((n + 1))
+        else
+            warn "$iface açılamadı"
+        fi
+    done
+    printf 'calisiyor\t%s\n' "$n"
+}
+
+# wg0.conf'u temiz üretir: [Interface] satırları (Address, ListenPort, MTU) kalır,
+# yeni sunucu anahtarı yazılır, bütün [Peer] blokları ve istemci profilleri
+# silinir. Uygulama başarısızsa önceki wg0.conf geri konur, profiller silinmez.
+# Çıktı: "<silinen peer>\t<silinen profil>".
+cmd_reset() {
+    [[ "${1:-}" == "--onay" ]] ||
+        die "kullanım: master-wg reset --onay (bütün peer'lar ve profiller silinir, yeni sunucu anahtarı üretilir)"
+    local peers iface priv content f n=0
+    take_lock
+    no_pending_settings
+    [[ -f "$WG_CONF_FILE" ]] || die "$WG_CONF_FILE yok; önce kurulumu çalıştırın"
+    peers="$(grep -c '^\[Peer\]$' "$WG_CONF_FILE" || true)"
+    iface="$(awk '/^# peer: / || /^\[Peer\]$/ {exit} index($0, "PrivateKey = ") != 1 {print}' "$WG_CONF_FILE" |
+        awk '{line[NR] = $0} NF {last = NR} END {for (i = 1; i <= last; i++) print line[i]}')"
+    grep -qx '\[Interface\]' <<<"$iface" || die "$WG_CONF_FILE içinde [Interface] yok"
+    priv="$(wg genkey)" || die "anahtar üretilemedi"
+    [[ "$priv" =~ $KEY_RE ]] || die "wg beklenmeyen biçimde anahtar üretti"
+    content="${iface}
+PrivateKey = ${priv}"
+    priv=""
+    if ! write_and_apply "$content"; then
+        content=""
+        die "$WG_INTERFACE yeniden üretilemedi; önceki ${WG_INTERFACE}.conf geri alındı"
+    fi
+    content=""
+    for f in "$WG_CLIENTS_DIR"/*.conf; do
+        [[ -f "$f" ]] || continue
+        rm -f -- "$f"
+        n=$((n + 1))
+    done
+    printf '%s\t%s\n' "$peers" "$n"
+}
+
+cmd_profile() {
+    valid_name "$1"
+    [[ -f "$WG_CLIENTS_DIR/$1.conf" ]] || die "'$1' için sunucuda profil yok"
+    cat -- "$WG_CLIENTS_DIR/$1.conf"
+}
+
+cmd_qr() {
+    valid_name "$1"
+    [[ -f "$WG_CLIENTS_DIR/$1.conf" ]] || die "'$1' için sunucuda profil yok"
+    qrencode -t ansiutf8 <"$WG_CLIENTS_DIR/$1.conf"
+}
+
+# DD-132: QR resmi Mac'e profille birlikte iner. İçinde istemci anahtarı vardır;
+# ikili veri terminale basılmaz.
+cmd_png() {
+    valid_name "$1"
+    [[ -f "$WG_CLIENTS_DIR/$1.conf" ]] || die "'$1' için sunucuda profil yok"
+    [[ ! -t 1 ]] || die "PNG terminale yazılmaz; çıktıyı bir dosyaya yönlendirin"
+    qrencode -t PNG -s 8 -o - <"$WG_CLIENTS_DIR/$1.conf"
+}
+
+if [[ "${1:-}" == "--if" ]]; then
+    [[ "$#" -ge 3 ]] || die "kullanım: master-wg --if wgN KOMUT …"
+    select_net "$2"
+    shift 2
+elif [[ "${1:-}" != version && "${1:-}" != nets && "${1:-}" != net-add && "${1:-}" != net-remove &&
+    "${1:-}" != durdur && "${1:-}" != baslat ]]; then
+    # Ağ gerektiren komutlar: tek ağ varsa o kullanılır.
+    select_only_net
+fi
+
+# DD-207: Konsol'un root arka ucu bu aracı kendi korumalı alanında çalıştırır; orada BASE_CONF_DIR,
+# arka uç klasör yokken başladıysa salt okunur görünür. Yazan bir komut önce açıkça söyler.
+yazilabilir() {
+    [[ ! -e "$BASE_CONF_DIR" || -w "$BASE_CONF_DIR" ]] ||
+        die "$BASE_CONF_DIR bu işlem için salt okunur görünüyor. Konsol arka ucunu yeniden başlatın (sudo systemctl restart master-panel) ya da kurulumu yeniden çalıştırın"
+}
+case "${1:-}" in
+    net-add|net-remove|add|remove|dns|keepalive|peer|net|net-settings|reset|durdur|baslat) yazilabilir ;;
+esac
+
+case "${1:-}" in
+    version) printf '%s\n' "$V2_VERSION" ;;
+    nets) [[ -z "$WG_INTERFACE" ]] || die "nets --if almaz"; cmd_nets ;;
+    net-add) [[ "$#" -eq 4 && -z "$WG_INTERFACE" ]] || die "kullanım: master-wg net-add PORT DNS ETİKET"
+        cmd_net_add "$2" "$3" "$4" ;;
+    net-remove) [[ "$#" -le 3 && -z "$WG_INTERFACE" ]] || die "kullanım: master-wg net-remove wgN --onay"
+        cmd_net_remove "${2:-}" "${3:-}" ;;
+    list) cmd_list list ;;
+    info) cmd_list info ;;
+    add) [[ "$#" -eq 5 ]] || die "kullanım: master-wg add AD DNS KEEPALIVE MTU"; cmd_add "$2" "$3" "$4" "$5" ;;
+    remove) [[ "$#" -eq 2 ]] || die "kullanım: master-wg remove AD"; cmd_remove "$2" ;;
+    profile) [[ "$#" -eq 2 ]] || die "kullanım: master-wg profile AD"; cmd_profile "$2" ;;
+    qr) [[ "$#" -eq 2 ]] || die "kullanım: master-wg qr AD"; cmd_qr "$2" ;;
+    png) [[ "$#" -eq 2 ]] || die "kullanım: master-wg png AD"; cmd_png "$2" ;;
+    dns) [[ "$#" -eq 3 ]] || die "kullanım: master-wg dns AD DNS"; cmd_dns "$2" "$3" ;;
+    keepalive) [[ "$#" -eq 3 ]] || die "kullanım: master-wg keepalive AD SANİYE"; cmd_keepalive "$2" "$3" ;;
+    peer) [[ "$#" -eq 3 ]] || die "kullanım: master-wg peer AD ac|kapat"; cmd_peer "$2" "$3" ;;
+    net) [[ "$#" -eq 2 ]] || die "kullanım: master-wg [--if wgN] net ac|kapat"; cmd_net "$2" ;;
+    net-settings) [[ "$#" -eq 3 || "$#" -eq 4 ]] || die "kullanım: master-wg --if wgN net-settings DNS REVİZYON [ETİKET]"
+        cmd_net_settings "${@:2}" ;;
+    reset) [[ "$#" -le 2 ]] || die "kullanım: master-wg reset --onay"; cmd_reset "${2:-}" ;;
+    durdur) [[ "$#" -eq 1 && -z "$WG_INTERFACE" ]] || die "kullanım: master-wg durdur"; cmd_durdur ;;
+    baslat) [[ "$#" -eq 1 && -z "$WG_INTERFACE" ]] || die "kullanım: master-wg baslat"; cmd_baslat ;;
+    *) die "kullanım: master-wg [--if wgN] version|list|info|add|remove|profile|qr|png|dns|keepalive|peer|reset|nets|net|net-add|net-remove|net-settings|durdur|baslat" ;;
+esac

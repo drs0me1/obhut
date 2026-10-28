@@ -1,0 +1,17 @@
+# macOS Finder metadata, created on the dev workstation, never part of the
+# installer or its documentation.
+.DS_Store
+
+# Private installer inputs and downloaded WireGuard profiles/QR codes (DD-143).
+/kurulum/
+
+# Claude Code's personal settings and its worktrees; the shared setup in .claude/ is tracked.
+/.claude/settings.local.json
+/.claude/worktrees/
+
+# Python bytecode left by local test runs; kur.sh never ships it.
+__pycache__/
+
+# Build dependencies of the editor bundle (Data/tools/duzenleyici, DD-249) and the new Konsol
+# (Data/tools/konsol-ui, DD-259); npm ci restores them.
+node_modules/

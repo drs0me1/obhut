@@ -1,0 +1,439 @@
+"""The fixed rows' transactions (Konsol, WebDAV), rollback and private/public isolation (DD-191, DD-195).
+
+Decision 1 (rebuild phase 4): a row that opens or widens access waits for the confirmation from Tailscale; one
+that only closes commits at once. The applications' rows are test_access_rows'."""
+from pathlib import Path
+import json
+import subprocess
+import sys
+import unittest
+from unittest.mock import patch
+
+import test_https_settings as fixtures
+import master_https as tls
+import master_settings as settings
+import master_publications as pubs
+REAL_RUN = subprocess.run
+
+
+class PublicationTests(unittest.TestCase):
+    command = fixtures.HttpsSettingsTests.command
+    confirm = fixtures.HttpsSettingsTests.confirm
+    commit = fixtures.HttpsSettingsTests.commit
+
+    def setUp(self):
+        fixtures.HttpsSettingsTests.setUp(self)
+        self.env["FILES_PANEL_PORT"] = "61009"
+        self.env["KONSOL_AUTH_DIR"] = str(self.root / "konsol")
+        (self.root / "konsol").mkdir(mode=0o700)
+        self.state.write_text("".join(k + "=" + v + "\n" for k, v in self.env.items()))
+        self.m = settings.Manager(self.state)
+        self.s.env.update(self.env)
+        # WebDAV's tailnet site as the installer leaves it: rendered to SHARE_CADDY_SOURCE and placed.
+        source = "# fixture\nhttp://paylas.ayc, http://{$TAILSCALE_IPV4}:61010 {\n\trespond 401\n}\n"
+        Path(self.env["SHARE_CADDY_SOURCE"]).write_text(source)
+        (self.root / "sites/paylasim.caddy").write_text(source)
+        self.commit(self.payload())
+
+    def payload(self, service="paylasim", tail=True, enabled=True, domain="dav.example.net", **extra):
+        return {"revision": self.m.revision(), "web": dict(service=service, tail=tail, enabled=enabled, domain=domain, **extra)}
+
+    def panel(self, **changes):
+        # Enabling the console publicly also carries the typed word (DD-195).
+        item = dict(enabled=True, domain="konsol.example.net", confirm="onayla")
+        item.update(changes)
+        return self.payload(service="panel", **item)
+
+    def test_unknown_upstreams_rejected(self):
+        # The fixed rows are WebDAV and Konsol; an application's rows are its own (the erisim section).
+        self.assertEqual(pubs.ids(), ("paylasim", "panel"))
+        for service in ("wireguard", "medya", "localhost:2019", "dosya", [], None):
+            with self.subTest(service=service), self.assertRaises(settings.SettingsError):
+                self.m.validate(self.payload(service=service))
+        payload = self.payload(); payload["web"]["upstream"] = "localhost:2019"
+        with self.assertRaises(settings.SettingsError):
+            self.m.validate(payload)
+
+    def test_real_worker_reports_imported_validation_errors_as_json(self):
+        for payload in (self.payload(service="wireguard"), self.payload(domain="https://bad.example.net")):
+            p = REAL_RUN([sys.executable, settings.__file__, "--state", str(self.state), "apply"],
+                         input=json.dumps(payload), text=True, capture_output=True, timeout=10)
+            self.assertEqual(p.returncode, 1)
+            self.assertIn("error", json.loads(p.stdout))
+            self.assertEqual(p.stderr, "")
+
+    def test_shared_https_port_is_reported_once_and_without_dav(self):
+        import test_resources
+        panel = test_resources.panel
+        import types
+        instance = panel.Panel(types.SimpleNamespace(state=str(self.state)))
+        with patch.object(pubs, "https_apps_active", return_value=["Notlar"]), \
+                patch.object(panel.master_settings, "tailnet_ports", return_value=[]), \
+                patch.object(instance, "ports", return_value=[]):
+            rows = instance.settings_ports(self.env, [])
+            self.assertEqual(len(rows), 1)
+            self.assertIn("Notlar + WebDAV", rows[0]["name"])
+            self.assertEqual(rows[0]["port"], 443)
+            with patch.object(panel.master_shares.Manager, "wan_active", return_value=False):
+                rows = instance.settings_ports(self.env, [])
+            self.assertEqual(len(rows), 1)
+            self.assertIn("Notlar", rows[0]["name"])
+            self.assertNotIn("WebDAV", rows[0]["name"])
+        # DD-195, rebuild phase 4: Konsol and the applications' internet names join the same single row.
+        with patch.object(pubs, "https_apps_active", return_value=["Konsol", "Notlar"]), \
+                patch.object(panel.master_settings, "tailnet_ports", return_value=[]), \
+                patch.object(instance, "ports", return_value=[]):
+            rows = instance.settings_ports(self.env, [])
+        self.assertEqual([r["name"] for r in rows], ["Caddy HTTPS · Konsol + Notlar + WebDAV · WAN"])
+        self.assertEqual(pubs.https_apps_active(self.env), [])
+        with patch.object(pubs, "panel_active", return_value=True):
+            self.assertEqual(pubs.https_apps_active(self.env), ["Konsol"])
+
+    def make_account(self):
+        import master_auth
+        store = master_auth.Store(self.env["KONSOL_AUTH_DIR"])
+        store.create("yonetici", "fixture-password-10")  # DD-205: no code; the tailnet device is the credential
+        return store
+
+    def wan_firewall(self):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with patch.object(sys, "argv", ["master_shares.py", "--state", str(self.state), "wan-firewall"]), \
+                contextlib.redirect_stdout(out):
+            fixtures.shares.main()
+        return out.getvalue().split()
+
+    def test_panel_publication_needs_an_account_and_keeps_its_tailnet_address(self):
+        # DD-195: the tailnet address is the management path that always remains.
+        with self.assertRaises(settings.SettingsError) as err:
+            self.m.validate(self.payload(service="panel", tail=False, enabled=False, domain=""))
+        self.assertIn("Tailscale", str(err.exception))
+        with self.assertRaises(settings.SettingsError) as err:
+            self.m.apply(self.panel())
+        self.assertIn("Sistem → Hesap bölümünde", str(err.exception))
+        self.assertFalse((self.root / "sites/panel-wan.caddy").exists())
+        with self.assertRaises(settings.SettingsError):
+            self.m.validate(self.panel(domain="dav.example.net"))
+        # The typed word is checked on the server, only for the panel row.
+        with self.assertRaises(settings.SettingsError) as err:
+            self.m.validate(self.payload(service="panel", domain="konsol.example.net"))
+        self.assertIn("onayla", str(err.exception))
+        with self.assertRaises(settings.SettingsError):
+            self.m.validate(self.panel(confirm="evet"))
+        with self.assertRaises(settings.SettingsError):
+            self.m.validate(self.payload(confirm="onayla"))
+        # Saved rows alone never conflict (v2-169): the live listener decides, see the fresh-install test.
+        pubs.config(self.env, {"web": {"panel": {"tail": True, "enabled": True, "domain": "konsol.example.net"}}})
+        store = self.make_account()
+        self.assertEqual(self.wan_firewall()[0], "1")  # WebDAV over HTTPS already listens
+        result = self.m.apply(self.panel())
+        self.assertEqual(result["pending"]["phase"], "awaiting", "decision 1: an internet name waits for its confirmation")
+        self.confirm(result)
+        # Keeping it on with the same name needs no new word; a new name does.
+        self.m.validate(self.payload(service="panel", domain="konsol.example.net"))
+        with self.assertRaises(settings.SettingsError):
+            self.m.validate(self.payload(service="panel", domain="konsol2.example.net"))
+        site = (self.root / "sites/panel-wan.caddy").read_text()
+        self.assertIn("https://konsol.example.net:443 {\n\tbind 8.8.8.8\n", site)
+        self.assertIn("disable_http_challenge", site)
+        self.assertIn('\theader Strict-Transport-Security "max-age=31536000"\n', site)
+        self.assertTrue(site.endswith("\timport konsol internet\n}\n"))
+        self.assertNotIn("reverse_proxy", site, "only the shared signed-in routes, no other upstream")
+        self.assertTrue(pubs.panel_active(self.env))
+        with patch.object(tls, "certificate", return_value=1_900_000_000):
+            row = pubs.status(self.env)[0]
+        self.assertEqual((row["service"], row["status"], row["expires"], row["tail"], row["account"]),
+                         ("panel", "ready", 1_900_000_000, True, True))
+        # WebDAV's public address closes; the Konsol site alone keeps TCP 443 and its budgets.
+        self.assertTrue(self.m.apply(self.payload(enabled=False))["committed"])
+        self.assertFalse((self.root / "sites/paylasim-wan.caddy").exists())
+        self.assertEqual(self.wan_firewall(), ["1", "16", "64", "443"])
+        # A reset account closes the public door at the next publish (the 30-second guard).
+        store.reset()
+        self.assertFalse(pubs.panel_active(self.env))
+        self.s.publish()
+        self.assertFalse((self.root / "sites/panel-wan.caddy").exists())
+        self.assertEqual(self.wan_firewall()[0], "0")
+        row = pubs.status(self.env)[0]
+        self.assertEqual(row["status"], "error")
+        self.assertIn("Sistem → Hesap bölümünde oluşturun", row["message"])
+
+    def plain_http(self):
+        # A fresh install: no HTTPS setting and no WebDAV row, so WebDAV is in consent-gated plain HTTP mode.
+        cfg = self.m.config()
+        cfg.pop("https", None)
+        cfg.pop("web", None)
+        settings.save_json(self.m.config_path, cfg)
+        self.assertEqual(tls.config(self.env)["mode"], "http")
+
+    def test_fresh_install_publishes_panel_without_a_webdav_name(self):
+        # v2-169: WebDAV's mode alone does not block; folders live on plaintext HTTP do.
+        self.plain_http()
+        self.make_account()
+        self.s.publish()
+        self.assertTrue(self.s.wan_active(), "setUp shares media/alpha over plain HTTP")
+        self.assertTrue(pubs.plain_http_active(self.env))
+        with self.assertRaises(settings.SettingsError) as err:
+            self.m.validate(self.panel())
+        self.assertIn("şifresiz HTTP ile açık", str(err.exception))
+        row = {r["service"]: r for r in pubs.status(self.env)}["paylasim"]
+        self.assertEqual(row["status"], "http")
+        # Closing that folder's internet connection frees the port; no WebDAV name is needed.
+        item = self.s.read()["items"][0]
+        self.s.change("save", {"id": item["id"], "connections": {"wan": {"enabled": False}}})
+        self.assertFalse(pubs.plain_http_active(self.env))
+        self.commit(self.panel())
+        self.assertTrue((self.root / "sites/panel-wan.caddy").exists())
+        self.assertFalse((self.root / "sites/paylasim-wan.caddy").exists())
+        self.assertEqual(self.wan_firewall(), ["1", "16", "64", "443"])
+        # While the HTTPS row is on, plain HTTP stays closed and the cards say why; nothing is rewritten.
+        info = self.s.wan_info()
+        self.assertFalse(info["available"])
+        self.assertIn("HTTPS alan adı gerekir", info["reason"])
+        with self.assertRaises(fixtures.shares.ShareError):
+            self.s.change("save", {"id": item["id"], "connections": {"wan": {"enabled": True}}, "ack_wan_http": True})
+        self.assertFalse(self.s.wan_active())
+        row = {r["service"]: r for r in pubs.status(self.env)}["paylasim"]
+        self.assertEqual(row["status"], "http")
+        self.assertIn("HTTPS alan adı gerekir", row["message"])
+        # Turning the Panel row off reopens plain HTTP for the folders (a simple re-enable).
+        self.m.apply(self.payload(service="panel", enabled=False, domain="konsol.example.net"))
+        self.assertTrue(self.s.wan_info()["available"])
+        self.s.change("save", {"id": item["id"], "connections": {"wan": {"enabled": True}}, "ack_wan_http": True})
+        self.assertTrue(self.s.wan_active())
+        self.assertEqual(self.wan_firewall(), ["1", "16", "64", "61010"])
+
+    def test_panel_certificate_failure_rolls_back_the_public_site(self):
+        self.make_account()
+        with patch.object(tls, "wait_certificate", side_effect=settings.SettingsError("cert failed")):
+            with self.assertRaises(settings.SettingsError):
+                self.m.apply(self.panel())
+        self.assertFalse((self.root / "sites/panel-wan.caddy").exists())
+        self.assertNotIn("panel", self.m.config().get("web", {}))
+        self.assertFalse(self.m.pending_path.exists())
+        # Turning it off again removes the site and keeps the remembered name.
+        self.commit(self.panel())
+        self.assertTrue((self.root / "sites/panel-wan.caddy").exists())
+        self.m.apply(self.payload(service="panel", enabled=False, domain="konsol.example.net"))
+        self.assertFalse((self.root / "sites/panel-wan.caddy").exists())
+        self.assertEqual(pubs.config(self.env)["panel"], {"tail": True, "enabled": False, "domain": "konsol.example.net"})
+
+    def test_tail_disabled_preserves_wan_and_folder_accounts(self):
+        accounts = self.s.path and Path(self.s.path).read_bytes()
+        self.assertTrue(self.m.apply(self.payload(tail=False))["committed"])
+        self.assertIn("respond 403", (self.root / "sites/paylasim.caddy").read_text())
+        self.assertIn("http://{$TAILSCALE_IPV4}:61010", (self.root / "sites/paylasim.caddy").read_text())
+        self.assertIn("https://dav.example.net:443", (self.root / "sites/paylasim-wan.caddy").read_text())
+        self.assertEqual(set(self.s.public()["items"][0]["urls"]), {"wan"})
+        self.assertEqual(Path(self.s.path).read_bytes(), accounts)
+        self.assertFalse(self.s.public()["tail_enabled"])
+        self.m.apply(self.payload())
+        self.assertIn("respond 401", (self.root / "sites/paylasim.caddy").read_text())
+
+    def test_wan_off_remembers_domain_without_plaintext_fallback(self):
+        self.m.apply(self.payload(enabled=False))
+        self.assertEqual(pubs.config(self.env)["paylasim"]["domain"], "dav.example.net")
+        self.assertEqual(tls.config(self.env)["mode"], "off")
+        self.assertFalse((self.root / "sites/paylasim-wan.caddy").exists())
+        self.assertEqual(set(self.s.public()["items"][0]["urls"]), {"tailscale"})
+        self.s.publish()
+        self.assertFalse((self.root / "sites/paylasim-wan.caddy").exists())
+
+    def test_first_row_certificate_failure_restores_private_file(self):
+        # A first-time row: no web key yet for the publisher to reconstruct after a failed apply.
+        cfg = self.m.config()
+        cfg.pop("web", None)
+        settings.save_json(self.m.config_path, cfg)
+        private = self.root / "sites/paylasim.caddy"
+        old = private.read_bytes()
+        with patch.object(tls, "wait_certificate", side_effect=settings.SettingsError("cert failed")):
+            with self.assertRaises(settings.SettingsError):
+                self.m.apply(self.payload(tail=False))
+        self.assertEqual(private.read_bytes(), old)
+        self.assertNotIn("web", self.m.config())
+        self.assertFalse(self.m.pending_path.exists())
+
+    def test_process_crash_restores_private_file_after_reboot(self):
+        old = (self.root / "sites/paylasim.caddy").read_bytes()
+        with patch.object(tls, "wait_certificate", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.m.apply(self.payload(tail=False))
+        with patch.object(settings, "boot_id", return_value="new"), patch.object(tls, "boot_id", return_value="new"):
+            self.m.guard()
+        self.assertEqual((self.root / "sites/paylasim.caddy").read_bytes(), old)
+        self.assertFalse(self.m.pending_path.exists())
+
+    def test_duplicate_domains_and_mixed_writes_rejected(self):
+        with self.assertRaisesRegex(settings.SettingsError, "aynı HTTPS alan adını"):
+            self.m.validate(self.panel(domain="dav.example.net"))
+        payload = self.payload(); payload["dns"] = self.m.config()["dns"]
+        with self.assertRaises(settings.SettingsError):
+            self.m.validate(payload)
+
+    def test_dns_error_is_read_only(self):
+        before = self.m.config()
+        with patch.object(tls, "check_dns", side_effect=settings.SettingsError("DNS mismatch")):
+            with self.assertRaises(settings.SettingsError):
+                self.m.apply(self.payload(domain="bad.example.net"))
+        self.assertEqual(self.m.config(), before)
+        self.assertFalse(self.m.pending_path.exists())
+
+    def test_private_403_stub_uses_exactly_the_template_addresses(self):
+        # DD-193: no hard-coded host names; the real template is the single source.
+        self.m.apply(self.payload(tail=False))
+        values = {"__LOCAL_DOMAIN__": "ev", "__SHARE_PORT__": "61010"}
+        source = (settings.Path(__file__).resolve().parents[1] / "templates/paylasim.caddy").read_text()
+        for key, value in values.items():
+            source = source.replace(key, value)
+        first = next(line for line in source.splitlines() if line.startswith("http"))
+        stub = pubs.private_site(self.env, "paylasim", source)
+        self.assertEqual(stub.splitlines()[1], first)
+        self.assertIn("\trespond 403\n", stub)
+        self.assertNotIn("reverse_proxy", stub)
+        extra = "# x\nhttp://paylas.ev, http://paylas-alt.ev {\n\treverse_proxy 127.0.0.1:1\n}\n"
+        self.assertIn("http://paylas.ev, http://paylas-alt.ev {", pubs.private_site(self.env, "paylasim", extra))
+        with self.assertRaises(settings.SettingsError):
+            pubs.private_site(self.env, "paylasim", "# no site block\n")
+
+    def test_unavailable_listener_fails_fast_without_certificate_wait(self):
+        # DD-193: no minute-long certificate wait when no public listener could open.
+        import master_shares
+        cases = (("paylasim", lambda: self.payload(domain="dav.example.net", tail=False), "WAN HTTPS dinleyicisi açılamadı",
+                  patch.object(master_shares.Manager, "wan_active", return_value=False)),)
+        for service, payload, message, blocked in cases:
+            with self.subTest(service=service):
+                before = self.m.config()
+                tls.wait_certificate.reset_mock()
+                with blocked, self.assertRaises(settings.SettingsError) as error:
+                    self.m.apply(payload())
+                self.assertIn(message, str(error.exception))
+                tls.wait_certificate.assert_not_called()
+                self.assertEqual(self.m.config(), before)
+                self.assertFalse(self.m.pending_path.exists())
+
+    def test_reapply_projects_saved_private_choice(self):
+        # A re-placed installer rendering returns to the saved Tailscale choice at the next publish.
+        self.m.apply(self.payload(tail=False))
+        original = Path(self.env["SHARE_CADDY_SOURCE"]).read_text()
+        self.assertIn("respond 403", pubs.private_site(self.env, "paylasim", original))
+        (self.root / "sites/paylasim.caddy").write_text(original)
+        self.s.publish()
+        self.assertIn("respond 403", (self.root / "sites/paylasim.caddy").read_text())
+        self.m.apply(self.payload())
+        self.assertEqual((self.root / "sites/paylasim.caddy").read_text(), original)
+
+    def test_unknown_saved_row_fails_closed(self):
+        # A row the table does not know (for example left by an older Obhut) is never ignored silently.
+        cfg = self.m.config()
+        cfg.setdefault("web", {})["medya"] = {"tail": True, "enabled": False, "domain": ""}
+        settings.save_json(self.m.config_path, cfg)
+        with self.assertRaisesRegex(settings.SettingsError, "Caddy yayın kaydında bilinmeyen satır: medya."):
+            pubs.config(self.env)
+        with self.assertRaises(settings.SettingsError):
+            pubs.extra_sites(self.env)
+        with self.assertRaises(settings.SettingsError):
+            self.m.validate(self.payload(enabled=False))
+        self.assertEqual(pubs.https_apps_active(self.env), [])
+        self.assertFalse(pubs.panel_active(self.env))
+        with self.assertRaises(fixtures.shares.ShareError):
+            self.s.publish()
+
+    def test_plan_of_a_fixed_row_writes_no_site_and_waits_for_no_certificate(self):
+        """DD-265: a fixed row's plan runs its checks (the DNS check) and writes nothing; decision 1 sets its window."""
+        sites = sorted(p.name for p in (self.root / "sites").iterdir())
+        calls = len(self.calls)
+        tls.wait_certificate.reset_mock()  # setUp's own WebDAV name waited for one
+        plan = self.m.plan(self.payload(domain="dav2.example.net"))
+        self.assertEqual(plan["onay_sn"], 60, "a rename is an opening")
+        self.assertEqual([(i["alan"], i["islem"], i["nesne"], i["once"], i["sonra"]) for i in plan["degisiklikler"]],
+                         [("erisim", "degistir", "WebDAV · internet adı", "dav.example.net", "dav2.example.net")])
+        self.assertIn("İnternet adı için HTTPS sertifikası alınır (en çok 1 dakika).", plan["etkiler"])
+        self.assertEqual(sorted(p.name for p in (self.root / "sites").iterdir()), sites)
+        self.assertEqual(len(self.calls), calls, "no reload, no restart")
+        tls.wait_certificate.assert_not_called()
+        plan = self.m.plan(self.payload(enabled=False))
+        self.assertEqual(plan["onay_sn"], 0, "closing commits at once")
+        self.assertEqual([(i["islem"], i["nesne"], i["once"], i["sonra"]) for i in plan["degisiklikler"]],
+                         [("kapat", "WebDAV · internet adı", "dav.example.net", "kapalı")])
+        self.assertNotIn("İnternet adı için HTTPS sertifikası alınır (en çok 1 dakika).", plan["etkiler"])
+        plan = self.m.plan(self.payload(tail=False))
+        self.assertEqual((plan["onay_sn"], plan["degisiklikler"][0]["islem"]), (0, "kapat"))
+        self.commit(self.payload(tail=False))
+        self.assertEqual(self.m.plan(self.payload())["onay_sn"], 60, "the Tailscale name switched on is an opening")
+        with patch.object(tls, "check_dns", side_effect=settings.SettingsError("DNS mismatch")), \
+                self.assertRaisesRegex(settings.SettingsError, "DNS mismatch"):
+            self.m.plan(self.payload(domain="dav2.example.net"))
+        # From the internet channel an opening cannot be confirmed; a closing can be applied.
+        self.assertFalse(self.m.plan(self.payload(domain="dav2.example.net"), kanal="internet")["uygulanabilir"])
+        self.assertTrue(self.m.plan(self.payload(tail=False, enabled=False), kanal="internet")["uygulanabilir"])
+
+    def test_an_unconfirmed_opening_is_rolled_back(self):
+        result = self.m.apply(self.payload(domain="dav2.example.net"))
+        self.assertIn("https://dav2.example.net:443", (self.root / "sites/paylasim-wan.caddy").read_text())
+        pending = self.m.pending()
+        pending["until"] = 0
+        settings.save_json(self.m.pending_path, pending)
+        self.m.guard()
+        self.assertFalse(self.m.pending_path.exists())
+        self.assertEqual(pubs.config(self.env)["paylasim"]["domain"], "dav.example.net")
+        self.assertIn("https://dav.example.net:443", (self.root / "sites/paylasim-wan.caddy").read_text())
+        self.assertTrue(result["pending"]["web"])
+
+    # --- DD-254: the operator sees the actual cause ------------------------------
+
+    def test_output_reason_reads_caddy_errors_and_installer_lines(self):
+        reason = fixtures.shares.output_reason
+        caddy = ('{"level":"warn","msg":"Unnecessary header_up X-Forwarded-For"}\n'
+                 '{"level":"error","ts":1,"msg":"adapting config using caddyfile: ambiguous site definition: '
+                 'https://notlar.example.net:443"}\n')
+        self.assertEqual(reason(caddy), "adapting config using caddyfile: ambiguous site definition: https://notlar.example.net:443")
+        self.assertEqual(reason('{"level":"error","msg":"loading config","error":"bind: address already in use"}\n'
+                                'Error: sending configuration to instance: HTTP 400\n'),
+                         "sending configuration to instance: HTTP 400")
+        self.assertEqual(reason("[12:00:01] HATA: zincir yazılamadı\n\n"), "zincir yazılamadı")
+        self.assertEqual(reason(""), "")
+        self.assertEqual(len(reason("x" * 900)), 300)
+
+    def failing(self, match, **error):
+        """Run the fixture commands, but the one whose argv contains `match` fails as given."""
+        def command(argv, **kwargs):
+            if match in " ".join(argv):
+                raise subprocess.CalledProcessError(1, argv, **error)
+            return self.command(argv, **kwargs)
+        return patch.object(fixtures.shares.subprocess, "run", side_effect=command)
+
+    def test_invalid_caddy_configuration_is_named_and_rolled_back(self):
+        before = self.m.config()
+        site = (self.root / "sites/paylasim-wan.caddy").read_text()
+        stderr = b'{"level":"error","msg":"adapting config using caddyfile: ambiguous site definition: https://dav2.example.net:443"}'
+        with self.failing("caddy validate", stderr=stderr), self.assertRaises(settings.SettingsError) as error:
+            self.m.apply(self.payload(domain="dav2.example.net"))
+        self.assertIn("(Caddy yapılandırması geçersiz: adapting config using caddyfile: ambiguous site definition: "
+                      "https://dav2.example.net:443); önceki yayın geri yüklendi.", str(error.exception))
+        self.assertEqual(self.m.config(), before)
+        self.assertEqual((self.root / "sites/paylasim-wan.caddy").read_text(), site)
+
+    def test_firewall_failure_names_the_firewall_and_its_message(self):
+        with self.failing("master-firewall", stderr="[12:00:01] HATA: zincir yazılamadı\n".encode()), \
+                self.assertRaises(settings.SettingsError) as error:
+            self.m.apply(self.payload(domain="dav2.example.net"))
+        self.assertIn("(güvenlik duvarı uygulanamadı: zincir yazılamadı)", str(error.exception))
+
+    def test_reload_failure_reads_caddys_own_reason_from_its_journal(self):
+        def command(argv, **kwargs):
+            if argv[:3] == ["systemctl", "reload", "caddy"]:
+                raise subprocess.CalledProcessError(1, argv, stderr=b"Job for caddy.service failed.")
+            if argv[0] == "journalctl":
+                self.assertIn("caddy", argv)
+                return subprocess.CompletedProcess(argv, 0, "Error: loading new config: listen tcp 8.8.8.8:443: bind: cannot assign requested address\n", "")
+            return self.command(argv, **kwargs)
+        with patch.object(fixtures.shares.subprocess, "run", side_effect=command), \
+                self.assertRaises(settings.SettingsError) as error:
+            self.m.apply(self.payload(domain="dav2.example.net"))
+        self.assertIn("(Caddy yeniden yüklenemedi: loading new config: listen tcp 8.8.8.8:443: bind: cannot assign "
+                      "requested address)", str(error.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()

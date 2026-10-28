@@ -1,0 +1,20 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: notlar uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması notlar: Pod
+After=network-online.target master-firewall.service
+Wants=network-online.target master-firewall.service
+
+[Pod]
+PodName=notlar
+Network=konsol-notlar.network
+PublishPort=127.0.0.1:62100:8080/tcp
+PodmanArgs=--infra-name=notlar__infra
+PodmanArgs=--label=io.master-stack.managed=uygulama
+PodmanArgs=--label=io.master-stack.uygulama=notlar
+
+[Service]
+RestartSec=10s
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_network.py" --state "/etc/master-stack/state.env" --check
+
+[Install]
+WantedBy=multi-user.target

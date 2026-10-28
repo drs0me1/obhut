@@ -1,0 +1,10 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: aktarim uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması aktarim: ağ
+
+[Network]
+NetworkName=ksl-aktarim
+Driver=bridge
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=aktarim
+PodmanArgs=--interface-name=kslf093d712a5

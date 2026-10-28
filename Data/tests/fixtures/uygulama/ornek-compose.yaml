@@ -1,0 +1,28 @@
+# A Compose file as a project publishes it: put your folder in place of /path/to/your/files,
+# then run `docker compose up -d` and open http://<your server>:8080. The first password is
+# in the log (`docker compose logs ornek`).
+#
+# `2` follows the 2.x releases; write `2.1` for one minor line, or `2.1.0` to stay on one.
+# The files folder must be writable for the user the image runs as.
+#
+# Inspector fixture: named volumes, a map environment, a placeholder host path, container_name.
+services:
+  ornek:
+    image: registry.example/ornek/sunucu:2
+    container_name: ornek
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      # A second service on a port of its own; leave this and ORNEK_EK_PORT out if you do
+      # not need it.
+      - "8092:8092"
+    environment:
+      ORNEK_EK_PORT: "8092"
+    volumes:
+      - ornek-db:/database
+      - ornek-config:/config
+      - /path/to/your/files:/srv
+
+volumes:
+  ornek-db:
+  ornek-config:

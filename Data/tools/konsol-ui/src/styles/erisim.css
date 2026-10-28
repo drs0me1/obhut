@@ -1,0 +1,617 @@
+/* Erişim (DD-258; rebuild phase 5's prototype): its tabs, an access row's sheet and the pending change's actions.
+   Shared pieces are in ui.css; colours only from tokens.css. */
+
+/* ---- the page */
+.access-page {
+  gap: 16px;
+}
+
+.access-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.access-tab > .card {
+  padding: 18px 20px;
+  border-radius: var(--r-lg);
+}
+
+.action-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.table-card {
+  gap: 12px;
+}
+
+.fact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.summary-grid .card {
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: var(--r-lg);
+}
+
+
+/* A lock beside a value that changes elsewhere ("Hep açık", "Adresler'de yönet"). */
+.lock-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+a.lock-link {
+  color: var(--accent-strong);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+a.lock-link:hover {
+  text-decoration: underline;
+}
+
+/* ---- Genel: the matrix */
+.matrix-card {
+  gap: 12px;
+}
+
+.matrix .col-main {
+  min-width: 160px;
+}
+
+/* A service's name leads to its row in Adresler. */
+.matrix-name {
+  display: block;
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+a.matrix-name:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+
+@container (max-width: 760px) {
+  .matrix .col-main {
+    min-width: 0;
+  }
+}
+
+/* ---- Adresler */
+.cell-addr {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.sw-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sw-cell .switch {
+  min-height: 32px;
+  margin-left: -6px;
+}
+
+.sw-cell .lock-line {
+  min-height: 32px;
+}
+
+.row-current > * {
+  background: var(--accent-soft);
+}
+
+/* A row's panel opens under the row itself (AccessRowPanel); the row and its panel read as one. */
+.data-table .row-detail > td {
+  padding: 0 12px 14px;
+  background: var(--accent-soft);
+}
+
+/* The panel takes the row's width and gives the table's columns none of its own (its long lines would widen them). */
+.data-table .row-detail > td > * {
+  contain: inline-size;
+}
+
+.data-table tbody tr:has(+ .row-detail) > * {
+  border-bottom: 0;
+}
+
+.data-table .row-detail:has(> td:empty) {
+  display: none;
+}
+
+.row-toggle-icon {
+  transform: rotate(90deg);
+}
+
+.row-toggle[aria-expanded="true"] .row-toggle-icon {
+  transform: rotate(-90deg);
+}
+
+/* On a phone the current row's card and its panel are one tinted block. */
+@container (max-width: 760px) {
+  .data-table tbody tr.row-current {
+    padding: 14px 8px;
+    border-radius: var(--r-md);
+    background: var(--accent-soft);
+  }
+
+  .data-table tbody tr.row-current > * {
+    background: none;
+  }
+
+  .data-table tbody tr:has(+ .row-detail) {
+    border-bottom: 0;
+    border-radius: var(--r-md) var(--r-md) 0 0;
+  }
+
+  .data-table tbody tr.row-detail {
+    display: block;
+    padding: 0 8px 8px;
+    border-radius: 0 0 var(--r-md) var(--r-md);
+    background: var(--accent-soft);
+  }
+
+  .data-table .row-detail > td {
+    display: block;
+    padding: 0;
+    background: none;
+  }
+}
+
+.scope-choice {
+  flex-wrap: wrap;
+}
+
+.scope-choice .segment {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13.5px;
+}
+
+.scope-choice .segment-danger[aria-checked="true"] {
+  color: var(--danger-ink);
+}
+
+.segment:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* ---- Yerel adlar */
+.names-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 14px;
+}
+
+.names-grid .card {
+  gap: 12px;
+  padding: 18px 20px;
+  border-radius: var(--r-lg);
+}
+
+.draft-bar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.draft-bar > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.domain-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+}
+
+.domain-form .field {
+  flex: 1 1 240px;
+  max-width: 420px;
+}
+
+.guide {
+  font-size: 14px;
+}
+
+.guide summary {
+  padding: 12px 0;
+  color: var(--ink-2);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.guide-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding-left: 22px;
+}
+
+.plan-address {
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Güvenlik duvarı */
+.fw-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.fw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.fw-tools .segmented {
+  flex-wrap: wrap;
+}
+
+.row-changed > * {
+  background: var(--warn-tint);
+}
+
+@container (max-width: 920px) {
+  .fw-table,
+  .fw-table tbody {
+    display: block;
+  }
+
+  .fw-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .fw-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 10px 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .fw-table tbody tr.row-changed {
+    padding: 14px 10px;
+    border-radius: var(--r-md);
+    background: var(--warn-tint);
+  }
+
+  .fw-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .fw-table td,
+  .fw-table tbody th {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .fw-table .col-main,
+  .fw-table .col-act {
+    grid-column: 1 / -1;
+  }
+
+  .fw-table .col-act {
+    width: auto;
+    white-space: normal;
+  }
+
+  .fw-table .col-act:empty {
+    display: none;
+  }
+
+  .fw-table td[data-label] {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    overflow-wrap: anywhere;
+  }
+
+  .fw-table td[data-label]::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .fw-table .row-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}
+
+/* ---- the danger zone (WireGuard's network settings, a share's sheet) */
+.danger-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-md);
+  background: var(--danger-tint);
+}
+
+/* ---- choices (Uygulama ekle's questions too) */
+.choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choice-list legend {
+  margin-bottom: 6px;
+  padding: 0;
+}
+
+.choice-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+
+.choice-item:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.choice-item input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.choice-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  font-size: 14.5px;
+}
+
+.choice-head .muted {
+  font-size: 12.5px;
+}
+
+.choice-sub {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* ---- an access row's panel (Adresler): its facts on one line beside the close button, then its fields side by side
+   as the row's own columns, flat; notices and notes across the whole width. */
+.row-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.row-facts > div {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.row-facts dt {
+  color: var(--muted);
+}
+
+.row-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.row-facts dd.mono {
+  font-size: 12.5px;
+}
+
+.row-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.row-cols {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px 28px;
+}
+
+.row-cols > * {
+  flex: 1 1 210px;
+  min-width: 0;
+}
+
+.row-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.row-col > .field {
+  align-self: stretch;
+}
+
+.row-cols > .row-wide {
+  flex-basis: 100%;
+}
+
+.row-port {
+  width: 120px;
+}
+
+.row-word .form-stack {
+  gap: 10px;
+}
+
+/* The scope as the table's segmented choice, with radios inside. */
+.segment:has(> input) {
+  display: inline-flex;
+  align-items: center;
+}
+
+.segment:has(> input:checked) {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: var(--shadow-raised);
+}
+
+.scope-choice .segment-danger:has(> input:checked) {
+  color: var(--danger-ink);
+}
+
+.segment:has(> input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.address-table .col-main,
+.raw-table .col-main {
+  min-width: 130px;
+}
+
+@container (max-width: 760px) {
+  .raw-table td[data-hucre="kapsam"],
+  .raw-table td[data-label="Adres"] {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ---- the pending change's actions */
+.pending-note {
+  color: var(--ink-2);
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.pending-error {
+  color: var(--danger-ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.pending-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pending-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .draft-bar {
+    bottom: calc(80px + env(safe-area-inset-bottom));
+  }
+
+  .draft-actions,
+  .pending-actions {
+    width: 100%;
+  }
+
+  .draft-actions .btn,
+  .pending-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .access-tab > .card,
+  .names-grid .card {
+    padding: 16px;
+  }
+}

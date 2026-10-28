@@ -1,0 +1,39 @@
+{
+  "environment": {
+    "ornek": "ORNEK_EK_PORT=8092\n"
+  },
+  "folders": [
+    "/var/lib/master-stack/uygulamalar/ornek/ornek-config",
+    "/var/lib/master-stack/uygulamalar/ornek/ornek-db"
+  ],
+  "binds": {
+    "ornek": [
+      "/srv/ornek"
+    ]
+  },
+  "start": [
+    "konsol-ornek_ornek.service"
+  ],
+  "stop": [
+    "konsol-ornek_ornek.service"
+  ],
+  "containers": {
+    "ornek": "ornek_ornek"
+  },
+  "network": {
+    "name": "ksl-ornek",
+    "interface": "ksl4f43613d59",
+    "unit": "konsol-ornek-network.service"
+  },
+  "pod": null,
+  "publications": [
+    {
+      "service": "ornek",
+      "port": 8080,
+      "protocol": "tcp",
+      "host_ip": "127.0.0.1",
+      "host_port": 62100
+    }
+  ],
+  "needs_podman5": []
+}

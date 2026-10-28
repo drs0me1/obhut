@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(git push)",
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git tag -d:*)",
+      "Bash(git tag --delete:*)",
+      "Bash(git rebase:*)",
+      "Bash(git filter-branch:*)",
+      "Bash(git filter-repo:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|MultiEdit|Write|NotebookEdit|Grep|Glob|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/kurulum-koru.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/kabuk-denetle.py\"",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

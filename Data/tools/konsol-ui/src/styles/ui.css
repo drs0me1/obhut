@@ -1,0 +1,1366 @@
+/* The shared components of phase 2 (DD-258 goal 5): button variants, fields, pills, chips, cards, empty
+   states, tabs, dialogs and sheets, the typed confirmation, the switch, usage bars and application tiles.
+   Colours only from tokens.css; nothing here needs a style attribute (the CSP allows none). */
+
+/* ---- buttons */
+.btn:disabled,
+.icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.btn-sm {
+  gap: 6px;
+  padding: 0 13px;
+  font-size: 13.5px;
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--danger-ink);
+  color: var(--on-danger);
+}
+
+.btn-danger-quiet {
+  border-color: var(--danger-line);
+  background: var(--surface);
+  color: var(--danger-ink);
+}
+
+.btn-danger-quiet:hover:not(:disabled) {
+  background: var(--danger-tint);
+  color: var(--danger-ink);
+}
+
+.btn-primary:disabled:hover {
+  background: var(--accent);
+}
+
+.fit {
+  width: fit-content;
+}
+
+/* ---- text helpers */
+.muted {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.wrap {
+  overflow-wrap: anywhere;
+}
+
+.fresh {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.warn-text {
+  color: var(--warn-ink);
+}
+
+.form-error {
+  padding: 10px 12px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-sm);
+  background: var(--danger-tint);
+  color: var(--danger-ink);
+  font-size: 14px;
+}
+
+/* ---- fields */
+.input {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.input:focus-visible {
+  border-color: var(--focus);
+  outline-offset: 0;
+}
+
+.check-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+
+.check-option input {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin: 1px 0 0;
+  accent-color: var(--danger);
+}
+
+.check-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14.5px;
+}
+
+.check-option small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.confirm-word {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.confirm-word-text {
+  font-family: var(--font-mono);
+}
+
+/* ---- the switch (role="switch") */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--tap);
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.switch-track {
+  position: relative;
+  flex: none;
+  width: 42px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--switch-off);
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: var(--shadow-raised);
+}
+
+.switch[aria-checked="true"] .switch-track {
+  background: var(--accent);
+}
+
+.switch[aria-checked="true"] .switch-thumb {
+  left: 19px;
+}
+
+/* ---- pills */
+.pill {
+  gap: 6px;
+}
+
+.pill-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pill-ok .pill-dot {
+  background: var(--ok);
+}
+
+.pill-warning {
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+}
+
+.pill-warning .pill-dot {
+  background: var(--warn);
+}
+
+.pill-danger .pill-dot {
+  background: var(--danger);
+}
+
+.pill-neutral {
+  background: var(--neutral-soft);
+  color: var(--ink-2);
+}
+
+/* ---- a reached address with its state's dot (Erişim's services table, the applications list): the dot in the
+   cell's colour, the lines beside it; a neutral line is muted, a fault's line in the fault's colour. */
+.reach {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.reach-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  transform: translateY(-1px);
+}
+
+.reach-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.reach-lines .mono {
+  font-size: 12.5px;
+}
+
+.reach-neutral .reach-lines {
+  color: var(--muted);
+}
+
+.reach-ok .reach-dot {
+  background: var(--ok);
+}
+
+.reach-warning .reach-dot {
+  background: var(--warn);
+}
+
+.reach-danger .reach-dot {
+  background: var(--danger);
+}
+
+.reach-danger .reach-lines {
+  color: var(--danger-ink);
+}
+
+.reach-accent .reach-dot {
+  background: var(--accent);
+}
+
+.reach-none .reach-dot {
+  visibility: hidden;
+}
+
+/* ---- cards */
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  font-size: 14.5px;
+}
+
+.notice-warning {
+  border-color: var(--warn-line);
+  background: var(--warn-tint);
+}
+
+.notice-danger {
+  border-color: var(--danger-line);
+  background: var(--danger-tint);
+  color: var(--danger-ink);
+}
+
+.notice-icon {
+  margin-top: 1px;
+  color: var(--warn-ink);
+}
+
+.notice-title {
+  font-size: 15px;
+}
+
+.notice-list {
+  margin-top: 4px;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+/* ---- empty state */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 26px 16px;
+  text-align: center;
+}
+
+.empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 4px;
+  border-radius: var(--r-md);
+  background: var(--sunken);
+  color: var(--muted);
+}
+
+.empty-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.empty-text {
+  max-width: 460px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* ---- tabs */
+.tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* The line under a strip is an inset shadow, not a border: the chosen tab's 2px line paints over it and nothing
+   overflows the list, which scrolls sideways on a narrow screen (a tab pulled 1px into a border did overflow it,
+   and a scroll bar showed beside the tabs). */
+.tablist {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  box-shadow: inset 0 -1px 0 var(--line-strong);
+  scrollbar-width: thin;
+}
+
+.tab {
+  flex: none;
+  min-height: var(--tap);
+  padding: 0 16px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font-size: 14.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.tab[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.tab:focus-visible {
+  outline-offset: -2px;
+}
+
+.tabpanel:focus-visible {
+  outline-offset: 4px;
+}
+
+/* ---- usage bars (SVG) */
+.usage {
+  display: block;
+  width: 100%;
+  height: 6px;
+}
+
+.usage-track {
+  fill: var(--neutral-soft);
+}
+
+.usage-fill {
+  fill: var(--accent);
+}
+
+/* ---- application tiles */
+.app-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  color: var(--on-tile);
+}
+
+.app-icon-sm {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+}
+
+.app-icon-lg {
+  width: 56px;
+  height: 56px;
+  border-radius: 15px;
+}
+
+.tile-1 {
+  background: var(--tile-1);
+}
+
+.tile-2 {
+  background: var(--tile-2);
+}
+
+.tile-3 {
+  background: var(--tile-3);
+}
+
+.tile-4 {
+  background: var(--tile-4);
+}
+
+/* ---- definition lists */
+.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.facts.mono {
+  font-size: 13px;
+}
+
+/* ---- dialogs and sheets */
+.layer-modal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.layer-modal-sheet {
+  justify-content: flex-end;
+  padding: 0;
+}
+
+.modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 460px;
+  max-width: 100%;
+  max-height: calc(100% - 32px);
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.modal-sheet {
+  width: 460px;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 16px 12px 22px;
+}
+
+.modal-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.modal-heading h2 {
+  font-size: 19px;
+  overflow-wrap: anywhere;
+}
+
+.modal-desc {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.modal-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 22px 18px;
+}
+
+.modal-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 22px calc(16px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line-soft);
+}
+
+.modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 14.5px;
+}
+
+.modal-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.modal-list .icon {
+  margin-top: 1px;
+  color: var(--muted);
+}
+
+@media (max-width: 760px) {
+  .layer-modal,
+  .layer-modal-sheet {
+    align-items: flex-end;
+    justify-content: stretch;
+    padding: 0;
+  }
+
+  .modal,
+  .modal-sheet {
+    width: 100%;
+    height: auto;
+    max-height: calc(100% - 40px);
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+  }
+
+  .modal-foot .btn {
+    flex: 1 1 auto;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .modal-enter-active,
+  .modal-leave-active {
+    transition: opacity 180ms ease;
+  }
+
+  .modal-enter-active .modal,
+  .modal-leave-active .modal {
+    transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .modal-enter-from,
+  .modal-leave-to {
+    opacity: 0;
+  }
+
+  .modal-enter-from .modal-dialog,
+  .modal-leave-to .modal-dialog {
+    transform: translateY(8px) scale(0.98);
+  }
+
+  .modal-enter-from .modal-sheet,
+  .modal-leave-to .modal-sheet {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) and (max-width: 760px) {
+  .modal-enter-from .modal-dialog,
+  .modal-leave-to .modal-dialog,
+  .modal-enter-from .modal-sheet,
+  .modal-leave-to .modal-sheet {
+    transform: translateY(100%);
+  }
+}
+
+/* ================= phase 3 components (DD-258 goal 5): the switch's disabled state, the field, tabs with a
+   second line and an end slot, the data table (cards in a narrow container) and the plan review. */
+
+/* ---- the switch */
+.switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.switch-quiet {
+  padding: 0 2px;
+}
+
+/* ---- the field */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.field-group > .field-label {
+  margin-bottom: 4px;
+  padding: 0;
+}
+
+.field-optional {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.field-error {
+  color: var(--danger-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field-invalid .input {
+  border-color: var(--danger);
+}
+
+.input-suffixed {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.input-suffixed .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.input-suffix {
+  display: flex;
+  align-items: center;
+  flex: none;
+  max-width: 50%;
+  padding: 0 12px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-left: 0;
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  background: var(--sunken);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+select.input {
+  padding-right: 8px;
+}
+
+.form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--tap);
+  font-size: 14.5px;
+  cursor: pointer;
+}
+
+.check-row input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.choice-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.choice-chip {
+  position: relative;
+  display: inline-flex;
+}
+
+.choice-chip input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.choice-chip span {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.choice-chip input:checked + span {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.choice-chip input:focus-visible + span {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.choice-chip input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* ---- tabs with a second line, what follows the last tab and an end slot. The list is as wide as its tabs (it
+   scrolls when the row is narrower); what follows it (an "Ağ ekle") sits beside the last tab and moves on with
+   each new one; the end slot keeps to the right. */
+.tabs-bar-end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+  box-shadow: inset 0 -1px 0 var(--line-strong);
+}
+
+.tabs-bar-end > .tablist {
+  flex: 0 1 auto;
+  min-width: 0;
+  box-shadow: none;
+}
+
+.tabs-after,
+.tabs-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+
+.tabs-end {
+  margin-left: auto;
+}
+
+/* A tab-shaped "add" beside the tabs: a dashed outline, the tabs' type. */
+.tab-add {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px dashed var(--line-button);
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--accent-strong);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-add:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.tab-add:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.tab-hinted {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  min-height: 56px;
+  text-align: left;
+}
+
+.tab-label {
+  font-weight: inherit;
+}
+
+.tab-hint {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/* ---- the panel in the page (InlinePanel): a sheet's parts under the row it belongs to */
+.inline-panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  scroll-margin-bottom: 16px;
+}
+
+.inline-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 6px 0 16px;
+}
+
+.inline-panel-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.inline-panel-heading h3 {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.inline-panel-close {
+  flex: none;
+  width: 36px;
+  height: 36px;
+}
+
+.inline-panel-desc {
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.inline-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 8px 16px 14px;
+}
+
+.inline-panel-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* A form's own actions (a removal, another mode) at the start of the actions. */
+.foot-start {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-right: auto;
+}
+
+.foot-start:empty {
+  display: none;
+}
+
+/* The row a panel opened under comes to the top with a gap; on a phone clear of the top and bottom bars. */
+tr:has(+ tr > td > .inline-panel) {
+  scroll-margin-top: 16px;
+}
+
+@media (max-width: 760px) {
+  .inline-panel {
+    scroll-margin-bottom: 88px;
+  }
+
+  tr:has(+ tr > td > .inline-panel) {
+    scroll-margin-top: 80px;
+  }
+
+  .inline-panel-head {
+    padding: 6px 4px 0 14px;
+  }
+
+  .inline-panel-close {
+    width: var(--tap);
+    height: var(--tap);
+  }
+
+  .inline-panel-body {
+    padding: 8px 14px 14px;
+  }
+
+  .inline-panel-foot {
+    padding: 10px 14px 12px;
+  }
+
+  .inline-panel-foot .btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* ---- the data table: a table on wide containers, cards on narrow ones */
+.table-wrap {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.data-table thead th {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.data-table td,
+.data-table tbody th {
+  padding: 12px;
+  border-bottom: 1px solid var(--line-soft);
+  font-weight: 400;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: break-word;
+}
+
+.data-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.data-table .col-main strong {
+  display: block;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.cell-sub {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.cell-note {
+  display: block;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.cell-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.data-table .col-act {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.data-table .row-actions {
+  flex-wrap: nowrap;
+}
+
+@container (max-width: 760px) {
+  .data-table,
+  .data-table tbody {
+    display: block;
+  }
+
+  .data-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .data-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 10px 16px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .data-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .data-table td,
+  .data-table tbody th {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .data-table .col-main,
+  .data-table .col-act {
+    grid-column: 1 / -1;
+  }
+
+  .data-table .col-act {
+    width: auto;
+    white-space: normal;
+  }
+
+  .data-table .col-act:empty {
+    display: none;
+  }
+
+  /* A card's column is narrow: a long address breaks inside its cell instead of running into the next. */
+  .data-table td[data-label] {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    overflow-wrap: anywhere;
+  }
+
+  .data-table td[data-label]::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .data-table .row-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}
+
+/* ---- the plan review */
+.plan {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.plan-window {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+  font-size: 14px;
+}
+
+.plan-window-timed {
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+}
+
+.plan-window .icon {
+  margin-top: 1px;
+}
+
+.plan-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-title {
+  font-size: 15px;
+}
+
+.plan-items {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.plan-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.plan-item:last-child {
+  border-bottom: 0;
+}
+
+.plan-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.plan-object {
+  min-width: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.plan-change {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.plan-before {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--line-button);
+}
+
+.plan-arrow {
+  color: var(--muted);
+}
+
+.plan-effects,
+.plan-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.plan-effects li,
+.plan-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.plan-effects .icon {
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.plan-warning {
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+}
+
+.plan-warning .icon {
+  margin-top: 1px;
+  color: var(--muted);
+}
+
+.plan-warning[data-seviye="warn"] {
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+}
+
+.plan-warning[data-seviye="warn"] .icon {
+  color: var(--warn-ink);
+}
+
+.plan-warning[data-seviye="bad"] {
+  background: var(--danger-tint);
+  color: var(--danger-ink);
+}
+
+.plan-warning[data-seviye="bad"] .icon {
+  color: var(--danger-ink);
+}
+
+.plan-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notice-ok {
+  border-color: var(--ok-soft);
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+}
+
+.notice-ok .notice-icon {
+  color: var(--ok-ink);
+}
+
+.notice-danger .notice-icon {
+  color: var(--danger-ink);
+}
+
+.notice > span,
+.notice > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.icon-btn-danger {
+  color: var(--danger-ink);
+}
+
+.icon-btn-danger:hover:not(:disabled) {
+  background: var(--danger-tint);
+}
+
+.ok-text {
+  color: var(--ok-ink);
+  font-weight: 600;
+}
+
+/* CopyButton (DD-266): the button and, when the clipboard fails, its note beside it. */
+.copy-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---- the summary card (SummaryCard.vue): its rows, one line each, and its link at the foot; the cards of a grid
+   row stretch to the tallest, so every link sits on one line */
+.summary-rows {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.summary-rows dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.summary-rows dt.warn-text {
+  color: var(--warn-ink);
+}
+
+.summary-rows dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-rows dd.mono {
+  font-size: 13px;
+}
+
+.summary-link {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 2px;
+  margin-top: auto;
+  color: var(--accent-strong);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.summary-link:hover {
+  text-decoration: underline;
+}

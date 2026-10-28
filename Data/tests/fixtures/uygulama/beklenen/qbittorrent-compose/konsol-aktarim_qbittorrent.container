@@ -1,0 +1,36 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: aktarim uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması aktarim: qbittorrent
+After=network-online.target master-firewall.service
+Wants=network-online.target master-firewall.service
+RequiresMountsFor="/srv/downloads"
+
+[Container]
+ContainerName=aktarim_qbittorrent
+Image=lscr.io/linuxserver/qbittorrent@sha256:e851219b75c97d1a161ad6b20c05b82cabb6c3b1b5ab542d9538d0fb1f31ba88
+Pull=never
+Network=konsol-aktarim.network
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=aktarim
+LogDriver=journald
+DropCapability=NET_BIND_SERVICE SETFCAP SYS_CHROOT
+EnvironmentFile="/etc/master-stack/containers/uygulamalar/aktarim/env/qbittorrent.env"
+PublishPort=127.0.0.1:62100:8080/tcp
+PublishPort=203.0.113.10:6881:6881/tcp
+PublishPort=203.0.113.10:6881:6881/udp
+Volume=/var/lib/master-stack/uygulamalar/aktarim/appdata:/config:rw
+Volume=/run/master-stack/konteyner-baglama/aktarim_qbittorrent/594e1fa2d324f6d7:/downloads:rw
+PodmanArgs=--network-alias=qbittorrent
+
+[Service]
+Restart=always
+RestartSec=10s
+TimeoutStartSec=180
+TimeoutStopSec=75
+UMask=0077
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_network.py" --state "/etc/master-stack/state.env" --check
+ExecStartPre=/usr/bin/python3 "/usr/local/sbin/master_container_binds.py" --state "/etc/master-stack/state.env" bagla "aktarim_qbittorrent" "/srv/downloads"
+ExecStopPost=-/usr/bin/python3 "/usr/local/sbin/master_container_binds.py" --state "/etc/master-stack/state.env" birak "aktarim_qbittorrent"
+
+[Install]
+WantedBy=multi-user.target

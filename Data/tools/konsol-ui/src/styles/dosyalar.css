@@ -1,0 +1,968 @@
+/* Phase 4b: Dosyalar (DD-258, DD-267) — Depolama, the folder browser of Sunucu klasörleri and Sistem dosyaları
+   (a table on wide containers, rows as small cards on narrow ones), the upload queue, the move dialog, the
+   text editor's wide sheet (CodeMirror, DD-249) and Çöp kutusu. Shared pieces are in ui.css and pages.css;
+   colours only from tokens.css, the editor's syntax colours included. */
+
+/* ---- the tabs */
+.files-page {
+  gap: 16px;
+}
+
+.files-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.files-tab > .card,
+.files-storage-top > .card {
+  padding: 18px 20px;
+  border-radius: var(--r-lg);
+}
+
+.files-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.files-heading-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.files-title:focus {
+  outline: none;
+}
+
+/* ---- the browser */
+.files-browser {
+  position: relative;
+}
+
+.files-crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.files-crumbs li {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.files-crumbs li + li::before {
+  content: "›";
+  padding: 0 2px;
+  color: var(--muted);
+}
+
+.files-crumb {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.files-crumb:hover {
+  background: var(--hover);
+}
+
+.files-crumb-here {
+  color: var(--ink);
+  cursor: default;
+}
+
+.files-crumb-here:hover {
+  background: none;
+}
+
+.files-tools {
+  justify-content: space-between;
+}
+
+.files-tool-actions,
+.files-selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.files-selection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+}
+
+.files-selection-text {
+  font-size: 14px;
+}
+
+.files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.files-switching {
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .files-list {
+    transition: opacity 120ms ease;
+  }
+}
+
+.files-all {
+  width: fit-content;
+  min-height: 36px;
+  padding-left: 9px;
+  font-size: 14px;
+}
+
+.files-all input {
+  width: 18px;
+  height: 18px;
+}
+
+/* ---- the file table */
+.files-table-wrap {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.files-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.files-table thead th {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.files-table td,
+.files-table tbody th {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  font-weight: 400;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.files-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.files-table .files-check {
+  width: 44px;
+  padding-right: 0;
+  padding-left: 4px;
+}
+
+.files-table .files-size,
+.files-table .files-date,
+.files-table .files-acts {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.files-table .files-size {
+  text-align: right;
+}
+
+.files-table .files-date {
+  color: var(--ink-2);
+}
+
+.files-row-on > td,
+.files-row-on > th {
+  background: var(--accent-soft);
+}
+
+.files-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.files-pick:hover {
+  background: var(--hover);
+}
+
+.files-pick input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.files-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.files-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  color: var(--muted);
+}
+
+.files-icon-dir {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.files-item-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.files-open {
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.files-open:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+.files-open-plain,
+.files-open-plain:hover {
+  color: var(--ink);
+  text-decoration: none;
+  cursor: default;
+}
+
+.files-marks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.files-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--neutral-soft);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.files-mark-on {
+  background: var(--ok-soft);
+  color: var(--ok-ink);
+}
+
+.files-mark-lock {
+  background: var(--warn-soft);
+  color: var(--warn-ink);
+}
+
+.files-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .files-row-actions .icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+@container (max-width: 640px) {
+  .files-table,
+  .files-table tbody {
+    display: block;
+  }
+
+  .files-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .files-table tbody tr {
+    display: grid;
+    grid-template-areas:
+      "check name name"
+      ". size date"
+      ". acts acts";
+    grid-template-columns: 36px auto minmax(0, 1fr);
+    gap: 4px 6px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .files-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .files-table td,
+  .files-table tbody th {
+    width: auto;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .files-table .files-check {
+    grid-area: check;
+    width: auto;
+    padding: 0;
+  }
+
+  .files-table .files-name {
+    grid-area: name;
+  }
+
+  .files-table .files-size,
+  .files-table .files-date {
+    width: auto;
+    color: var(--muted);
+    font-size: 13px;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .files-table .files-size {
+    grid-area: size;
+    padding-left: 44px;
+  }
+
+  .files-table .files-date {
+    grid-area: date;
+  }
+
+  .files-table .files-date::before {
+    content: "· ";
+  }
+
+  .files-table .files-acts {
+    grid-area: acts;
+    width: auto;
+    padding-left: 44px;
+    white-space: normal;
+  }
+
+  .files-row-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .files-row-on {
+    border-radius: var(--r-sm);
+    background: var(--accent-soft);
+  }
+
+  .files-row-on > td,
+  .files-row-on > th {
+    background: none;
+  }
+}
+
+@container (max-width: 400px) {
+  .files-table .files-acts {
+    grid-column: 1 / -1;
+    padding-left: 0;
+  }
+}
+
+/* ---- dropping files on the browser */
+.files-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  border: 2px dashed var(--accent);
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  color: var(--accent-strong);
+  font-weight: 600;
+  text-align: center;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+/* ---- the upload queue */
+.files-uploads {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-muted);
+}
+
+.files-uploads-title {
+  font-size: 14px;
+}
+
+.files-upload-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.files-upload {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.files-upload-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--accent);
+}
+
+.files-upload-hata .files-upload-icon {
+  color: var(--danger-ink);
+}
+
+.files-upload-atlandi .files-upload-icon {
+  color: var(--warn-ink);
+}
+
+.files-upload-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  font-size: 14px;
+}
+
+.files-upload-state {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.files-upload-hata .files-upload-state {
+  color: var(--danger-ink);
+}
+
+.files-upload-atlandi .files-upload-state {
+  color: var(--warn-ink);
+}
+
+/* ---- the move dialog */
+.files-move {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.files-move-here {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.files-crumb-here:focus {
+  outline: none;
+}
+
+.files-crumb-here:focus-visible {
+  outline: 2px solid var(--focus);
+}
+
+.files-move-list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.files-move-list li + li {
+  border-top: 1px solid var(--line-soft);
+}
+
+.files-move-dir {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 6px 12px;
+  border: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.files-move-dir:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.files-move-dir:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.files-move-dir > .icon:first-child {
+  color: var(--accent);
+}
+
+.files-move-dir > .wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.files-move-chevron {
+  color: var(--muted);
+}
+
+/* ---- the text editor: a wide sheet */
+.modal-sheet:has(.files-editor) {
+  width: min(1080px, calc(100vw - 48px));
+}
+
+.files-editor {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.files-editor-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.files-editor-encoding {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+.files-editor-encoding .input {
+  width: auto;
+  min-height: 36px;
+  font-size: 14px;
+}
+
+.files-editor-pos {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.files-textview {
+  flex: 1 1 auto;
+  min-height: 200px;
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.files-reopen {
+  margin-left: 8px;
+}
+
+.files-ask {
+  flex: 1 1 100%;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.files-hint {
+  align-self: center;
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.files-saved {
+  align-self: center;
+  color: var(--ok-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* CodeMirror's own rules come from the bundle through a constructed sheet; these win by one more class. */
+.ed-box {
+  flex: 1 1 auto;
+  min-height: 260px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.ed-box .cm-editor {
+  height: 100%;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.ed-box .cm-editor.cm-focused {
+  outline: none;
+}
+
+.ed-box:focus-within {
+  border-color: var(--focus);
+}
+
+.ed-box .cm-editor .cm-scroller {
+  font-family: var(--font-mono);
+  line-height: 1.55;
+}
+
+.ed-box .cm-editor .cm-gutters {
+  border-right: 1px solid var(--line);
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+
+.ed-box .cm-editor .cm-activeLine {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.ed-box .cm-editor .cm-activeLineGutter {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--ink);
+}
+
+.ed-box .cm-editor .cm-content {
+  caret-color: var(--accent);
+}
+
+.ed-box .cm-editor .cm-cursor {
+  border-left-color: var(--accent);
+}
+
+.ed-box .cm-editor .cm-selectionBackground,
+.ed-box .cm-editor.cm-focused .cm-selectionBackground {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.ed-box .cm-editor .cm-selectionMatch {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.ed-box .cm-editor .cm-searchMatch {
+  background: color-mix(in srgb, var(--warn) 30%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--warn) 60%, transparent);
+}
+
+.ed-box .cm-editor .cm-matchingBracket {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.ed-box .cm-editor .cm-panels {
+  border-color: var(--line);
+  background: var(--surface-muted);
+  color: var(--ink);
+}
+
+.ed-box .cm-editor .cm-panel.cm-search {
+  padding: 6px 8px;
+  font-size: 12.5px;
+}
+
+.ed-box .cm-editor .cm-textfield,
+.ed-box .cm-editor .cm-button {
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  background-image: none;
+  color: var(--ink);
+  font: inherit;
+}
+
+.ed-box .cm-editor .cm-textfield {
+  padding: 4px 7px;
+}
+
+.ed-box .cm-editor .cm-button {
+  padding: 3px 9px;
+}
+
+.ed-box .cm-editor .cm-foldPlaceholder {
+  border-color: var(--line);
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+
+.ed-box .tok-comment {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.ed-box .tok-keyword,
+.ed-box .tok-atom,
+.ed-box .tok-bool {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.ed-box .tok-string,
+.ed-box .tok-string2,
+.ed-box .tok-url {
+  color: var(--ok-ink);
+}
+
+.ed-box .tok-number {
+  color: var(--warn-ink);
+}
+
+.ed-box .tok-propertyName,
+.ed-box .tok-definition,
+.ed-box .tok-typeName,
+.ed-box .tok-className,
+.ed-box .tok-labelName {
+  color: var(--accent);
+}
+
+.ed-box .tok-meta,
+.ed-box .tok-heading,
+.ed-box .tok-namespace {
+  color: var(--warn-ink);
+}
+
+.ed-box .tok-heading {
+  font-weight: 700;
+}
+
+.ed-box .tok-operator,
+.ed-box .tok-punctuation {
+  color: var(--ink-2);
+}
+
+.ed-box .tok-invalid {
+  color: var(--danger-ink);
+}
+
+@media (max-width: 760px) {
+  .files-tab > .card,
+  .files-storage-top > .card {
+    padding: 16px;
+  }
+
+  .modal-sheet:has(.files-editor) {
+    width: 100%;
+  }
+
+  .ed-box {
+    flex: none;
+    height: 52vh;
+    min-height: 220px;
+  }
+
+  .files-textview {
+    flex: none;
+    max-height: 52vh;
+  }
+
+  .files-hint {
+    display: none;
+  }
+
+  .files-editor-pos {
+    margin-left: 0;
+  }
+}
+
+/* ---- Depolama */
+.files-storage-top {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.files-folder-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.files-folder-link .icon {
+  color: var(--accent);
+}
+
+.files-folder-link:hover strong {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+.files-uses {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.files-uses li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.files-use-name {
+  width: fit-content;
+  font-weight: 600;
+}
+
+@container (max-width: 760px) {
+  .data-table .files-uses-cell {
+    grid-column: 1 / -1;
+  }
+}
+
+.files-elsewhere {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Uygulama verileri (K7): each application's own folder, its folders with their sizes and mounts */
+.appdata-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.appdata {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.appdata:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.appdata-head,
+.appdata-folder {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.appdata-path {
+  width: fit-content;
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.appdata-folders {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.appdata-folders li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.appdata-folder {
+  font-size: 13.5px;
+}

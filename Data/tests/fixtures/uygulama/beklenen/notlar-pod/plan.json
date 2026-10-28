@@ -1,0 +1,51 @@
+{
+  "environment": {
+    "notlar-web": "NGINX_PORT=8080\n",
+    "notlar-redis": ""
+  },
+  "folders": [
+    "/var/lib/master-stack/uygulamalar/notlar/notlar_cache",
+    "/var/lib/master-stack/uygulamalar/notlar/notlar_redis"
+  ],
+  "binds": {
+    "notlar-web": [
+      "/srv/notlar/html"
+    ],
+    "notlar-redis": []
+  },
+  "start": [
+    "konsol-notlar-pod.service",
+    "konsol-notlar_notlar-web.service",
+    "konsol-notlar_notlar-redis.service"
+  ],
+  "stop": [
+    "konsol-notlar_notlar-redis.service",
+    "konsol-notlar_notlar-web.service",
+    "konsol-notlar-pod.service"
+  ],
+  "containers": {
+    "notlar-web": "notlar_notlar-web",
+    "notlar-redis": "notlar_notlar-redis"
+  },
+  "network": {
+    "name": "ksl-notlar",
+    "interface": "ksl9928e97df3",
+    "unit": "konsol-notlar-network.service"
+  },
+  "pod": {
+    "name": "notlar",
+    "unit": "konsol-notlar-pod.service"
+  },
+  "publications": [
+    {
+      "service": "notlar-web",
+      "port": 8080,
+      "protocol": "tcp",
+      "host_ip": "127.0.0.1",
+      "host_port": 62100
+    }
+  ],
+  "needs_podman5": [
+    "Kubernetes dosyası birden çok konteynerli bir Pod (Quadlet .pod)"
+  ]
+}

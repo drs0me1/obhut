@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# DD-268: sunucunun durumu ve SSH'den kurtarma (root). Konsol'un arka ucuna kendi soketinden sorar;
+# arka uç yanıt vermezse servisleri systemd'den okur. Komutlar: sudo obhut --help
+set -euo pipefail
+exec /usr/bin/python3 "$(dirname -- "$(readlink -f -- "$0")")/master_obhut.py" "$@"

@@ -1,0 +1,71 @@
+# A Deployment with one replica (as `podman kube generate --type deployment` names it), a secret
+# reference, an HTTP probe, a memory folder and its volume claim.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: "2026-10-17T08:20:03Z"
+  labels:
+    app: sayac-pod
+  name: sayac-pod-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sayac-pod
+  template:
+    metadata:
+      creationTimestamp: "2026-10-17T08:20:03Z"
+      labels:
+        app: sayac-pod
+      name: sayac-pod
+    spec:
+      containers:
+      - env:
+        - name: COUNTER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: sayac
+              key: token
+        - name: COUNTER_MODE
+          value: public
+        image: ghcr.io/example/sayac:2.0
+        imagePullPolicy: IfNotPresent
+        name: sayac
+        ports:
+        - containerPort: 9000
+          name: http
+        - containerPort: 9001
+          protocol: UDP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - mountPath: /data
+          name: sayac-data-pvc
+        - mountPath: /tmp
+          name: tmp
+        workingDir: /data
+      volumes:
+      - name: sayac-data-pvc
+        persistentVolumeClaim:
+          claimName: sayac-data
+      - name: tmp
+        emptyDir:
+          medium: Memory
+status: {}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sayac-data
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,10 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: notlar uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması notlar: ağ
+
+[Network]
+NetworkName=ksl-notlar
+Driver=bridge
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=notlar
+PodmanArgs=--interface-name=ksl9928e97df3

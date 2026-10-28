@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+# Tailscale adres değişince state.env güncelle ve Caddy'yi yeniden başlat.
+# Ek siteler (ör. Paylaşım'ın Infuse adresi {$TAILSCALE_IPV4}:port) Caddyfile'a içe
+# aktarılır; Caddy yeniden başlayınca onlar da yeni adresle açılır (DD-98, DD-149).
+# DD-239/DD-240: 5 dakikalık döngü yok. Açılışta bir kez, her gece 03:00–04:00 arasında bir kez, Caddy
+# çökünce (OnFailure) ve master-onar (Konsol'un "Denetle ve onar" düğmesi ya da SSH) istediğinde çalışır.
+set -Eeuo pipefail
+umask 077
+
+STATE_FILE="${STATE_FILE:-/etc/master-stack/state.env}"
+TAILSCALE_IF="${TAILSCALE_IF:-tailscale0}"
+
+die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
+
+[[ "$(id -u)" == "0" ]] || die "root gerekli"
+[[ -r "$STATE_FILE" ]] || die "state.env yok: $STATE_FILE"
+
+# shellcheck source=/dev/null
+source "$STATE_FILE"
+
+: "${TAILSCALE_IF:=tailscale0}"
+
+: "${SBIN_DIR:?}"
+
+BOUND_UNITS="caddy.service"
+FIREWALL_UNIT="master-firewall.service"
+# The base's tools are in state.env's SBIN_DIR (config/defaults.env, the single source).
+FIREWALL_BIN="$SBIN_DIR/master-firewall"
+# WantedBy=tailscaled tetiklemesi süreç start'ı ile gelir; IP henüz yok olabilir.
+# tailscale wait (1.90+) backend + arayüz + IP hazır olana kadar bekler.
+WAIT_TIMEOUT="${REFRESH_TAILNET_WAIT_TIMEOUT:-120s}"
+
+warn_if_tailnet_unusable() {
+    # Node tailnet'ten silinirse arayüzdeki adres bir süre durur: her unit
+    # yeşil kalır, systemctl --failed boş kalır, ama hiçbir tailnet cihazı
+    # erişemez. Bu durum bir kez 4 saat sessizce sürdü. Tek satırlık uyarı
+    # onu greplenebilir yapar — izleme yığını değil (DD-86).
+    # BackendState tek başına yetmez: Running + Online=false da "unusable".
+    command -v tailscale >/dev/null 2>&1 || return 0
+    local detail=""
+    detail="$(
+        tailscale status --json 2>/dev/null |
+            jq -r 'if (.BackendState == "Running" and .Self.Online == true)
+                   then "ok"
+                   else
+                     "BackendState=\(.BackendState // "unknown") Online=\(.Self.Online // false)"
+                   end' 2>/dev/null
+    )" || detail=""
+    if [[ -n "$detail" && "$detail" != "ok" ]]; then
+        printf 'refresh-tailnet: UYARI tailnet kullanılamıyor (%s)\n' \
+            "$detail" >&2
+    fi
+}
+
+restart_bound_units() {
+    # systemctl try-restart, failed/inactive bir unit'te HİÇBİR ŞEY yapmaz ve
+    # 0 döner — bu yüzden eski "try-restart || restart" kalıbındaki fallback
+    # ulaşılamazdı ve failed bir unit adres geri geldiğinde asla toparlanmazdı.
+    # restart her iki durumu da kapsar (DD-72).
+    local unit
+    for unit in $BOUND_UNITS; do
+        systemctl restart "$unit" ||
+            printf 'refresh-tailnet: %s yeniden başlatılamadı\n' "$unit" >&2
+    done
+}
+
+recover_failed_bound_units() {
+    # Adres değişmediği hâlde unit failed kalmış olabilir: adres geç geldiği
+    # için başlangıçta bind edememiş olan Caddy bu durumda kalır ve
+    # kendiliğinden dönmez. Kurtarma yolu Caddy'nin OnFailure'ı ve master-onar'dır (DD-239).
+    local unit
+    for unit in $BOUND_UNITS; do
+        if systemctl is-failed --quiet "$unit"; then
+            printf 'refresh-tailnet: %s failed; yeniden başlatılıyor\n' "$unit"
+            # DD-182: a boot race can use up Caddy's start limit (3/600 s); without this the
+            # restart fails with "start request repeated too quickly" for ten minutes.
+            systemctl reset-failed "$unit" 2>/dev/null || true
+            systemctl restart "$unit" ||
+                printf 'refresh-tailnet: %s kurtarılamadı\n' "$unit" >&2
+        fi
+    done
+}
+
+recover_firewall_if_broken() {
+    # Ağ kenarı watchdog'u (DD-94): yalnız firewall unit'i ve kendi zincir
+    # invariantları. Container/dosya/image sağlığı kapsam dışı — sözleşme §2'de
+    # reddedilen reconcile motoru değil.
+    local why="" state=""
+    [[ -x "$FIREWALL_BIN" ]] || return 0
+    # tailscaled restart'ı ikisini birlikte tetikler; apply sürerken --check
+    # geçici olarak fail eder. Bu turu atla; saatlik duvar denetimi tekrar bakar (DD-239).
+    state="$(systemctl show -p ActiveState --value "$FIREWALL_UNIT" 2>/dev/null || true)"
+    [[ "$state" == "activating" || "$state" == "deactivating" ]] && return 0
+    if systemctl is-failed --quiet "$FIREWALL_UNIT"; then
+        why="unit failed"
+    elif ! "$FIREWALL_BIN" --check >/dev/null 2>&1; then
+        why="--check başarısız"
+    fi
+    [[ -n "$why" ]] || return 0
+    printf 'refresh-tailnet: firewall bozuk (%s); yeniden uygulanıyor\n' "$why"
+    # start-limit tükenmişse düz restart "repeated too quickly" ile döner.
+    systemctl reset-failed "$FIREWALL_UNIT" 2>/dev/null || true
+    systemctl restart "$FIREWALL_UNIT" ||
+        printf 'refresh-tailnet: firewall yeniden başlatılamadı\n' >&2
+}
+
+recover_failed_wireguard() {
+    # DD-180: WireGuard ağı duvar denetimi geçmeden açılmaz (wg-quick@ drop-in). Duvar
+    # açılışta kurulamamışsa ağ failed kalır; duvar düzelince burada yeniden açılır.
+    # Yalnız etkin (Konsol'dan kapatılmamış) ağlar; Tailscale'i beklemez.
+    local unit units
+    # DD-229/271: ağ kurulmamışsa ya da WireGuard durdurulmuşsa birimler aranmaz.
+    [[ -n "${WG_NETWORKS_FILE:-}" && -f "$WG_NETWORKS_FILE" ]] || return 0
+    [[ -n "${WG_STOPPED_FILE:-}" && ! -e "$WG_STOPPED_FILE" ]] || return 0
+    units="$(systemctl list-units --failed --plain --no-legend 'wg-quick@wg*.service' 2>/dev/null |
+        awk '{print $1}')" || return 0
+    [[ -n "$units" ]] || return 0
+    "$FIREWALL_BIN" --check >/dev/null 2>&1 || return 0
+    for unit in $units; do
+        [[ "$unit" =~ ^wg-quick@wg[0-9]\.service$ ]] || continue
+        systemctl is-enabled --quiet "$unit" 2>/dev/null || continue
+        printf 'refresh-tailnet: %s failed; yeniden açılıyor\n' "$unit"
+        systemctl restart "$unit" ||
+            printf 'refresh-tailnet: %s açılamadı\n' "$unit" >&2
+    done
+}
+
+refresh_application_addresses() {
+    # Rebuild phase 4: an application's open raw port is published on TAILSCALE_IPV4 or WAN_IPV4 in its
+    # unit. The container worker writes the units that carry an older address again and restarts those
+    # services (master_container_worker.py --adres-yenile; idempotent). It may wait up to 300 s per
+    # service, so it runs as its own transient unit and this unit's budget stays as it is; a job, the
+    # installer or a pending settings change makes it leave the work to the next run.
+    [[ -n "${UYGULAMA_STATE_DIR:-}" && -n "${SBIN_DIR:-}" && -f "${SBIN_DIR}/master_container_worker.py" ]] || return 0
+    systemd-run --quiet --no-block --collect --unit=master-container-adres-yenile \
+        --property=RuntimeMaxSec=1800 --property=UMask=0077 \
+        --setenv=PYTHONDONTWRITEBYTECODE=1 \
+        /usr/bin/python3 "$SBIN_DIR/master_container_worker.py" --state "$STATE_FILE" --adres-yenile ||
+        printf 'refresh-tailnet: uygulama adres işi başlatılamadı ya da sürüyor; sonraki çalışmada denenecek\n' >&2
+}
+
+wait_for_tailscale_ready() {
+    command -v tailscale >/dev/null 2>&1 || return 0
+    if ! tailscale wait --help >/dev/null 2>&1; then
+        printf 'refresh-tailnet: tailscale wait yok; IP yoksa soft-skip\n' >&2
+        return 0
+    fi
+    if tailscale wait --timeout="$WAIT_TIMEOUT"; then
+        return 0
+    fi
+    printf 'refresh-tailnet: tailscale wait zaman aşımı (%s); atlanıyor\n' \
+        "$WAIT_TIMEOUT" >&2
+    return 1
+}
+
+# Tailscale durumundan bağımsız çalışmalı: tailnet çökse de firewall toparlanır.
+recover_firewall_if_broken
+recover_failed_wireguard
+
+if ! wait_for_tailscale_ready; then
+    exit 0
+fi
+
+# DD-182: the tailnet allowlist includes PeerAPI read from tailscaled. Right after a
+# tailscaled restart the first check above can run before it answers; check again now.
+recover_firewall_if_broken
+
+warn_if_tailnet_unusable
+
+# DD-157: alan adı değişimiyle aynı state.env dosyasını yarıştırma. Bekleme:
+# Caddy OnFailure bu birimi tetikleyebilir; doluysa sonraki çalışma yeterli.
+if [[ -n "${RUNTIME_DIR:-}" ]]; then
+    mkdir -p "$RUNTIME_DIR"
+    exec 8>"$RUNTIME_DIR/state.lock"
+    flock -n 8 || exit 0
+    # shellcheck source=/dev/null
+    source "$STATE_FILE"
+fi
+
+new_v4="$(
+    ip -4 -o addr show dev "$TAILSCALE_IF" scope global 2>/dev/null |
+        awk 'NR==1 { sub(/\/.*/, "", $4); print $4 }'
+)" || new_v4=""
+if [[ ! "$new_v4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    printf 'refresh-tailnet: Tailscale IPv4 yok (%s); atlanıyor\n' "$TAILSCALE_IF"
+    exit 0
+fi
+
+new_v6="$(
+    ip -6 -o addr show dev "$TAILSCALE_IF" scope global 2>/dev/null |
+        awk 'NR==1 { sub(/\/.*/, "", $4); print $4 }'
+)" || new_v6=""
+
+old_v4="${TAILSCALE_IPV4:-}"
+old_v6="${TAILSCALE_IPV6:-}"
+
+if [[ "$new_v4" == "$old_v4" && "$new_v6" == "$old_v6" ]]; then
+    printf 'refresh-tailnet: değişiklik yok (%s)\n' "$new_v4"
+    recover_failed_bound_units
+    # The boot and nightly runs also catch a WAN address an installer run has written since.
+    refresh_application_addresses
+    exit 0
+fi
+
+printf 'refresh-tailnet: %s/%s -> %s/%s\n' \
+    "${old_v4:-yok}" "${old_v6:-yok}" "$new_v4" "${new_v6:-yok}"
+
+tmp="$(mktemp "${STATE_FILE%/*}/.state-XXXXXX")"
+# shellcheck disable=SC2064
+trap 'rm -f -- "$tmp"' EXIT
+
+# Mevcut state satırlarını koru; yalnız TS adreslerini değiştir.
+while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+        TAILSCALE_IPV4=*) printf 'TAILSCALE_IPV4=%s\n' "$new_v4" ;;
+        TAILSCALE_IPV6=*) printf 'TAILSCALE_IPV6=%s\n' "$new_v6" ;;
+        *) printf '%s\n' "$line" ;;
+    esac
+done <"$STATE_FILE" >"$tmp"
+
+# Anahtar yoksa ekle
+grep -q '^TAILSCALE_IPV4=' "$tmp" || printf 'TAILSCALE_IPV4=%s\n' "$new_v4" >>"$tmp"
+grep -q '^TAILSCALE_IPV6=' "$tmp" || printf 'TAILSCALE_IPV6=%s\n' "$new_v6" >>"$tmp"
+
+chmod 0600 "$tmp"
+mv -f "$tmp" "$STATE_FILE"
+trap - EXIT
+
+[[ -z "${RUNTIME_DIR:-}" ]] || exec 8>&-
+recover_firewall_if_broken
+restart_bound_units
+refresh_application_addresses
+
+printf 'refresh-tailnet: state.env güncellendi; Caddy yeniden başlatıldı\n'

@@ -1,0 +1,54 @@
+# A web application with its database: the password comes from the environment (.env) and is shared.
+name: notlar
+services:
+  web:
+    image: ghcr.io/example/notlar:${NOTLAR_VERSION:-1.4}
+    user: "1000:1000"
+    command: ["serve", "--listen", "0.0.0.0:3000", "--base", "${BASE_URL:-http://notlar.example}"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://notlar:${DB_PASSWORD}@db:5432/notlar
+      DB_PASSWORD: ${DB_PASSWORD}
+      LOG_LEVEL: ${LOG_LEVEL-info}
+      PRICE_NOTE: "$$5 per month"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./uploads:/app/uploads
+      - type: bind
+        source: /srv/media/notlar
+        target: /media/notlar
+        read_only: true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    labels:
+      org.example.role: web
+    restart: unless-stopped
+  db:
+    image: docker.io/library/postgres:16-alpine
+    environment:
+      - POSTGRES_USER=notlar
+      - POSTGRES_DB=notlar
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    tmpfs:
+      - /run/postgresql
+    healthcheck:
+      test: pg_isready -U notlar
+      interval: 10s
+    stop_grace_period: 1m30s
+    restart: unless-stopped
+    x-note: an extension field
+
+volumes:
+  db-data:
+
+x-backup:
+  schedule: daily

@@ -1,0 +1,10 @@
+# Konsol tarafından oluşturuldu; kalıcı kaynak: sayac uygulamasının kaydı.
+[Unit]
+Description=Konsol uygulaması sayac: ağ
+
+[Network]
+NetworkName=ksl-sayac
+Driver=bridge
+Label=io.master-stack.managed=uygulama
+Label=io.master-stack.uygulama=sayac
+PodmanArgs=--interface-name=ksl15751ad628

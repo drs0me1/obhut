@@ -1,0 +1,8 @@
+# GitHub's language bar counts the code this project writes. Documents (including the design
+# mockups and the archive), built bundles and generated files are left out; generated files are
+# also collapsed in diffs.
+Data/docs/** linguist-documentation
+Data/console/duzenleyici.js linguist-generated
+Data/console/yeni/** linguist-generated
+Data/tools/konsol-ui/src/api/sema.ts linguist-generated
+Data/tools/*/package-lock.json linguist-generated

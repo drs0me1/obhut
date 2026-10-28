@@ -1,0 +1,1122 @@
+/* Uygulamalar (rebuild phase 5): the list, Uygulama ekle's steps, the inspector's questions, an application's file
+   with its line numbers and marks, an application's page and its tabs; the /srv folder picker (Dosyalar →
+   Paylaşımlar and an application's folders); the log's search. Colours only from tokens.css; nothing needs a style
+   attribute (the CSP allows none). */
+
+/* ---- the folder picker */
+.folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.folder-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.folder-pick .input {
+  flex: 1 1 180px;
+  min-width: 0;
+  background: var(--surface-muted);
+}
+
+.folder-pick .btn {
+  flex: none;
+}
+
+.folder-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-muted);
+}
+
+.folder-here {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.folder-where {
+  flex: 1 1 140px;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.folder-where:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.folder-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+  border-top: 1px solid var(--line-soft);
+}
+
+.folder-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.folder-text {
+  display: flex;
+  flex: 1 1 160px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.folder-acts {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.folder-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.flip {
+  transform: scaleX(-1);
+}
+
+/* ---- a titled group of fields (a share's connections) */
+.form-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+  padding: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+/* ---- Uygulamalar' list */
+.apps-toolbar .apps-add {
+  margin-left: auto;
+}
+
+.state-cell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.col-net {
+  white-space: nowrap;
+}
+
+/* ---- an application's page: tabs with several cards stack them; Tanım stays mounted (hidden) under another tab */
+.definition-view {
+  grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr));
+  align-items: start;
+}
+
+.tab-keep[hidden] {
+  display: none;
+}
+
+.app-page .tabpanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.summary-tab,
+.definition-tab,
+.definition-edit,
+.storage-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.sub-title {
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.secret-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Özet: each service with its pills and facts */
+.service-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.service-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.service-item:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.service-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.service-name {
+  font-size: 15.5px;
+  overflow-wrap: anywhere;
+}
+
+.facts.service-facts {
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+  font-size: 13.5px;
+}
+
+/* A service's processes: one block per user, its commands on their own line below. */
+.process-line {
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}
+
+.process-line + .process-line {
+  margin-top: 4px;
+}
+
+.process-commands {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* What an application's /srv warning means now (its processes' user), under the warning. */
+.warning-now {
+  display: block;
+  margin-top: 2px;
+}
+
+/* Tanım → Yanıtlar: a long question ("Klasör /var/lib/db · db") sits above its answer. */
+.facts.answer-facts {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px 0;
+}
+
+.facts.answer-facts dd + dt {
+  margin-top: 10px;
+}
+
+.unit-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.unit-chips li {
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--sunken);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.edit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 10px;
+}
+
+.remove-keep .mono {
+  display: block;
+}
+
+/* ---- an application's file: line numbers and marks beside a plain text area. The gutter is laid over the editor's
+   left edge (two digits wide, wider with .code-d3 … .code-d6), so only the text area sets the height. */
+.code-editor {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-muted);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 20px;
+}
+
+.code-editor:focus-within {
+  border-color: var(--focus);
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+.code-invalid {
+  border-color: var(--danger);
+}
+
+.code-gutter {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  width: calc(2ch + 20px);
+  overflow: hidden;
+  padding: 10px 8px 60px 0;
+  border-right: 1px solid var(--line-soft);
+  background: var(--sunken);
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+
+.code-area {
+  position: relative;
+  min-width: 0;
+  margin-left: calc(2ch + 20px);
+}
+
+.code-d3 .code-gutter {
+  width: calc(3ch + 20px);
+}
+
+.code-d3 .code-area {
+  margin-left: calc(3ch + 20px);
+}
+
+.code-d4 .code-gutter {
+  width: calc(4ch + 20px);
+}
+
+.code-d4 .code-area {
+  margin-left: calc(4ch + 20px);
+}
+
+.code-d5 .code-gutter,
+.code-d6 .code-gutter {
+  width: calc(6ch + 20px);
+}
+
+.code-d5 .code-area,
+.code-d6 .code-area {
+  margin-left: calc(6ch + 20px);
+}
+
+.code-num {
+  flex: none;
+  height: 20px;
+}
+
+.code-num-refuse {
+  color: var(--danger-ink);
+  font-weight: 700;
+}
+
+.code-num-question {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.code-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  padding: 10px 0 60px;
+  white-space: pre;
+  pointer-events: none;
+}
+
+.code-line {
+  width: max-content;
+  min-width: 100%;
+  height: 20px;
+  padding: 0 12px;
+}
+
+.code-line-question {
+  background: var(--accent-soft);
+}
+
+.code-line-refuse {
+  background: var(--danger-soft);
+}
+
+.code-line-note {
+  background: var(--warn-tint);
+}
+
+/* The question in hand (Uygulama ekle's inspector). */
+.code-line-current {
+  box-shadow: inset 3px 0 0 var(--accent-strong);
+}
+
+.code-text {
+  color: transparent;
+}
+
+.code-mark {
+  display: inline-block;
+  margin-left: 12px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--accent-strong);
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 18px;
+  vertical-align: top;
+  margin-top: 1px;
+}
+
+.code-line-refuse .code-mark {
+  color: var(--danger-ink);
+}
+
+.code-line-note .code-mark {
+  color: var(--warn-ink);
+}
+
+.code-input {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  caret-color: var(--ink);
+  font: inherit;
+  line-height: 20px;
+  white-space: pre;
+  resize: vertical;
+  tab-size: 2;
+}
+
+.code-input:focus-visible {
+  outline: none;
+}
+
+.code-readonly .code-input {
+  resize: none;
+}
+
+/* ---- Uygulama ekle: a full-window page (DD-279). Its head and its bar stay in sight; on a wide screen the page fills
+   the window and each pane scrolls on its own, on a phone (900 px and below) the page scrolls as one. */
+.app-full .main {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 0;
+}
+
+.app-full .pending-slot {
+  max-width: none;
+}
+
+.app-full .pending,
+.app-full .build-notice {
+  max-width: none;
+  margin: 12px 24px 0;
+}
+
+.add-page {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.add-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.add-head h1 {
+  font-size: 22px;
+}
+
+.add-head h1:focus {
+  outline: none;
+}
+
+.add-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--tap);
+  padding: 0 6px 0 2px;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.add-back:hover {
+  color: var(--ink);
+}
+
+.add-steps {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.add-close {
+  margin-left: auto;
+}
+
+.add-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.add-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 20px 24px;
+}
+
+.add-pane-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.add-pane-head .meter-note {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.add-pane-title {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.add-body .add-sources {
+  align-content: start;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 20px 24px;
+}
+
+.add-sources legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.add-hint {
+  max-width: 60ch;
+  color: var(--muted);
+}
+
+.add-drop {
+  border-radius: var(--r-md);
+}
+
+.add-drop-on {
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
+}
+
+.add-switch {
+  display: none;
+}
+
+.add-order {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 22px;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+.add-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 10px;
+  padding: 12px 24px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.add-result .notice:focus {
+  outline: none;
+}
+
+.job-log-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.job-log-wrap .log-toolbar {
+  justify-content: flex-end;
+}
+
+.job-log {
+  min-height: 160px;
+}
+
+.job-log ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.job-log li {
+  display: grid;
+  grid-template-columns: 8ch 14px minmax(0, 1fr);
+  gap: 0 8px;
+}
+
+.job-time,
+.job-mark,
+.job-empty {
+  color: var(--log-muted);
+}
+
+.job-mark {
+  display: inline-flex;
+  align-items: center;
+  height: 1.7em;
+}
+
+.job-bilgi .job-mark,
+.job-tamam .job-mark,
+.job-tamam .job-text {
+  color: var(--log-ok);
+}
+
+.job-hata .job-mark,
+.job-hata .job-text {
+  color: var(--log-err);
+}
+
+.job-cikti .job-text {
+  padding-left: 10px;
+  border-left: 2px solid var(--log-err);
+  color: var(--log-muted);
+}
+
+.job-empty {
+  margin: 0;
+}
+
+@media (min-width: 901px) {
+  .app-full .main {
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+  }
+
+  .add-body {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .add-pane,
+  .add-body .add-sources {
+    overflow-y: auto;
+  }
+
+  .add-body > * + * {
+    border-left: 1px solid var(--line);
+  }
+
+  .add-body-1 {
+    grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  }
+
+  .add-body-2 {
+    grid-template-columns: minmax(0, 1.1fr) minmax(400px, 1fr);
+  }
+
+  .add-body-3 {
+    grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr);
+  }
+
+  .add-body-4 {
+    grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
+  }
+
+  /* The file fills its pane: the text area takes the height, the gutter and the marks follow it. */
+  .add-fill {
+    flex: 1 1 auto;
+    min-height: 240px;
+  }
+
+  .add-fill .code-editor,
+  .add-fill .code-area,
+  .add-fill .code-input {
+    height: 100%;
+  }
+
+  .add-fill .code-input {
+    resize: none;
+  }
+
+  .add-log .job-log-wrap,
+  .add-log .job-log {
+    flex: 1 1 auto;
+    max-height: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .add-head {
+    padding: 8px 16px;
+  }
+
+  .add-head h1 {
+    font-size: 20px;
+  }
+
+  .add-steps {
+    order: 3;
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+
+  /* The close button leads to the same place. */
+  .add-back {
+    display: none;
+  }
+
+  .app-full .pending,
+  .app-full .build-notice {
+    margin: 12px 16px 0;
+  }
+
+  .add-pane,
+  .add-body .add-sources {
+    padding: 16px;
+  }
+
+  .add-body .add-sources {
+    padding-bottom: 0;
+  }
+
+  .add-switch {
+    display: flex;
+    padding: 16px 16px 0;
+  }
+
+  .add-split[data-bolme="sorular"] .add-file,
+  .add-split[data-bolme="dosya"] .add-questions {
+    display: none;
+  }
+
+  .add-bar {
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  }
+}
+
+.flow-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.flow-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px 3px 4px;
+  border-radius: 999px;
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.flow-step-num {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.flow-steps .flow-step-on {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 650;
+}
+
+.flow-step-on .flow-step-num {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.flow-step-done .flow-step-num {
+  background: var(--ok);
+  color: var(--on-accent);
+}
+
+.flow-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.flow-confirm-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.src-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.src-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.src-card:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.src-card:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The radio covers its card, so the whole card is its click target. */
+.src-card input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.src-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.src-text span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.flow-file-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.flow-paste {
+  min-height: 220px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 20px;
+  white-space: pre;
+  resize: vertical;
+}
+
+.flow-progress {
+  align-items: center;
+}
+
+.flow-boxes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.flow-boxes > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.flow-boxes dt {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.flow-boxes dd {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.flow-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.flow-problems {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.flow-problems li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  overflow-wrap: anywhere;
+}
+
+.flow-foot-text {
+  flex: 1 1 auto;
+  align-self: center;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.flow-foot-text:empty {
+  display: none;
+}
+
+/* ---- the inspector's questions */
+.questions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.q-group {
+  margin-top: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.q-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.q-card:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.q-need {
+  border-color: var(--warn-line);
+  background: var(--warn-tint);
+}
+
+.q-invalid {
+  border-color: var(--danger-line);
+}
+
+.q-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+}
+
+.q-title {
+  font-size: 15px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.q-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.q-line {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.q-line:hover {
+  text-decoration: underline;
+}
+
+.q-why,
+.q-guess {
+  color: var(--ink-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.q-guess {
+  color: var(--muted);
+}
+
+.q-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+}
+
+.q-stay {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.q-kept {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.q-secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.q-secret .input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+/* ---- Tanım's difference */
+.diff {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ---- the log's tools and matches */
+.log-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.log-search {
+  max-width: 360px;
+}
+
+.log-hit {
+  border-radius: 3px;
+  background: var(--warn);
+  color: var(--log-bg);
+}

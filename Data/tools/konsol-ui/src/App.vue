@@ -1,0 +1,114 @@
+<!-- The shell (DD-258): sidebar, page head with the top bar's tools, the pending-change banner and the page;
+     on a phone a compact top bar and a bottom bar instead of the sidebar. The palette, the activity drawer,
+     the phone's menu sheet and a page's dialogs sit outside .app, which is inert while one of them is open.
+     Every page's head starts with "Geri" (the page before, when there is one) and "Genel Bakış", before the
+     title or, for a page below a section (an application), the trail back; that page renders its own heading. A
+     full-window
+     page (route meta full: Uygulama ekle) has its own head and bar: the shell keeps only the pending-change
+     banner above it, since a change waiting for its confirmation must stay in sight, and the new-build notice
+     (DD-280: the files this page runs were replaced on the server). -->
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
+import SideNav from "./components/SideNav.vue";
+import TopTools from "./components/TopTools.vue";
+import PendingBanner from "./components/PendingBanner.vue";
+import BuildNotice from "./components/BuildNotice.vue";
+import BottomBar from "./components/BottomBar.vue";
+import CommandPalette from "./components/CommandPalette.vue";
+import ActivityDrawer from "./components/ActivityDrawer.vue";
+import MenuSheet from "./components/MenuSheet.vue";
+import Wordmark from "./components/Wordmark.vue";
+import { Icon } from "./components/icons";
+import { sectionById } from "./sections";
+import { live } from "./live";
+import { pageHead } from "./page";
+import { anyOpen, toggleSurface, ui } from "./ui";
+import { watchBuild } from "./build";
+
+const route = useRoute();
+const router = useRouter();
+const section = computed(() => sectionById(route.meta.section ?? route.name));
+const full = computed(() => route.meta.full === true);
+const title = computed(() => pageHead.title ?? section.value.title);
+const description = computed(() => pageHead.description ?? section.value.description);
+const main = ref<HTMLElement | null>(null);
+/** Whether "Geri" has a page to go back to: the router notes the page before in the history entry. */
+const canBack = computed(() => route.fullPath !== "" && Boolean((window.history.state as { back?: string | null } | null)?.back));
+
+watch(title, (t) => (document.title = `${t} · Konsol`), { immediate: true });
+watch(anyOpen, (open) => document.documentElement.classList.toggle("modal-open", open));
+
+// After moving to another page, focus its heading so a screen reader announces it.
+const stopAfterEach = router.afterEach((to, from, failure) => {
+  if (failure || !from.matched.length || to.path === from.path) return;
+  void nextTick(() => main.value?.querySelector<HTMLElement>("h1")?.focus({ preventScroll: true }));
+});
+
+function focusMain(): void {
+  main.value?.focus();
+}
+
+function onKeydown(event: KeyboardEvent): void {
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && (event.code === "KeyK" || event.key.toLowerCase() === "k")) {
+    event.preventDefault();
+    // A confirmation waits for its answer; the palette does not replace it.
+    if (ui.open !== "dialog") toggleSurface("palette");
+  }
+}
+
+onMounted(() => {
+  window.addEventListener("keydown", onKeydown);
+  void watchBuild();
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKeydown);
+  stopAfterEach();
+});
+</script>
+
+<template>
+  <div class="app" :class="{ 'app-full': full }" :inert="anyOpen" :data-baglanti="live.connection">
+    <a class="skip-link" href="#icerik" @click.prevent="focusMain">İçeriğe geç</a>
+    <header v-if="!full" class="sidebar">
+      <SideNav />
+    </header>
+    <div class="column">
+      <header v-if="!full" class="mobile-top">
+        <RouterLink to="/genel" class="mobile-brand" aria-label="Obhut · Genel Bakış">
+          <Wordmark />
+        </RouterLink>
+        <TopTools compact />
+      </header>
+      <main id="icerik" ref="main" class="main" tabindex="-1">
+        <div v-if="!full" class="page-head" :class="{ 'page-head-trail': pageHead.parent }">
+          <div class="page-title">
+            <nav class="page-nav" aria-label="Gezinme">
+              <button type="button" class="icon-btn" :disabled="!canBack" aria-label="Geri" title="Geri" data-testid="page-back" @click="router.back()">
+                <Icon name="back" :size="20" />
+              </button>
+              <RouterLink to="/genel" class="icon-btn" aria-label="Genel Bakış" title="Genel Bakış" data-testid="page-home"><Icon name="home" :size="20" /></RouterLink>
+            </nav>
+            <nav v-if="pageHead.parent" class="trail" aria-label="Konum">
+              <RouterLink :to="pageHead.parent.to" class="trail-link">{{ pageHead.parent.label }}</RouterLink>
+              <Icon name="chevron" :size="14" />
+              <span aria-current="page">{{ title }}</span>
+            </nav>
+            <div v-else class="page-title-text">
+              <h1 tabindex="-1">{{ title }}</h1>
+              <p class="page-desc" data-testid="page-desc">{{ description }}</p>
+            </div>
+          </div>
+          <TopTools class="desktop-tools" />
+        </div>
+        <BuildNotice />
+        <PendingBanner />
+        <RouterView />
+      </main>
+    </div>
+    <BottomBar v-if="!full" />
+  </div>
+  <CommandPalette />
+  <ActivityDrawer />
+  <MenuSheet />
+</template>

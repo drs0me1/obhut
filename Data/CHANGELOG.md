@@ -1,0 +1,2147 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [2.1.0] — 2026-10-21
+
+The first version under DD-292: every build now raises the version people see (a fix the last number, a new or
+changed behaviour the middle one), so Konsol's update offer names a newer version instead of 2.0.0 again. Since
+2.0.0: Uygulama ekle as a full-window page with the install's log, removal that leaves nothing behind, Uyarılar behind
+the top bar's count, Genel Bakış as the applications with the resources and the server in the sidebar, Podman and
+WireGuard as sections of their own, Erişim's rows opening under themselves, and a shorter Sistem → Sağlık. Builds
+v2-264 to v2-281.
+
+- The version rises with every build (DD-292): a build that only fixes raises the last number (2.1.0 → 2.1.1),
+  one that adds or changes what you see or do raises the middle one (2.1.1 → 2.2.0); the first number is the
+  generation. Sistem → Güncellemeler, the sidebar, `sudo obhut durum` and the installer's lines show it as before.
+  Should a newer build still carry the installed version (a server offered a build from before this rule),
+  Güncellemeler names its build beside it ("2.0.0 · v2-280") instead of offering "2.0.0" again.
+- Sistem → Sağlık shows only what needs attention (DD-293). Sağlık denetimleri is one line of counts with the
+  overall state, and only the checks with a problem are listed under it; "Tüm denetimler" opens the full table.
+  Denetle ve onar names the last run in one line (when, who started it), its state with the step counts, and only
+  the steps with a problem or a repair; while a run goes on the line says how far it got. "Tüm adımlar" opens
+  every step with the run's start and end. When all is well each card is one line and its button.
+- Uygulama ekle is a page of its own that fills the window (DD-279): the source list beside the chosen source (a
+  file can also be dropped on it), the file beside the inspector's questions, grouped by service, with the line of
+  the question in hand lit and "Bekleyene git" for the next unanswered one; the plan beside the install's order.
+  Leaving with something entered asks first, also inside Konsol; a running install is not stopped by leaving.
+- A new Kurulum step shows the install as it runs: each step with its time, the image pinned, each service
+  running. A finished install stays on its log until you move on. When a container does not come up, its own last
+  lines are kept in the log before the install is rolled back (secret values masked), the reason is said once,
+  and "Başlatma sorusuna dön" leads back to the question with every answer kept.
+- An image that starts as root and switches to its own user (a `PUID`/`PGID` in the file) is explained in its
+  start question; starting it directly as that user stops at once, and the error now says so.
+- An open Konsol notices when the server's Konsol files change, after the installer ran again or an update from
+  another tab (DD-280): it says so and reloads itself, or, while something is entered, waits for "Şimdi yenile".
+  A new build number alone (an install that did not change Konsol's files) changes nothing on the page.
+- A failed install's container lines in its log mask a secret even when it spans several lines; job records
+  older than 30 days are removed when a job begins.
+- Removing an application leaves nothing behind by default (DD-281): its data is deleted once you type its name
+  (tick "Verileri sakla" to keep it), its images go unless another application or container uses them, and its
+  old job records go with the data. Your `/srv` folders are never touched.
+- Erişim → WireGuard: "Ağ ekle" sits right after the last network's tab, as a dashed tab, and moves on as you add
+  networks; "WireGuard'ı kapat" stays at the right. No tab strip shows a stray scroll bar any more (a tab was drawn
+  1 px into the strip's line, which made the strip scroll), in Erişim or anywhere else; the layout check of every
+  Konsol screen now catches such a one-pixel overflow.
+- An application's page shows what each running service really runs as: "Root başladı · abc olarak çalışıyor" or
+  "Root olarak çalışıyor", with a line per user and its commands (DD-282). The /srv warning says what that means
+  now: when the application switched to the Files account its files open in Dosyalar and the warning turns into a
+  note; when it still runs as root it says so.
+- Erişim → Genel: the four summary cards share one layout (their state at the top, short one-line rows, a link to
+  the tab with the details at the foot) and are as tall as each other. The İnternet card shows only the server's
+  addresses; how many ports are open is its state, and which ones are in Güvenlik duvarı.
+- Erişim → Genel: "Hizmetler ve erişim" shows in each cell the addresses and ports a service is reached on there,
+  one per line, or that it is closed; the colour of its dot is its state (a raw port on the internet or WebDAV
+  without encryption is amber). The explanatory sentences, the "Teknik ayrıntı" switch and its detail rows and the
+  WireGuard note under the table are gone; a firewall rule's row says whether it allows or blocks, and a blocking
+  rule shows its port. The service's name leads to its row in Adresler.
+- Erişim → Adresler: "Ayrıntı" opens a row's settings as a compact card right under the row instead of a panel from
+  the right (DD-283): the row's details on one line, its fields side by side like the table's columns, "Adresi
+  kaldır" or "Adres aç" beside Vazgeç. Pressing it again closes the card; choosing another row moves it there, so only one is open. A
+  switch or a scope in the table opens the same card with the change made, and links from Genel Bakış, the
+  services table, Yerel adlar or an application's page open it under its row. While a change is being applied,
+  the table's other controls wait.
+- "Ham port" is now "doğrudan port" everywhere Konsol and the server speak: a port published as itself, with no
+  Caddy row (DD-284). Adresler' second table is "Doğrudan portlar", a row's kind reads "Doğrudan port", the row's
+  number field is "Sunucu portu", and the plan, the inspector's questions and the errors say the same.
+- Uygulamalar: the Erişim column became a mapping, server → container: for each container port, the addresses and
+  ports it is reached on from Tailscale and the internet (each in its colour, as Erişim's table shows them; "Kapalı"
+  when the port is not open), then the container port itself ("→ 8080/tcp", with its service when the application
+  has more than one). The "Ham 8092 · Tailscale" chips are gone. The Güncelleme column is gone too: a newer image
+  shows on the application's page (Özet) and counts in the Dikkat filter.
+- Erişim → Genel: an application is one row whatever its ports; its ports are listed under its name and each cell
+  gathers every port's addresses. An application with one port still leads to its row in Adresler; one with more
+  leads to its own Erişim tab, where each port links to its row.
+- Genel Bakış is the applications only (DD-287): the Kaynaklar meters moved into the sidebar, in a card above the
+  server card, and both sit at the sidebar's foot. The Ağ card and its WAN rate are gone; each application's
+  network is its row in Uygulamalar, where a footnote under the live rate now says what passed through its bridge
+  since it came up ("toplam ↓ 1,2 GB · ↑ 300 MB"). Konsol no longer has a `/api/konsol/ag` route.
+- Genel Bakış is lighter (DD-286): Kaynaklar and Ağ come first, the applications under them; the Erişim özeti
+  card is gone (its counts and openings are Erişim's), and the Sunucu card moved into the sidebar's card under
+  "Tailscale bağlı": the system, how long it has been up, the Tailscale and internet addresses, the version.
+- Uyarılar, a page of its own behind the top bar's count (DD-285): every problem with the link to where it is
+  fixed, the most serious first, or "Her şey yolunda". Genel Bakış no longer carries the Dikkat card; the count
+  beside the search is the one place that says how many, Uyarılar the one place that lists them.
+- "Geri" and "Genel Bakış" buttons before every page's title (and before an application's trail), so any page
+  reached through a link has a way back inside Konsol, also when it runs without a browser bar.
+- Podman is a section of its own in the sidebar, under Uygulamalar (DD-289). At the top: whether Podman runs and
+  its version, how many containers run and how many are unhealthy, their CPU and memory against the server's, and
+  what images, containers and volumes take on disk. Then every container with its state, image, CPU, memory,
+  uptime and ports; an application's container leads to its page, and one Obhut does not manage says who runs it
+  (filter: Tümü, Çalışan, Durmuş). Then the images (one row per image with all its names), volumes,
+  networks and the folders removed applications left: what nothing uses is marked "Kullanılmayan" and can be
+  ticked, across the tabs, and removed with "Seçilenleri kaldır…" (the same cleanup, with `temizle` typed). The
+  separate Temizlik card is gone. Gelişmiş is Caddy, DNS and the technical firewall, read-only.
+- Erişim no longer has a Tailscale tab (DD-288). Erişim → Genel's Tailscale card keeps the state, the addresses
+  and the key's end, and its link opens the Tailscale admin console; Sistem → Sunucu shows the device's Tailscale
+  name, the client version and whether it is offered as an exit node. A device key that ends within 14 days is
+  now a warning in Uyarılar (and in the top bar's count), not only a line on the tab.
+- Genel Bakış' line under its title says what the page now holds, "Uygulamalar bir bakışta: durumları ve
+  adresleri.", instead of naming health, access and the server, which moved to Uyarılar, Erişim and the sidebar.
+- Uygulama ekle no longer takes over an existing container (DD-290): an application comes only from a file, an
+  `https` address or an image name. A container Obhut did not install still shows in Podman, read-only, with who
+  runs it, but has no filter of its own; Obhut never starts, stops, removes or adopts it. A server with an
+  application installed from an existing container needs that application removed before this update.
+- Podman's containers table is readable again: a long image name no longer pushes the other columns narrow (or
+  the table past its card on a 1180–1366 px window). The image takes only the room left, on one line cut with
+  "…" (the whole name on hover), and a narrower table leaves it out; each port stays on one line and the
+  container's name gets its full width.
+- WireGuard is a section of its own in the sidebar, right under Erişim (DD-291), at `#/wireguard` and on a phone
+  under "Daha fazla". It is what Erişim → WireGuard was, unchanged: the networks as tabs with "Ağ ekle" and
+  "WireGuard'ı kapat", each network's card and its devices with their QR codes and profiles. Erişim keeps Genel
+  (its WireGuard card now leads to the section), Adresler, Yerel adlar and Güvenlik duvarı. The installer, `master-wg`,
+  `wireguard.command` and the settings messages now say "Konsol → WireGuard", and the installer's closing summary
+  names every section, Podman included. The sidebar's spacing is a little tighter, so the eight sections and the
+  Kaynaklar and server cards still fit a 900 px tall window.
+
+## [2.0.0] — 2026-10-18
+
+The second generation of Obhut (DD-271 to DD-278). Applications run from their own Compose or Kubernetes files: an
+inspector reads each file and asks what only the operator can answer, and Obhut writes its own Quadlet units. Each
+application port has one access row in Erişim, and every change to access is shown as a plan; an opening waits for a
+confirmation, a closing applies at once. WireGuard is built in and off until turned on. The App Store and its packages
+are gone. This generation installs only on a clean operating system: a server with Obhut 1.x stops at the first
+stage, and 1.2.0 tells such a server so instead of offering an update. The build numbers v2-255 to v2-259 and v2-261
+to v2-263 are this generation's; v2-260 is 1.2.0.
+
+### 2026-10-18 — Documents, sweep and the clean-server test (v2-261, v2-262, branch `yeni-yapi`)
+
+- The documents describe the new generation only (DD-278): the contract, the architecture, the folder-share
+  guide, README, OKUBENI and the test guide; old interface documents and superseded decisions are archived.
+- A WireGuard network closed in Konsol stays closed after a re-run or an update, and its internet port is
+  closed with it; adding, removing, opening, closing or renewing a network from the terminal waits while a
+  Konsol change is pending.
+- A change that waits for confirmation cannot be applied from the internet address (it could not be confirmed
+  there); restarting the server or running the repair waits until an application job or a cleanup ends.
+- Yerel adlar shows Konsol's, Paylaşımlar' and the applications' names read-only, each changed where it
+  belongs; the switch that hid such a name is gone. Your own DNS records work as before.
+- Opening an internet name for an application says that only the application's own login guards it; a
+  password written in a Compose file is pointed out on its line (it is not used, but it stays in the file).
+- The installed programs no longer carry options that only tests used.
+- An application's Tanım plan lists a start mode only when it really changes; an unchanged definition plans
+  nothing (found on the clean-server test, v2-262).
+
+### 2026-10-17 — Konsol's new screens (v2-259, branch `yeni-yapi`)
+
+- Uygulamalar → "Uygulama ekle" (DD-276): paste or upload a Compose or Kubernetes file, or start from an
+  https address, an image name or a container already on the server; the inspector marks the file line by
+  line and asks its questions; the plan shows everything that will be created before anything is written;
+  the install runs as a job and opens the application's page.
+- An application's page has Özet, Erişim, Depolama, Tanım and Günlük. Tanım shows the file and the answers
+  and edits them: the change is shown as a plan first and applied as a job; secrets stay unless renewed; an
+  application added from an address can be refreshed from it.
+- Each application's live download and upload rate is shown in the list, on its page and in Genel Bakış'
+  network card (read from the application's own network).
+- Genel Bakış shows what needs attention, the applications with an "Aç" button, an access summary and what
+  is open to the internet. Erişim has its own Yerel adlar tab.
+- Dosyalar → Depolama shows each application's data folders with their sizes. Sistem: "Günlük" is now
+  "İşlem geçmişi", Güncellemeler counts application image updates, and the Görünüm tab is gone (the theme
+  switch is in the top bar and the command palette).
+- Gelişmiş is read-only; its only action is a cleanup of unused images, networks, volumes and the folders of
+  removed applications. Pulling images and creating Podman volumes or networks by hand are gone.
+
+### 2026-10-17 — Each application port has its own access row (v2-258, branch `yeni-yapi`)
+
+- Erişim → Adresler lists Konsol, Paylaşımlar and every port of every application (DD-275). A port is
+  either an address (a Tailscale name, optionally a Tailscale port on the server's Tailscale address and an
+  internet name with HTTPS) or a raw port that is closed, open on Tailscale or open on the internet. An
+  application's address answers on Tailscale as soon as it is installed; raw ports start closed.
+- Every change is shown as a plan first. Opening or widening access waits 60 seconds for a confirmation from
+  Tailscale and is undone if it does not come; closing applies at once and never reopens by itself.
+- "Adres aç" gives a raw TCP port a name, "Adresi kaldır" takes it away; both restart that service for a
+  few seconds. Opening a raw port to the internet asks for an explicit consent, and the port number on the
+  server can differ from the container's.
+- The firewall view shows application ports as fixed rows that link to their access row; a firewall rule
+  cannot be put on such a port.
+- WireGuard: turning it on, adding a network and opening one are plans with the 60 second confirmation;
+  stopping, closing and removing apply at once; renewing a network's key needs the typed word. Devices and
+  their settings change at once as before.
+- Removed: Yayınla and manually added addresses (an application port's row replaces them), and the old
+  WebDAV-only HTTPS setting. `sudo obhut yayin` is now `sudo obhut erisim liste|kapat`.
+
+### 2026-10-17 — Applications run from their own Compose or Kubernetes files (v2-257, branch `yeni-yapi`)
+
+- An application is installed from its own Compose or Kubernetes file and the operator's answers
+  (DD-274): Obhut writes its Quadlet units, pulls and pins its images, creates its secrets as Podman
+  secrets, gives each address port a local port, starts its containers in order and waits until they are
+  running and healthy. Anything that fails is taken back, and the job says which service stopped and where
+  its journal is. Konsol's screens for adding and editing arrive in a later phase; the routes are in place.
+- Each application has its own network; Compose services reach each other by name, a Kubernetes Pod's
+  containers share `localhost`. A Pod with several containers and a Compose `service_healthy` need
+  Podman 5 (Debian 13, Ubuntu 26.04); on Ubuntu 24.04 such a file is refused before anything is written.
+- A container starts either directly as its own user (no privileges at all) or as root with Podman's
+  usual privileges minus a few; a root start, or a start as another user, that can write to `/srv` is
+  shown with a warning.
+- Uygulamalar lists the applications with their services, resources and update state. Each application's
+  page shows its services, ports, folders, file and answers (never a secret's value) and its logs per
+  service, and starts, stops, restarts, updates or removes it; removal keeps the data unless the
+  application's name is typed.
+- A draft file can be made from an `https` address, an image name or a container that already runs on
+  the server; taking over a container moves its data into the new application.
+- Removed: Konsol's single-container definitions, "Bir imajdan", "Yönetime al", the definition editor and
+  the container settings tab, and Yayınla's step that added a local port to a container.
+- The base installs `catatonit`, which Podman needs for pods and for `init: true`.
+
+### 2026-10-17 — Konsol reads Compose and Kubernetes files (v2-256, branch `yeni-yapi`)
+
+- Konsol can read an application's own Compose or Kubernetes YAML file and inspect it without changing
+  anything on the server (DD-273): what it refuses and why, line by line; what it asks (each port, each
+  variable and secret, each folder, how each container starts); and, once answered, the definition the
+  next phase will install. Nothing in the interface uses it yet.
+- Obhut reads YAML itself, with no new package: what Compose and Kubernetes files use is read, anything
+  else (anchors, tags, multi-line plain text...) is shown with its line instead of being guessed.
+
+### 2026-10-17 — A new generation: a clean base without the App Store (v2-255, branch `yeni-yapi`)
+
+- This build starts Obhut's second generation (DD-271, DD-272). It installs only on a clean operating
+  system: a server that ran an older Obhut stops at the first stage with "Bu sunucuda eski nesil bir
+  Obhut var; bu sürüm yalnız temiz bir işletim sistemine kurulur", before anything is written. There is no
+  upgrade path from 1.x.
+- The App Store is gone: the catalogue, the qBittorrent and Gezgin packages, the store engine
+  (`master-modul`) and every package form, page and setting. Uygulamalar lists the containers Konsol
+  manages; adding applications from their own Compose or Kubernetes files arrives in a later phase.
+- WireGuard is part of the base: it is installed with Obhut and turned off. Erişim → WireGuard turns it on
+  by creating the first network, and stops or starts it as a whole; there is nothing to install.
+- Files and folder WebDAV are installed directly; Paylaşımlar is no longer listed as an application.
+- Genel Bakış' network card shows the internet rates only; per-application totals are gone with the
+  packages.
+- Leftovers kept for older installs are removed: old folder-share records (schema 3) are refused, and a
+  share record with a field this version does not write is refused too; old Konsol addresses no longer
+  redirect and land on Genel Bakış; `/yeni` no longer redirects.
+
+## [1.2.0] — 2026-10-17
+
+The last release of the 1.x line. Konsol's redesign is complete: Erişim with Yayınla, Sistem, Gelişmiş and
+adding applications, then Konsol at `/` with Dosyalar and Paylaşımlar while the old interface goes;
+Gezgin's WebDAV shares on the tailnet; Konsol as an app on the home screen and `sudo obhut` over SSH; the
+leftovers of the old interface removed and the layout measured on every test screenshot. Konsol also
+learns that a new generation of Obhut needs a clean install and is never offered as an update. The
+entries below are the builds that make up 1.2.0. The build numbers v2-255 to v2-259 belong to the new
+generation's branch, so this release is v2-260; servers compare build numbers, so a server on 1.1.0 or
+on any of these builds sees it as newer.
+
+### 2026-10-17 — Release 1.2.0: a new generation needs a clean install (v2-260)
+
+- Konsol's update check reads the generation of the newest build on GitHub (`OBHUT_NESIL` in its
+  `install.sh`; a build without it is generation 1, as every 1.x build is). When the newest build is of
+  another generation, Sistem → Güncellemeler shows "Yeni nesil çıktı" and, where "Güncelle" was, a notice:
+  the new generation installs only on a clean operating system and does not come to this server as an
+  update; nothing changes here; to move, back up what you need and install it on a clean system with
+  `kur.sh`. The sidebar and Genel Bakış say "yeni nesil çıktı" beside the version, and `sudo obhut durum`
+  and `sudo obhut guncelle` print the same and start nothing (DD-277).
+- `GET /api/konsol/guncelleme` gains `yeni_nesil` (`{nesil, metin}`, or null); its POST refuses another
+  generation with the same text.
+- `master-guncelle`, the update's own unit, reads the target's `install.sh` before it downloads `kur.sh`
+  and stops when that build is of another generation or cannot be read. Nothing on the server changes,
+  and Güncellemeler shows the reason as the last attempt's failure.
+- The release is named 1.2.0 in Konsol and the installer.
+
+### 2026-10-16 — Long addresses stay in their column on a phone (v2-254)
+
+- On a phone, the cards of Erişim → Güvenlik duvarı (listeners), an application's port card and Gelişmiş →
+  DNS no longer let a long address run over the next column; it wraps inside its own cell (DD-270).
+- The browser suites measure every screen state they photograph: a horizontal scroll, content spilling over
+  or cut off at its box, squeezed text, overlapping text or controls and dialogs that do not fit fail the
+  suite. A sweep measures the same states from 320 to 1920 px.
+
+### 2026-10-16 — Leftovers of the old interface removed (v2-253)
+
+- Konsol's backend no longer reads the firewall rule by rule for a page that is gone: opening Erişim or
+  Gelişmiş runs six fewer `iptables` commands. Genel Bakış gets the last CPU sample and the last network
+  rate instead of histories nothing drew (DD-269).
+- qBittorrent's settings have one route, the Ayarlar tab's `/ayar`; the old account and folder routes
+  answer 404. Its journal line now reads "qBittorrent ayarları kaydedildi (…)". WireGuard no longer
+  offers a masked profile preview; a device profile is a download or a QR code, as before.
+- Messages on the server terminal, in `wireguard.command`, `kur.sh` and the repair report name today's
+  places (Erişim → Adresler, Erişim → WireGuard, Uygulamalar, the pending-change bar) instead of
+  Ayarlar, App Store or Ana Menü. The install summary no longer lists an archive tool.
+- Live checks that still asked for removed routes (`https-live`, `publications-live`,
+  `panel-public-live`, `konsol-login-live`) read the current ones again.
+- Code kept only for installs from before v2-190 is gone. A server that still has the share folder
+  of releases before v2-145 (`/srv/.pay`) is not installed any more: the installer stops before
+  changing anything and asks for that folder to be checked and removed, since it may hold old account
+  data and is no longer hidden. The user area is `/srv` only (no `/data`), and the old native
+  qBittorrent service is not checked for.
+
+### 2026-10-16 — Konsol as an app on the home screen, and `obhut` for SSH (v2-252)
+
+- Konsol can be added to a phone's or computer's home screen and opens in its own window with the Ô
+  icon. Nothing is stored for offline use, so it always shows the server as it is now (DD-268).
+- `sudo obhut` on the server shows its state and gets Konsol back when the page cannot be reached:
+  `obhut durum`, `obhut denetle`, `obhut onar`, `obhut guncelle`, `obhut hesap sifirla`,
+  `obhut uygulama liste|baslat|durdur|yeniden-baslat <id>`, `obhut yayin kapat <id>` (closes an internet
+  name, the Tailscale name stays) and `obhut geri-al` (rolls back a pending settings change). It works
+  even when Konsol's backend is down: it then lists the services and `obhut onar` repairs them.
+- Folder shares stay in Konsol (Dosyalar → Paylaşımlar); Gezgin keeps sharing its own content beside
+  them.
+
+### 2026-10-16 — Gezgin's WebDAV shares on the tailnet (v2-251)
+
+- Gezgin, installed from the App Store, can share folders over WebDAV again (Finder, Infuse): its
+  share window offers "Bağlantı" and "WebDAV", as Gezgin was designed. The package left Gezgin's
+  WebDAV port off, so the windows showed links alone and looked like an older Gezgin.
+- The shares are at `http://gezgin.<domain>:62984/<share>/`, on the tailnet only; nothing opens on
+  the internet. Installed servers get it with the next update (the container is made anew; users,
+  settings and shares stay) (DD-264).
+
+### 2026-10-16 — Konsol at /, Dosyalar and Paylaşımlar; the old interface removed (v2-250)
+
+- Konsol is the new interface now, at `http://panel.<domain>/`; `/yeni/` sends you there and keeps the
+  view you asked for. Old bookmarks land on their new places: App Store on the catalogue, the Podman
+  page on Uygulamalar or the container's application page, Ayarlar's tabs on Erişim, Sistem or Gelişmiş,
+  Files' folders on Dosyalar, a package's page on its application page (DD-267).
+- Dosyalar has five tabs: Depolama (the disk, the trash and the top folders with their size, item count
+  and which applications and shares use them, with a way to Gezgin), Sunucu klasörleri (browse, filter,
+  upload with progress and cancel, download, new folder, rename, move, trash and edit text files),
+  Çöp kutusu (restore, delete for good and empty after the typed word), Paylaşımlar and, on the tailnet,
+  Sistem dosyaları (the whole server as root, permanent delete by the item's name).
+- Paylaşımlar manages folder shares: one card per share with its Tailscale and internet connections
+  (switch, read-only or read-write, 1/7/30 days or unlimited, the address and Infuse's fields), creating
+  and editing a share with a typed or generated password, and removal after the typed word. A folder
+  in Sunucu klasörleri links to its share or to a new one.
+- The sign-in page for the internet name has its own look in Konsol's colours and returns to the view
+  you came from.
+- Removed with the old interface: Konsol's ZIP/RAR archive jobs (Gezgin opens and creates archives),
+  the favourite folders, the Ana Menü edit mode and its saved layout, and the old Files, App Store,
+  Podman and Ayarlar pages. Package pages are gone too; an application's settings are on its own page.
+- A re-run removes what earlier runs left for these: the old interface's files, the RAR package source,
+  the saved layout and favourites, the old archive helpers and Konsol's old archive work folder
+  (`/srv/.arsiv`, only when it is the one Konsol made). Installed `unrar` and `python3-rarfile` stay;
+  on Debian they no longer get updates, so remove them with `apt purge unrar python3-rarfile` if you
+  do not use them.
+- The installer's summary, its warnings and Konsol's messages name the new places (Sistem → Hesap,
+  Erişim → Adresler, Sistem → Günlük, the catalogue in Uygulamalar).
+
+### 2026-10-16 — Sistem, Gelişmiş and adding applications in the new interface (v2-249)
+
+- The new interface at `/yeni/` has Sistem: every health check with "Denetle" and "Onar", the last
+  repair report and its log; the version with "Yeniden denetle" and "Güncelle"; the Konsol account
+  (create, change the password, sign out); the server's facts and "Yeniden başlat"; the theme; and the
+  log of Konsol's actions with kinds and search (DD-266).
+- Gelişmiş shows the effective Caddy and DNS configuration with the raw files, and manages Podman's
+  images, volumes and networks.
+- Uygulamalar can add applications: from the catalogue with each package's install form, from an image
+  with the full container editor, or by taking over a container made outside Konsol. An application's
+  page now has its settings (the container's definition, a package's settings form and first-login
+  account), the container's details and a searchable log.
+- A container action no longer fails at once when it meets the share check that runs every 30 seconds;
+  it waits a few seconds for it, as package installs do.
+
+### 2026-10-15 — Erişim and Yayınla in the new interface (v2-248)
+
+- The new interface at `/yeni/` has its Erişim section: Genel shows what needs attention, each with
+  "Düzelt", the Tailscale, internet, WireGuard and certificate cards and who reaches which service
+  from where; Adresler lists every address with its state, the local names and records, DNS
+  forwarding and the local domain; Tailscale, WireGuard and Güvenlik duvarı have their own tabs
+  (DD-265).
+- Yayınla opens an application on the tailnet, the internet or both in four steps (what, who, which
+  name, the plan). A container made in Konsol that has no port on this server first gets one
+  (127.0.0.1, from 62100–62899), then its name; the plan says so before anything changes.
+- Every change on these pages shows its plan first: what changes before and after, what restarts and
+  whether it must be confirmed within 60 seconds (firewall) or 5 minutes (the local domain). A change
+  the page could not confirm from where it is open says so instead of applying.
+- A WireGuard network's name can be changed in its settings, in the new interface and through
+  `master-wg net-settings DNS REVİZYON [ETİKET]`; keys, profiles and devices stay.
+
+## [1.1.0] — 2026-10-13
+
+Gezgin, the file manager, joins the App Store; the redesigned Konsol at `/yeni/` gets its first own
+pages (Genel Bakış, Uygulamalar and the application page); Konsol shows containers' CPU and memory.
+The entries below are the builds that make up 1.1.0. Servers compare build numbers, so a server on
+1.0.0 or on any of these builds sees this release as newer.
+
+### 2026-10-13 — Release 1.1.0 (v2-247)
+
+- The release is named 1.1.0 in Konsol, the new interface and the installer. Nothing else changes.
+
+### 2026-10-13 — Container CPU and memory on the Podman page (v2-246)
+
+- Konsol's Podman page shows each running container's CPU and memory; the new interface's
+  application list gets the same numbers. They were empty: `podman stats` cannot run in Konsol's
+  sandboxed backend, because it enters each container's network namespace. The backend now reads the
+  container's own cgroup files instead, and its sandbox stays as it was (DD-263).
+- Memory leaves out the file cache the system can drop at once, as `docker stats` does. CPU is the
+  share of one core since the previous reading, so a container shows "—" until the page's next
+  refresh (ten seconds).
+- A container's detail shows the same CPU and memory; before, it showed "—" even when the list had
+  numbers. A container whose numbers cannot be read is named in the page's note.
+
+### 2026-10-13 — Gezgin in the App Store; Genel Bakış and Uygulamalar in the new interface (v2-245)
+
+- Gezgin, the file manager, is in the App Store. Its install window asks for the first administrator;
+  Gezgin then opens at `http://gezgin.<domain>` with its own sign-in, and can be published on the
+  internet from Ayarlar → Caddy like qBittorrent. It sees the whole user area except Konsol's trash
+  and archive work. Removed without its data, it keeps its users, settings and link shares in
+  `/var/lib/gezgin` and comes back with them (DD-262).
+- The new interface at `/yeni/` has its own Genel Bakış, Uygulamalar and application pages: every
+  application (App Store packages, Konsol's containers, Files and WebDAV) in one list with its state,
+  how it is reached, its update state and its actions (DD-261).
+- The current Konsol links to the new interface at the bottom of its sidebar ("Yeni arayüzü dene").
+- Reading the application list starts the image update check when the last one is more than six
+  hours old; before, only the Podman page started it.
+- After an App Store container application is installed, the container guard includes it at once:
+  the firewall check no longer reports the guard as stale until the hourly check, and qBittorrent's
+  peer port is open right after its install (DD-262).
+
+## [1.0.0] — 2026-10-13
+
+The first tagged release under the name Obhut. From here on, releases follow semantic versioning and
+are tagged `vX.Y.Z`. The build number (`V2_VERSION`, shown as v2-NNN below) still rises with every
+change and is what servers compare when Konsol offers an update (DD-260). The entries below are the
+builds that make up 1.0.0; earlier builds are in
+[`docs/archive/CHANGELOG-before-v2-145.md`](docs/archive/CHANGELOG-before-v2-145.md).
+
+### 2026-10-13 — A release version beside the build number (v2-244)
+
+- Obhut has a version people read: **1.0.0**. Konsol shows it in the server facts and on the update
+  button and its confirmation ("Sunucu 1.1.0 sürümüne güncellensin mi?"), the new interface in its
+  sidebar, the installer in its first and last lines. The build number stays in the logs and in the
+  title of the version fact.
+- Updates are offered exactly as before: servers compare build numbers, so a server on any earlier
+  build sees this one as newer (DD-260).
+
+### 2026-10-13 — The redesigned Konsol's first phase at /yeni/ (v2-243)
+
+- The redesigned Konsol starts at `http://panel.<domain>/yeni/`, beside the current one, which is
+  unchanged at `/`. This first phase is its frame: the sections by task (Genel Bakış, Uygulamalar,
+  Erişim, Dosyalar, Sistem, Gelişmiş), search with ⌘K/Ctrl+K, the problem count and the running
+  operations in the top bar, the banner of a settings change waiting for confirmation, light/dark
+  theme and a bottom bar on phones. Its pages still open the current Konsol (DD-258, DD-259).
+- Konsol's backend can now say, for every service, whether it is reachable from the server itself,
+  from Tailscale, from WireGuard and from the internet, with warnings such as WebDAV served over
+  plain HTTP on the internet or a container port published straight on the WAN. Nothing changes on
+  the server; the Erişim page of a later phase shows it.
+- Live updates: the new interface receives resources, health, running operations and the pending
+  change from one event stream instead of asking every few seconds. Only what changed is sent; on
+  the public name the stream ends when the session does.
+
+### 2026-10-13 — Konsol's sidebar shows the Ôbhut wordmark (v2-242)
+
+- Konsol's sidebar and its mobile header show "Ôbhut" where they showed the server's name with
+  an accent dot. The server's name and the panel address stay beneath it in the small line
+  ("<host> · panel.<domain>"), so nothing the operator read there is lost (DD-256).
+
+### 2026-10-12 — Security and stability review (v2-241)
+
+- The firewall stops before touching any rule when an installed package's declaration cannot be
+  read. It used to go on with the networks read so far, which could drop the WireGuard NAT and
+  the private-destination blocks while `--check` still passed.
+- Saving qBittorrent's account or folder no longer deletes its settings file when the service
+  cannot be stopped; a failed change restores only the files it had saved. A stopped app's
+  settings save even when its unit is not loaded.
+- Emptying the Files trash never enters a disk mounted inside a folder that was moved to the
+  trash; it answers that a disk is mounted there instead of erasing it. Uploads write every byte
+  even when the disk accepts a chunk in parts.
+- Konsol's backend ends a request whose body does not arrive within 30 seconds (a sign-in sent a
+  byte at a time could hold the public site's connections), refuses addresses with `.`, `..` or
+  empty segments, and answers a failed App Store listing with an error instead of dropping the
+  connection.
+- An update started from Konsol (or a second `kur.sh`) no longer replaces the installer's files
+  while an installation or App Store operation is running. "Denetle ve onar" waits for the hourly
+  firewall check instead of showing the previous report. A truncated answer from GitHub counts as
+  a failed update check. Opening or closing a WireGuard network waits for a running App Store
+  stop.
+- Cleanup: unused styles, an unused import and CLI action, an option that could never be reached,
+  stale mentions of the retired exporter and `.command` installer, the README and CLAUDE.md
+  layout rows (DD-257).
+
+### 2026-10-12 — The sign-in page shows the Ôbhut wordmark (v2-240)
+
+- Konsol's sign-in page shows "Ôbhut" (the mark as its first letter) where it said "Konsol.";
+  the subtitle and the rest of the page are unchanged. The wordmark follows the page's theme
+  (DD-256).
+
+### 2026-10-11 — The Obhut mark: Konsol's icon (v2-239)
+
+- Obhut has a mark: the letter O wearing a roof, "Ô" (`Data/console/obhut.svg`, with a 180 px
+  PNG for iOS home screens). Konsol and its sign-in page now show it as their browser icon; the
+  README carries the wordmark, "Ôbhut" with the mark as its first letter
+  (`Data/docs/obhut-yazi.svg`). Nothing else in Konsol changes (DD-256).
+
+### 2026-10-11 — The project is named Obhut (v2-238)
+
+- The repository is now `drs0me1/obhut`; the install line is
+  `curl -fsSL https://raw.githubusercontent.com/drs0me1/obhut/main/kur.sh | sudo bash`. The old
+  `drs0me1/myserver` address keeps working through GitHub's redirect.
+- The installer's banner and first log line say "Obhut" ("=== Obhut — kurulum ===",
+  "Obhut <sürüm> başlıyor"). Konsol, Gezgin and the App Store keep their names.
+- Installed servers keep updating from Konsol, and their next update records the new repository
+  name. Paths, services and commands on the server keep their names (DD-255).
+
+### 2026-10-10 — Publication errors name their cause (v2-237)
+
+- When saving in Settings → Caddy (or a folder share) cannot apply the change, the message now says
+  which step failed and why, e.g. "Caddy yapılandırması geçersiz: … ambiguous site definition: …"
+  instead of only "WAN dinleyicisi/güvenlik duvarı uygulanamadı." The previous state is still
+  restored (DD-254).
+
+### 2026-10-10 — Updates go on while Caddy's package repository is down (v2-236)
+
+- When Caddy's package repository does not answer (it returns "402 Payment Required" when its
+  bandwidth limit is reached), an update or re-run of a server that already has Caddy no longer
+  stops in stage 1: it goes on with a warning and Caddy keeps its current version until the
+  repository is back. Any other repository error still stops the run (DD-253).
+- A failed Konsol update now shows the installer's own error instead of
+  "env failed with exit status 1.".
+
+### 2026-10-10 — Caddy: addresses the operator enters (v2-235)
+
+- Ayarlar → Caddy has "+ Elle adres": give a name, a Tailscale name (`<ad>.<yerel alan>`) and a port
+  on this server (127.0.0.1), and optionally open it on the internet with an HTTPS name, e.g. a Podman
+  container's web interface published on 127.0.0.1.
+- The address appears in the table like the other rows, with its own Tailscale and internet
+  switches and a Sil button; its Tailscale name is answered by the server's DNS.
+- On the internet the application's own login is the only guard; Konsol's sign-in is not put in
+  front. Konsol's own ports and applications that already have a row cannot be used (DD-252).
+
+### 2026-10-08 — Podman: container logs in full, unfiltered (v2-234)
+
+- The Günlük section of a container on the Podman page shows the log exactly as it was written:
+  passwords, tokens and keys are no longer replaced with "••••".
+- For containers Konsol or the App Store runs, the log now covers every start, restart and
+  re-creation (read from the service's system journal), so a line printed before a restart — such as
+  an application's first generated password — is still there (DD-251).
+
+### 2026-10-07 — Files: the favourite star follows the folder's name (v2-233)
+
+- In the details under the contents, the favourite star now sits right after the folder's name instead
+  of on its picture. A long name is shortened with "…"; the star always stays visible (DD-250).
+
+### 2026-10-07 — Files: favourite folders (v2-232)
+
+- A selected folder (or the open one) has a star on its picture in the details: a hollow star adds it
+  to Favoriler, a filled one takes it out. It works in both views, "Sistem (/)" included.
+- Favourites are listed first in the places column, above Sunucu and Sistem (/), with where they are
+  ("/srv/media", "root · /etc"). A click opens the folder; the × on hover takes it out.
+- The list is kept on the server, so every device shows the same favourites (at most 20). Favourites
+  from "Sistem (/)" appear only over Tailscale, like that view (DD-250).
+
+### 2026-10-07 — Files: a text editor with syntax colours, also as root in "Sistem (/)" (v2-231)
+
+- A double click on a text file (yml, json, conf, sh, py, log, …) opens it in an editor with line
+  numbers, syntax colours, search (Ctrl+F) and undo. "Düzenle" in the details opens any file up to
+  1 MiB, files without an extension such as sshd_config or hosts included. Kaydet or Ctrl+S saves.
+- A save keeps the file's encoding (UTF-8 with or without BOM, Windows-1254, DOS), its line endings,
+  owner and permissions. If the file changed after it was opened, nothing is written. Closing with
+  unsaved changes asks first.
+- In "Sistem (/)" the editor saves as root: files that are read-only by their permissions (for
+  example 0440) can be changed too, and their permissions stay as they were. A strip in the editor
+  says so; there is no trash in this view, so the previous content cannot be brought back.
+- Files over 1 MiB, files that cannot be read without loss in the chosen encoding, files with several
+  hard links and setuid/setgid files open read-only with the reason.
+- The text view no longer shows a stray "null" line (DD-249).
+
+### 2026-10-07 — Files: folder sizes in the "Sistem (/)" view too (v2-230)
+
+- In "Sistem (/)" folders now show their total size beside the item count, as in /srv ("N öge ·
+  size"). The size counts only the folder's own disk: a disk mounted inside it is not added.
+  `/proc`, `/sys`, `/dev`, container layers and network shares show only their count (DD-248).
+
+### 2026-10-07 — Files: folder tiles show their total size (v2-229)
+
+- Under a folder in the icon view, and in its details line, the item count is followed by the folder's
+  total size: "248 öge · 1,82 TB". An empty folder, or one whose size could not be calculated (a very
+  large folder, or the "Sistem (/)" view), still shows only its count (DD-247).
+
+### 2026-10-07 — Restart from Konsol; Sağlık in two rows; a false "Zamanlayıcılar" finding fixed (v2-228)
+
+- Ayarlar → Sistem → Panel ve sunucu has "Yeniden başlat": after typing "onayla" the server reboots a
+  few seconds later. Only from a Tailscale device; refused while an update, a repair or an app
+  operation runs.
+- The Sağlık card has two rows, so each check's explanation fits under its name.
+- "Denetle ve onar" no longer reports `master-settings-guard.timer` as stopped and "re-opens" it on
+  every run: that timer runs only while a Konsol settings change waits for confirmation (DD-246).
+
+### 2026-10-07 — Update icon; Ayarlar → Sistem in three cards (v2-227)
+
+- The update control beside the clock is a round update icon: plain when up to date, coloured with a
+  red dot when a new version exists. Words appear only while an update runs, showing its stage.
+- Ayarlar → Sistem: "Panel ve sunucu" on top (with the Konsol account as its last line), Sağlık in one
+  row, and "Denetle ve onar" across the width with its steps in three columns. The "Yerleşik altyapı"
+  card is gone (DD-245).
+
+### 2026-10-07 — Files: one-line details with word buttons; "Seç" for picking several items (v2-226)
+
+- Under the item's name the details panel shows one line: type, size, location, last change and, for a
+  shared folder, its open connections.
+- The actions are words again: Klasörü aç / İndir, Yeniden adlandır, Taşı, Arşiv oluştur, Arşivi aç,
+  Paylaş, Paylaşımı yönet, Paylaşımı kaldır, Çöpe at, Seçimi bırak.
+- A "Seç" button beside Yükle: while it is on, every item shows a round check and a click adds or
+  removes it (nothing opens); "Tümünü seç" is in the details panel. Seç again, Esc, "Seçimi bırak" or
+  opening another folder ends it (DD-244).
+
+### 2026-10-07 — Files in three separate panels; a slimmer details line (v2-225)
+
+- The file list, the details under it and the Favoriler/Konumlar column are separate panels with a
+  small gap between them.
+- The details panel is half as tall: one line with the item, its location and date (or a shared
+  folder's connections) and the actions as icons; hover shows each action's name.
+- The item count and total size are gone from the path bar, so it no longer changes width from folder
+  to folder (with nothing selected, the details panel still shows them) (DD-243).
+
+### 2026-10-07 — Ana Menü widgets in order; Ağ as a wide row (v2-224)
+
+- Sunucu and Hız sit side by side; the Ağ card is one row tall and two tiles wide below them, the same
+  on phones. Each application's totals carry the download/upload icons of the Hız card.
+- Düzenle moves the widgets with ◀ ▶ like the application tiles; the order is saved with the layout.
+  An arrow that would change nothing is disabled (DD-242).
+
+### 2026-10-07 — "Onar" covers more; last check and a log on the Sağlık card (v2-223)
+
+- Onar now also puts back exit-node forwarding, Tailscale's exit-node and SSH settings, the
+  installer's timers, SSH, the clock sync and the record permissions; restarts only the part of
+  Konsol (backend or Caddy) or Files that does not answer; frees disk space (apt cache, old journal;
+  never your files or the trash) and finishes half-installed packages.
+- It also reports what it does not change: a new WAN address, Caddy configuration errors, Podman,
+  WireGuard peers that never connected, read-only disks, out-of-memory kills, a pending reboot, an
+  expiring Tailscale key, a half-finished update or settings change.
+- The Sağlık card shows the date and time of the last check (and whether it came over SSH) and a
+  "Günlük" button with the checks and repairs of the last 72 hours or the last week (DD-241).
+
+### 2026-10-07 — Nightly address refresh (v2-222)
+
+- The Tailscale address and Caddy check now also runs once every night between 03:00 and 04:00,
+  besides once after each boot. A changed address is picked up by the next night at the latest
+  (DD-240).
+
+### 2026-10-07 — "Denetle ve onar" instead of a 5-minute background check (v2-221)
+
+- The Tailscale/Caddy/firewall check no longer runs every five minutes. It runs once after boot and
+  when Caddy fails; the firewall alone is checked hourly.
+- Ayarlar → Sistem → Sağlık has "Denetle" (report only) and "Onar". Onar checks and repairs the
+  firewall, Tailscale and its address, Konsol's and the installed apps' services, DNS and Konsol
+  itself, and shows each step as it runs. Only from a Tailscale device.
+- When Konsol cannot be reached: `sudo master-onar` over SSH, or double-click `onar.command` on the
+  Mac (it uses the SSH host in `kurulum/kurulum.env`) (DD-239).
+
+### 2026-10-07 — "Sistem (/)": full access, no warning strip (v2-220)
+
+- The red "Root olarak çalışıyorsunuz" strip is gone from Files' "Sistem (/)" view.
+- `/proc`, `/sys`, `/dev` and `/run` are no longer read-only there: folders and files can be
+  created, renamed, moved and deleted like anywhere else. The kernel still refuses most changes in
+  `/proc` and `/sys` and says so. Deleting under `/run` or `/dev` can stop a service until it
+  restarts or the server reboots. Nothing overwrites an existing file, and a mounted disk is still
+  never deleted (DD-238).
+
+### 2026-10-07 — Files: details under the contents, the folder in the address (v2-219)
+
+- The selected item's details and actions moved from the right column to a fixed panel under the
+  files. Its height never changes, so selecting something no longer resizes the file area.
+- A shared folder shows one line there: Tailscale/WAN state with the days left, the account,
+  Yönet and Kaldır. The full connection cards stay on Paylaşımlar.
+- Favoriler lists the first eight folders and "Tümünü göster"; Konumlar and the disk stay in view.
+- The open folder is in the address: a reload or a bookmark opens it, and the browser's back and
+  forward buttons move between folders (DD-237).
+
+### 2026-10-07 — Files behaves like a file manager (v2-218)
+
+- Opening a folder changes only the folder's contents. The toolbar, search box, places column and
+  menus stay as they are; nothing on the page is rebuilt or moves.
+- On a computer the Files window fills the screen's height and only its parts scroll: the contents,
+  the right column, the trash and share lists. Phones keep scrolling the page.
+- While a folder loads, the previous one stays on screen, dimmed, with a thin bar under the toolbar.
+  A folder that cannot be opened keeps you where you were instead of jumping to the top folder.
+- New back/forward buttons; going back returns to the same scroll position. Recently opened folders
+  show at once and are refreshed behind the scenes.
+- Keyboard: arrows select, Enter opens, Backspace goes up, Alt+←/→ back and forward, Ctrl/⌘+A
+  selects all (DD-236).
+
+### 2026-10-06 — Konsol: the page no longer moves sideways (v2-217)
+
+- Fixed: in Files, double-clicking a folder could still shake the page. The first click selects
+  the folder and its details make the page taller than the window, so the browser's scroll bar
+  appears; when the folder opens, the scroll bar goes away again. Konsol now always keeps the scroll
+  bar's room (`scrollbar-gutter: stable`), so pages never move sideways when their height changes. With
+  always-visible scroll bars, short pages show an empty strip of that width on the right.
+- Fixed: since v2-216 a folder opened from far down a long list was shown from the middle. Opening a
+  folder now always starts at its top.
+
+### 2026-10-06 — Files: no jump while a folder opens (v2-216)
+
+- Fixed: opening a folder made the whole page jump sideways and back. While the folder loaded,
+  the Files window shrank for a moment, the browser's scroll bar disappeared and everything moved
+  by half its width. The window now keeps its height until the folder's contents arrive.
+
+### 2026-10-06 — Files: double-click opens a folder once (v2-215)
+
+- Fixed: double-clicking a folder in Files' icon view opened it twice (`etc/etc`), showed
+  "bulunamadı (taşınmış ya da silinmiş olabilir)" and jumped back to the top folder. It happened in
+  `/srv` and in "Sistem (/)" alike. A double-click now opens the folder once, and downloads or opens
+  a file once.
+
+### 2026-10-06 — Files: "Sistem (/)", the whole server as root (v2-214)
+
+- Files' right column has a new "Sistem (/)" entry under Favoriler. It shows the whole server from
+  `/`, as root, with a red strip saying so. Browse, upload, download, new folder, rename, move and
+  read text files work as in `/srv`; `/proc`, `/sys`, `/dev` and `/run` are read-only.
+- There is no trash there: "Kalıcı sil" deletes at once and asks you to type the item's name (or
+  `onayla` for several). A disk mounted at or below the item is never deleted.
+- Only from a Tailscale device. The public HTTPS Konsol name never reaches it, and the `/srv` view
+  keeps running as the downloads account. It runs as its own service, `master-sistem-dosya` (DD-235).
+- Fixed: selecting a file in Files printed "nullnull" under its actions.
+
+### 2026-10-06 — Sunucu widget fits the full addresses (v2-213)
+
+- The Tailscale and WAN addresses in Ana Menü's "Sunucu" card were cut off with "…" when
+  the card was narrow. The card's rows now size their text to the card's width: down to 9px in the
+  narrowest cell, 11.5px as before in wide ones, so a 15-character IPv4 address always fits (DD-231).
+
+### 2026-10-05 — "Güncelle" beside the clock (v2-212)
+
+- Ana Menü shows the installed version's state next to the time: "Güncel", or "Güncelle v2-…" when
+  GitHub has a newer installer. A click asks for confirmation, then the server installs exactly that
+  version by itself; the button shows the installer stage and the page reloads when it ends.
+- Only from a Tailscale device; a first install or a missing Tailscale login still needs the
+  terminal line. Servers on v2-211 or older get the button after one terminal run (DD-233).
+
+### 2026-10-05 — Finder-style Files and a two-card sidebar (v2-211)
+
+- Files shows folders and files as icons, with a column on the right: Favoriler (Sunucu and its
+  folders), Konumlar (Paylaşımlar, Çöp), the details and actions of the selection, and the disk.
+  The bottom action bar is gone; every action is in the right column.
+- One click selects, a second click opens; Ctrl/Cmd and Shift select several items, shown as one
+  two-document icon with a count. The list view is one click away (▦/☰) and remembered per browser.
+- The sidebar's server resources are a separate card under the navigation (DD-232).
+
+### 2026-10-05 — Ana Menü widgets: Sunucu and Hız 1×1, Ağ 2×2 (v2-210)
+
+- The network chart is gone. "Hız" is a small card with the server's live download/upload, shown
+  with download/upload icons. "Ağ" is a double-size card that lists each application's total
+  download/upload on one line; more applications scroll inside the card.
+- "Sunucu" is a small card with the Tailscale and WAN address, uptime and version.
+- On a computer the two small cards stack on the left, "Ağ" sits beside them; on a phone "Ağ"
+  takes the full width and the two small cards share a row (DD-231).
+
+### 2026-10-05 — Installer accepts a stopped WireGuard (v2-209)
+
+- An installer run with WireGuard stopped from Ana Menü/App Store ended with "wg0 dinleme portu
+  kayıttaki 61001 değil": the final check expected every network up. It now skips the interfaces
+  of a stopped WireGuard and of a network closed on its own; open networks are still checked
+  (found on the test server, DD-229).
+
+### 2026-10-05 — Home widgets aligned to the tiles, "Sunucu" widget, uniform Store cards (v2-208)
+
+- Application tiles say "Dur"/"Başla" in a larger type.
+- Ana Menü: the address block (Tailscale IP, WAN IP, uptime, version, access) is a "Sunucu" widget
+  next to the network card; the sidebar ends with the server resources.
+- The network card is exactly as wide as two application tiles; its halves are balanced and
+  application totals show the name on one line and download/upload below it.
+- App Store cards have the same width and layout as the Ana Menü tiles.
+- Settings → Caddy: the local-domain card lines up with the "Adresler ve erişim" table (DD-230).
+
+### 2026-10-05 — Overview controls, stopping WireGuard, containers kept off the host (v2-207)
+
+- Ana Menü: "Düzenle" sits in the bottom-right corner of the screen. Application tiles say
+  "Durdur"/"Başlat" in words; settings is a gear and logs a terminal icon.
+- WireGuard can be stopped and started from its tile and from App Store. Stopping closes every
+  network and removes WireGuard's ports and forwarding from the firewall; it stays stopped after
+  a reboot or an installer run. Starting reopens the networks that were open before (DD-229).
+- Files has only the list view; the "Kartlar" view is gone.
+- Containers can no longer open connections to the server itself (any of its addresses), only
+  DNS on their own network gateway. Before, this relied on the host firewall alone (DD-229).
+
+### 2026-10-05 — Install on the server with one curl line (v2-206)
+
+- The repository is public (`drs0me1/myserver`). On the server:
+  `curl -fsSL https://raw.githubusercontent.com/drs0me1/myserver/main/kur.sh | sudo bash`.
+  `kur.sh` downloads the code from GitHub, places it in `/root/debian-server-installer` and
+  starts the installer on the terminal. `KUR_REF` installs a specific commit or tag (DD-228).
+- The Mac installer (`<version>.command`), its exporter and `Data/app/` are gone. The
+  installer no longer reads an input file. A first install asks for the local domain instead,
+  with no default (asked again until valid). Re-runs keep the existing name without asking;
+  change it in Konsol → Ayarlar.
+- Every run upgrades the system first (`full-upgrade`), re-runs included. The re-run question
+  is gone.
+- `kurulum/kurulum.env` now holds only `SSH_HOST`, for `wireguard.command`.
+
+### 2026-10-05 — Containers write to server folders only as the Files account (v2-205)
+
+- The Podman page has a new "Çalıştıran hesap" choice. The Files account runs the container as the
+  downloads uid without any privileges, and its files stay group-writable like everything in `/srv`.
+  "İmajın kendi hesabı" keeps the image's user, which is often root.
+- A writable server folder now requires the Files account. An image that needs root can use volumes
+  or read-only folders. New containers start with the Files account (DD-227).
+- After a start, Konsol checks that the container really runs as that account with no privileges.
+- Adopting a container that already runs as the downloads uid keeps that account.
+- Existing Konsol containers keep running as before. One that writes into a server folder needs the
+  account switched the next time it is saved.
+
+### 2026-10-05 — A container's folders can no longer be swapped for another host directory (v2-204)
+
+- A Konsol container bound to a folder under `/srv` used to look the folder up by name at every
+  start. Anything running as the downloads account could replace the folder with a link to
+  another directory, and a container running as root would then mount that directory.
+- Now each start walks the folder without following links and pins exactly that directory. The
+  container mounts the pinned copy. A missing or linked folder keeps the container down, with a
+  clear reason in its log (DD-226).
+- Existing Konsol containers get this the next time they are saved or started from Konsol.
+
+### 2026-10-05 — Files and WebDAV no longer see packages' private data (v2-203)
+
+- Files, WebDAV and the RAR helper run as the downloads account. They can no longer read
+  `/var/lib`, where packages keep private state such as qBittorrent's profile with its interface
+  password hash. WebDAV also no longer sees the archive staging folder `.arsiv` at all.
+- The new `PRIVATE_STATE_ROOT` setting names that folder once, and packages keep private state
+  there or readable by root only (DD-225).
+- The next installer run restarts Files and WebDAV once. A running archive job is marked
+  interrupted, and open WebDAV transfers are cut.
+
+### 2026-10-05 — Containers reach the internet, not the LAN or the tailnet (v2-202)
+
+- Konsol's container guard now also limits what a container opens itself. Allowed: the internet.
+  Not allowed: IPv6, the tailnet (it would leave as this exit node), and the private, CGNAT,
+  link-local, loopback and multicast ranges of `VPN_BLOCK_DEST4`. This applies to qBittorrent
+  and to Konsol containers.
+- Replies to a container's publications still pass, and exit-node and WireGuard traffic still
+  meets the guard's first rule only.
+- On nrm nothing reachable changes: Tailscale already dropped the tailnet path, and the
+  provider has no private network or metadata service. On a home LAN or with a cloud provider
+  it closes real paths (DD-224).
+
+### 2026-10-05 — Containers wait for the firewall and no longer restart with it (v2-201)
+
+- qBittorrent no longer starts while Konsol's container guard is missing. If the firewall
+  failed at boot, it used to start anyway. Now it waits and retries every 10 seconds until the
+  guard is in place (measured on nrm, DD-223).
+- Konsol containers no longer restart when the firewall restarts: a Tailscale update, a
+  WireGuard network change, an installer run or a watchdog repair. Before, each of these
+  restarted them and could leave them stopped.
+- Container units only check the guard before they start. The firewall, the package engine and
+  the container workers, which hold the locks, write it. A missing guard is reported as such.
+- The next installer run restarts qBittorrent once, because its Quadlet changes. Existing
+  Konsol containers keep their old unit until they are saved once in Konsol.
+
+### 2026-10-05 — Documentation matches the code again (no version change)
+
+- Contract, architecture, folder-shares and three DD records described an older state.
+  - The Files unit writes all of `SERVER_ROOT`, and the trash is `SERVER_ROOT/.cop`.
+  - WebDAV masks the trash with `InaccessiblePaths` (no tmpfs).
+  - The WebDAV registry's package-folder list refreshes on a share save, a removal or an
+    installer run (applied at WebDAV's next start), never through the 30-second guard.
+- Added what was missing:
+  - Konsol container publications and the bridge DNS exception in the port and INPUT
+    contracts.
+  - Every WAN-address binder in the architecture's address section.
+  - The Tailscale-address hand-off to the container worker.
+  - The full manifest key list.
+  - Package settings files in the single-source rule.
+  - Podman, the container guard and the `podman info` check in the stage table.
+- Measured on nrm on 2026-10-05: the Files/unrar sandbox no longer reaches qBittorrent's
+  interface (DD-180 amended). DD-152 and DD-208 carry amendment notes.
+- No code or installer payload changed.
+
+### 2026-10-05 — A failed install no longer loses a package's pending changes (v2-200)
+
+- If an install wrote new package files and then failed before stage 7, the next successful
+  run no longer skips applying them. Found on nrm on 2026-10-04: stage 5 (`master-firewall`)
+  failed after stage 4, and a later successful run left the package's old placed Quadlet/unit
+  in place until `master-modul uygula <id>` was run by hand.
+- The installer now leaves an empty marker per package in `/etc/master-stack/moduller-bekleyen/`
+  as soon as one of the package's rendered files changes (also when a WebDAV or Files helper
+  changes). The marker is removed only after `master-modul uygula` (or `yerlesik` for the
+  built-ins) succeeded, or when the package is not installed. A failed `uygula` is still a
+  warning, and now the next run tries again (DD-222).
+- No manual step for future runs. A host that already missed a reapply before this version
+  still needs `master-modul uygula <id>` once, unless the package's files change again.
+
+### 2026-10-05 — qBittorrent's peer port can be changed on the Podman page (v2-199)
+
+- The Podman page's editor for qBittorrent has a new "Eş portu" field next to the interface port
+  (DD-221). Saving moves the internet-facing peer port (TCP and UDP on the WAN IPv4 address) with
+  everything that depends on it: the container's published ports, qBittorrent's own setting, the
+  forwarding guard and the value the installer uses on its next run. The old port closes.
+- Saving is refused for a port outside 1024–65535, the interface port, a port another service of
+  the server uses and one that is already taken on the WAN address; the form recommends 61000–65535.
+- Only a port you actually change is kept across updates, and removing qBittorrent with its data
+  keeps it, like the interface port.
+- The App Store no longer prints the peer port number (it could be out of date after a change);
+  the Podman page and Settings show the current port.
+
+### 2026-10-05 — Reinstalling qBittorrent after deleting its data works again (v2-198)
+
+- Removing qBittorrent with "Profili, torrent listesini ve imajı da sil" no longer forgets the
+  interface port chosen on the Podman page or an approved image update (DD-220). Before, a reinstall
+  from App Store after such a removal could fail until the installer ran again, because the files the
+  installer had prepared still used the chosen port. The removal dialog now says these choices stay.
+- Such a choice also outlasts newer package versions: after an approved image update, a newer image
+  pinned in the package does not replace it; the image moves with the next approved update. To return
+  to the package's values, delete `/etc/master-stack/package-overrides/torrent.env` and the drop-in
+  `qbittorrent.container.d/85-konteyner.conf` as root and run the installer.
+
+### 2026-10-04 — qBittorrent's own defaults again, on uncommon ports (v2-197)
+
+- The defaults chosen in v2-196 are withdrawn (DD-219): a new qBittorrent profile again gets only
+  what Konsol needs (download folder, interface address and port, login required, legal notice);
+  everything else is qBittorrent's own default.
+- qBittorrent's ports moved away from the 610xx block to fixed, rarely scanned ports: the interface
+  to 62947 (still only on 127.0.0.1) and the peer port to 63851 (TCP and UDP on the WAN address).
+  Both are outside the range Linux uses for outgoing connections. An installer run moves an existing
+  install; a port chosen earlier on the Podman page keeps its value.
+- SSH (22), the share's HTTP port (61010), WireGuard (61001) and Tailscale (41641) are unchanged;
+  443 must stay for Let's Encrypt.
+- The App Store no longer says qBittorrent opens no peer port; it names the peer port and that it is
+  open on the WAN IPv4 address only. In Settings the peer port appears for IPv4 only and without an
+  on/off switch: it is a container publication that opens and closes with the app.
+- Saving only the download folder on the Podman page no longer fixes the interface port; only a port
+  you actually change is kept across updates. An install where qBittorrent was saved there before
+  stays on its old interface port until you enter the new one.
+
+### 2026-10-04 — qBittorrent defaults chosen for new installs (v2-196)
+
+- A new qBittorrent profile now starts with the settings chosen in Konsol's review (DD-218): no
+  UPnP/NAT-PMP port mapping, no local peer discovery, encryption required, anonymous mode on, up to
+  15 active downloads, uploads and torrents, half-finished files kept in
+  `/srv/downloads/incomplete` until they finish, and disk space reserved when a download starts.
+  Seeding stays unlimited and the interface English, as qBittorrent ships them.
+- These are starting values: changes made later in qBittorrent stay. An existing qBittorrent keeps
+  its own settings; it gets these only after a reinstall that deletes its data, or by changing them
+  in qBittorrent.
+
+### 2026-10-04 — qBittorrent on its own network with only two ports open (v2-195)
+
+- qBittorrent now runs on its own Podman bridge network instead of the server's network (DD-217).
+  Its Quadlet file publishes exactly three things: the interface on 127.0.0.1:61006 (Caddy and the
+  publication reach it there) and the peer port 61008 on the server's WAN IPv4 address over TCP and
+  UDP. Nothing is published on Tailscale or any other address, and Konsol's container guard drops
+  every other packet into that network.
+- The peer port is fixed at 61008 and is reachable from the internet, so other peers can connect
+  to the server. Before, qBittorrent listened on every address but the firewall closed all of them
+  on the WAN.
+- On this network qBittorrent has no IPv6 peers. If the server's WAN address changes, run the
+  installer again.
+- Existing qBittorrent installs: reinstall it from App Store once (the install sets the interface to
+  listen inside its network); without that its interface does not answer after the update.
+- The Podman page shows the network's name and labels the WAN publication as internet access.
+  Changing the interface port there also moves its line in the Quadlet file.
+
+### 2026-10-04 — Podman page, open ports and app navigation (v2-194)
+
+- The container page is now called Podman in the sidebar and in its title (DD-216); its address,
+  bookmarks and the old Settings links stay the same. The installer summary points to Konsol → Podman.
+- The Access column shows the ports a host-network container opens (DD-215). qBittorrent used to
+  show only "Sunucu ağı (host)"; now each port appears as ip:port with its protocols, for example the
+  peer port on the WAN, Tailscale and local addresses and the interface on 127.0.0.1. The list shows
+  up to three ports and "+N port daha"; the detail lists every address. The labels say which address a
+  port is bound to; whether it is reachable from outside is still the firewall's decision.
+- Installed applications no longer appear in the sidebar ("Kurulu uygulamalar" is gone, DD-216):
+  WireGuard and qBittorrent open from their Ana Menü icons, as before also from App Store.
+- Fixed: on a fresh load the qBittorrent row could read "torrent" for up to ten seconds; it now shows
+  the container name until the app list arrives and then the application name right away.
+
+### 2026-10-04 — Image update check and container row controls (v2-193)
+
+- Konsol checks whether a newer image build is published (DD-214): the Konteynerler page asks
+  on open (answers cached for six hours) and "Güncellemeleri denetle" checks again. Only registry
+  manifests are read; nothing is downloaded and nothing updates by itself.
+- A row with a newer build shows "Güncelleme var"; the summary counts them and the detail shows
+  the state, the followed tag and the check time. After a confirmation the image is updated:
+  qBittorrent follows `lscr.io/linuxserver/qbittorrent:latest`, pulls the new digest, restarts and
+  is verified; on failure the previous image and files return. The Quadlet file always names the
+  exact running digest, and the choice survives installer runs.
+- Container rows: start/stop and edit now sit right before the name, remove stays at the end; the
+  icons are the home tiles' own (play/pause, settings sliders, trash), bare like them. The rows follow
+  the table's own width, so with the sidebar open a narrow window shows cards instead of squeezed names.
+
+### 2026-10-04 — Compact Ana Menü and container controls (v2-192)
+
+- The network widget occupies two of six desktop slots; narrower screens use four
+  or two slots. Fixed-height chart and traffic-table areas keep the widget compact.
+  Application traffic remains cumulative; only server traffic shows live rates.
+- Home application cards are about 16% narrower on desktop, with the same height
+  and 44 px action targets. The order is start/stop, settings, logs.
+- The sidebar entry is Ana Menü. Clock/date replace the home title instead of
+  appearing in the sidebar. Home refreshes every five seconds, without a Refresh
+  button, duplicate ten-second reads or hidden-page polling.
+- App Store cards omit subtitles; descriptions remain in Details. Container rows
+  show only the application/container name, status, resources and access, followed
+  by start/stop, edit and remove. Unsupported actions remain disabled; ownership,
+  confirmations and data-retention behavior are unchanged.
+- DD-213 records the contract. Five fixture browser suites and 174 Bats checks
+  passed; three checks skipped because this Mac lacks GNU timeout. Root and
+  `Data/app` contain the verified v2-192 portable installer. No server deployment.
+
+### 2026-10-04 — Installed applications and one network widget on the overview (v2-191)
+
+- The home tiles contain only installed applications. Dosyalar, Ayarlar and App Store
+  remain in the sidebar; Paylaşımlar remains a tab inside Dosyalar, not a separate
+  sidebar entry. None has a duplicate home card.
+- Each application has three fixed icon positions: settings, start/stop and logs.
+  Unsupported actions leave an empty position; WireGuard has no start/stop action.
+  Logs open a dialog using the existing module journal.
+- Clock/date move below the sidebar resources, alongside WAN/Tailscale addresses,
+  version and uptime. The separate home clock/system widgets and their unused SVG/CSS
+  are removed.
+- Network is the only home widget, fixed at full width. Hide/show and application
+  reordering keep the existing server layout contract; removed saved IDs are ignored
+  and an older network width is normalized to four columns.
+- The live server rates/chart and the borderless application table share equal width
+  and height. The table has application icon/name, cumulative download total and
+  cumulative upload total columns in a fixed-height scrolling area. Only the server
+  section shows rates; application totals use byte units, never bytes/s. Unavailable
+  totals remain unknown. Existing traffic sources and authentication are unchanged;
+  qBittorrent's all-time totals can lag until its next statistics-file save.
+- Regression coverage includes log timeout/retry and late answers, table scroll/focus
+  retention, three icon hit targets and responsive layout in both themes. The mobile
+  edit toolbar stays below the tiles rather than covering them on short screens.
+- DD-212 records the contract; local validation results are in `SESSION.md`.
+  Source and both repository portable installers are v2-191. Each version change also
+  rebuilds its installer in the repository; no Desktop copies or separate snapshots.
+  No live deployment performed.
+
+### 2026-10-03 — Main-sidebar container manager (v2-190)
+
+- Containers moves from Settings into the main sidebar with containers, images, volumes
+  and networks. The accepted design gains real lifecycle controls, details/logs, creation
+  and configuration forms; old links redirect to the new page.
+- Generic containers retain ports, mounts, environment and startup settings across
+  recreation. Manual stop remains effective at boot; stopped editing does not start the
+  container. Resources in use cannot be deleted, and removing a container keeps its data.
+- App Store applications retain their package lifecycle. qBittorrent's listener port and
+  download folder can be changed through its adapter; publication and installer re-runs
+  use the durable port setting. Existing account settings remain in the app form.
+- Explicit local/Tailscale/internet port scopes are enforced on managed bridges. Operations
+  report actual completion or failure, reject stale edits and keep secret values private.
+- Implementation and acceptance evidence: see `SESSION.md` (DD-211).
+
+### 2026-10-03 — Icon-only tile actions; v2-188 live acceptance (v2-189)
+
+- **Tile actions are bare icons** (DD-210; user: "fon rengi olmadan sadece simge"): Ayarlar and Durdur/Başlat
+  under the overview's application tiles show only their icon — no text, background or border, also on
+  hover and press. Their names are the accessible label and the tooltip ("qBittorrent ayarları",
+  "qBittorrent: Durdur", "…: Durduruluyor…"); the keyboard focus ring stays; each keeps a ~44 px invisible
+  touch area. Confirmation, busy lock and state follow-up are unchanged.
+- Fixed: when a Durdur/Başlat request finished, its redraw pulled keyboard focus back to the tile even if
+  the operator had moved elsewhere.
+- **v2-188 on nrm (Astra, 2026-10-03):** installed from the frozen runtime archive (sha256
+  `3739392986a2369522eff6e0d0b6c986a527e50fc297aaa749f0c401e81b3b5f`) with scratch inputs, defaults and `E`;
+  exit 0, core services active, the operator's qBittorrent username, password hash and save path unchanged
+  (digest before/after). Real browser: native qBittorrent popup (new tab, noopener), settings prefill with a
+  blank password while running and stopped, cancelled stop, stop → start from the tile. Isolated Podman
+  fixture with the deployed worker, quadlet and pinned image: the install form's account, password and
+  folder accepted by native qBittorrent at first start, a running change with a library bind and old-login
+  rejection, a stopped save keeping the hash; cleanup complete. qBittorrent 5.2 answers a successful login
+  with 204 (no body) and a wrong one with 401; the fixture first expected 5.1's "Ok." (test fixed, no
+  product change). Linux Bats `master-modul installs qBittorrent` 1/1 on nrm; Konsol health all ok.
+- **Verified locally:** see SESSION.md.
+
+### 2026-10-03 — Ayarlar and Durdur/Başlat under the overview's application tiles (v2-188)
+
+- **Action row under installed applications** (DD-210): each installed App Store application's tile on
+  Genel bakış now has a compact row beneath its icon. **Ayarlar** opens the app's settings form
+  (qBittorrent) or, without one, its Konsol page (WireGuard). **Durdur/Başlat**, only for apps that can
+  stop (qBittorrent), follows the server's state: Durdur asks the same confirmation as App Store, both go
+  through the usual lifecycle and progress, the button is locked while the operation runs and shows
+  "Duruyor…"/"Başlıyor…", a refusal is shown and the button stays usable. Built-in tiles (Dosyalar,
+  Paylaşımlar, App Store, Ayarlar) get no row; edit mode shows none. This replaces v2-187's single settings
+  icon. The icon itself still opens the app's web UI while it runs.
+- **Verified:** see SESSION.md.
+
+### 2026-10-03 — qBittorrent install form, direct app launch, settings action (v2-187)
+
+- **App Store → qBittorrent → Kur opens a form** (DD-210): username (default `admin`), password
+  (required, twice) and download folder (default the downloads folder; the safe folder chooser). Nothing
+  is sent until a valid submission; Vazgeç/Escape changes nothing; a server refusal keeps the typed
+  values and no install starts. The values are written into qBittorrent's profile before the container
+  first starts, so there is no temporary password step. A failed install returns a kept profile and
+  folder to what they were.
+- **The app opens itself:** while qBittorrent runs, its overview tile, its sidebar entry and App Store's
+  "Aç" open qBittorrent's web UI in a new tab (the public name on Konsol's public address, the tailnet
+  name on the tailnet). Stopped, or without a public name on the public address, they open its Konsol
+  page instead.
+- **Settings action:** a small settings button beneath the qBittorrent tile opens a dialog for the
+  username, a new password (blank keeps the current one) and the download folder; one save, one short
+  restart, a stopped app stays stopped.
+- Generic: `konsol.json` `form` + manifest `PAKET_KUR_AYAR`; the shell, backend and engine name no
+  application. WireGuard installs as before.
+- **Verified:** see SESSION.md.
+
+### 2026-10-03 — Podman in the base, qBittorrent as a Podman container, Settings → Konteynerler (v2-186)
+
+- **Podman is part of the base** (DD-208): stage 1 installs `podman` and `netavark` without
+  recommends and requires `podman info` (checked again in stage 7; the summary prints the
+  version). No daemon, socket or auto-update timer is enabled; Docker stays out (DD-152).
+  v2-185's App Store package "Podman" (never released) is gone: Podman is not an application.
+- **Settings → Konteynerler** (a sixth tab): the read-only container view — every container with
+  state, image, unit, mounts, ports and a masked log tail (100–1000 lines) — now from
+  `GET /api/konsol/konteynerler/*` in the base. No start/stop/remove; environments never shown.
+- **qBittorrent runs in Podman** (DD-209) and stays an ordinary App Store application (tile,
+  sidebar, page; a "Konteyner" chip in the App Store): the linuxserver image pinned by digest,
+  a quadlet unit `qbittorrent.service`, host network, the downloads account's uid, only the
+  profile and the downloads folder mounted (same path), UI on 127.0.0.1 only. The page links
+  to its container view. Stop removes the unit so nothing starts at boot; remove keeps the
+  image, `--veri` also deletes it. A download folder outside the downloads tree is bind-mounted
+  through a quadlet drop-in. The Debian package `qbittorrent-nox` is no longer used.
+- Engine: `PAKET_CALISMA=konteyner`, `PAKET_KONTEYNER` (quadlet into `/etc/containers/systemd`)
+  and `PAKET_IMAJ` (digest-only image, pulled once; removed by image id).
+- qBittorrent page: the account form no longer loses a typed password (or the half-typed repeat,
+  focus and caret) when the 10 s status poll or Yenile redraws the page; the service bar no
+  longer shows the text "null" for an absent item.
+- Manual step for a host that ran an earlier version with qBittorrent installed (fresh-install
+  rule, no migration): `systemctl disable --now qbittorrent-nox@<user>.service` before
+  installing qBittorrent from the App Store again; the old profile in `/var/lib/qbittorrent`
+  is reused by the container as is.
+- **Verified:** see SESSION.md.
+
+### 2026-10-02 — WireGuard network creation on a fresh host; a one-card creation screen (v2-184)
+
+- Fixed (DD-207): creating a WireGuard network from Konsol failed with "install: cannot change
+  permissions of '/etc/wireguard/clients-wg0'" when `/etc/wireguard` did not exist while the
+  root backend started (a host where WireGuard was installed later, or the folder was removed and
+  created again): systemd had skipped its writable bind. The installer now creates every
+  package-declared backend write path before starting the backend and restarts a backend that
+  sees one read-only; the store engine repeats the check after installing, starting or applying
+  a package; Konsol keeps following an operation through that brief restart; `master-wg` names
+  the problem and the remedy instead of a raw `install` error.
+- The new-network screen is one card as wide as the windows (label and port side by side, DNS,
+  what will happen, buttons). DNS options are two lines, so the network settings, peer add and
+  peer edit windows show the whole list without scrolling inside.
+- **Verified:** Mac — 174 Bats (two new), 426 Python, all eight fixture browser suites. nrm —
+  174 Linux Bats; the faulty state reproduced (backend started without `/etc/wireguard`, a
+  later folder read-only for it), then the v2-184 installer created the folder and restarted the
+  backend with a writable mount; App Store install of WireGuard and a network created through
+  Konsol's API (HTTP 201, wg0 up) and removed again; the folder removed and recreated under the
+  running backend was repaired by `master-modul uygula` with one backend restart (none on the
+  second run); the creation screen is one 560 px card on the live host.
+
+### 2026-10-02 — Overview edit mode, server-side layout and a network card (v2-183)
+
+- Genel bakış has a **Düzenle** pill bottom-left (DD-206): tiles can be dragged (mouse or
+  finger) or moved with arrow buttons, each widget gets a width of 1–4 columns and a hide/show
+  switch; Bitti saves, Vazgeç/Escape discards, Varsayılan restores the defaults. The layout is
+  stored by the root backend (`KONSOL_AUTH_DIR/duzen.json`), so every device shows the same.
+- The clock card shows time, date, uptime and the Tailscale and WAN addresses; the host/OS/kernel
+  line moved out (Ayarlar → Sistem has it).
+- New **Ağ** card: the WAN interface's download/upload rates every 2 s with a two-minute chart,
+  and each installed application's totals — qBittorrent's own all-time figures from its
+  statistics file (with the time it saved them), WireGuard's interfaces since the networks came
+  up — through a new optional package module (`PAKET_TRAFIK`, `trafik.py`); the shell still names
+  no application. systemd IP accounting was tried and dropped: on Debian 13 a daemon-reload loses
+  those counters.
+- **Verified:** Mac — 426 Python (17 new in `test_overview`), 172 Bats, all eight fixture browser
+  suites (panel-ui drives the whole edit flow, a mouse drag included). nrm — 172 Linux Bats, the
+  overview tests with Debian's Python; installer runs over v2-182 (exit 0); live from the Mac
+  without a session: rates every 2 s, a 120 s chart filled at once, a layout saved through the real
+  backend, read back after a reload and reset (`duzen.json` gone); with qBittorrent and WireGuard
+  installed for the test, their totals (qBittorrent's survive a daemon-reload); both removed
+  afterwards with their data and apt packages.
+
+### 2026-10-02 — Status widget: charts only, larger (v2-182)
+
+- Genel bakış → Sistem durumu no longer repeats the health-check texts (Ayarlar → Sistem →
+  Sağlık has them); the pill in the card head keeps the verdict. The CPU and RAM rings and
+  the storage pie grew from 58 to 84 px and sit in three equal columns that fill the card.
+- **Verified:** Mac — 171 Bats, all eight fixture browser suites (panel-ui: no check lines,
+  ring ≥ 80 px, both widgets about the same height). nrm — installer run over v2-181
+  (exit 0); live from the Mac without a session: rings 84 × 84 px, no explanation lines, the
+  two widgets exactly the same height; light/dark/mobile screenshots reviewed.
+
+### 2026-10-02 — No sign-in on the tailnet; the account is the public name's credential (v2-181)
+
+- Konsol's tailnet address (`panel.<domain>`) asks for no sign-in any more (DD-205): Caddy
+  still asks the root backend before every request, and on the Tailscale site the backend
+  passes every request from another Tailscale device; its sign-in page goes back to Konsol.
+  The public HTTPS name keeps the user name and password, the `Secure` cookie and the
+  attempt budgets.
+- The one-time setup code is gone: no installer printout, no code form, no `master-konsol
+  kod`. The operator creates the account — the public name's credential — in Settings →
+  Sistem → Konsol hesabı over Tailscale (user name + password, no code); the Panel's
+  internet switch still needs it. From the tailnet the password is changed without the
+  current one and every session ends; over the internet the current password is required
+  as before. The sidebar's "Çıkış yap" and the account name shown to anonymous visitors
+  exist only on the public name. `sudo master-konsol sifirla` deletes the account and
+  closes the public name.
+- **Flagged trade-off:** every device in the tailnet administers the server without a
+  password; Tailscale ACLs decide who reaches the panel.
+- **Verified:** Mac — 409 Python (22 in `test_konsol_auth`), 171 Bats, browser suites
+  `giris-ui`, `settings-ui`, `panel-ui`, `files-ui`, `torrent-ui`, `wireguard-ui`,
+  `publications-ui`, `settings-https-ui`. nrm (Linux) — 171 Bats on a fresh copy of the
+  tree, `test_konsol_auth`/`test_publications` with Debian's Python; installer run over
+  v2-180 (exit 0, stage 7 proves the tailnet gate: 204 and `/giris.html` → `/`); from the
+  Mac without any cookie `panel.ayc` pages, Files API and root API answer 200,
+  `/giris.html` redirects to `/`, the account name is shown to the tailnet; the public name
+  still redirects to the sign-in page, answers 401 on the API, hides the account name and
+  refuses account creation (403); Settings → Sistem shows "İnternet hesabı: …" with
+  "Parolayı değiştir" only and no sidebar sign-out. `konsol-login-live.py` skips (exit 3)
+  because the operator's account exists.
+
+### 2026-10-02 — Public HTTPS address shown without WebDAV's port (v2-180)
+
+- Settings → Caddy showed a ready Panel or application name as `https://<name>:61010`
+  whenever WebDAV still used legacy HTTP: the link took WebDAV's own WAN port
+  (`manage.https.port`, which is `SHARE_PORT` in that state) instead of the HTTPS listener
+  port (`https_port`, `SHARE_HTTPS_PORT`). Caddy itself always listened on 443, so the shown
+  address did not open. Only the display changed; site generation, share URLs and package
+  URLs already used the right port.
+- **Verified:** Mac — 409 Python, 171 Bats, all fixture browser suites; the new
+  `settings-https-ui` assertion fails against the previous `ayarlar.js` with exactly
+  `https://panel.example.net:61010`. nrm — installer run over v2-179 (exit 0); live
+  Settings → Caddy shows the ready Panel name without a port while WebDAV is still on
+  legacy HTTP; no `:61010` anywhere in the table.
+
+### 2026-10-02 — Overview widgets trimmed (v2-179)
+
+- Genel bakış keeps two widgets: the clock and **Sistem durumu**, which now shows storage as
+  a pie beside the CPU and RAM rings (warn colour from 90 %). The separate Depolama card
+  (disk bar, trash size) and the İşlemci history sparkline are gone; the sidebar meters still
+  carry the figures. No endpoint or markup change elsewhere.
+- **Verified:** Mac — 409 Python, 171 Bats, browser suites `panel-ui` (two widgets, three
+  charts, pie caption from the fixture's disk figures), `files-ui`, `settings-ui`,
+  `torrent-ui`, `wireguard-ui`, `publications-ui`, `settings-https-ui`, `giris-ui`. nrm —
+  installer run over v2-178 (exit 0); live Playwright look at `panel.ayc`: clock and status
+  cards only, CPU/RAM rings with the storage pie, health pill healthy after the host's reboot,
+  `backdrop-filter` active, no CSP report; light/dark/mobile screenshots reviewed.
+
+### 2026-10-02 — CasaOS-inspired skin and an overview page for Konsol (v2-178)
+
+- Konsol wears a CasaOS-inspired skin (DD-204): a wallpaper (inline SVG, no external
+  asset) behind translucent glass surfaces, pill buttons, rounded application tiles with
+  tinted icons; light and dark follow the system; reduced-transparency readers and engines
+  without `backdrop-filter` get opaque surfaces.
+- New landing page **Genel bakış**: clock with host/OS/kernel/uptime, CPU/RAM rings with
+  the health pill, storage with trash size, CPU history, and tiles for Dosyalar, every
+  installed application (icon and tone from its package), Paylaşımlar, App Store and
+  Ayarlar — all from the existing endpoints. An unknown route opens it.
+- App Store entries are tiles (same markup and controls, new layout).
+- **Verified:** Mac — 409 Python, 171 Bats, browser suites `panel-ui`, `files-ui`,
+  `settings-ui`, `torrent-ui`, `wireguard-ui`, `publications-ui`, `settings-https-ui`,
+  `giris-ui`. nrm — portable installer run over v2-177 (exit 0); live Playwright look
+  at `panel.ayc` with a root-opened session: Genel bakış lands, tiles Dosyalar ·
+  qBittorrent (running) · Paylaşımlar · App Store · Ayarlar, health pill shows the host's
+  real pending-reboot warning, `backdrop-filter` active, no CSP report in the console;
+  light/dark/mobile and App Store screenshots reviewed.
+
+### 2026-10-02 — Package-declared folders, settings and backend write paths, phase 3 (v2-177)
+
+- Packages declare the folders they write into (`PAKET_KLASORLER`; qBittorrent's
+  `downloads/incomplete`) and may report the user's current choice through a module
+  (`klasorler.py`). Files refuses to select/share/trash them and names the owner,
+  share creation refuses them (fail closed on an unreadable report) and WebDAV hides and
+  refuses them inside shares — by path, not by folder name (DD-203). The base's
+  `TORRENT_TEMP_DIR`, `temp_name`, `--temp-dir` and its reader of qBittorrent's profile are gone.
+- `magaza/torrent/torrent.env` holds `TORRENT_UI_PORT` and `TORRENT_PROFILE_DIR`; the
+  installer fills a package's own placeholders from its env file, so `defaults.env` and
+  `state.env` carry no `TORRENT_*` key. A `PAKET_PORTLAR` key also resolves from the
+  package's env file.
+- `master-panel.service` takes its `ReadWritePaths` from the packages' `PAKET_ARKAUC_YOLLAR`
+  declarations (WireGuard: `/etc/wireguard`), each optional; the unit names no application.
+- One package-module loader in `master_settings.py` (publication checks and folder
+  reports) that writes no `__pycache__` into the rendered package folder.
+- Cosmetics: summaries list the catalogue's names, stale WAN sites are removed by pattern,
+  Settings port descriptions and the public-panel warning name no application, base
+  comments describe roles instead of products.
+- Fresh install only; an in-place host gets the new unit lines and files on the next run.
+- **Verified:** Mac — 409 Python, 170 Bats, all fixture browser suites. nrm — two portable
+  runs with scratch inputs on the in-place host (exit 0, no warnings; the second confirmed
+  the rendered-folder prune removed the stale `__pycache__`); live acceptance: no `TORRENT_*`
+  in `state.env`, `torrent.env` rendered and its values in the Caddy site, manifest and
+  package API, `--protected="downloads/incomplete=qBittorrent"` on the file backend and the
+  same list with owner in `/api/state`, `ReadWritePaths=-/etc/wireguard -…` rendered from the
+  WireGuard manifest, the port catalogue resolving `TORRENT_UI_PORT` from the package env, a
+  share on or inside the declared folder refused, a temporary folder pointed into a library
+  folder reported by `klasorler.py` and refused (profile restored), an ordinary folder shared
+  and unshared with no bytecode written into the package folder, WireGuard installed from
+  the engine with a network and peer created through the API over the declared write path,
+  the firewall check passing and `master-wg` refusing the torrent port by name; WireGuard
+  removed again. Linux (nrm) — 409 Python, 170 Bats, firewall, settings, settings-domain,
+  torrent-defaults, publications-proxy and install-hardening suites.
+
+### 2026-10-02 — qBittorrent page and settings in its package, phase 2c (v2-176)
+
+- The qBittorrent page is the package's `sayfa.js`/`sayfa.css`; its account and
+  download-folder form posts to the package API `/api/uygulama/torrent/{hesap,dizin}`
+  and reads `…/durum` (DD-202). Changes apply directly through the package worker
+  `ayar.py` (stop, snapshot, write, start; a failure restores both files and restarts);
+  the folder change no longer has a 60 s confirmation window.
+- Settings has no qBittorrent tab and no `torrent` section; `GET /api/konsol/ayarlar`
+  carries no `torrent` key and no account/folder fields. The shell, `ayarlar.js` and
+  the root backend contain no qBittorrent code.
+- Backend: `PackageContext.worker()` runs a package script that lives under the
+  package's own folder as a transient root unit with JSON on stdin, the same private
+  path as the base settings and share workers.
+- The torrent package's hooks place the page files on install and re-run and remove
+  them on rollback (the first live run showed only WireGuard's hooks did).
+- Fresh install only; an in-place host receives the new package files on the next
+  installer run.
+- **Verified:** Mac — 408 Python, 169 Bats, browser suites `torrent-ui` (new),
+  `panel-ui`, `settings-ui`, `files-ui`, `publications-ui`, `settings-https-ui`,
+  `wireguard-ui`, `giris-ui`. nrm — portable run with scratch inputs on the in-place
+  host (exit 0, no warnings; three runs, the first two surfaced the hook and `--lib`
+  fixes); live acceptance: package files rendered, the page under
+  `CONSOLE_WEB_DIR/uygulama/torrent` (0644 root) and served by Caddy, the module listing
+  offers it, `GET /api/konsol/ayarlar` has no `torrent` key, `/api/uygulama/torrent/durum`
+  answers 401 without a session and the paths without any hash, bad shapes answer 400
+  before the worker, the folder policy refusal comes from the worker, a username change
+  and its restore went through the worker (service restarted, profile 0640 uid 1000,
+  password hash untouched, audit lines), a folder change to `/srv/media` and back wrote
+  the `90-konsol.conf` drop-in and qBittorrent's default save path. Linux (nrm) — 408
+  Python, 169 Bats, firewall, settings (package worker block), settings-domain,
+  torrent-defaults, publications-proxy and install-hardening suites.
+
+### 2026-10-02 — Neutral backend, package-owned settings, self-checking packages, phase 2b (v2-175)
+
+- The root backend is `master-panel` on `PANEL_SOCKET` (`/run/master-panel/api.sock`);
+  `master-wg-panel`, `WG_PANEL_SOCKET` and `WG_PANEL_RUNTIME` are gone (DD-201).
+- WireGuard's settings moved into its package: `magaza/wireguard/wireguard.env` holds
+  every `WG_*` default and path; `master-wg`, the hooks, the Konsol API module and the
+  Mac launcher read it there. `defaults.env`/`state.env` carry no `WG_*` key; the VPN
+  endpoint is `WAN_IPV4`; the firewall's destination block lists are `VPN_BLOCK_DEST4/6`.
+- Stage 7 asks each installed package to check itself (`paket_denetle`) and verifies
+  that absent packages left no tool or drop-in; the re-run prune and the summary note
+  (`paket_not`) and counts (`paket_ozet`) come from the manifests and hooks.
+- `master-wg net-add` reserves the ports every package manifest declares instead of
+  naming qBittorrent, Files and WebDAV; the launcher's intro line names App Store.
+- Fresh install only, as the whole store model: a host updated in place keeps the
+  old `master-wg-panel.service` running beside the new one until the operator
+  runs `systemctl disable --now master-wg-panel.service`, removes
+  `/etc/systemd/system/master-wg-panel.service` and `/usr/local/sbin/master-wg-panel`
+  and reloads systemd (done by hand on nrm).
+- **Verified:** Mac — 403 Python, 169 Bats (browser suites unchanged by this phase).
+  nrm — portable run with scratch inputs (exit 0, no warnings) on the in-place host;
+  live acceptance: `master-panel` active on `/run/master-panel/api.sock`
+  (`root:caddy 0660`), no `WG_*` key in `state.env`, `VPN_BLOCK_DEST4/6` present,
+  the package env rendered; `master-wg net-add` refused 61006/61010/61009 naming
+  `torrent`/`paylasim`/`dosya` from their manifests; the API state's endpoint and a
+  masked profile's `Endpoint` carried `WAN_IPV4`, defaults came from `wireguard.env`,
+  `master-firewall --check` passed and the journal lines sat under `master-panel`;
+  a second installer run with wg0 and one peer installed passed the package's
+  `paket_denetle`, and the summary printed "WireGuard: kurulu — 1 ağ, 1 peer" with
+  the package's note; the network and the package were then removed (`--veri`),
+  leaving the registry, `/etc/wireguard` and the console folder clean. Linux (nrm) —
+  403 Python, 169 Bats, firewall, settings, settings-domain, torrent-defaults,
+  publications-proxy and install-hardening suites.
+
+### 2026-10-02 — Konsol pages and application API from packages, phase 2a (v2-174)
+
+- The Konsol shell and the root backend no longer know WireGuard (DD-200). A
+  package declares `PAKET_KONSOL` (App Store texts, page declaration and journal
+  words in `konsol.json`, rendered by the installer), `PAKET_SAYFA` (its page files,
+  placed under `CONSOLE_WEB_DIR/uygulama/<id>/` on install and removed with the
+  package) and `PAKET_API` (a Python module the root backend loads from the
+  package folder while the package is registered and serves at
+  `/api/uygulama/<id>/*` behind the existing gates). WireGuard's page, stylesheet
+  and API moved into `magaza/wireguard/`; qBittorrent's App Store texts into
+  `magaza/torrent/konsol.json`.
+- Konsol builds the "Kurulu uygulamalar" links and sections from the package
+  declarations, loads an installed package's page on demand, unmounts it on
+  removal and labels journal lines of package APIs (`<id>:<verb>`) with the
+  package's own words. `/api/wg/*` is gone; the audit list is
+  `/api/konsol/islemler`; Settings → Güvenlik Duvarı names its VPN category after
+  the installed package (`vpn_installed`, `vpn_name`).
+- Backend unit: no `--master-wg` argument and no WireGuard environment lines;
+  `WG_CLIENT_DNS_DEFAULT`/`WG_CLIENT_KEEPALIVE_DEFAULT` are written to `state.env`.
+  Stage 7 probes the package-neutral resources endpoint only.
+- Found live and fixed before release: the installer did not write
+  `CONSOLE_WEB_DIR` to `state.env` (the engine needs it for the page files), and the
+  WireGuard hook placed the page after the registry line, so a failed step could
+  leave a half-registered package; the page now goes in before the registry, and
+  the last package's empty `uygulama/` folder is removed with it. The Linux lock
+  tests (`install-hardening-linux.py`) gained the real torrent manifest; their
+  fixture had carried no catalogue since the engine became manifest-driven.
+- **Verified:** Mac — 403 Python, 169 Bats, all fixture browser suites
+  (wireguard-ui, panel-ui, files-ui, settings-ui, settings-https-ui,
+  publications-ui, giris-ui). Linux (nrm) — 403 Python, 169 Bats, firewall,
+  settings, settings-domain, torrent-defaults, publications-proxy and
+  install-hardening suites. nrm — portable run with scratch inputs (exit 0, no
+  warnings); live acceptance through Caddy with a root-issued session: the module
+  listing carries both packages' texts; without WireGuard its page file is 404
+  (302 without a session) and its API 404/409; `kur` placed `sayfa.js`/`sayfa.css`
+  (0644 root) and Caddy served them behind the session; network, peer, masked
+  profile, QR, peer switch and DNS settings worked through
+  `/api/uygulama/wireguard/*`; `master-firewall --check` passed; the journal
+  carried `wireguard:<verb>` lines; Settings showed the VPN category, networks
+  and port rows from the package; `kaldir --veri` removed the page, the API and
+  the VPN category with the firewall check still clean.
+
+### 2026-10-01 — Publication rows from package declarations, phase 1b (v2-173)
+
+- Settings → Caddy no longer names qBittorrent (DD-199). A package publishes by
+  declaring a row name, a local name, a loopback upstream and an optional check
+  module in its manifest; `master_publications` builds rows, private stubs,
+  public sites and status messages from that, loads the check module from the
+  package folder and closes the row when the module is missing, broken or
+  failing. A declaration without a loopback upstream produces no row.
+- qBittorrent's native-login checks moved verbatim into `magaza/torrent/yayin.py`.
+  The settings worker, share publisher, firewall helper and Konsol module
+  listing use the generic package functions; the WebDAV and Konsol rows stay
+  fixed. The manifest reader is shared by the backend and the publication module.
+- **Verified:** Mac — 400 Python, 169 Bats, settings browser suites. Linux (nrm) —
+  400 Python, both qBittorrent proxy suites (real Caddy and qBittorrent against
+  the package's manifest and check module), firewall and domain suites. nrm —
+  portable run with scratch inputs (exit 0, no warnings); the rendered package
+  folder carries the manifest with its filled upstream and the check module,
+  the table lists Panel, qBittorrent and WebDAV from the package catalogue, and
+  turning the qBittorrent row on through the real API ran the package's checks,
+  obtained the certificate and reached the module listing's public address; the
+  row was then restored to its previous off state.
+
+### 2026-10-01 — Firewall, health and ports from package declarations, phase 1b (v2-172)
+
+- `master-firewall` no longer knows WireGuard (DD-198). Installed packages
+  declare their needs through a `paket_firewall` hook in a one-word vocabulary
+  (`vpn IFACE UDP_PORT NET4 NET6`); the firewall validates every line, keeps
+  interfaces and ports unique, writes and checks the rules itself, and a
+  malformed or unknown line changes nothing, as a corrupt registry did before.
+- The health card asks `master-modul saglik` which units installed packages
+  require; WireGuard's networks and qBittorrent's unit come from their hooks.
+- Settings → Güvenlik Duvarı port rows for qBittorrent, WebDAV and the Files
+  backend come from `PAKET_PORTLAR` in the manifests; the built-in Files got a
+  manifest. Base rows are only Tailscale, SSH, Caddy and dnsmasq.
+- **Verified:** Mac — 400 Python, 169 Bats, ShellCheck. Linux (nrm) — 400
+  Python, firewall, settings and domain suites. nrm — portable run with scratch
+  inputs (exit 0, no warnings); then on the real host: `master-firewall --check`
+  clean, `master-modul saglik` names qBittorrent's unit, a WireGuard install plus
+  `net-add` produced the UDP permit, 13 forward rules, NAT and the tailnet permit
+  from the package's declaration with the check clean, a corrupt registry line
+  made the firewall refuse without changing a rule, and `kaldir --veri` removed
+  every rule again. Settings → Güvenlik Duvarı shows the manifest-declared port
+  rows and the health card reads the package units.
+
+### 2026-10-01 — Store engine and package format, phase 1a (v2-171)
+
+- `master-modul` is now a package engine that knows no application (DD-197).
+  Each package under `magaza/<id>/` carries a manifest (`paket.env`) and a hook
+  file (`kanca`); the catalogue, runtime, start/stop and account capabilities,
+  apt packages, tools, unit drop-ins, names and log units come from the
+  manifest. The engine places and removes the declared artifacts itself and
+  refuses to finish a removal that left any of them behind.
+- The installer renders every package folder generically: files with `__KEY__`
+  placeholders are filled from its own variables, executables keep 0755, and a
+  package is re-applied when a file changed or its manifest says always. The
+  summary takes names and info lines from the packages.
+- WireGuard and qBittorrent lifecycles moved verbatim into their hooks; the
+  built-in WebDAV got a manifest marked built-in. Commands, locks, progress and
+  `liste` output are unchanged for Konsol.
+- **Verified:** Mac — 400 Python, 169 Bats (fixtures now run the real engine
+  against the real hooks), ShellCheck. Linux (nrm) — 400 Python, 169 Bats. nrm —
+  portable run with scratch inputs (exit 0, no warnings): every package folder
+  carries its manifest and hooks, qBittorrent was re-applied and kept running
+  with its name and login state, and a real `kur wireguard`, `master-wg net-add`,
+  `kaldir --veri` cycle left no tool, drop-in, modules-load file, key, registry
+  row or interface behind, with the firewall check clean.
+
+### 2026-10-01 — Store model, phase 0: the base owns no WireGuard (v2-170)
+
+- Konsol → Ayarlar → Günlük labelled every root-backend event "WireGuard", so
+  failed sign-ins and settings saves looked like WireGuard errors. Events are
+  now labelled Konsol, Ayarlar, Paylaşımlar, Dosyalar, Uygulamalar or WireGuard
+  by their real source, sign-in/settings/share events have their own words, and
+  filter chips appear only for kinds present (DD-196).
+- The repo folder `modules/` is now `magaza/`, and the WireGuard tool and
+  `wg-quick@` drop-in live in `magaza/wireguard/`. The installer renders them
+  into the package folder only; App Store install places them, removal takes
+  them away, and a re-run removes leftovers when the package is absent. Stage 7
+  requires the tool only with the package and its absence without it.
+- The root backend's unit is "Konsol root backend"; the installer probes it
+  through `/api/konsol/kaynaklar`; Caddy starts without `--environ`, so
+  `state.env` is no longer dumped into the journal; the five-minute tailnet
+  timer and the module log route look at WireGuard only while it is installed;
+  the install summary and confirmation screen mention WireGuard only as a
+  package.
+- Fixed (found by the live removal test): `master-modul kaldir wireguard` never
+  closed the networks on a real host. `systemctl list-unit-files` exits 1 when
+  nothing matches, which ended the shutdown listing before the registry was
+  read, so `wg0` stayed up with its unit enabled while keys and registry were
+  gone. Each source is now read independently; the Bats fixture's systemctl
+  exits like the real one.
+- **Verified:** Mac — 400 Python, 169 Bats, panel and settings browser suites,
+  ShellCheck. Linux (nrm) — 400 Python, 169 Bats, firewall, domain, torrent
+  defaults and install-hardening suites. nrm — the fresh v2-169 host re-run
+  with scratch inputs (exit 0, no warnings, account kept): the re-run removed
+  the tool and drop-in the older base had left, the backend unit is named
+  generically, Caddy runs without `--environ`, and the journal since the
+  install carries no WireGuard line from our units. Then `master-modul kur
+  wireguard`, `master-wg net-add`, and `kaldir --veri` on the real host: unit
+  inactive and disabled, `wg0` gone, tool, drop-in, keys, registry row, UDP
+  rule and forward chain gone, firewall check clean.
+
+### 2026-10-01 — HTTPS publications no longer depend on WebDAV's mode (v2-169)
+
+- On a fresh install, publishing Panel (or qBittorrent) over HTTPS failed with
+  "Önce WebDAV için HTTPS kaydedin veya eski HTTP WAN erişimini kapatın" although
+  no folder was shared on the internet: WebDAV without a saved HTTPS name counts
+  as legacy HTTP mode, and the DD-191 rule looked at that mode. The real limit is
+  Caddy's single WAN port. The rule now checks the live listener: enabling an
+  HTTPS publication is refused only while folders are actually shared over
+  plaintext HTTP, with a message naming both ways out. While a qBittorrent or
+  Panel internet row is on, legacy HTTP WebDAV internet access stays closed and
+  the folder cards say that an HTTPS name is needed; saved folder connections are
+  not changed.
+- Settings → Caddy shows whether legacy HTTP is live (`wan_active` on the WebDAV
+  row) and words its note accordingly.
+- **Verified:** Mac — 400 Python, 168 Bats, browser suites (publications,
+  HTTPS settings with both notes, files, settings). Linux (nrm) — 400 Python,
+  168 Bats, firewall and domain suites; the qBittorrent proxy suite needs the
+  qbittorrent-nox package, which the fresh host does not have, and now exits 3
+  there. nrm — the user's fresh install re-run with scratch inputs (exit 0, no
+  warnings, account kept); `panel-public-live.py` then published Panel on
+  `panel.example.com` from exactly the refused state (WebDAV in legacy HTTP mode,
+  nothing shared) and restored the row.
+
+### 2026-10-01 — qBittorrent link follows the Konsol address (v2-168)
+
+- Konsol opened on its public HTTPS address linked qBittorrent by its tailnet
+  name, which the internet cannot reach. The module listing now carries both
+  addresses (`urls.tailscale`, `urls.internet`); the qBittorrent page's "Web
+  arayüzünü aç" button and the first-login card's address use the public name
+  when Konsol itself is on HTTPS and the qBittorrent row in Settings → Caddy is
+  on and verified. Otherwise the page says to turn that row on, with a link to
+  Settings → Caddy (DD-195 amendment). The tailnet address is unchanged.
+- **Verified:** Mac — 399 Python, 168 Bats, seven browser suites including a
+  new `https://` origin scenario. Linux (nrm) — 399 Python, 168 Bats. nrm — one
+  portable run with scratch inputs (exit 0); on the public Konsol address the
+  module listing names `https://qbit.example.com` for qBittorrent and that name
+  answers; the public sign-in page keeps HSTS and the session redirect.
+
+### 2026-10-01 — Konsol over public HTTPS (v2-167)
+
+- The Panel row in Settings → Caddy now has an internet switch and an HTTPS name
+  like qBittorrent and WebDAV (DD-195). Its Tailscale switch stays on. Enabling
+  it needs an existing Konsol account, a DNS-only A record and the typed word
+  `onayla`; the dialog states that a public Konsol is full administration behind
+  one password.
+- Caddy keeps the Konsol routes in one `(konsol)` snippet. The tailnet site and
+  the generated public site (`moduller/panel-wan.caddy`, TLS-ALPN, HSTS) both
+  import it, so the session check, sign-in exceptions, CSP and backends are the
+  same. Backends always see `Host: panel.<domain>`; Caddy alone writes
+  `X-Konsol-Kanal`.
+- The root backend accepts the public channel only while the publication is
+  active and never from the server's own addresses. The one-time setup code is
+  refused there; the session cookie is `Secure` over HTTPS. Twenty failed public
+  sign-ins within ten minutes close public sign-in for fifteen minutes while
+  Tailscale sign-in stays open. One password check per address, two at once.
+- The public site shares TCP 443 and the WebDAV socket budgets; it stays open
+  even with WebDAV's WAN off. The 30-second guard removes it after an account
+  reset or a lost WAN address. Firewall and local-domain changes are still
+  confirmed only over Tailscale.
+- Review follow-ups before release: each Caddy site opens at most 16 backend
+  connections and the unit raises the descriptor limit, so an internet flood
+  cannot make the backend refuse Tailscale; the shared sign-in budget is checked
+  again after waiting for a hash slot; the typed `onayla` is verified by the
+  server; timed confirmations require the Tailscale channel (100.64/10 is also
+  carrier NAT) and the domain check reads the browser's real name; the page
+  explains legacy WebDAV HTTP before the dialog and warns when renaming from the
+  public address.
+- Fixed: the installer's confirmation screen still said Konsol had no password.
+- New tests: Panel row and site in `test_publications.py`, public channel and
+  budget in `test_konsol_auth.py`, snippet wiring in `common.bats`, the editable
+  row in `publications-ui.cjs`, opt-in `panel-public-live.py`.
+- **Verified:** Mac — 398 Python (4 platform skips), 168 Bats, seven browser
+  fixture suites, ShellCheck, Bash/JavaScript syntax. Linux (nrm) — 398 Python
+  (1 optional skip), 168 Bats, domain (real Caddy), firewall, settings,
+  qBittorrent defaults, settings-systemd, install-hardening and both
+  publication-proxy suites. The snippet, `{args[0]}`, `header_up` inside
+  `forward_auth`, `max_conns_per_host` and a generated public Konsol site were
+  validated with nrm's Caddy 2.11.4.
+- **nrm:** two portable runs with scratch inputs, both exit 0 with no warnings;
+  the operator's Konsol account and sessions survived. `publications-live` and
+  `backend-hardening-live` pass; a spoofed `X-Konsol-Kanal` on the tailnet site
+  is overwritten by Caddy. The public acceptance (`panel-public-live.py`) still
+  needs a real DNS-only name for the panel and has not run yet.
+
+### 2026-10-01 — Konsol sign-in with a one-time setup code (v2-166)
+
+- Konsol asks for a user name and password again (DD-194). Every page, file and
+  API request is checked by the root backend through Caddy's `forward_auth`; only
+  the sign-in page and its API are open. A missing session goes to the sign-in
+  page and returns to the same Konsol page afterwards.
+- The first account is created on the sign-in page with a one-time code that the
+  installer prints at the very end while no account exists (24 hours, single use,
+  never written to `install.log`). The input file still holds no account.
+- Sessions last seven days (HttpOnly, SameSite=Strict cookie). Settings → Sistem
+  shows the account with a password change that ends every other session, and
+  the sidebar has "Çıkış yap". Five failed attempts from one address within a
+  minute block it for five minutes.
+- Server command `sudo master-konsol sifirla` deletes the account and sessions
+  and prints a new code; `durum` shows the state.
+- Stage 7 now checks the open sign-in page, that host-local page requests are
+  refused and that the session check answers 401/302; the Files self-check uses
+  its loopback port. The Panel row in Settings → Caddy stays Tailscale-only.
+- Live tests use a short root-issued session (`master-konsol oturum-ac`) for
+  Konsol calls through Caddy; host-side tests use the loopback Files backend.
+  New: `test_konsol_auth.py`, `giris-ui.cjs`, `konsol-login-live.py`.
+- **Verified:** Mac — 391 Python (4 platform skips), 167 Bats (3 skips), seven
+  browser fixture suites, ShellCheck, Bash/JavaScript syntax. Linux (nrm) — 391
+  Python (1 optional skip), 167 Bats (1 skip), domain (real Caddy), firewall,
+  settings, qBittorrent defaults, settings-systemd and install-hardening suites.
+  The panel site with `forward_auth` was validated by nrm's Caddy before release.
+- **nrm:** the first two portable runs stopped at stage 7 — master-modul still
+  checked Files through Caddy, then the sign-in files were missing from the
+  installed page list; both fixed (and a Bats guard now requires every console
+  file to be installed). Third run with scratch inputs exit 0. The one-time code
+  appears only at the end of the terminal output: not in `install.log`, not in
+  the journal. Share registry, qBittorrent profile, WireGuard registry and
+  qBittorrent PID unchanged. Live: `konsol-login-live.py` (open sign-in files;
+  302/401 for every page, file and API without a session; code creates the
+  account once; sign-in, password change ending other sessions, old password
+  refused, sign-out; 429 after five failures), share-connections, publications,
+  backend-hardening over HTTPS WAN and Tailscale (100/100 Konsol and Files
+  requests at 20 parallel with a session; 256 MiB SHA-verified 52.9/57.3 MB/s) and
+  the read-only installed-UI browser suite with a session all pass. The test
+  account was removed; the host waits for the operator's own first account.
+- `publications-live.py` once hit a transient settings lock while restoring and
+  left public WebDAV off for a few minutes; it was restored at once, and the test
+  now retries that answer and restores every row independently.
+
+### 2026-10-01 — Cross-review fixes for v2-159..v2-164 (v2-165)
+
+- Saving an internet publication in Settings → Caddy now fails at once with the
+  real cause when its listener cannot open, instead of waiting a minute for a
+  certificate and suggesting a DNS/CAA problem (DD-193).
+- Cold-boot recovery firewall: the INPUT and FORWARD guards are independent and
+  each is all-or-nothing, so a failed rule can neither lock out SSH nor skip the
+  WireGuard forwarding block.
+- New folder shares start with Tailscale on only while WebDAV is published on
+  Tailscale; turning a folder's Tailscale connection on is refused while that
+  publication is closed (same rule as WAN). The create form starts that switch
+  off and locked.
+- Concurrent requests with the same credentials (an Infuse library scan) share
+  one password check instead of competing for the hash slots, so a cold first
+  connection no longer gets 503 replies. Limits are unchanged.
+- The unreachable standalone HTTPS card is removed; public WebDAV HTTPS is edited
+  in the address table, which now names the HTTPS port in legacy HTTP mode too.
+  A save's refresh no longer draws data read before the save. A closed WAN share
+  card says “WAN” instead of “HTTPS”.
+- Caddy no longer logs a warning each time a media player closes a stream;
+  proxy errors and failed upstream connections are still logged.
+- Installer runs no longer leave a copy of every rendered template in the
+  server's `/tmp` (a Bash 5-only cleanup bug; the files were root-only and
+  vanished at reboot).
+- Smaller: private 403 routes follow the module templates' addresses; clearer
+  qBittorrent publication, Files and health messages; deep JSON handled in two
+  more parse sites; `__pycache__/` ignored by Git.
+- Live tests: `publications-live.py` no longer contains the operator's domain and
+  works with a public qBittorrent; `backend-hardening-live.py` follows the
+  host's WAN mode; `share-networks-live.py` skips (exit 3) on HTTPS hosts.
+- **Verified:** Mac — 374 Python (4 platform skips), 166 Bats (3 skips), six
+  browser fixture suites, ShellCheck, Bash/JavaScript syntax. Linux (nrm, Bash
+  5.2) — 374 Python (1 optional skip), 166 Bats (1 skip), firewall (including
+  cold rescue), settings, domain, qBittorrent defaults, publication proxy on 443
+  and 18443, settings-systemd and install-hardening suites. The scoped Caddy
+  logging validated against nrm's Caddy 2.11.4 before release.
+- **nrm:** portable run with scratch inputs (SSH_HOST=nrm, blank LOCAL_DOMAIN,
+  default no full-upgrade, `E`), exit 0. Share registry, qBittorrent profile and
+  WireGuard registry digests and qBittorrent PID unchanged; installed helpers
+  match source; no new `/tmp` file. Live: share-connections, publications
+  (private 403 on every template address, DAV public off/on, restored choices)
+  and backend-hardening over HTTPS WAN (57.9 MB/s) and Tailscale (56.9 MB/s,
+  SHA-verified, OOM 0) pass; `share-networks-live.py` skipped with exit 3. A
+  cold identical-login burst returned 8/8 (Tailscale) and 4/4 (WAN) HTTP 207,
+  no 503; six mid-stream client resets wrote no Caddy log line. Health green.
+  137 leaked template copies and old test trees were removed from `/tmp`.
+
+### 2026-10-01 — Per-connection WebDAV policies and dual-card Shares (v2-164)
+
+- Each folder keeps one ID/account while Tailscale and WAN independently control
+  enabled state, RO/RW and expiry (DD-192). Both off is valid. New shares use
+  Tailscale on/RO/seven days and WAN off/RO/seven days.
+- Schema 4 stores both connection policies. Valid schema 3 converts in memory
+  and `prepare` persists it without rotating accounts, changing identity/timestamps
+  or renewing expiry. Schema 2 and conflicting legacy fields in schema 4 fail
+  closed. Stale global-policy updates and pause requests require a page refresh.
+- Nested partial saves preserve omitted values under the locks. Explicit RW needs
+  acknowledgement in the selected scope; toggles never renew expiry. The receiving
+  listener enforces its policy on DAV writes, transfer chunks and staged uploads,
+  including cached logins.
+- Shares shows two cards with independent controls, address/copy and Infuse
+  details, HTTPS or honest legacy-HTTP labeling, and global Caddy gate reasons.
+  Candidate card URLs may remain while off; `row.urls` lists only active scopes.
+  Shared account/path/password management remains separate. Share edits still
+  restart active WebDAV and interrupt all transfers; configured HTTPS renewal
+  remains available with no active folders under its existing global gate.
+- **Verification (reported by the main implementation task):** 36 new tests
+  passed on macOS/Debian; full Python 366 (four macOS skips, one Linux skip);
+  Bats 165 (three skips); six browser fixture suites passed, including Files at
+  ten widths in both themes, with screenshots reviewed. Portable deployment on
+  `nrm` exited 0; schema-3 migration matched the expected normalized schema 4
+  exactly, preserving credentials, identities, IDs and absolute expiry. Settings
+  and qBittorrent bytes and qBittorrent PID stayed unchanged. Real HTTPS/Tailscale
+  connection acceptance passed with byte-identical registry cleanup; read-only
+  installed UI passed at three widths/two themes with zero errors or API writes.
+  See [SESSION.md](SESSION.md) for exact evidence and final host health; native
+  client acceptance is not implied.
+
+### 2026-09-30 — Compact local-domain settings and DNS guide (v2-163)
+
+- Limit the Caddy local-domain card to 620 px, with its input and Update button
+  on one row. Keep the publication table full-width and the mobile layout fluid.
+- Add four manual Tailscale Admin DNS steps below the input, linking to the DNS
+  console and showing the current server IP and saved local suffix. Unsaved
+  edits do not change the guide. No Tailscale account/API changes are made.
+- Preserve local-domain validation/confirmation/rollback and all independent
+  HTTPS settings. The operator has now enabled `qbit.example.com` successfully.
+- **Verified locally:** publication-table browser/CSP tests at five widths in
+  both themes, dynamic guide values, cancelled domain-change flow, existing
+  Settings and HTTPS UI regressions; 330 Python cases (4 platform/optional skips),
+  JavaScript/Bash syntax, ShellCheck and exact 49-file portable payload parity.
+- **nrm:** portable upgrade with scratch inputs, default no full-upgrade and E,
+  exit 0. Read-only live browser checks pass at three widths in both themes;
+  current IP/suffix and both ready certificates appear without browser errors.
+  Settings/share/qBittorrent file digests and qBittorrent PID are unchanged.
+  External trusted HTTPS returns qBittorrent login 200, anonymous API 403 and
+  WebDAV root 404. Health is green; eight services active, no failed units;
+  Caddy, dnsmasq, firewall and systemd validation pass. No fresh OS/reboot,
+  authenticated client/transfer test, commit or Desktop copy for this UI change.
+
+### 2026-09-30 — Independent Caddy address table (v2-162)
+
+- Settings → Caddy now lists Panel, qBittorrent and WebDAV with independent
+  Tailscale/Internet choices, public domain, certificate state and per-row Save.
+  Panel stays private and locked in both UI/API. Local-domain configuration
+  remains separate; the effective Caddy configuration is a collapsed detail.
+  Responsive rows support both themes (DD-191).
+- Direct HTTPS only; no Tunnel, DNS API, arbitrary upstream or new daemon.
+  Native qBittorrent login, CSRF/Host protection and login-attempt limits are
+  prerequisites, not silently rewritten preferences. Public names share one
+  TCP443 permission and the existing connection budgets. Legacy DAV HTTP must
+  be disabled or converted before enabling public qBittorrent.
+- Off retains the domain without HTTP fallback. Private off answers 403 and
+  survives module reapply. Folder accounts/network permissions are unchanged;
+  disabled global networks no longer produce copyable share URLs. Transaction
+  snapshots restore private routes after first-save failure/crash too.
+- Real API rejection exposed duplicate Python exception classes when the
+  Settings CLI imported itself via helpers; fixed module identity and added a
+  subprocess regression. Native proxy tests caught nondefault-port Host
+  rejection: upstream Host omits the public port, while X-Forwarded-Host keeps
+  the external authority for CSRF without weakening either protection.
+- **Verified:** 330 Python cases on macOS/Linux (4/1 skips), 165 Bats on both
+  (3/1 skips), publication-table browser/CSP tests at five widths in both themes,
+  existing HTTPS/settings/files/panel/WireGuard browser regressions,
+  actual nrm page with no browser errors, syntax/ShellCheck and exact 49-file
+  source/bundle/installed-tree parity. Linux firewall packet tests cover
+  qBittorrent-only/shared HTTPS, stopped/unsafe-auth closure, manual denies and
+  cold recovery. Real native password/settings and isolated Caddy/qBittorrent
+  login/cookie/CSRF/Host/Panel-isolation tests pass on ports 443 and 18443.
+- **nrm:** three portable runs with scratch SSH_HOST=nrm/blank LOCAL_DOMAIN,
+  default no full-upgrade, E, exit 0. Actual private off/on, module reapply and
+  public DAV off/on preserve effective choices, verified TLS and folder-account
+  bytes. External HTTPS/Tailscale PROPFIND, RO/RW, Unicode PUT, absolute MOVE,
+  DELETE, ranges and SHA-verified download pass (31.07 MB/s on a short 32 MiB
+  sample; not a speed ceiling). Temporary test accounts/files were removed.
+- Final state: Panel private/locked; qBittorrent private; WebDAV Tailscale plus
+  `dav.example.com` HTTPS, certificate expiry 2026-12-29. `torrent.example.com` has no
+  DNS record yet, so its public DNS/ACME path was not enabled or claimed tested.
+  Caddy/dnsmasq/firewall checks pass, no failed units. Final Settings API burst
+  (8 parallel, 32 requests) returns 32/32 HTTP200, slowest 213 ms; health is green.
+  No fresh OS, reboot,
+  native Infuse or future renewal test; no commit or Desktop copy.
+
+### 2026-09-30 — Panel-managed public WebDAV HTTPS (v2-161)
+
+- Settings → Caddy gains a separate public-domain card with DNS guidance,
+  save/disable actions, certificate status and expiry. Local names and private
+  administration stay unchanged. Only the public WebDAV endpoint moves to HTTPS;
+  Files → Shares shows its new copyable address (DD-190).
+- DNS must resolve exactly to the assigned public IPv4, without AAAA or proxy.
+  Caddy obtains/renews Let's Encrypt certificates using TLS-ALPN on TCP 443;
+  no DNS token, WAN port 80, UDP 443 or new daemon. The HTTPS listener requires
+  matching Host/SNI. Account scope, password throttles and connection limits stay.
+- Existing revision/lock/pending recovery owns the operation. Save commits after
+  verified certificate chain/hostname; failure restores the prior setting.
+  Explicit removal closes WAN without HTTP downgrade; accounts and Tailscale
+  URLs survive. The configured HTTPS listener stays for renewal with no active
+  folders. Certificate health is a local probe, not public-reachability proof.
+- **Verified:** 318 Python cases on macOS/Linux (4/1 skips); 165 Bats on macOS/Linux
+  (3/1 skips), five fixture browser suites, shell syntax/ShellCheck and exact
+  48-file portable parity. Linux settings/DNS/domain/native qBittorrent tests
+  pass. Isolated firewall packets cover HTTPS renewal/limits, legacy closure,
+  Tailscale/WG preservation and cold corruption/recovery. DNS/certificate
+  failure, pending crash recovery, stale/mixed requests,
+  renewal with paused folders and no-plaintext fallback have regression coverage.
+- **nrm:** three portable runs, scratch inputs, no full-upgrade, confirmation E,
+  exit 0. Saved `dav.example.com` through the real Settings API; trusted TLS 1.3,
+  Let's Encrypt certificate expires 2026-12-29. External HTTPS PROPFIND, RO/RW,
+  GET/Range, Unicode PUT, absolute MOVE, DELETE, pause and network isolation pass.
+  Private paths return 404; mismatched TLS/Host returns 421. A SHA-verified
+  ~32 MiB transfer measured 29.53 MB/s (short acceptance run, not a speed ceiling).
+- Actual disable/re-enable closes both WAN ports without breaking Tailscale;
+  rerun preserves the domain/certificate. Original share registry remains
+  byte-identical after temporary test-account cleanup. Live Caddy page has no
+  browser errors, health is green and Caddy/dnsmasq/firewall validation passes.
+  No fresh OS, reboot, native Infuse UI or real future certificate renewal was
+  exercised. The old WAN HTTP URL no longer works after HTTPS is enabled;
+  clients must use the newly displayed HTTPS address. No commit or Desktop copy.
+
+### 2026-09-30 — Remaining audit stages: boot safety, WebDAV and health (v2-160)
+
+- Firewall retains valid owned protection on registry errors; a cold boot gets
+  a narrow rescue guard while strict health/pre-start checks still fail. Both
+  INPUT policies deny otherwise unhandled interfaces (DD-187).
+- Installer creates/repairs user directories through no-follow descriptors,
+  skipping special/multiply-linked files and private trees. Module mutations
+  share the install lock without nested deadlock; CLI account lookup also uses
+  the safe qBittorrent reader.
+- Full Linux shell verification found Bash 5.2's `patsub_replacement` changing
+  literal ampersands in templates. Rendering now temporarily disables that
+  option and restores the caller's setting; Bash 3.2 remains supported.
+- Separate bounded scrypt pools, short wait/cache recheck and overload 503 with
+  Retry-After preserve credential throttles. PUT/COPY stage outside the global
+  mutation lock and revalidate before atomic publication. WebDAV sandbox,
+  process/memory/start limits and proxy/backend idle ordering are tightened
+  (DD-188); TCP/request budgets and explicit HTTP WAN remain unchanged.
+- IPv4-only generated DNS, accurate parser projection, desired-service health,
+  Debian kernel reboot detection, controlled deep-JSON errors and actionable
+  incomplete-folder versus share-overlap messages (DD-189).
+- **Verified:** 281 Python tests on macOS (4 skips) and Linux (1 optional RAR
+  corpus skip); 165 Bats on both (Mac 3 skips, Linux 1 negative-flock skip),
+  four fixture browser suites, shell syntax/shellcheck and complete 47-file
+  portable parity. Real Linux ownership/flock: 28 tests. Isolated firewall
+  (including cold settings/share/WG corruption, preserved denies, retry/recovery,
+  second NIC and third-party rules), settings, domain/DNS, native qBittorrent
+  defaults and transient systemd recovery all pass.
+- **nrm:** three portable runs, exit 0; rebooted from 6.12.107 to
+  6.12.111+deb13-amd64. Core/optional services and firewall healthy, two WG peers
+  retained; kernel warning before reboot becomes green after. All three service
+  names return A only, not unusable AAAA. Caddy/dnsmasq/unit validation passed.
+- After reboot, 320 burst API requests all 200; 80 parallel PROPFIND all 207;
+  WAN 59.36 MB/s and Tailscale 55.22 MB/s on separate SHA-verified 256 MiB
+  transfers. Peak DAV cgroup usage reaches its 512 MiB cap by reclaiming cache,
+  not growing anonymous memory (~35 MB); OOM and oom_kill remain zero.
+- Temporary RO/RW accounts prove password rotation, isolation, pause, Unicode,
+  ranges and persistence across rerun/reboot; cleaned afterwards. Original share
+  account metadata is identical. qBittorrent config bytes stayed identical across
+  installer reruns but its digest changed across the native service reboot;
+  the pre-boot contents were not saved, so byte-for-byte profile persistence is
+  not claimed. Native fixture tests do prove preservation of chosen preferences.
+  No Desktop copy or commit. No fresh Ubuntu installation, native Infuse UI or remote WG-client
+  session was tested; HTTP WAN and account-level Tailscale policy are unchanged.
+
+### 2026-09-30 — Audit stage 1: burst admission and filesystem guards (v2-159)
+
+- The Konsol Unix socket, Files and both WebDAV listeners now queue up to
+  128 pending connections instead of Python's default 5. This addresses the
+  observed Unix-socket admission failures; WAN request, login and TCP limits
+  are unchanged (DD-186).
+- Both root readers of the service-owned qBittorrent configuration use the
+  existing descriptor-safe, bounded regular-file reader. Symlink components,
+  FIFOs and other special files are rejected without waiting for input. A
+  missing profile still works; an unsafe profile prevents share changes.
+- Files rejects root `.cop`, `.pay` and `.arsiv` sources before a rename,
+  move or trash batch starts. Moving a nested reserved name into the root is
+  also refused; restoring an old trash entry chooses a harmless alternate name.
+- Regression tests cover actual socket bursts, bounded FIFO rejection,
+  symlink parents, oversized files, mixed selections and ordinary file actions.
+- **Verified:** portable payload matches all 46 runtime files; deployed to nrm
+  using scratch inputs, default no full-upgrade and `E` (exit 0). All four
+  backend listeners report backlog 128; services active and firewall check
+  passes. Local Python: 206 tests (4 skips); Linux Python: 206 (1 skip).
+  Mac Bats: 163 (3 skips), with physical temporary paths for the no-follow
+  fixtures. Shell syntax, shellcheck and diff whitespace checks pass.
+  Live: Konsol and Files each 100/100 HTTP 200 at 20 parallel fresh client
+  connections; direct Unix socket 120/120 at 24 parallel. Separate 256 MiB
+  downloads: WAN 59.72 MB/s, Tailscale 57.53 MB/s, both SHA256 verified;
+  each network passed 40 PROPFINDs at four parallel and byte ranges.
+  Service memory grew from 15.3 MB to 559.2 MB, including 523.0 MB file cache
+  and 34.4 MB anonymous memory. This demonstrates the speed-test/cache
+  mechanism, not the cause of the historical 670 MB peak. Test account/files
+  removed, existing share registry byte-for-byte unchanged. No reboot or
+  fresh-OS/native Infuse test in this stage.
+
+### 2026-09-30 — Tailscale/Caddy auto-updates and maintenance cleanup (v2-158)
+
+- Unattended upgrades now also install Tailscale and Caddy updates from their
+  own repositories, besides Debian/Ubuntu security updates. The daily run is
+  moved to 04:00 (up to 30 min random delay) so a Tailscale or Caddy restart
+  happens at night; stage 7 warns if either repository is missing from the
+  policy (DD-184). Reboots stay manual.
+- Removed code that only served hosts installed with earlier versions (fresh
+  install only, DD-185): the WireGuard registry upgrade helper, the old
+  `GET /api/wg/sistem` view, schema-2 share registry conversion, the retired
+  health-site and old-share-link answers (now 404), Konsol's rewrites of retired
+  bookmarks, the `ui`/`ping` WireGuard rule kinds in the settings view, log
+  labels no backend writes and 93 lines of unused CSS. A host installed with an
+  older version needs a fresh install.
+- Documentation trimmed to current behaviour: retired decisions, CHANGELOG
+  entries before v2-145 and older session notes moved verbatim to
+  `docs/archive/`; new `docs/decisions-index.md` lists every DD with its status.
+- **Verified on nrm:** deployed with the portable launcher and scratch inputs
+  (exit 0). `apt-config` lists both new patterns; `unattended-upgrade --dry-run`
+  names them as allowed origins and the installed tailscale and caddy packages
+  match them; the timer's next run is 04:00. Over the tailnet
+  `/api/wg/sistem` and `/api/paylas*` answer 404, resources and health 200.
+  Linux unit tests (197), firewall/settings/domain/torrent namespace suites,
+  settings-systemd, shares/archives/RAR live and the external WAN share test
+  pass. Locally: 163 Bats, 197 Python, the four browser suites, shellcheck.
+
+### 2026-09-30 — Archive jobs page removed (v2-157)
+
+- Files no longer has an "Arşiv işleri" tab. A running job shows as one bar above
+  the list with its progress and "İptal et"; starting a job stays in Files (DD-183).
+- Ayarlar → Günlük now shows archive jobs readably: start ("sources → result"),
+  cancel request and the result with the server's message, including jobs found
+  interrupted after a restart. Before, only an opaque job id was logged.
+- **Verified:** deployed to nrm; archives-live (ZIP, nested, conflict, invalid
+  path, cancel) wrote readable arsiv-olustur/ac/iptal/sonuc lines and Konsol's
+  Günlük API returned them. Local mock with recorded nrm replies: no jobs tab,
+  bar with İptal et while running, gone after completion, old bookmark opens
+  Files, no console errors. 163 Bats, 203 Python. With Node/Playwright now on the
+  Mac, all four fixture browser suites pass, updated for the archive bar
+  (panel-ui) and the health card plus typed discard (settings-ui).
+
+### 2026-09-30 — Stuck rollback, WAN address change, watchdog, health card (v2-156)
+
+- A settings rollback that keeps failing is retried after 15/30/60/120 s and
+  then waits as "takıldı": Konsol shows the error with "Yeniden dene" and
+  "Bırak" (typed onayla) instead of retrying every 2 s forever (DD-182).
+- A WAN share whose address the provider changed is closed with a reason; a
+  Caddy that could not start on the old address is started without it, and the
+  installer no longer dies in stage 6 on that address.
+- The Tailscale watchdog resets Caddy's start limit before restarting it and
+  checks the firewall again once Tailscale answers.
+- A damaged archive history is set aside instead of keeping Files from starting.
+- New read-only Sağlık card on Settings → Sistem: failed services, Tailscale and
+  key expiry, firewall, reboot needed, clock sync, disk/inodes, pending settings.
+- A new archive job waits for the previous one to finish removing its staging
+  area instead of answering "işlem sürüyor" right after it showed "done".
+- **Verified on nrm:** installer removed a WAN site bound to a stale address in
+  stage 6 and republished it; a runtime address change closed the site with a
+  reason and a Caddy stuck on the old address came back; five failing rollbacks
+  became "takıldı" (health red, timer idle), then retry and discard (wrong word
+  refused) both worked; damaged history set aside with no restart; reboot into
+  kernel 6.12.111: all units active, wg0 after the firewall, sockets 0660/0700,
+  no TCP 61008/2019, health green after NTP sync. Caddy's start limit could not
+  be reached on Debian 13 (automatic restarts continued), so the reset-failed
+  change is precautionary. Local 163 Bats, 201 Python; Linux unit, namespace,
+  systemd, share/archive/RAR and external WAN suites pass.
+
+### 2026-09-30 — Faster WebDAV logins, quieter journal, compressed Konsol (v2-155)
+
+- WebDAV remembers a successful login for 10 minutes, so Infuse/Finder requests
+  no longer pay one scrypt check each; every limit and check still applies
+  (DD-181). Tailnet WebDAV slots 16 → 64; closing replies say so.
+- WebDAV and Files replies through Caddy no longer wait ~40 ms each for a
+  delayed ACK (Nagle was on for the kept-alive loopback connection).
+- The settings rollback timer runs only while a change is pending (it used to
+  start every 2 s). Both short timers keep systemd's per-run lines out of the
+  journal. The root backend logs audit lines only, no request lines.
+- Konsol pages and API replies are compressed; page files revalidate (304)
+  instead of downloading again. Concurrent settings refreshes share one run.
+- qBittorrent gets lower CPU priority than Tailscale and Konsol; archive jobs
+  run niced and store already-compressed media without re-deflating it.
+- **Verified on nrm (with v2-154):** WebDAV PROPFIND through Caddy 44 → 1 ms;
+  konsol.js 119 → 37 KB (zstd) and 304 on revalidation; guard/share timers wrote
+  0 journal lines in 3 min (was ~200); real apply started and then stopped the
+  timer; an unconfirmed firewall rule was rolled back after 66 s and the timer
+  stopped; qBittorrent nice 10 / CPUWeight 50.
+
+### 2026-09-30 — Private sockets and login, disk and WireGuard safeguards (v2-154)
+
+- The root Konsol backend has no TCP port: a Unix socket for root and Caddy's
+  group (`SO_PEERCRED` checked); Caddy's admin API moves from `127.0.0.1:2019`
+  to a socket in a `0700` folder. What Caddy relays to the root backend must
+  come from another tailnet device, not from the server itself. Downloads-account
+  programs (qBittorrent, unrar) can no longer reach either, directly or through
+  Caddy. Stage 7 proves it and reloads Caddy (DD-180).
+- WebDAV: the 5-failure/60 s IP block also covers Tailscale; 100 failures in
+  an hour close a share for an hour to addresses not yet logged in; wrong user,
+  paused or unknown shares cost the same hash as a real check.
+- WebDAV PUT/COPY and Files uploads stop with 507 before free space falls under
+  min(5 GiB, 10%) and remove their temporary file.
+- Files backend (unrar) sandbox: loopback-only network, system-call filter,
+  hidden processes, private IPC, no writable-executable memory.
+- WireGuard networks start only after `master-firewall --check` passes; the
+  refresh timer reopens a network that failed for that reason.
+- Root backend closes the connection after an error or an unread request body,
+  so a body hidden in a cross-site POST can no longer run as a second request.
+- **Verified on nrm (installed as v2-154, then v2-155):** no TCP 61008/2019;
+  socket modes; downloads uid refused on both sockets and through Caddy (403);
+  a supplementary-caddy-group user refused by SO_PEERCRED; Caddy reload works;
+  tailnet WebDAV 5th bad login → 429 while local probes stay 401; nested
+  RAR/ZIP/RAR extracted by real unrar in the sandbox (exposure 3.0 → 1.4); a
+  broken firewall kept wg0 down until the timer repaired both. Local: 162 Bats
+  (3 macOS skips), 191 Python (4 skips); Linux: 191 Python (1 skip), four
+  namespace suites, real-systemd timer test, share/archive/WAN acceptance pass.
+
+### 2026-09-29 — Per-folder Tailscale / HTTP WAN sharing (v2-153)
+
+- Select Tailscale, WAN IPv4 or both per folder; one account/ID/permission/expiry.
+  Existing schema-2 and new shares default to Tailscale; adding WAN requires
+  explicit acknowledgement that HTTP exposes credentials/content (DD-179).
+- Separate trusted listener scopes and connection pools; Caddy replaces the
+  client-IP header. WAN: 5 bad logins/60s → 300s IP block with Retry-After,
+  4096-entry bounded history, 4 parallel hashes, 8 backend connections total,
+  4 requests/IP. Tailnet retains 16 connections. Edge TCP: 16/IP, 64 total;
+  WAN header/idle timeouts are 10s/30s. No bandwidth limiter or new package.
+- Open only the existing WebDAV port and `/s/*`; no admin interfaces, public
+  IPv6, wildcard bind, NAT/ACL change or automatic exposure of existing shares.
+  Manual firewall denies remain effective. Last active WAN share removal/pause
+  closes the listener/owned rules; a scoped timer projects expiry and recovers
+  interrupted registry operations. Caddy startup checks the firewall first.
+- Show labeled copyable URLs/network badges, HTTP consent and limits. Keep
+  inline RO/RW and duration controls. Caddy/firewall inventory identifies WAN
+  correctly and parses proxy blocks as well as single-line upstreams.
+- Add manager migration/publication/recovery tests, real-HTTP budget/scope
+  regressions, UI network tests and a disposable external-client acceptance
+  script. HTTP remains unsuitable for confidential internet traffic.
+- **Verified on nrm:** portable upgrade, Caddy/systemd/DNS/firewall checks,
+  external WAN/Tailscale isolation, TCP/request/login caps, pause/expiry cleanup
+  and 66 installed Linux share tests. Local 159 Bats and 170 Python cases have
+  three platform skips each. No fresh-OS/reboot/native-client certification.
+
+### 2026-09-29 — Integration-only qBittorrent defaults (v2-152)
+
+- Stop forcing UPnP/automatic port mapping, local peer discovery and separate
+  temporary storage in new qBittorrent profiles (DD-178). Leave these and other
+  user preferences at the installed application's defaults until changed.
+- Keep the download path, authenticated loopback WebUI and headless startup
+  notice, plus existing nonroot service/sandbox and DNS/Caddy integration.
+  Existing profiles and host firewall permissions are unchanged.
+- Add exact seed-key and reapply/reinstall preservation checks, plus a native
+  isolated Linux comparison and user-choice restart test.
+- **Verified:** 155 Bats cases (three platform skips), 126 Python cases (two
+  optional native-RAR skips), Bash syntax/ShellCheck and 44-file portable payload
+  equality. Native Debian qBittorrent 5.1.0-2 passed the isolated default/login/
+  preference-persistence test twice. No installed profile/service was changed;
+  full host upgrade, fresh OS installation and reboot were not run this turn.
+
+### 2026-09-28 — WireGuard internet-only (v2-151)
+
+- Retire Local access entirely (DD-177): no creation/settings selector, API
+  scope or CLI argument. Network settings now change default DNS only.
+- Drop WG host ingress before established/ICMP/Tailscale acceptance; block
+  private/CGNAT/link-local destinations even via WAN. Keep internet NAT/return
+  traffic and required user-created UDP endpoints.
+- Upgrade existing registry policies without modifying keys, profiles, DNS,
+  ports or addresses. Remove WG host-rule overrides and only the retired WG
+  Caddy instances/template/env files; clean/repeat installs never recreate them.
+- Firewall host overrides remain available for WAN/Tailscale only.
+- **Verified:** 155 Bats cases (three platform skips), 126 Python cases (two
+  native-RAR skips), WireGuard/Settings/Panel/Files browser suites and syntax/
+  ShellCheck. Isolated Linux tests cover IPv4/IPv6 NAT, host/old-flow denial,
+  private WAN destinations, retained networks and third-party chain preservation.
+  nrm upgrade passed stages 0–7; real kernel WG clients on existing wg0 and an
+  own new test network reached IPv4/IPv6 internet and public DNS, not host services.
+  Test peers/network were removed; original keys/settings/accounts and qB process
+  stayed unchanged. Transport was host-loopback to WG, not an external WAN device.
+  Fresh OS installation and reboot acceptance are separate, not claimed here.
+
+### 2026-09-28 — Default WireGuard Local access (v2-150)
+
+- New Konsol networks default to Internet + local at the backend. Remove the
+  creation access card/toggle and its unused code/styles; update preview/help.
+- All peers inherit access to the installed qBittorrent UI on their own network;
+  all other isolation remains. Existing network settings can still disable Local,
+  and re-runs preserve that saved choice. Explicit CLI/API scopes remain supported
+  (DD-176). No key/profile regeneration, new dependency or firewall widening.
+- **Verified:** 157 Bats cases (three macOS skips), 121 Python cases (two
+  native-RAR skips), WireGuard/Panel/Settings browser suites, syntax/ShellCheck.
+  nrm portable upgrade passed stages 0–7. A scope-less test network created with
+  `ui`, active WG/Caddy, the narrow firewall permit and qB UI HTTP 200; removed
+  only that empty fixture. Eight services healthy, live desktop/mobile passed;
+  original registry/configuration hashes, qB process and full normalized firewall
+  match before/after. Existing wg0 was already Local-enabled. No fresh OS/reboot
+  or external WG-client acceptance claimed.
+
+### 2026-09-28 — Firewall source and rule cleanup (v2-149)
+
+- Missing WireGuard module registration no longer revives retained networks.
+  Omit/remove unused project forwarding/NAT chains when no networks are configured.
+- Remove redundant terminal returns and single-element multiport generation.
+  Preserve required VPN endpoints, actual permissions, user overrides and all
+  third-party rules; no legacy service installer is restored (DD-175).
+- Strengthen INPUT/NAT drift checks and add clean/repeat/removal regression
+  fixtures, while keeping the panel accurate for intentionally absent chains.
+- **Verified:** 157 Bats cases (three platform skips), 119 Python cases (two
+  native-RAR skips), Settings browser suite, isolated Linux IPv4/IPv6 input and
+  routed WG NAT/isolation tests. Portable upgrade and repeat install on nrm
+  passed stages 0–7. Project rules decreased 81 → 73; all other firewall content,
+  user settings, WG profiles and qB process remained unchanged. Eight services
+  healthy; live API/desktop/mobile tests passed. No fresh OS/reboot claim.
+
+### 2026-09-28 — Simplify Internet and WireGuard port lists (v2-148)
+
+- Remove synthetic closed WAN rows for local/tailnet services, arbitrary sockets
+  and unsupported IPv6 WG endpoints at the backend source (DD-174).
+- List tunnel-local qBittorrent permissions only for IPv4 networks with Local
+  access configured. Keep required VPN UDP endpoints regardless of peer/socket
+  activity, explicit user allows/denies, network selectors and raw diagnostics.
+  Actual firewall policy, services and saved settings are unchanged.
+- **Verified:** 157 Bats cases (three platform skips), 117 Python cases (two
+  native-RAR skips), Settings browser tests, syntax/ShellCheck and portable nrm
+  upgrade. Live API/browser checks confirm WAN 4/2 rows (IPv4/IPv6), one wg0
+  IPv4 UI row and no synthetic wg1/IPv6 UI rows; explicit-rule fixtures remain
+  editable. Normalized full firewall rules, configuration hashes and qB process
+  match before/after; eight services healthy. No fresh-install/reboot claim.
+
+### 2026-09-28 — Remove synthetic Tailscale port entries (v2-147)
+
+- Generate Tailscale port rows from the configured per-family allowlist and WG
+  registry, not arbitrary host listeners (DD-173). Remove irrelevant peer/local
+  backend/Caddy admin rows at their source; preserve explicit user rules and
+  unfiltered technical diagnostics. No hardcoded port exclusions.
+- Preserve default-deny protection, required local services, every configured
+  WG endpoint, socket bindings, torrent settings and all forwarding/NAT policy.
+- **Verified:** 157 Bats cases (three platform skips), 114 Python cases (two
+  native-RAR skips), Settings browser suite, portable nrm upgrade and live
+  IPv4/IPv6 API/socket checks. Desktop/mobile show only configured tailnet rows;
+  raw diagnostics remain intact. Eight services active, no failed units; account,
+  share, module/WG registry/profile hashes and qBittorrent process unchanged.
+  No fresh install, Ubuntu, reboot or authenticated Infuse claim for this change.
+
+### 2026-09-28 — Minimum tailnet host exposure (v2-146)
+
+- Replace implicit all-port tailnet access with an explicit host allowlist before
+  Tailscale's own INPUT acceptance (DD-172). Keep SSH, Caddy, DNS, folder WebDAV,
+  self-advertised PeerAPI and every registered WireGuard endpoint. Block other
+  new inbound ports by default, including qBittorrent peers and direct backends.
+- Preserve operator overrides, loopback, established replies, ICMP, all WAN/WG
+  and forwarding/NAT policies. No network deletion, credential change or package
+  removal. Peer counts and counters never determine whether a WG port is needed.
+- Make the port table use the same allowlist instead of treating any listener
+  as tailnet-accessible. Add real IPv4/IPv6 packet, override and drift tests;
+  helper changes now trigger both firewall refresh and panel restart.
+- **Verified:** 157 Bats cases (three platform skips), 113 Python cases (two
+  local RAR skips, native Debian coverage), Settings browser suite and isolated
+  Linux packet/settings tests. Portable nrm upgrade and live dual-stack checks
+  preserve service/config/WG state; qBittorrent's PID is unchanged. No clean
+  Ubuntu/reboot, VPN client throughput or authenticated Infuse acceptance claim.
+
+### 2026-09-28 — Runtime and installer cleanup (v2-145)
+
+- Align active documentation, input-template and launcher messages with built-in
+  Files/WebDAV/archive tools, App Store, current settings and no automatic backup.
+  Remove unused frontend helpers, old shared-account UI and obsolete CSS.
+- Remove unreachable built-in module install/remove/data-delete branches and
+  shared-password plumbing. Stop creating `.pay/w` and its marker, exporting old
+  credential paths or repairing legacy metadata permissions (DD-171).
+- Preserve current folder accounts and all existing data; retain reserved-path
+  guards and tolerate absent legacy paths in the WebDAV sandbox. Retired Files
+  share routes now consistently answer 410; drop their obsolete state summary.
+- Keep all used dependencies and runtime files; no package purge, automatic
+  migration, data deletion or extra background service. Add regression checks
+  for fresh/legacy trees, retired API gates and first-login secret handling.
+- **Verified:** 157 local Bats cases (three platform skips), 108 local Python
+  cases (two native RAR skips), four browser suites; all 108 Python cases pass
+  on native Debian including real RAR. Reproducible 45-file portable payload,
+  nrm upgrade, live UI/API, systemd absent/present-path sandbox and built-in
+  idempotency checks pass. Accounts, settings, WG configs and qBittorrent process
+  are unchanged. No fresh Ubuntu/full fresh-install/reboot acceptance claim.
+
+Older entries (v2-144 and earlier) are archived verbatim in [`docs/archive/CHANGELOG-before-v2-145.md`](docs/archive/CHANGELOG-before-v2-145.md).
+
+[2.1.0]: https://github.com/drs0me1/obhut/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/drs0me1/obhut/compare/v1.2.0...v2.0.0
+[1.2.0]: https://github.com/drs0me1/obhut/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/drs0me1/obhut/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/drs0me1/obhut/releases/tag/v1.0.0

@@ -1,0 +1,64 @@
+# A hardened service as many projects document it: resource limits, a read-only root, no new
+# privileges, an init process and its own log settings.
+services:
+  kasa:
+    image: docker.io/example/kasa:1.32.0
+    hostname: kasa
+    init: true
+    read_only: true
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    shm_size: 64m
+    ulimits:
+      nofile:
+        soft: 20000
+        hard: 40000
+      nproc: 512
+    pids_limit: 200
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+        reservations:
+          memory: 64M
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    tty: false
+    stdin_open: false
+    platform: linux/amd64
+    pull_policy: always
+    ports:
+      - "8080:80"
+    volumes:
+      - kasa-data:/data
+  yedek:
+    image: docker.io/example/kasa-yedek:1.0
+    init: false
+    mem_limit: 128m
+    cpus: 0.25
+    cap_drop:
+      - SETFCAP
+      - KILL
+    security_opt:
+      - no-new-privileges
+    depends_on:
+      - kasa
+    volumes:
+      - kasa-data:/data:ro
+    restart: unless-stopped
+
+volumes:
+  kasa-data:
