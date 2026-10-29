@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.2.0] — 2026-10-29
+
+Podman, live and fully managed (DD-294). Build v2-282.
+
+- Konsol follows Podman as it changes: Podman's API socket is on (its service runs only while something is
+  connected), the backend follows Podman's event stream while a Konsol page is open, and the Podman section, an
+  application's state and the container pages read themselves again within about a second of a change, whoever
+  made it (also `podman run` over SSH).
+- Every container is Konsol's to manage, also one installed outside Obhut. Each row in Podman says who runs it
+  (an Obhut application, a systemd unit, a Compose project, a pod, Podman alone) and has its actions: start,
+  stop, restart, remove. A systemd unit's container is acted on through its unit, so systemd does not undo it;
+  removing it stops the unit and also deletes its Quadlet file unless you untick it (otherwise it comes back at
+  the next boot). An application's container is still managed on the application's page. Removing asks for the
+  container's name; each action is a job in İşlemler and a line in İşlem geçmişi.
+- Each container has its own page (Podman → a container's name): its state, who runs it, its image, CPU and
+  memory, ports, mounts (a `/srv` folder opens in Dosyalar, any other in Sistem dosyaları), networks, labels, and
+  its log (from journald, its unit or its log file; live on request). Never its environment or command line.
+- A port published by a container Obhut did not install is no longer open to the internet: the container guard
+  drops what comes in on the WAN to anything but Obhut's own bridges. From Tailscale it is reachable as before;
+  Erişim shows it closed on the internet and open on Tailscale, with no warning. (Checked on the test host
+  before this build: such a port answered from the internet.)
+- Sistem → Sağlık's Podman step checks the API socket and opens it again when it is off.
+
 ## [2.1.0] — 2026-10-21
 
 The first version under DD-292: every build now raises the version people see (a fix the last number, a new or

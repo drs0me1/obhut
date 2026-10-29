@@ -533,10 +533,22 @@ class Repair:
             return "atlandi", "podman kurulu değil"
         if rc != 0:
             return "sorun", "podman çalışmıyor (%s)" % last_line(err)
+        # DD-294: the API socket Konsol follows Podman's events through; enabled again when it is off.
+        fixed = ""
+        if run(["systemctl", "is-enabled", "--quiet", "podman.socket"], timeout=15)[0] != 0 or \
+                run(["systemctl", "is-active", "--quiet", "podman.socket"], timeout=15)[0] != 0:
+            if not self.fix:
+                return "sorun", "Podman API soketi kapalı; Konsol Podman'daki değişiklikleri canlı göremez"
+            rc, _, err = run(["systemctl", "enable", "--now", "podman.socket"], timeout=60)
+            if rc != 0:
+                return "hata", "Podman API soketi açılamadı (%s)" % (last_line(err) or rc)
+            fixed = "Podman API soketi yeniden açıldı"
         table = self.env.get("KONTEYNER_NFT_TABLE", "")
         if table and run(["nft", "list", "table", "inet", table], timeout=15)[0] != 0:
             return "sorun", "Konteyner koruma tablosu (inet %s) yok; bir konteyner işlemi ya da kurulum yeniden kurar" % table
-        return "ok", "Podman çalışıyor" + (", konteyner koruması yerinde" if table else "")
+        if fixed:
+            return "onarildi", fixed
+        return "ok", "Podman çalışıyor, API soketi açık" + (", konteyner koruması yerinde" if table else "")
 
     def wireguard(self):
         try:

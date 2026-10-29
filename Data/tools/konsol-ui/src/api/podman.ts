@@ -1,9 +1,21 @@
 // Podman's reads (DD-211, DD-289): the containers, images, volumes and networks with what each kind takes on disk
-// (GET /api/konsol/konteynerler/liste), and the section's only write, the cleanup of what nothing uses (its read
-// model and the job, K8). Paths and shapes come from sema.ts (generated from panel/master_api.py); every reply is
+// (GET /api/konsol/konteynerler/liste) and the cleanup of what nothing uses (its read model and the job, K8);
+// DD-294: one container's page, its log and its actions (start, stop, restart, remove; a job each), whoever
+// installed it. Paths and shapes come from sema.ts (generated from panel/master_api.py); every reply is
 // checked before a page shows it, a list item without its expected fields is left out, and a collection that
 // could not be read is never shown as an empty one.
-import { YOLLAR, type KonteynerListesi, type Temizlik, type TemizlikIsi, type TemizlikIstegi } from "./sema";
+import {
+  YOLLAR,
+  type KonteynerAyrintisi,
+  type KonteynerEylemIsi,
+  type KonteynerEylemi,
+  type KonteynerGunlugu,
+  type KonteynerListesi,
+  type KonteynerYonetimi,
+  type Temizlik,
+  type TemizlikIsi,
+  type TemizlikIstegi,
+} from "./sema";
 import { getJson, postJson } from "./http";
 import { isObject, isText, shaped } from "./konsol";
 
@@ -25,6 +37,12 @@ export interface Container {
   started: number | null;
   /** The application it belongs to (its labels and record), or null: a container Obhut does not manage. */
   app: string | null;
+  /** Who runs it and what Konsol may do to it (DD-294); null when the server did not say. */
+  manager: KonteynerYonetimi | null;
+  /** The pod it is in ("" for none). */
+  pod: string;
+  /** A job working on it now. */
+  busy: string | null;
   cpu: number | null;
   memory: number | null;
   ports: { hostIp: string; hostPort: number; containerPort: number; protocol: string }[];
@@ -76,6 +94,29 @@ export interface Resources {
 }
 
 const used = (v: unknown) => texts(v);
+const ACTIONS: readonly KonteynerYonetimi["eylemler"][number][] = ["baslat", "durdur", "yeniden-baslat", "kaldir"];
+const MANAGERS: readonly KonteynerYonetimi["tur"][] = ["uygulama", "birim", "compose", "pod", "podman"];
+/** Who runs a container, in words. */
+export function managerText(m: KonteynerYonetimi | null | undefined): string {
+  if (!m) return "—";
+  return {
+    uygulama: `Obhut uygulaması · ${m.ad}`,
+    birim: `systemd birimi · ${m.ad}`,
+    compose: `Compose projesi · ${m.ad}`,
+    pod: `Pod · ${m.ad}`,
+    podman: "Yalnız Podman",
+  }[m.tur];
+}
+
+/** A manager as the server sent it, or null; an action the shell does not know is left out. */
+export function manager(v: unknown): KonteynerYonetimi | null {
+  if (!isObject(v) || !MANAGERS.includes(v.tur as KonteynerYonetimi["tur"])) return null;
+  return {
+    tur: v.tur as KonteynerYonetimi["tur"], ad: isText(v.ad) ? v.ad : "",
+    eylemler: (isList(v.eylemler) ? v.eylemler : []).filter((a): a is KonteynerYonetimi["eylemler"][number] => ACTIONS.includes(a as never)),
+    dosya: isText(v.dosya) ? v.dosya : "",
+  };
+}
 // Podman's subnet rows may be {subnet, gateway} objects; plain text is read too.
 const subnets = (v: unknown) => (isList(v) ? v.map((x) => (isText(x) ? x : isObject(x) && isText(x.subnet) ? x.subnet : "")).filter(Boolean) : []);
 const KINDS: readonly StorageKind["type"][] = ["images", "containers", "volumes"];
@@ -94,6 +135,7 @@ export async function readResources(): Promise<Resources> {
           name: c.name as string, image: isText(c.image) ? c.image : "", state: isText(c.state) ? c.state : "", health: isText(c.health) ? c.health : "",
           exitCode: isNumber(c.exit_code) ? c.exit_code : 0, restarts: isNumber(c.restarts) ? c.restarts : 0, started: nullableNumber(c.started),
           app: c.source === "uygulama" && isText(c.uygulama) && c.uygulama ? c.uygulama : null,
+          manager: manager(c.yonetim), pod: isText(c.pod) ? c.pod : "", busy: isText(c.busy) && c.busy ? c.busy : null,
           cpu: nullableNumber(c.cpu_percent), memory: nullableNumber(c.memory_bytes),
           ports: (isList(c.ports) ? c.ports : [])
             .filter((p) => isObject(p) && isNumber(p.host_port) && isNumber(p.container_port))
@@ -131,19 +173,16 @@ export async function readResources(): Promise<Resources> {
 
 // ---- the cleanup (K8)
 /** What nothing uses (images by ID with their tags, networks and volumes by name, removed applications' data
-    folders with their sizes) and the containers Obhut does not manage; `fresh` measures the folders again. */
+    folders with their sizes); `fresh` measures the folders again. */
 export async function readCleanup(fresh = false): Promise<Temizlik> {
   const v = shaped<Temizlik>(await getJson(YOLLAR.temizlik + (fresh ? "?yenile=1" : "")), (d) =>
-    ["imajlar", "aglar", "birimler", "klasorler", "konteynerler"].every((k) => isList(d[k])));
+    ["imajlar", "aglar", "birimler", "klasorler"].every((k) => isList(d[k])));
   return {
     read_at: isNumber(v.read_at) ? v.read_at : 0,
     imajlar: v.imajlar.filter((i) => isObject(i) && isText(i.id)).map((i) => ({ id: i.id, etiketler: texts(i.etiketler), boyut: nullableNumber(i.boyut), olusturuldu: nullableNumber(i.olusturuldu) })),
     aglar: v.aglar.filter((n) => isObject(n) && isText(n.ad)).map((n) => ({ ad: n.ad, surucu: isText(n.surucu) ? n.surucu : "", arayuz: isText(n.arayuz) ? n.arayuz : "" })),
     birimler: v.birimler.filter((b) => isObject(b) && isText(b.ad)).map((b) => ({ ad: b.ad, surucu: isText(b.surucu) ? b.surucu : "", olusturuldu: nullableNumber(b.olusturuldu) })),
     klasorler: v.klasorler.filter((k) => isObject(k) && isText(k.ad) && isText(k.yol)).map((k) => ({ ad: k.ad, yol: k.yol, boyut: nullableNumber(k.boyut), neden: isText(k.neden) ? k.neden : "" })),
-    konteynerler: v.konteynerler
-      .filter((c) => isObject(c) && isText(c.ad))
-      .map((c) => ({ ad: c.ad, imaj: isText(c.imaj) ? c.imaj : "", durum: isText(c.durum) ? c.durum : "", yonetici: c.yonetici === "kayitsiz" || c.yonetici === "baska" ? c.yonetici : "podman" })),
     hatalar: texts(v.hatalar),
   };
 }
@@ -151,4 +190,32 @@ export async function readCleanup(fresh = false): Promise<Temizlik> {
 /** The selected items as one job (202), followed in İşlemler; each is checked again right before it goes. */
 export async function startCleanup(request: TemizlikIstegi): Promise<TemizlikIsi> {
   return shaped(await postJson(YOLLAR.temizle, request), (v) => isText(v.is) && v.is !== "");
+}
+
+// ---- one container (DD-294)
+/** One container's page: its facts (never its environment or command line), who runs it, its resources. */
+export async function readContainer(name: string): Promise<KonteynerAyrintisi> {
+  const v = shaped<KonteynerAyrintisi>(await getJson(`${YOLLAR.konteyner_ayrintisi}?${new URLSearchParams({ ad: name })}`), (d) =>
+    isText(d.ad) && isObject(d.yonetim) && isList(d.portlar) && isList(d.baglamalar) && isList(d.aglar) && isList(d.etiketler));
+  const m = manager(v.yonetim);
+  if (!m) throw new Error("Konteynerin yöneticisi okunamadı.");
+  return {
+    ...v, yonetim: m,
+    portlar: v.portlar.filter((p) => isObject(p) && isNumber(p.host_port) && isNumber(p.container_port)),
+    baglamalar: v.baglamalar.filter((b) => isObject(b) && isText(b.hedef)),
+    aglar: v.aglar.filter((a) => isObject(a) && isText(a.ad)),
+    etiketler: v.etiketler.filter((e) => isObject(e) && isText(e.ad) && isText(e.deger)),
+  };
+}
+
+/** A container's last lines, from where its log driver writes them. */
+export async function readContainerLog(name: string, lines: number): Promise<KonteynerGunlugu> {
+  const v = shaped<KonteynerGunlugu>(await getJson(`${YOLLAR.konteyner_gunlugu}?${new URLSearchParams({ ad: name, satir: String(lines) })}`), (d) =>
+    isList(d.satirlar));
+  return { satirlar: texts(v.satirlar), kesik: v.kesik === true, kaynak: v.kaynak };
+}
+
+/** Starts one container's action as a job (202), followed in İşlemler. */
+export async function startContainerAction(request: KonteynerEylemi): Promise<KonteynerEylemIsi> {
+  return shaped(await postJson(YOLLAR.konteyner_eylemi, request), (v) => isText(v.is) && v.is !== "");
 }

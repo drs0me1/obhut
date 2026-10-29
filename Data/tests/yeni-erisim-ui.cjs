@@ -60,7 +60,7 @@ function rows(o = {}) {
     appRow(MEDYA_UDP, { tur: "ham", kapsam: "kapali", port: 1900 }, { yerel: cell("kapali"), tailscale: cell("kapali"), internet: cell("kapali") }),
     appRow(KUTU, { tur: "ham", kapsam: "kapali", port: 9000 }, { yerel: cell("kapali"), tailscale: cell("kapali"), internet: cell("kapali") }),
     row("konteyner:dis", "dis", "konteyner", { yerel: cell("acik", ["127.0.0.1:5000/tcp"]), tailscale: cell("kapali"), internet: cell("kapali") },
-      "Konteyner · Konsol dışında yönetiliyor"),
+      "Konteyner · Obhut dışında kuruldu"),
     row("paylasim", "Paylaşımlar", "paylasim", { tailscale: cell("acik", ["paylas.ev", "100.64.0.2:61010"]),
       internet: cell("acik", ["http://203.0.113.10:61010"], "", "Şifresiz HTTP"), web: { tail: true, enabled: false, domain: "" } }, "WebDAV · 2 klasör"),
     row("sistem:ssh", "SSH", "sistem", { tailscale: cell("acik", ["22/tcp"]), internet: cell("acik", ["203.0.113.10:22/tcp"]) }, "Uzak kabuk"),

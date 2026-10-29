@@ -10,13 +10,15 @@ import { Icon } from "../../components/icons";
 import EmptyState from "../../components/ui/EmptyState.vue";
 import Switch from "../../components/ui/Switch.vue";
 import { readAppLog } from "../../api/konsol";
+import { readContainerLog } from "../../api/podman";
 import { useQueryFlag, useQueryParam } from "../../query";
 import { clock, fold } from "../../format";
 import type { UygulamaGunlugu } from "../../api/sema";
 
 const TAILS = ["100", "200", "500", "1000"] as const;
 type Tail = (typeof TAILS)[number];
-const props = defineProps<{ app: string; services: string[] }>();
+// DD-294: with `container` the same view shows one container's log (Podman's container page; no services).
+const props = withDefaults(defineProps<{ app?: string; services?: string[]; container?: string }>(), { app: "", services: () => [], container: "" });
 
 const liveOn = useQueryFlag("canli");
 const tail = useQueryParam<Tail>("satir", TAILS, "200");
@@ -43,7 +45,7 @@ async function load(): Promise<void> {
   const el = box.value;
   const atEnd = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 24;
   try {
-    const value = await readAppLog(props.app, service.value, Number(tail.value));
+    const value = props.container ? await readContainerLog(props.container, Number(tail.value)) : await readAppLog(props.app, service.value, Number(tail.value));
     if (mine !== seq) return;
     log.value = value;
     error.value = "";
@@ -80,7 +82,7 @@ watch(
 // Another application or service in the same page, or another number of lines: read again (a read under way
 // is dropped).
 watch(
-  () => [props.app, service.value, tail.value],
+  () => [props.app || props.container, service.value, tail.value],
   ([app, svc], [beforeApp, beforeSvc]) => {
     seq += 1;
     loading.value = false;

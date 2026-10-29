@@ -1,7 +1,8 @@
 // İşlem geçmişi's words (GET /api/konsol/islemler, DD-276, A7): every line the backends write, in the interface's
 // words. The root backend's own actions (the account, the update, the reboot, repair, the folder shares), the
 // settings transaction's ("ayar-<step>", its detail naming an access row, a WireGuard action or "ayarlar"; the same
-// names the pending banner uses), the applications' ("uygulama-<verb>"), Podman's cleanup ("temizlik"),
+// names the pending banner uses), the applications' ("uygulama-<verb>"), Podman's cleanup ("temizlik") and one
+// container's actions ("konteyner-<verb>", DD-294),
 // WireGuard's device actions ("wireguard-<verb>") and the file backends' (source "dosya").
 import { SCOPE_TEXT } from "../../access";
 import type { KayitSatiri, WireGuardEylemi } from "../../api/sema";
@@ -10,6 +11,11 @@ import type { KayitSatiri, WireGuardEylemi } from "../../api/sema";
 const APP: Record<string, string> = {
   kur: "Uygulama kurulumu", baslat: "Uygulama başlatma", durdur: "Uygulama durdurma", "yeniden-baslat": "Uygulama yeniden başlatma",
   guncelle: "Uygulama imaj güncellemesi", tanim: "Uygulama tanım değişikliği", kaldir: "Uygulama kaldırma", taslak: "Taslak dosya",
+};
+
+/** One container's actions ("konteyner-<verb>", DD-294); the detail names the container. */
+const CONTAINER: Record<string, string> = {
+  baslat: "Konteyner başlatma", durdur: "Konteyner durdurma", "yeniden-baslat": "Konteyner yeniden başlatma", kaldir: "Konteyner kaldırma",
 };
 
 /** WireGuard's device lines (master_wireguard's audit verbs; {detail} is the whole detail, {0}, {1} … its words). */
@@ -117,7 +123,7 @@ export function kindOf(e: KayitSatiri): Kind {
   if (e.action.startsWith("wireguard-")) return "wireguard";
   if (e.action.startsWith("ayar-")) return e.detail.startsWith("wireguard ") ? "wireguard" : "erisim";
   if (e.action.startsWith("paylasim-")) return "paylasim";
-  if (e.action === "temizlik") return "podman";
+  if (e.action === "temizlik" || e.action.startsWith("konteyner-")) return "podman";
   return "konsol";
 }
 
@@ -140,6 +146,9 @@ export function lineOf(e: KayitSatiri): string {
     // A removal's detail says whether the data stays: "<app> (veri: sakla|sil)".
     const detail = e.detail.replace(/ \(veri: sakla\)$/, " (veriler saklanır)").replace(/ \(veri: sil\)$/, " (veriler silinir)");
     text = `${APP[verb] ?? verb} istendi: ${detail}`;
+  } else if (e.action.startsWith("konteyner-")) {
+    const verb = e.action.slice("konteyner-".length);
+    text = `${CONTAINER[verb] ?? verb} istendi: ${e.detail}`;
   } else text = `${e.action} ${e.detail}`;
   return e.ok ? text : `${text} — başarısız`;
 }

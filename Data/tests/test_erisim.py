@@ -126,7 +126,7 @@ class ReadModelTests(unittest.TestCase):
         self.assertEqual(self.states(medya), ("acik", "kapali", "kapali", "kapali"))
         self.assertEqual(medya["yerel"]["adresler"], ["127.0.0.1:8094 → 80/tcp"])
         self.assertEqual((medya["uygulama"], medya["calisiyor"], medya["satir"], medya["aciklama"]),
-                         (None, True, None, "Konteyner · Konsol dışında yönetiliyor"), "an external container has no page")
+                         (None, True, None, "Konteyner · Obhut dışında kuruldu"), "an external container has no access row")
         ssh = self.row(result, "sistem:ssh")
         self.assertEqual(self.states(ssh), ("yok", "acik", "kapali", "acik"))
         self.assertEqual(ssh["internet"]["adresler"], ["203.0.113.10:22/tcp"])
@@ -230,18 +230,19 @@ class ReadModelTests(unittest.TestCase):
         self.assertFalse([r for r in stopped["hizmetler"] if r["tur"] == "vpn"])
         self.assertEqual(stopped["ozet"]["wireguard"], {"kurulu": False, "durduruldu": True, "aglar": []})
 
-    def test_an_external_containers_publications_warn_without_a_place(self):
+    def test_an_external_containers_public_port_is_closed_to_the_internet_by_the_guard(self):
         containers = copy.deepcopy(CONTAINERS)
         containers["containers"][2]["ports"] += [
             {"host_ip": "0.0.0.0", "host_port": 8443, "container_port": 443, "protocol": "tcp", "scope": "public"},
             {"host_ip": "192.168.1.5", "host_port": 9000, "container_port": 9000, "protocol": "tcp", "scope": "other"}]
         result = self.build(containers=containers)
         row = self.row(result, "konteyner:medya")
-        self.assertEqual(row["internet"]["adresler"], ["203.0.113.10:8443 → 443/tcp"])
+        # DD-294: the guard drops it from the internet: the internet cell is closed and names it; from Tailscale it is open.
+        self.assertEqual((row["internet"]["durum"], row["internet"]["adresler"]), ("kapali", ["203.0.113.10:8443 → 443/tcp"]))
+        self.assertEqual((row["tailscale"]["durum"], row["tailscale"]["adresler"]), ("acik", ["100.64.0.2:8443 → 443/tcp"]))
         texts = sorted(w["metin"] for w in result["uyarilar"])
-        self.assertEqual(len(texts), 2)
+        self.assertEqual(len(texts), 1, "no internet warning: the port is not open there")
         self.assertIn("192.168.1.5:9000/tcp adresindeki yayın tanınmıyor", texts[0])
-        self.assertIn("203.0.113.10:8443 → 443/tcp doğrudan internete açık", texts[1])
         self.assertEqual({(w["hizmet"], w["duzelt"]) for w in result["uyarilar"]}, {("konteyner:medya", None)},
                          "a container of no application has no page to fix it on")
 
@@ -250,7 +251,7 @@ class ReadModelTests(unittest.TestCase):
             {"name": "gece", "source": "external", "state": "exited", "live": True, "ports": []}]}
         row = self.row(self.build(containers=containers), "konteyner:gece")
         self.assertEqual(self.states(row), ("kapali", "kapali", "kapali", "kapali"))
-        self.assertEqual((row["calisiyor"], row["aciklama"]), (False, "Konteyner · Konsol dışında yönetiliyor"))
+        self.assertEqual((row["calisiyor"], row["aciklama"]), (False, "Konteyner · Obhut dışında kuruldu"))
 
     def test_publication_errors_become_warnings(self):
         settings = copy.deepcopy(SETTINGS)

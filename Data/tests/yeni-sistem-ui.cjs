@@ -106,19 +106,24 @@ const ADVANCED = {
   },
 };
 const ID = (c) => c.repeat(64);
-// Podman's containers (DD-289): two of applications (one unhealthy), three it does not manage (one stopped).
+// Podman's containers (DD-289): two of applications (one unhealthy), three it does not manage (one stopped): a plain one,
+// a systemd unit's and a Compose project's (DD-294: Konsol manages them all; an application's on its own page).
+const EVERY = ["baslat", "durdur", "yeniden-baslat", "kaldir"];
 const container = (name, o = {}) => ({ id: name.slice(0, 12), name, image: `registry.example/${name}:1`, state: "running", status: "", unit: "", network: "",
   ports: [], created: NOW - 6 * DAY, started: NOW - DAY, exit_code: 0, restarts: 0, health: "", live: true, source: "external", uygulama: null,
-  cpu_percent: null, memory_bytes: null, busy: null, listening: null, ...o });
+  cpu_percent: null, memory_bytes: null, busy: null, listening: null, pod: "", yonetim: { tur: "podman", ad: "", eylemler: EVERY }, ...o });
 const CONTAINERS = [
   container("notlar_web", { image: "docker.io/library/nginx:1.27", unit: "konsol-notlar_web.service", network: "ksl-notlar", source: "uygulama", uygulama: "notlar",
+    yonetim: { tur: "uygulama", ad: "notlar", eylemler: [] },
     started: NOW - 5 * DAY, health: "healthy", cpu_percent: 1.2, memory_bytes: 190840832,
     ports: [{ host_ip: "127.0.0.1", host_port: 62100, container_port: 8080, protocol: "tcp", scope: "lo" }] }),
   container("ornek_app", { image: "registry.example/ornek@sha256:" + ID("2"), source: "uygulama", uygulama: "ornek", started: NOW - 7200, health: "unhealthy", restarts: 3,
+    yonetim: { tur: "uygulama", ad: "ornek", eylemler: [] },
     cpu_percent: 0.6, memory_bytes: 268435456, ports: [{ host_ip: "100.64.0.2", host_port: 9001, container_port: 9000, protocol: "udp", scope: "tailscale" }] }),
   container("deneme", { memory_bytes: 67108864 }),
-  container("yetim", { image: "registry.example/yetim:2", state: "exited", exit_code: 137, restarts: 1 }),
-  container("baskasi", { image: "registry.example/baskasi:3" }),
+  container("yetim", { image: "registry.example/yetim:2", state: "exited", exit_code: 137, restarts: 1,
+    yonetim: { tur: "birim", ad: "yetim.service", eylemler: EVERY, dosya: "/etc/containers/systemd/yetim.container" } }),
+  container("baskasi", { image: "registry.example/baskasi:3", yonetim: { tur: "compose", ad: "yigin", eylemler: EVERY } }),
 ];
 const resources = (o = {}) => ({
   read_at: NOW, runtime: { version: "5.4.2", ok: true, error: "" }, containers: CONTAINERS,
@@ -156,7 +161,7 @@ const FIREWALL = {
     { aile: 4, tablo: "filter", zincir: "ts-input", sira: "1", paket: 10, bayt: 900, kural: "-A ts-input -j RETURN", sahip: "Tailscale" },
     { aile: 6, tablo: "filter", zincir: "MASTER-INPUT", sira: "1", paket: 7, bayt: 560, kural: "-A MASTER-INPUT -i lo -j ACCEPT", sahip: "Obhut" }],
 };
-// Podman's cleanup (GET /api/konsol/gelismis/temizlik): what nothing uses and the unmanaged containers.
+// Podman's cleanup (GET /api/konsol/gelismis/temizlik): what nothing uses.
 const DATA_DIR = "/var/lib/master-stack/uygulamalar";
 const cleanupView = (o = {}) => ({
   read_at: NOW,
@@ -166,9 +171,6 @@ const cleanupView = (o = {}) => ({
   birimler: [{ ad: "eski", surucu: "local", olusturuldu: NOW - 5 * DAY }],
   klasorler: [{ ad: "eskiuygulama", yol: DATA_DIR + "/eskiuygulama", boyut: 1288490188, neden: "" },
     { ad: "buyuk", yol: DATA_DIR + "/buyuk", boyut: null, neden: "Ölçüm süreye sığmadı; klasörde çok fazla öge var." }],
-  konteynerler: [{ ad: "deneme", imaj: "registry.example/deneme:1", durum: "running", yonetici: "podman" },
-    { ad: "yetim", imaj: "registry.example/yetim:2", durum: "exited", yonetici: "kayitsiz" },
-    { ad: "baskasi", imaj: "registry.example/baskasi:3", durum: "running", yonetici: "baska" }],
   hatalar: [], ...o,
 });
 
@@ -226,6 +228,20 @@ const rebootReplies = [];
 h.handlers["/api/konsol/yeniden-baslat"] = ({ method }) => (method === "POST" ? rebootReplies.shift() ?? { status: 202, body: { sure: 5 } } : undefined);
 const cleanupReplies = [];
 h.handlers["/api/konsol/gelismis/temizlik"] = ({ method }) => (method === "POST" ? cleanupReplies.shift() ?? { status: 202, body: { is: HEX("7") } } : undefined);
+// DD-294: a container's page, its log and its actions.
+const containerDetail = (name, o = {}) => ({ read_at: NOW, ad: name, id: name.slice(0, 12), imaj: `registry.example/${name}:1`, imaj_id: "c".repeat(12),
+  durum: "running", saglik: "", cikis_kodu: 0, hata: "", olusturuldu: NOW - 6 * DAY, basladi: NOW - DAY, yeniden_baslama: 0, politika: "always",
+  ag_kipi: "bridge", pod: "", portlar: [{ host_ip: "", host_port: 8080, container_port: 80, protocol: "tcp", scope: "public" }],
+  baglamalar: [{ tur: "bind", kaynak: "/srv/media", hedef: "/media", ad: "", salt_okunur: true },
+    { tur: "volume", kaynak: "/var/lib/containers/storage/volumes/veri/_data", hedef: "/data", ad: "veri", salt_okunur: false }],
+  aglar: [{ ad: "podman", ipv4: "10.88.0.5", ipv6: "" }], etiketler: [{ ad: "io.example.surum", deger: "1" }],
+  cpu: 0.4, bellek: 67108864, gunluk_kaynagi: "journald", yonetim: { tur: "podman", ad: "", eylemler: EVERY }, is: null, uygulama: null, ...o });
+const DETAILS = { deneme: containerDetail("deneme"),
+  yetim: containerDetail("yetim", { durum: "exited", cikis_kodu: 137, hata: "OOM", yonetim: { tur: "birim", ad: "yetim.service", eylemler: EVERY, dosya: "/etc/containers/systemd/yetim.container" } }) };
+h.handlers["/api/konsol/konteynerler/ayrinti"] = ({ query }) => (DETAILS[query.get("ad")] ? { body: DETAILS[query.get("ad")] } : { status: 404, body: { error: "Konteyner bulunamadı." } });
+h.handlers["/api/konsol/konteynerler/gunluk"] = ({ query }) => ({ body: { satirlar: ["2026-10-29T10:00:00+0100 sunucu deneme[1]: hazır", `satır sayısı ${query.get("satir")}`], kesik: false, kaynak: "journald" } });
+const actionReplies = [];
+h.handlers["/api/konsol/konteynerler/eylem"] = ({ method }) => (method === "POST" ? actionReplies.shift() ?? { status: 202, body: { is: HEX("9") } } : undefined);
 let jobRecord = null;
 h.handlers["/api/konsol/konteynerler/islem"] = ({ query }) => (jobRecord && query.get("id") === jobRecord.id ? { body: jobRecord } : { status: 404, body: { error: "İşlem bulunamadı." } });
 
@@ -857,7 +873,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     data["guvenlik-duvari"] = FIREWALL;
     await page.context().close();
 
-    // ================= Podman (DD-289): its own section; the containers read-only, what nothing uses removed from its list
+    // ================= Podman (DD-289, DD-294): its own section; every container managed, what nothing uses removed from its list
     page = await newPage();
     await page.goto(url("#/podman"));
     assert.equal(await page.locator("main h1").innerText(), "Podman");
@@ -875,28 +891,67 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.deepEqual(await stat("podman-usage"), ["4 konteyner", "502 MB bellek", [["Bellek payı", "%6"], ["İşlemci", "%2"]]], "summed over what runs, against the server's memory");
     assert.deepEqual(await stat("podman-storage"), ["6 kullanılmayan", "432 MB", [["İmajlar", "391 MB · 3 imaj"], ["Konteynerler", "1 MB · 5 konteyner"], ["Birimler", "40 MB · 3 birim"]]],
       "each kind as podman system df counts it");
-    assert.deepEqual((await podman.getByRole("button").allInnerTexts()).map((t) => t.replace(/\s+/g, " ")),
-      ["Yenile", "Tümü 5", "Çalışan 4", "Durmuş 1", "Seçilenleri kaldır…"], "nothing to pull, create, start, stop or adopt");
+    assert.deepEqual((await podman.getByRole("button").evaluateAll((els) => els.filter((e) => !e.closest("tbody")).map((e) => e.innerText.replace(/\s+/g, " ").trim()))),
+      ["Yenile", "Tümü 5", "Çalışan 4", "Durmuş 1", "Seçilenleri kaldır…"], "outside the rows: nothing to pull or create");
     // The containers: running first by memory; an application's lead to its page, the others say who runs them.
     const containers = podman.getByTestId("containers");
     const ctr = (name) => containers.locator(`tr[data-konteyner="${name}"]`);
     const cell = (name, label) => ctr(name).locator(`td[data-label="${label}"]`).innerText();
     assert.deepEqual(await containers.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.konteyner)), ["ornek_app", "notlar_web", "deneme", "baskasi", "yetim"]);
     assert.equal(await ctr("notlar_web").locator("th .cell-note").innerText(), "notlar · servis web");
-    assert.equal(await ctr("notlar_web").getByRole("link", { name: "notlar" }).getAttribute("href"), "#/uygulamalar/notlar");
+    assert.equal(await ctr("notlar_web").getByRole("link", { name: "notlar", exact: true }).getAttribute("href"), "#/uygulamalar/notlar");
     assert.deepEqual(await Promise.all(["Durum", "İşlemci", "Bellek", "Çalışma", "Portlar"].map((l) => cell("notlar_web", l))),
       ["Çalışıyor", "%1", "182 MB", "5 gün", "127.0.0.1:62100 → 8080/tcp"]);
     assert.equal(await cell("ornek_app", "Durum"), "Sağlıksız\n3 kez yeniden başladı");
     assert.match(await cell("ornek_app", "Çalışma"), /^2 sa \d+ dk$/);
     assert.equal(await cell("ornek_app", "Portlar"), "100.64.0.2:9001 → 9000/udp");
     assert.equal(await ctr("ornek_app").locator('td[data-label="İmaj"] .sr-only').innerText(), "registry.example/ornek@sha256:" + ID("2"));
-    const owner = (name) => ctr(name).locator("th").evaluate((th) => [th.querySelector(".pill")?.textContent ?? "", th.querySelector(".cell-note")?.textContent ?? ""]);
-    assert.deepEqual(await owner("deneme"), ["Obhut dışı", "Yalnız Podman çalıştırıyor"]);
-    assert.deepEqual(await owner("baskasi"), ["Obhut dışı", "Başka bir yönetici çalıştırıyor"]);
-    assert.equal(await ctr("yetim").locator("th .pill").innerText(), "Kaydı yok");
+    // Who runs each; every name leads to its own page (DD-294).
+    const owner = (name) => ctr(name).locator("th .cell-note").innerText();
+    assert.deepEqual(await Promise.all(["deneme", "baskasi", "yetim"].map(owner)), ["Yalnız Podman", "Compose projesi · yigin", "systemd birimi · yetim.service"]);
+    assert.equal(await ctr("deneme").getByTestId("container-link").getAttribute("href"), "#/podman/konteyner/deneme");
     assert.deepEqual(await Promise.all(["Durum", "İşlemci", "Bellek", "Çalışma", "Portlar"].map((l) => cell("yetim", l))),
       ["Durdu\nçıkış kodu 137 · 1 kez yeniden başladı", "—", "—", "—", "yok"]);
-    assert.equal(await containers.locator("tbody button, tbody input").count(), 0, "no action on a container");
+    // The actions by state and owner: an application's container leads to the application.
+    const acts = (name) => ctr(name).locator("[data-eylem]").evaluateAll((els) => els.map((e) => e.dataset.eylem));
+    assert.deepEqual(await acts("notlar_web"), ["uygulama"]);
+    assert.equal(await ctr("notlar_web").getByRole("link", { name: "notlar_web: notlar uygulamasında yönet" }).count(), 1);
+    assert.equal(await ctr("notlar_web").locator('[data-eylem="uygulama"]').getAttribute("href"), "#/uygulamalar/notlar");
+    assert.deepEqual(await acts("deneme"), ["durdur", "yeniden-baslat", "kaldir"]);
+    assert.deepEqual(await acts("yetim"), ["baslat", "kaldir"]);
+    assert.equal(await ctr("deneme").getByRole("button", { name: "deneme durdur" }).count(), 1, "icon buttons name their container");
+    // An action is a job: its exact body, its step in the row, the list read again at its end.
+    await ctr("deneme").getByRole("button", { name: "deneme durdur" }).click();
+    await waitFor(() => posts("konteynerler/eylem").length === 1, "the action posted");
+    assert.deepEqual(lastPost("konteynerler/eylem"), { ad: "deneme", eylem: "durdur" });
+    await ctr("deneme").locator('[data-eylem="yeniden-baslat"]:disabled').waitFor();  // one action at a time
+    push("islemler", { items: [job({ id: HEX("9"), ad: "deneme · Konteyner işlemi", adim: "Durduruluyor: deneme" })] });
+    await ctr("deneme").getByTestId("container-step").filter({ hasText: "Durduruluyor: deneme…" }).waitFor();
+    jobRecord = { id: HEX("9"), action: "konteyner", name: "deneme", state: "done", step: "", result: { ok: true, ad: "deneme", eylem: "durdur", notlar: [] } };
+    const listBefore = gets("konteynerler/liste").length;
+    push("islemler", { items: [job({ id: HEX("9"), ad: "deneme · Konteyner işlemi", durum: "tamam", bitis: NOW + 30 })] });
+    await waitFor(() => gets("konteynerler/liste").length > listBefore, "the list read again at the job's end");
+    // Podman's own event (the live "podman" topic) reads the list again too, whoever changed it.
+    push("podman", { surum: "1", canli: true });
+    const listLive = gets("konteynerler/liste").length;
+    push("podman", { surum: "2", canli: true });
+    await waitFor(() => gets("konteynerler/liste").length > listLive, "a Podman event reads the list again");
+    // Removing a systemd unit's container: the unit stops first, its Quadlet file goes too unless unticked, its name is typed.
+    await ctr("yetim").getByRole("button", { name: "yetim kaldır" }).click();
+    const removeDialog = page.getByRole("dialog", { name: "yetim kaldırılsın mı?" });
+    await removeDialog.waitFor();
+    assert.match(await removeDialog.getByTestId("remove-unit-text").innerText(), /yetim\.service birimi çalıştırıyor/);
+    assert.equal(await removeDialog.getByTestId("remove-unit-file").isChecked(), true, "the Quadlet file goes by default");
+    assert.equal(await removeDialog.getByTestId("remove-volumes").isChecked(), false);
+    assert(await removeDialog.getByTestId("remove-confirm").isDisabled(), "the name typed first");
+    await removeDialog.getByLabel("Onaylamak için yetim yazın").fill("yetim");
+    await removeDialog.getByTestId("remove-volumes").check();
+    actionReplies.push({ status: 202, body: { is: HEX("a") } });
+    await removeDialog.getByTestId("remove-confirm").click();
+    await removeDialog.waitFor({ state: "detached" });
+    assert.deepEqual(lastPost("konteynerler/eylem"), { ad: "yetim", eylem: "kaldir", onay: "yetim", birim_dosyasi: true, birimler: true });
+    push("islemler", { items: [job({ id: HEX("a"), ad: "yetim · Konteyner işlemi", durum: "hata", bitis: NOW + 40, adim: "Konteyner aracı işlemi reddetti (systemctl stop)." })] });
+    await ctr("yetim").getByTestId("container-failure").filter({ hasText: "Konteyner aracı işlemi reddetti (systemctl stop)." }).waitFor();
     await containers.getByRole("button", { name: /Durmuş/ }).click();
     await page.waitForURL((u) => new URLSearchParams(u.hash.split("?")[1]).get("suzgec") === "durmus");
     assert.deepEqual(await containers.locator("tbody tr").evaluateAll((rows) => rows.map((r) => r.dataset.konteyner)), ["yetim"]);
@@ -1004,8 +1059,48 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
     assert.equal(posts("konteynerler/islem").length, 0);
     await page.context().close();
 
+    // ================= one container's page (DD-294): facts, ports, mounts into Dosyalar, networks, labels, its log and its actions
+    page = await newPage();
+    await page.goto(url("#/podman/konteyner/deneme"));
+    await page.getByTestId("container-facts").waitFor();
+    assert.equal(await page.locator("main h1").innerText(), "deneme");
+    assert.equal(await page.locator(".trail a").getAttribute("href"), "#/podman", "the trail back to Podman");
+    assert.deepEqual(await page.locator('.sidebar .nav-item[aria-current="true"] .nav-label').allInnerTexts(), ["Podman"]);
+    assert.equal(await page.getByTestId("container-desc").innerText(), "Yalnız Podman · registry.example/deneme:1");
+    assert.equal(await page.getByTestId("container-state").innerText(), "Çalışıyor");
+    assert.deepEqual(await page.locator(".container-actions [data-eylem]").evaluateAll((els) => els.map((e) => e.dataset.eylem)), ["durdur", "yeniden-baslat", "kaldir"]);
+    assert.equal(await page.getByTestId("container-ports").locator("tbody tr").innerText(), "8080 → 80/tcp\tTailscale · internete kapalı (koruma)",
+      "the guard closes the internet to a container that is not an application's (DD-294)");
+    assert.deepEqual(await page.getByTestId("container-mounts").locator("tbody td a").evaluateAll((as) => as.map((a) => a.getAttribute("href"))),
+      ["#/dosyalar?sekme=srv&yol=media", "#/dosyalar?sekme=sistem&yol=var%2Flib%2Fcontainers%2Fstorage%2Fvolumes%2Fveri%2F_data"]);
+    assert.equal(await page.getByTestId("container-networks").locator("tbody tr").innerText(), "podman\t10.88.0.5\t—");
+    assert.doesNotMatch(await page.locator("main").innerText(), /PASSWORD|never-shown/, "no environment, no command line");
+    await shot(page, "1440-light-konteyner.png", true);
+    await page.getByRole("tab", { name: "Günlük" }).click();
+    await page.getByTestId("log-lines").filter({ hasText: "deneme[1]: hazır" }).waitFor();
+    assert.equal(await page.getByTestId("log-service").count(), 0, "a container has no services to choose");
+    assert.match(await page.getByTestId("container-log").innerText(), /Kaynak: systemd günlüğü \(journald\)/);
+    // A unit's container names its Quadlet file; removed, the page goes back to Podman.
+    await page.goto(url("#/podman/konteyner/yetim"));
+    await page.getByTestId("container-manager").filter({ hasText: "/etc/containers/systemd/yetim.container" }).waitFor();
+    assert.match(await page.getByTestId("container-facts").innerText(), /OOM/);
+    await page.getByRole("button", { name: "Kaldır…" }).click();
+    const pageDialog = page.getByRole("dialog", { name: "yetim kaldırılsın mı?" });
+    await pageDialog.getByLabel("Onaylamak için yetim yazın").fill("yetim");
+    actionReplies.push({ status: 202, body: { is: HEX("b") } });
+    jobRecord = { id: HEX("b"), action: "konteyner", name: "yetim", state: "done", step: "", result: { ok: true, ad: "yetim", eylem: "kaldir", notlar: [] } };
+    await pageDialog.getByTestId("remove-confirm").click();
+    push("islemler", { items: [job({ id: HEX("b"), ad: "yetim · Konteyner işlemi", durum: "tamam", bitis: NOW + 50 })] });
+    await page.waitForURL((u) => u.hash === "#/podman");
+    // A container Podman does not know.
+    expectedFailures = ["/api/konsol/konteynerler/ayrinti"];
+    await page.goto(url("#/podman/konteyner/yok"));
+    await page.getByText("Bu konteyner yok").waitFor();
+    expectedFailures = [];
+    await page.context().close();
+
     // Nothing to remove; a cleanup read that failed; a collection that could not be read; a runtime that does not answer.
-    data["gelismis/temizlik"] = cleanupView({ imajlar: [], aglar: [], birimler: [], klasorler: [], konteynerler: [], hatalar: ["notlar: tanım okunamadı."] });
+    data["gelismis/temizlik"] = cleanupView({ imajlar: [], aglar: [], birimler: [], klasorler: [], hatalar: ["notlar: tanım okunamadı."] });
     page = await newPage();
     await page.goto(url("#/podman"));
     await page.getByTestId("cleanup-chosen").filter({ hasText: "Kullanılmayan imaj, birim, ağ ya da klasör yok." }).waitFor();
@@ -1081,6 +1176,7 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
       ["birimler", "#/podman?kaynak=birimler", "[data-testid=volumes] tbody tr"],
       ["aglar", "#/podman?kaynak=aglar", "[data-testid=networks] tbody tr"],
       ["klasorler", "#/podman?kaynak=klasorler", "[data-testid=folders] tbody tr"],
+      ["konteyner", "#/podman/konteyner/yetim", "[data-testid=container-facts]"],
     ];
     const SHEETS = [["onarim-kaydi", "#/sistem?kayit=72s", "[data-testid=repair-log-text]"]];
     for (const colorScheme of ["light", "dark"]) {
@@ -1126,7 +1222,9 @@ const reloaded = (page) => page.evaluate(() => window.__eski !== true).catch(() 
       "search, the address), the internet channel's locks and sign-out (sidebar and phone menu), Gelişmiş (Caddy's sites with routes, owners " +
       "as their sources, access and scheme, raw files in the address with copy, Yenile, a failed read; DNS from the same read with raw " +
       "sources; the firewall's technical rules and listeners per family, Yenile, an unreadable listener list), Podman (its section; the four " +
-      "summaries, the containers read-only with application links, who runs the others, the filter in the address; images by ID with every " +
+      "summaries, every container with who runs it, its link, its actions by state and owner as jobs with their exact bodies, the removal's " +
+      "typed name and ticks, a Podman event reading the list again, the filter in the address; a container's page with its facts, mounts into " +
+      "Dosyalar, its log, its removal leading back, an unknown one; images by ID with every " +
       "name, volumes, networks and leftover folders with what nothing uses ticked across tabs, the dialog naming what goes, the typed word, " +
       "a refusal, the exact body, the job in İşlemler, what went, what stayed and why, nothing to remove, a failed read), Tüm denetimler, the " +
       "palette, keyboard and focus, 1440/390/320 in light and dark. Screenshots: " + h.shots);

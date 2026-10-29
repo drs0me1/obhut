@@ -447,7 +447,80 @@ export interface KonteynerSatiri {
     protocol: string;
     scope: string;
   }[] | null;
+  pod?: string;
+  yonetim?: KonteynerYonetimi;
   [key: string]: unknown;
+}
+
+export interface KonteynerYonetimi {
+  tur: "uygulama" | "birim" | "compose" | "pod" | "podman";
+  ad: string;
+  eylemler: ("baslat" | "durdur" | "yeniden-baslat" | "kaldir")[];
+  dosya?: string;
+}
+
+export interface KonteynerAyrintisi {
+  read_at: number;
+  ad: string;
+  id: string;
+  imaj: string;
+  imaj_id: string;
+  durum: string;
+  saglik: string;
+  cikis_kodu: number;
+  hata: string;
+  olusturuldu: number | null;
+  basladi: number | null;
+  yeniden_baslama: number;
+  politika: string;
+  ag_kipi: string;
+  pod: string;
+  portlar: KonteynerPortu[];
+  baglamalar: {
+    tur: string;
+    kaynak: string;
+    hedef: string;
+    ad: string;
+    salt_okunur: boolean;
+  }[];
+  aglar: {
+    ad: string;
+    ipv4: string;
+    ipv6: string;
+  }[];
+  etiketler: {
+    ad: string;
+    deger: string;
+  }[];
+  cpu: number | null;
+  bellek: number | null;
+  gunluk_kaynagi: "journald" | "birim" | "dosya" | "yok";
+  yonetim: KonteynerYonetimi;
+  is: string | null;
+  uygulama: string | null;
+}
+
+export interface KonteynerGunlugu {
+  satirlar: string[];
+  kesik: boolean;
+  kaynak: "journald" | "birim" | "dosya" | "yok";
+}
+
+export interface KonteynerEylemi {
+  ad: string;
+  eylem: "baslat" | "durdur" | "yeniden-baslat" | "kaldir";
+  onay?: string;
+  birim_dosyasi?: boolean;
+  birimler?: boolean;
+}
+
+export interface KonteynerEylemIsi {
+  is: string;
+}
+
+export interface PodmanDegisimi {
+  surum: string;
+  canli: boolean;
 }
 
 export interface KonteynerListesi {
@@ -714,12 +787,6 @@ export interface Temizlik {
     yol: string;
     boyut: number | null;
     neden: string;
-  })[];
-  konteynerler: ({
-    ad: string;
-    imaj: string;
-    durum: string;
-    yonetici: "podman" | "kayitsiz" | "baska";
   })[];
   hatalar: string[];
 }
@@ -1476,6 +1543,7 @@ export interface Olaylar {
   saglik: Saglik;
   islemler: Islemler;
   bekleyen: Bekleyen;
+  podman: PodmanDegisimi;
   kapat: Kapat;
 }
 
@@ -1508,6 +1576,9 @@ export const YOLLAR = {
   adlar: "/api/konsol/adlar",
   konteyner_listesi: "/api/konsol/konteynerler/liste",
   konteyner_isi: "/api/konsol/konteynerler/islem",
+  konteyner_ayrintisi: "/api/konsol/konteynerler/ayrinti",
+  konteyner_gunlugu: "/api/konsol/konteynerler/gunluk",
+  konteyner_eylemi: "/api/konsol/konteynerler/eylem",
   oturum: "/api/konsol/oturum",
   oturum_kur: "/api/konsol/oturum/kur",
   oturum_cikis: "/api/konsol/oturum/cikis",

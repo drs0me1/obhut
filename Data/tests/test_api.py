@@ -334,16 +334,16 @@ class OnlyTheTableAnswers(Fixture):
         self.assertTrue(match.called)
 
     def test_removed_reads_are_404(self):
-        # Rebuild §2.2: no screen read a container's detail or the old folder picker; both routes are gone.
-        paths = ("/api/konsol/konteynerler/ayrinti?ad=notlar_web", "/api/konsol/ayarlar/klasorler",
-                 "/api/konsol/ayarlar/klasorler?path=/srv")
+        # Rebuild §2.2: no screen read the old folder picker; its route is gone. (A container's detail came back with
+        # its page, DD-294: GET …/konteynerler/ayrinti.)
+        paths = ("/api/konsol/ayarlar/klasorler", "/api/konsol/ayarlar/klasorler?path=/srv")
         with patch.object(panel.subprocess, "run", side_effect=AssertionError("no handler may run")):
             for path in paths:
                 self.assertIsNone(master_api.find("GET", path.partition("?")[0]), path)
                 for method in ("GET", "HEAD"):
                     with self.subTest(method=method, path=path):
                         self.assertEqual(self.request(method, path)[0], 404)
-        self.assertFalse([n for n in ("api_konteyner_ayrintisi", "api_klasorler") if hasattr(panel.Handler, n)])
+        self.assertFalse(hasattr(panel.Handler, "api_klasorler"))
 
     def test_the_two_exceptions_answer_without_the_table(self):
         with patch.object(panel.master_api, "match", side_effect=AssertionError("not through the table")):

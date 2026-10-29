@@ -5,9 +5,11 @@ Podman is part of the base (Konsol's container runtime). The root backend calls 
 for GET /api/konsol/konteynerler/liste; everything comes from `podman` itself
 (ps, inspect, images, system df) run inside the backend's sandbox, which is enough for
 reading, and, for a container on the host network, from /proc (the sockets it listens on, DD-215).
-Nothing here starts, stops or removes a container: that belongs to the application that owns it.
-Environment variables are never returned (they may hold passwords). An application's log is its
-units' journal (master_container_manager, DD-251).
+Nothing here starts, stops or removes a container: every action is a job of the root worker (an
+application's through its own record, any other container's under DD-294's rules, which `control` names).
+Environment variables and the command line are never returned (they may hold passwords). An application's
+log is its units' journal (master_container_manager, DD-251); any other container's comes from where its log
+driver writes it (`log_source`).
 """
 import ipaddress
 import json
@@ -18,6 +20,17 @@ import sys
 import time
 
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
+# DD-294: what Konsol may do to a container that is not an application's, and the systemd unit names it acts on.
+CONTAINER_ACTIONS = ("baslat", "durdur", "yeniden-baslat", "kaldir")
+UNIT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@:-]{0,250}\.service\Z")
+# Units Konsol never stops, restarts or disables for a container, whatever a container's label names: the
+# installer's own and the system's.
+PROTECTED_UNITS = frozenset(("tailscaled.service", "caddy.service", "dnsmasq.service", "ssh.service", "sshd.service", "cron.service",
+                             "networking.service", "systemd-networkd.service", "systemd-resolved.service", "dbus.service"))
+PROTECTED_UNIT_PREFIXES = ("master-", "systemd-", "wg-quick@", "podman", "user@", "getty@", "serial-getty@")
+PROJECT_LABELS = ("com.docker.compose.project", "io.podman.compose.project")
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+LOG_LINE_CHARS = 2000
 # `podman system df`'s kinds as Konsol's Podman section names them (DD-289).
 DF_TYPES = {"Images": "images", "Containers": "containers", "Local Volumes": "volumes"}
 
@@ -272,6 +285,149 @@ def listening(pid, wan=(), tailscale=(), proc="/proc", cgroups="/sys/fs/cgroup")
     return rows
 
 
+def protected_unit(unit):
+    return unit in PROTECTED_UNITS or unit.startswith(PROTECTED_UNIT_PREFIXES)
+
+
+def conmon_cgroup(raw, proc="/proc"):
+    """The cgroup path of a container's conmon (its unit's own cgroup when a unit runs it), or ""."""
+    pid = (raw.get("State") or {}).get("ConmonPid")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return ""
+    try:
+        with open("%s/%d/cgroup" % (proc, pid), encoding="utf-8") as fh:
+            for line in fh.read(8192).splitlines():
+                if line.startswith("0::"):
+                    return line[3:].strip()
+    except OSError:
+        return ""
+    return ""
+
+
+def unit_runs(raw, unit, props, folder, proc="/proc"):
+    """Whether `unit` really runs this container (DD-294): a label is the container's own word, so it counts only when
+    systemd agrees: the unit was generated from a Quadlet file in KONTEYNER_BIRIM_DIR, or the unit's cgroup holds the
+    container's conmon or the container itself. The installer's and the system's units never count. props: the
+    unit's systemd ControlGroup and SourcePath."""
+    if not UNIT_RE.fullmatch(unit) or protected_unit(unit):
+        return False
+    if quadlet_path(props.get("SourcePath", ""), folder):
+        return True
+    group = (props.get("ControlGroup") or "").rstrip("/")
+    if not group:
+        return False
+    for path in (conmon_cgroup(raw, proc), str((raw.get("State") or {}).get("CgroupPath", ""))):
+        if path and (path == group or path.startswith(group + "/")):
+            return True
+    return False
+
+
+def unit_of(raw):
+    """The systemd unit a container says runs it: Podman's PODMAN_SYSTEMD_UNIT label (Quadlet, `podman generate
+    systemd`), else the service in its cgroup path; "" when nothing but Podman runs it. A claim only: unit_runs
+    checks it with systemd."""
+    labels = (raw.get("Config") or {}).get("Labels") or {}
+    unit = labels.get("PODMAN_SYSTEMD_UNIT")
+    if isinstance(unit, str) and UNIT_RE.fullmatch(unit):
+        return unit
+    cgroup = str((raw.get("State") or {}).get("CgroupPath", ""))
+    for part in cgroup.split("/"):
+        if part.endswith(".service") and not part.startswith("user@") and UNIT_RE.fullmatch(part):
+            return part
+    return ""
+
+
+def control(raw, pod="", app_exists=lambda app: False, unit_props=None):
+    """Who runs a container and so how Konsol acts on it (DD-294, the operator's decision of 2026-10-29: every
+    container is Konsol's to manage): {tur, ad, eylemler, dosya}. An application's (its labels and a record, or its
+    pod's infra container) is managed on the application's page; a systemd unit's through that unit, so systemd does
+    not undo it (unit_props(unit) → {ControlGroup, SourcePath, folder}: the claim checked with systemd, unit_runs;
+    without it only a protected unit is refused); a Compose project's, a pod's and a plain one through Podman.
+    dosya: the unit's Quadlet file, when there is one."""
+    import master_container_config as config
+    import master_generator as table
+    labels = (raw.get("Config") or {}).get("Labels") or {}
+    app = labels.get(table.APP_LABEL)
+    if config.ownership(raw) == table.MANAGED_VALUE and isinstance(app, str) and app_exists(app):
+        return {"tur": "uygulama", "ad": app, "eylemler": [], "dosya": ""}
+    name = str(raw.get("Name", "")).lstrip("/")
+    if name.endswith("__infra"):
+        owner = name[:-len("__infra")]
+        try:
+            if name == table.pod_infra_name(owner) and app_exists(owner):
+                return {"tur": "uygulama", "ad": owner, "eylemler": [], "dosya": ""}
+        except table.GeneratorError:
+            pass
+    every = list(CONTAINER_ACTIONS)
+    unit = unit_of(raw)
+    if unit:
+        props = unit_props(unit) if unit_props else {}
+        trusted = unit_runs(raw, unit, props, props.get("folder", "")) if unit_props else not protected_unit(unit)
+        if trusted:
+            return {"tur": "birim", "ad": unit, "eylemler": every, "dosya": quadlet_path(props.get("SourcePath", ""), props.get("folder", ""))}
+    project = next((labels[k] for k in PROJECT_LABELS if isinstance(labels.get(k), str) and labels[k]), "")
+    if project:
+        return {"tur": "compose", "ad": project, "eylemler": every, "dosya": ""}
+    if pod:
+        return {"tur": "pod", "ad": pod, "eylemler": every, "dosya": ""}
+    return {"tur": "podman", "ad": "", "eylemler": every, "dosya": ""}
+
+
+def quadlet_path(source, folder):
+    """A unit's SourcePath when it is a Quadlet file directly in `folder` (KONTEYNER_BIRIM_DIR), else ""."""
+    folder = (folder or "").rstrip("/")
+    if folder and isinstance(source, str) and source.startswith(folder + "/") and "/" not in source[len(folder) + 1:] \
+            and source.endswith((".container", ".kube", ".pod")) and NAME_RE.fullmatch(source[len(folder) + 1:]):
+        return source
+    return ""
+
+
+def log_source(raw):
+    """Where a container's output is (DD-294): ("journald", full ID), ("birim", unit) for a unit's passthrough,
+    ("dosya", path) for a k8s-file or json-file log, or ("yok", "")."""
+    host = raw.get("HostConfig") or {}
+    kind = str((host.get("LogConfig") or {}).get("Type") or "")
+    ident = raw.get("Id")
+    if kind == "journald" and isinstance(ident, str) and re.fullmatch(r"[0-9a-f]{64}", ident):
+        return "journald", ident
+    if kind == "passthrough" and unit_of(raw):
+        return "birim", unit_of(raw)
+    path = (host.get("LogConfig") or {}).get("Path") or raw.get("LogPath")
+    if kind in ("k8s-file", "json-file") and isinstance(path, str) and path.startswith("/") and ".." not in path.split("/"):
+        return "dosya", path
+    return "yok", ""
+
+
+def clean_line(text):
+    """A log line as a page shows it: no terminal colours or control characters, at most LOG_LINE_CHARS."""
+    text = ANSI_RE.sub("", text)
+    text = "".join(ch for ch in text if ch == "\t" or ord(ch) >= 32)
+    return text[:LOG_LINE_CHARS]
+
+
+def file_tail(path, lines, limit=4 * 1024 * 1024):
+    """The last `lines` lines of a k8s-file or json-file log (its own format undone to the time and the text)."""
+    import json as _json
+    with open(path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        fh.seek(max(0, size - limit))
+        data = fh.read(limit).decode("utf-8", "replace")
+    out = []
+    for line in data.splitlines()[-lines:]:
+        if line.startswith("{"):
+            try:
+                item = _json.loads(line)
+                out.append("%s %s" % (str(item.get("time", ""))[:19], str(item.get("log", "")).rstrip("\n")))
+                continue
+            except ValueError:
+                pass
+        # k8s-file: "<time> <stream> <F|P> <text>"
+        parts = line.split(" ", 3)
+        out.append("%s %s" % (parts[0][:19], parts[3]) if len(parts) == 4 and parts[1] in ("stdout", "stderr") else line)
+    return out
+
+
 class ContainerError(Exception):
     def __init__(self, status, message):
         super().__init__(message)
@@ -332,6 +488,7 @@ class Containers:
                 # The application a container belongs to, by its labels (a display hint; the worker proves ownership).
                 "uygulama": str(labels.get(table.APP_LABEL) or "") if labels.get(table.MANAGED_LABEL) == table.MANAGED_VALUE else "",
                 "network": ", ".join(networks) if networks else "host" if (c.get("Namespaces") or {}).get("Net", "") == "host" or not networks else "",
+                "pod": str(c.get("PodName") or ""),
                 "ports": ps_ports(c.get("Ports")), "mounts": len(c.get("Mounts") or []),
             })
         return True, result, ""

@@ -53,6 +53,7 @@ import master_api
 import master_applications
 import master_auth
 import master_containers
+import master_podman_api
 import master_container_config
 import master_container_manager
 import master_erisim
@@ -86,7 +87,7 @@ STREAM_RETRY_MS = 3000
 STREAM_LIMIT = 4
 # The activity drawer keeps a finished operation this long.
 JOB_KEEP_SECONDS = 120
-JOB_CONTAINER_ACTIONS = {"temizlik": "Temizlik",
+JOB_CONTAINER_ACTIONS = {"temizlik": "Temizlik", "konteyner": "Konteyner işlemi",
                          "uygulama-kur": "Kurulum", "uygulama-baslat": "Başlatma", "uygulama-durdur": "Durdurma",
                          "uygulama-yeniden-baslat": "Yeniden başlatma", "uygulama-guncelle": "İmaj güncelleme",
                          "uygulama-tanim": "Tanım değişikliği", "uygulama-kaldir": "Kaldırma",
@@ -126,6 +127,8 @@ PORT_ROWS = (
 # kabul edilir. DD-195: internet sitesini Caddy X-Konsol-Kanal: internet ile işaretler.
 CHANNEL_HEADER = "X-Konsol-Kanal"
 PUBLIC_CACHE_SECONDS = 5
+# DD-294: the "podman" topic's interval while Podman's event stream cannot be followed.
+PODMAN_FALLBACK_SECONDS = 10
 TAILNET_RANGES = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 # Her uygulamanın hızı kendi köprüsünün bayt sayaçlarından okunur (dosyadan, dış komut yok; DD-206'nın yolu, DD-287):
 # arka plan örnekleyicisi her SAMPLE_SECONDS'te en çok NET_STEP_SECONDS arayla hızı yeniden ölçer;
@@ -417,13 +420,27 @@ class Panel:
         # DD-261: the read model starts a stale image-update check (DD-214) in the background.
         self.update_kick_lock = threading.Lock()
         self.update_kick_at = -UPDATE_KICK_SECONDS
+        self.podman_watch = master_podman_api.Watch(self.podman_client, changed=lambda: self.events.nudge("podman"))
         self.events = master_olaylar.Events([
             master_olaylar.Topic("kaynaklar", 2, self.system,
                                  key=lambda v: json.dumps([v.get("sampled_at"), v.get("host"), v.get("version"), v.get("domain")])),
             master_olaylar.Topic("bekleyen", 1, self.pending),
             master_olaylar.Topic("islemler", 2, self.jobs),
             master_olaylar.Topic("saglik", 60, self.health, key=master_olaylar.without("read_at"), slow=True),
-        ], limit=STREAM_LIMIT)
+            # DD-294: Podman's state changed (its event stream); while the stream is down, every 10 s.
+            master_olaylar.Topic("podman", PODMAN_FALLBACK_SECONDS, self.podman_changes),
+        ], limit=STREAM_LIMIT, watchers=[self.podman_watch])
+
+    def podman_client(self):
+        env = read_env(self.args.state)
+        return master_podman_api.Client(env.get("PODMAN_SOCKET", ""), env.get("PODMAN_API", ""))
+
+    def podman_changes(self):
+        """The live "podman" topic (DD-294): a mark that changes when Podman's state did, so open pages read their
+        containers again. While the event stream is down it changes every PODMAN_FALLBACK_SECONDS."""
+        revision, live = self.podman_watch.state()
+        mark = str(revision) if live else "t%d" % (time.time() // PODMAN_FALLBACK_SECONDS)
+        return {"surum": mark, "canli": live}
 
     def public_open(self):
         """DD-195: is Konsol published on the internet right now (name, WAN IPv4, account)?
@@ -2008,6 +2025,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def api_konteyner_isi(self, query):
         self.container_read(lambda: self.panel.containers.operation(query.get("id", [""])[0]))
 
+    # DD-294: one container, whoever installed it: its page, its log and its actions (a job, an audit line).
+    def api_konteyner_ayrintisi(self, query):
+        self.container_read(lambda: self.container_view().detail(query.get("ad", [""])[0]))
+
+    def api_konteyner_gunlugu(self, query):
+        self.container_read(lambda: self.container_view().logs(query.get("ad", [""])[0], query.get("satir", ["200"])[0]))
+
+    def api_konteyner_eylemi(self, user, data):
+        # The audit line names only what was checked: a name or an action outside their rules is "-" (a line break in
+        # one would write a line of its own).
+        name = data.get("ad") if isinstance(data, dict) and isinstance(data.get("ad"), str) else ""
+        name = name if master_containers.NAME_RE.fullmatch(name) else "-"
+        action = data.get("eylem") if isinstance(data, dict) else ""
+        action = action if action in master_containers.CONTAINER_ACTIONS else "eylem"
+        try:
+            job = self.panel.containers.submit_container(data)
+        except master_containers.ContainerError as err:
+            self.audit(user, "konteyner-" + action, name, False)
+            self.error(err.status, str(err))
+            return
+        self.audit(user, "konteyner-" + action, name, True)
+        self.json(202, {"is": job["id"]})
+
     # DD-266: Sistem — the account and this session, the update, the reboot, the repair log, the audit log.
     def api_oturum(self, query):
         try:
@@ -2092,7 +2132,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         view = self.panel.settings(fresh="yenile" in query)
         self.json(200, {"read_at": view["read_at"], "caddy": view["web"], "dnsmasq": view["dns"]})
 
-    # K8: Podman's only write, the cleanup of what nothing uses: a read model and one job (each item checked again
+    # K8: Podman's cleanup of what nothing uses: a read model and one job (each item checked again
     # by the worker right before it goes), with an audit line naming what was asked.
     def api_temizlik(self, query):
         self.container_read(lambda: self.container_view().cleanup(fresh="yenile" in query))

@@ -194,7 +194,35 @@ SCHEMAS = {
         "health": STR, "live": BOOL, "source": enum("uygulama", "external"), "uygulama": null(STR),
         "cpu_percent": null(NUM), "memory_bytes": null(INT), "busy": null(STR),
         "listening": null(arr(obj({"address": STR, "port": INT, "protocol": STR, "scope": STR}))),
+        "pod": STR, "yonetim": ref("KonteynerYonetimi"),
     }),
+    # DD-294: who runs a container and what Konsol may do to it: an application's (ad: the application) on its own
+    # page, a systemd unit's (ad: the unit; dosya: its Quadlet file, in the detail only) through that unit, a
+    # Compose project's (ad: the project), a pod's (ad: the pod) and a plain one through Podman.
+    "KonteynerYonetimi": obj({"tur": enum("uygulama", "birim", "compose", "pod", "podman"), "ad": STR,
+                              "eylemler": arr(enum("baslat", "durdur", "yeniden-baslat", "kaldir")), "dosya": STR},
+                             optional=("dosya",)),
+    # One container's page: facts from a whitelist of its inspect (never its environment, command line or create
+    # command); gunluk_kaynagi says where its log is read (journald, its unit, its log file, or none).
+    "KonteynerAyrintisi": obj({
+        "read_at": INT, "ad": STR, "id": STR, "imaj": STR, "imaj_id": STR, "durum": STR, "saglik": STR, "cikis_kodu": INT,
+        "hata": STR, "olusturuldu": null(INT), "basladi": null(INT), "yeniden_baslama": INT, "politika": STR, "ag_kipi": STR,
+        "pod": STR, "portlar": arr(ref("KonteynerPortu")),
+        "baglamalar": arr(obj({"tur": STR, "kaynak": STR, "hedef": STR, "ad": STR, "salt_okunur": BOOL})),
+        "aglar": arr(obj({"ad": STR, "ipv4": STR, "ipv6": STR})),
+        "etiketler": arr(obj({"ad": STR, "deger": STR})),
+        "cpu": null(NUM), "bellek": null(INT), "gunluk_kaynagi": enum("journald", "birim", "dosya", "yok"),
+        "yonetim": ref("KonteynerYonetimi"), "is": null(STR), "uygulama": null(STR),
+    }),
+    "KonteynerGunlugu": obj({"satirlar": arr(STR), "kesik": BOOL, "kaynak": enum("journald", "birim", "dosya", "yok")}),
+    # A removal needs the container's name typed (onay); birim_dosyasi (default true): its Quadlet file goes too;
+    # birimler: its anonymous volumes go too.
+    "KonteynerEylemi": obj({"ad": STR, "eylem": enum("baslat", "durdur", "yeniden-baslat", "kaldir"), "onay": STR,
+                            "birim_dosyasi": BOOL, "birimler": BOOL}, optional=("onay", "birim_dosyasi", "birimler")),
+    "KonteynerEylemIsi": obj({"is": STR}),
+    # DD-294: the live "podman" topic: a mark that changes when Podman's state did; canli: its event stream is
+    # followed (otherwise the mark changes every 10 s).
+    "PodmanDegisimi": obj({"surum": STR, "canli": BOOL}),
     "KonteynerListesi": open_obj({
         "read_at": INT, "runtime": obj({"version": STR, "ok": BOOL, "error": STR}),
         "containers": arr(ref("KonteynerSatiri")),
@@ -260,16 +288,14 @@ SCHEMAS = {
                         "raw": arr(ref("YapilandirmaDosyasi"))}),
     }),
     # K8: Podman's cleanup. What nothing uses (an image by its ID with its tags; a network or volume by its name; a
-    # removed application's data folder by its name, with its size) and the containers no application owns
-    # (yonetici: podman — nothing else manages it, kayitsiz — an application's labels without a record, baska —
-    # another manager), read-only.
+    # removed application's data folder by its name, with its size). Who runs each container is the list's
+    # (KonteynerSatiri.yonetim, DD-294).
     "Temizlik": obj({
         "read_at": INT,
         "imajlar": arr(obj({"id": STR, "etiketler": arr(STR), "boyut": null(INT), "olusturuldu": null(INT)})),
         "aglar": arr(obj({"ad": STR, "surucu": STR, "arayuz": STR})),
         "birimler": arr(obj({"ad": STR, "surucu": STR, "olusturuldu": null(INT)})),
         "klasorler": arr(obj({"ad": STR, "yol": STR, "boyut": null(INT), "neden": STR})),
-        "konteynerler": arr(obj({"ad": STR, "imaj": STR, "durum": STR, "yonetici": enum("podman", "kayitsiz", "baska")})),
         "hatalar": arr(STR),
     }),
     "TemizlikIstegi": obj({"imajlar": arr(STR), "aglar": arr(STR), "birimler": arr(STR), "klasorler": arr(STR)},
@@ -527,7 +553,7 @@ ROUTES = (
           "Canlı olaylar (Server-Sent Events): değişen konu yeniden gönderilir, 15 sn'de bir yaşam satırı, "
           "yaklaşık 10 dakikada bir akış biter ve sayfa yeniden bağlanır",
           events={"kaynaklar": ref("Kaynaklar"), "saglik": ref("Saglik"), "islemler": ref("Islemler"),
-                  "bekleyen": ref("Bekleyen"), "kapat": ref("Kapat")}),
+                  "bekleyen": ref("Bekleyen"), "podman": ref("PodmanDegisimi"), "kapat": ref("Kapat")}),
     Route("GET", "/api/konsol/kaynaklar", "kaynaklar", "Sunucunun kaynakları", ref("Kaynaklar")),
     Route("GET", "/api/konsol/saglik", "saglik", "Sağlık kartı (30 sn önbellekli)", ref("Saglik")),
     Route("GET", "/api/konsol/etkinlik", "etkinlik", "Süren ve yeni biten işlemler (olay akışı yokken)", ref("Islemler")),
@@ -592,7 +618,18 @@ ROUTES = (
     Route("GET", "/api/konsol/konteynerler/liste", "konteyner_listesi",
           "Konteynerler, imajlar, birimler ve ağlar (DD-211)", ref("KonteynerListesi")),
     Route("GET", "/api/konsol/konteynerler/islem", "konteyner_isi",
-          "Bir işin durumu ve sonucu (uygulama ve temizlik işleri; isteği taşımaz)", ref("KonteynerIsi"), query={"id": STR}),
+          "Bir işin durumu ve sonucu (uygulama, konteyner ve temizlik işleri; isteği taşımaz)", ref("KonteynerIsi"),
+          query={"id": STR}),
+    # DD-294: one container, whoever installed it.
+    Route("GET", "/api/konsol/konteynerler/ayrinti", "konteyner_ayrintisi",
+          "Bir konteyner: durumu, portları, bağlamaları, ağları, etiketleri, kaynak kullanımı ve kimin yönettiği "
+          "(ortam değişkenleri ve komut satırı hiç verilmez)", ref("KonteynerAyrintisi"), query={"ad": STR}),
+    Route("GET", "/api/konsol/konteynerler/gunluk", "konteyner_gunlugu",
+          "Bir konteynerin son günlük satırları (journald, birimi ya da günlük dosyası)", ref("KonteynerGunlugu"),
+          query={"ad": STR, "satir": STR}),
+    Route("POST", "/api/konsol/konteynerler/eylem", "konteyner_eylemi",
+          "Bir konteyneri başlatır, durdurur, yeniden başlatır ya da kaldırır (yazılan adıyla); uygulamanınki "
+          "uygulamanın sayfasından; iş arka planda", ref("KonteynerEylemIsi"), request=ref("KonteynerEylemi"), status=202),
     Route("GET", "/api/konsol/oturum", "oturum", "Konsol hesabı ve bu oturum (DD-194, DD-205)", ref("Oturum")),
     Route("POST", "/api/konsol/oturum/kur", "oturum_kur", "Konsol hesabını oluşturur; yalnız Tailscale'den",
           ref("HesapSonucu"), request=ref("HesapKur")),
@@ -624,10 +661,10 @@ ROUTES = (
     Route("GET", "/api/konsol/gelismis", "gelismis",
           "Gelişmiş: etkin Caddy ve dnsmasq yapılandırması (salt okunur); ?yenile önbelleği atlar", ref("Gelismis"),
           query={"yenile": STR}),
-    # K8: Podman's only write.
+    # K8: Podman's cleanup of what nothing uses (a container's own actions are DD-294's konteynerler/eylem).
     Route("GET", "/api/konsol/gelismis/temizlik", "temizlik",
-          "Hiçbir şeyin kullanmadığı imajlar, ağlar, birimler ve kaldırılmış uygulamaların veri klasörleri; Obhut'un "
-          "yönetmediği konteynerler (salt okunur); ?yenile klasörleri yeniden ölçer", ref("Temizlik"), query={"yenile": STR}),
+          "Hiçbir şeyin kullanmadığı imajlar, ağlar, birimler ve kaldırılmış uygulamaların veri klasörleri (salt okunur); "
+          "?yenile klasörleri yeniden ölçer", ref("Temizlik"), query={"yenile": STR}),
     Route("POST", "/api/konsol/gelismis/temizlik", "temizle",
           "Seçilenleri kaldırır; her öge kaldırılmadan hemen önce yeniden denetlenir; iş arka planda, ilerleme olay "
           "akışında", ref("TemizlikIsi"), request=ref("TemizlikIstegi"), status=202),

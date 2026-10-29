@@ -129,7 +129,8 @@ Bare paths are relative to `Data/`. Keys in capitals are declared once in `confi
 | `panel/master_shares.py` | The folder-share registry and its changes; the projection's writer (`publish`) and its 30 s guard | Plain passwords |
 | `panel/master_webdav.py` | The unprivileged WebDAV server on two loopback listeners | The registry's writer |
 | `panel/master_erisim.py` | `GET /api/konsol/erisim`: who reaches what from where | Probes or changes of its own |
-| `panel/master_olaylar.py` | One producer for every Server-Sent Events stream | Topics' content |
+| `panel/master_olaylar.py` | One producer for every Server-Sent Events stream; the watchers it runs while a stream is open | Topics' content |
+| `panel/master_podman_api.py` | Podman's API over its Unix socket (stdlib); the event watch behind the `podman` topic (**DD-294**) | Reads the `podman` command serves |
 | `panel/master_update.py` | The update offer (GitHub, generation, build number) and the update unit's state | Installer code |
 | `panel/master_wireguard.py` | Konsol's WireGuard routes over `master-wg`; the `wireguard` settings section's checks and plan text | Keys in listings |
 | `panel/master_yaml.py` | The YAML subset reader | Compose or Kubernetes |
@@ -138,10 +139,10 @@ Bare paths are relative to `Data/`. Keys in capitals are declared once in `confi
 | `panel/master_generator.py` | The definition and allocations → every unit, environment file, folder, bind and publication (pure) | Files, commands, clocks |
 | `panel/master_applications.py` | Records, the pool, the guard's input, access rows, names taken, read models, install summaries, drafts, sizes, the cleanup's items | Running anything that writes |
 | `panel/master_container_manager.py` | The inventory and the applications' read model in the backend; the job broker (transient units, at most four jobs) and the image update check | Writes (the worker does them) |
-| `panel/master_container_worker.py` | Every container write: install, start, stop, restart, update, edit, remove, drafts, the cleanup, access-row unit changes, `--adres-yenile` | Reconciliation |
-| `panel/master_container_network.py` | The container guard's nft table: apply and exact check | Netavark's NAT; other tables |
+| `panel/master_container_worker.py` | Every container write: install, start, stop, restart, update, edit, remove, drafts, the cleanup, any container's action (**DD-294**), access-row unit changes, `--adres-yenile` | Reconciliation |
+| `panel/master_container_network.py` | The container guard's nft table (Konsol's bridges, and WAN DNAT to any other container dropped, **DD-294**): apply and exact check | Netavark's NAT; other tables |
 | `panel/master_container_binds.py` | A unit's `ExecStartPre`/`ExecStopPost`: pin `/srv` bind sources onto anchors | Which folders may be bound (the inspector decides) |
-| `panel/master_containers.py` | Read-only Podman mapping, listening sockets, the manifest-only update check | Starting or stopping anything |
+| `panel/master_containers.py` | Read-only Podman mapping, listening sockets, the manifest-only update check; who runs a container (`control`), its log source | Starting or stopping anything |
 | `panel/master_container_config.py` | Shared errors, private file helpers, systemd quoting, the managed label | Applications |
 | `panel/master_permissions.py` | The installer's descriptor-pinned folder creation and selective owner/mode repair (run from the tree) | Symlinks, special or multiply linked files |
 | `files-panel/master-files-panel` | The file API for `SERVER_ROOT` as the Files account; with `--sistem` the same API for `/` as root on a socket | Shares, credentials, WireGuard |

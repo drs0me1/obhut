@@ -166,7 +166,9 @@ def app_row(env, item, pubs, running, wireguard, warnings):
 
 
 def add_container(row, item, env, warnings):
-    """The publications of a container that no application owns on its service row (no place to fix them)."""
+    """The publications of a container that no application owns on its service row (no place to fix them). DD-294: the
+    container guard drops what comes in from the internet to such a container, so a public publication is the internet
+    cell's closed address; published on every address it is reached from Tailscale."""
     fix = (None, "")
     for group in port_groups(item.get("ports")):
         text = port_text(group, env)
@@ -175,9 +177,11 @@ def add_container(row, item, env, warnings):
         elif group["scope"] == "tailscale":
             open_cell(row["tailscale"], text)
         elif group["scope"] == "public":
-            open_cell(row["internet"], text)
-            warnings.append(warning("warn", row["id"], "%s: %s doğrudan internete açık; şifreleme ve giriş uygulamanın kendisinde."
-                                    % (row["ad"], text), *fix))
+            if text not in row["internet"]["adresler"]:
+                row["internet"]["adresler"].append(text)
+            close_cell(row["internet"])
+            if group["host_ip"] in ("0.0.0.0", "::", "") and env.get("TAILSCALE_IPV4"):
+                open_cell(row["tailscale"], port_text(dict(group, scope="tailscale", host_ip=env["TAILSCALE_IPV4"]), env))
         else:
             warnings.append(warning("warn", row["id"], "%s: %s adresindeki yayın tanınmıyor; Podman'dan denetleyin."
                                     % (row["ad"], text), *fix))
@@ -299,7 +303,7 @@ def build(env, settings, shares, containers, tailscale, networks, wg_stopped, no
     for item in items:
         if item.get("source") == "uygulama":
             continue
-        row = service("konteyner:" + item["name"], item["name"], "konteyner", "Konteyner · Konsol dışında yönetiliyor",
+        row = service("konteyner:" + item["name"], item["name"], "konteyner", "Konteyner · Obhut dışında kuruldu",
                       wireguard, None, item.get("state") == "running")
         add_container(row, item, env, warnings)
         out.append(closed(row))

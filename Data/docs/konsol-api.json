@@ -109,6 +109,9 @@
           "bekleyen": {
             "$ref": "#/components/schemas/Bekleyen"
           },
+          "podman": {
+            "$ref": "#/components/schemas/PodmanDegisimi"
+          },
           "kapat": {
             "$ref": "#/components/schemas/Kapat"
           }
@@ -1556,7 +1559,7 @@
     "/api/konsol/konteynerler/islem": {
       "get": {
         "operationId": "konteyner_isi",
-        "summary": "Bir işin durumu ve sonucu (uygulama ve temizlik işleri; isteği taşımaz)",
+        "summary": "Bir işin durumu ve sonucu (uygulama, konteyner ve temizlik işleri; isteği taşımaz)",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -1596,6 +1599,173 @@
                 "schema": {
                   "$ref": "#/components/schemas/Hata"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/konteynerler/ayrinti": {
+      "get": {
+        "operationId": "konteyner_ayrintisi",
+        "summary": "Bir konteyner: durumu, portları, bağlamaları, ağları, etiketleri, kaynak kullanımı ve kimin yönettiği (ortam değişkenleri ve komut satırı hiç verilmez)",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "ad",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KonteynerAyrintisi"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/konteynerler/gunluk": {
+      "get": {
+        "operationId": "konteyner_gunlugu",
+        "summary": "Bir konteynerin son günlük satırları (journald, birimi ya da günlük dosyası)",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          },
+          {
+            "name": "ad",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "satir",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KonteynerGunlugu"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/konsol/konteynerler/eylem": {
+      "post": {
+        "operationId": "konteyner_eylemi",
+        "summary": "Bir konteyneri başlatır, durdurur, yeniden başlatır ya da kaldırır (yazılan adıyla); uygulamanınki uygulamanın sayfasından; iş arka planda",
+        "parameters": [
+          {
+            "name": "X-Konsol",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Başarılı",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KonteynerEylemIsi"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Host, köken ya da X-Konsol denetimi",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "İstek biçimi geçersiz",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Hata"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KonteynerEylemi"
               }
             }
           }
@@ -2241,7 +2411,7 @@
     "/api/konsol/gelismis/temizlik": {
       "get": {
         "operationId": "temizlik",
-        "summary": "Hiçbir şeyin kullanmadığı imajlar, ağlar, birimler ve kaldırılmış uygulamaların veri klasörleri; Obhut'un yönetmediği konteynerler (salt okunur); ?yenile klasörleri yeniden ölçer",
+        "summary": "Hiçbir şeyin kullanmadığı imajlar, ağlar, birimler ve kaldırılmış uygulamaların veri klasörleri (salt okunur); ?yenile klasörleri yeniden ölçer",
         "parameters": [
           {
             "name": "X-Konsol",
@@ -5037,10 +5207,366 @@
                 "type": "null"
               }
             ]
+          },
+          "pod": {
+            "type": "string"
+          },
+          "yonetim": {
+            "$ref": "#/components/schemas/KonteynerYonetimi"
           }
         },
         "required": [],
         "additionalProperties": true
+      },
+      "KonteynerYonetimi": {
+        "type": "object",
+        "properties": {
+          "tur": {
+            "type": "string",
+            "enum": [
+              "uygulama",
+              "birim",
+              "compose",
+              "pod",
+              "podman"
+            ]
+          },
+          "ad": {
+            "type": "string"
+          },
+          "eylemler": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "baslat",
+                "durdur",
+                "yeniden-baslat",
+                "kaldir"
+              ]
+            }
+          },
+          "dosya": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tur",
+          "ad",
+          "eylemler"
+        ],
+        "additionalProperties": false
+      },
+      "KonteynerAyrintisi": {
+        "type": "object",
+        "properties": {
+          "read_at": {
+            "type": "integer"
+          },
+          "ad": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "imaj": {
+            "type": "string"
+          },
+          "imaj_id": {
+            "type": "string"
+          },
+          "durum": {
+            "type": "string"
+          },
+          "saglik": {
+            "type": "string"
+          },
+          "cikis_kodu": {
+            "type": "integer"
+          },
+          "hata": {
+            "type": "string"
+          },
+          "olusturuldu": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "basladi": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "yeniden_baslama": {
+            "type": "integer"
+          },
+          "politika": {
+            "type": "string"
+          },
+          "ag_kipi": {
+            "type": "string"
+          },
+          "pod": {
+            "type": "string"
+          },
+          "portlar": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KonteynerPortu"
+            }
+          },
+          "baglamalar": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tur": {
+                  "type": "string"
+                },
+                "kaynak": {
+                  "type": "string"
+                },
+                "hedef": {
+                  "type": "string"
+                },
+                "ad": {
+                  "type": "string"
+                },
+                "salt_okunur": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "tur",
+                "kaynak",
+                "hedef",
+                "ad",
+                "salt_okunur"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "aglar": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ad": {
+                  "type": "string"
+                },
+                "ipv4": {
+                  "type": "string"
+                },
+                "ipv6": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ad",
+                "ipv4",
+                "ipv6"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "etiketler": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ad": {
+                  "type": "string"
+                },
+                "deger": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ad",
+                "deger"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "cpu": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bellek": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gunluk_kaynagi": {
+            "type": "string",
+            "enum": [
+              "journald",
+              "birim",
+              "dosya",
+              "yok"
+            ]
+          },
+          "yonetim": {
+            "$ref": "#/components/schemas/KonteynerYonetimi"
+          },
+          "is": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "uygulama": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "read_at",
+          "ad",
+          "id",
+          "imaj",
+          "imaj_id",
+          "durum",
+          "saglik",
+          "cikis_kodu",
+          "hata",
+          "olusturuldu",
+          "basladi",
+          "yeniden_baslama",
+          "politika",
+          "ag_kipi",
+          "pod",
+          "portlar",
+          "baglamalar",
+          "aglar",
+          "etiketler",
+          "cpu",
+          "bellek",
+          "gunluk_kaynagi",
+          "yonetim",
+          "is",
+          "uygulama"
+        ],
+        "additionalProperties": false
+      },
+      "KonteynerGunlugu": {
+        "type": "object",
+        "properties": {
+          "satirlar": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kesik": {
+            "type": "boolean"
+          },
+          "kaynak": {
+            "type": "string",
+            "enum": [
+              "journald",
+              "birim",
+              "dosya",
+              "yok"
+            ]
+          }
+        },
+        "required": [
+          "satirlar",
+          "kesik",
+          "kaynak"
+        ],
+        "additionalProperties": false
+      },
+      "KonteynerEylemi": {
+        "type": "object",
+        "properties": {
+          "ad": {
+            "type": "string"
+          },
+          "eylem": {
+            "type": "string",
+            "enum": [
+              "baslat",
+              "durdur",
+              "yeniden-baslat",
+              "kaldir"
+            ]
+          },
+          "onay": {
+            "type": "string"
+          },
+          "birim_dosyasi": {
+            "type": "boolean"
+          },
+          "birimler": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ad",
+          "eylem"
+        ],
+        "additionalProperties": false
+      },
+      "KonteynerEylemIsi": {
+        "type": "object",
+        "properties": {
+          "is": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "is"
+        ],
+        "additionalProperties": false
+      },
+      "PodmanDegisimi": {
+        "type": "object",
+        "properties": {
+          "surum": {
+            "type": "string"
+          },
+          "canli": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "surum",
+          "canli"
+        ],
+        "additionalProperties": false
       },
       "KonteynerListesi": {
         "type": "object",
@@ -6148,38 +6674,6 @@
               "additionalProperties": false
             }
           },
-          "konteynerler": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "ad": {
-                  "type": "string"
-                },
-                "imaj": {
-                  "type": "string"
-                },
-                "durum": {
-                  "type": "string"
-                },
-                "yonetici": {
-                  "type": "string",
-                  "enum": [
-                    "podman",
-                    "kayitsiz",
-                    "baska"
-                  ]
-                }
-              },
-              "required": [
-                "ad",
-                "imaj",
-                "durum",
-                "yonetici"
-              ],
-              "additionalProperties": false
-            }
-          },
           "hatalar": {
             "type": "array",
             "items": {
@@ -6193,7 +6687,6 @@
           "aglar",
           "birimler",
           "klasorler",
-          "konteynerler",
           "hatalar"
         ],
         "additionalProperties": false

@@ -176,6 +176,8 @@ class ManagerListeningTests(unittest.TestCase):
                                    "Config": {"Labels": {"PODMAN_SYSTEMD_UNIT": argv[-1] + ".service"}}}]), ""
         if argv[:2] in (["podman", "images"], ["podman", "system"], ["podman", "stats"], ["podman", "volume"], ["podman", "network"]):
             return 0, "[]", ""
+        if argv[:2] == ["systemctl", "show"]:  # DD-294's unit check: nothing here
+            return 0, "ControlGroup=\nSourcePath=\n", ""
         raise AssertionError(argv)
 
     def test_only_running_host_network_rows_are_read(self):

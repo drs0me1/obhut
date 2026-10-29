@@ -211,8 +211,86 @@
   min-width: 0;
 }
 
+/* ---- one container's actions (DD-294): a row of small buttons; in the list only their icons, the step under them */
+.container-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.container-actions-compact {
+  justify-content: flex-end;
+  min-width: 8rem;
+  max-width: 9rem;
+  margin-left: auto;
+}
+
+.container-actions-compact .btn-sm {
+  padding: 0 9px;
+}
+
+.container-actions .action-step {
+  flex-basis: 100%;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.container-actions-compact .action-step {
+  text-align: right;
+}
+
+.container-link {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.container-link:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+/* ---- one container's page */
+.container-page {
+  gap: 20px;
+}
+
+.container-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.container-summary > .card {
+  padding: 18px 20px;
+  border-radius: var(--r-lg);
+}
+
+.label-card > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.label-card[open] > summary {
+  margin-bottom: 12px;
+}
+
 @media (max-width: 760px) {
   .podman-card {
+    padding: 16px;
+  }
+
+  .container-actions-compact {
+    justify-content: flex-start;
+  }
+
+  .container-actions-compact .action-step {
+    text-align: left;
+  }
+
+  .container-summary > .card {
     padding: 16px;
   }
 }

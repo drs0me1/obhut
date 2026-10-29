@@ -5,7 +5,9 @@ The producer runs only while a stream is open. It reads each topic on its own in
 function the backend passes in and publishes the topic again only when its content changed, so an
 idle server sends nothing but heartbeats. Streams wait on one condition: the cost of a read does not
 grow with the number of open tabs. A slow topic (the health card runs the firewall check) is read in
-its own thread so it never holds up the others.
+its own thread so it never holds up the others. Watchers (DD-294: Podman's event stream) run while the
+producer does; one that saw a change nudges its topic, which is then read on the next tick instead of
+waiting for its interval.
 """
 import json
 import threading
@@ -22,8 +24,9 @@ class Topic:
 
 
 class Events:
-    def __init__(self, topics, limit=4, clock=time.monotonic, tick=1.0, log=None):
+    def __init__(self, topics, limit=4, clock=time.monotonic, tick=1.0, log=None, watchers=()):
         self.topics = list(topics)
+        self.watchers = list(watchers)
         self.limit = limit
         self.clock = clock
         self.tick = tick
@@ -51,6 +54,8 @@ class Events:
                 self.due, self.latest = {}, {}
                 self.thread = threading.Thread(target=self.run, name="konsol-olaylar", daemon=True)
                 self.thread.start()
+                # Under the condition, so a stopping producer's watch(False) can never come after this start.
+                self.watch(True)
 
     def unsubscribe(self, channel):
         with self.cond:
@@ -70,6 +75,18 @@ class Events:
                            key=lambda item: item[1])
             return self.seq, items
 
+    def nudge(self, name):
+        """A watcher saw a change: the topic is read on the next tick."""
+        with self.cond:
+            self.due[name] = 0.0
+
+    def watch(self, on):
+        for watcher in self.watchers:
+            try:
+                watcher.start() if on else watcher.stop()
+            except Exception as err:  # a watcher's failure leaves the topics running
+                self.log("izleyici %s (%s)" % ("başlatılamadı" if on else "durdurulamadı", err.__class__.__name__))
+
     # -- producer
     def run(self):
         while True:
@@ -77,6 +94,7 @@ class Events:
                 if not self.clients:
                     self.running = False
                     self.latest = {}
+                    self.watch(False)
                     return
             self.step()
             with self.cond:

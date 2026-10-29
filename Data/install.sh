@@ -5,10 +5,10 @@
 set -Eeuo pipefail
 umask 077
 
-V2_VERSION="2026.08.06-v2-281"
+V2_VERSION="2026.08.06-v2-282"
 # DD-260, DD-292: insanların gördüğü sürüm; her yeni yapıyla artar (yalnız düzeltme → son hane, yeni ya da değişen
 # davranış → orta hane; ilk hane nesildir). V2_VERSION yapı numarasıdır: sunucular güncellemede onu karşılaştırır.
-OBHUT_SURUM="2.1.0"
+OBHUT_SURUM="2.2.0"
 # DD-271: kurulumun nesli. Bu nesil yalnız temiz bir işletim sistemine kurulur (aşama 0'ın kapısı);
 # Konsol yalnız aynı nesildeki yapıları güncelleme olarak önerir.
 OBHUT_NESIL="2"
@@ -98,6 +98,8 @@ KONTEYNER_LOCK=$KONTEYNER_LOCK
 KONTEYNER_BAGLAMA_DIR=$KONTEYNER_BAGLAMA_DIR
 KONTEYNER_BRIDGE_PREFIX=$KONTEYNER_BRIDGE_PREFIX
 KONTEYNER_NFT_TABLE=$KONTEYNER_NFT_TABLE
+PODMAN_SOCKET=$PODMAN_SOCKET
+PODMAN_API=$PODMAN_API
 UYGULAMA_STATE_DIR=$UYGULAMA_STATE_DIR
 UYGULAMA_VERI_DIR=$UYGULAMA_VERI_DIR
 UYGULAMA_PORT_ILK=$UYGULAMA_PORT_ILK
@@ -349,15 +351,27 @@ check_nft_iptables() {
     log INFO "iptables henüz kurulu değil (Debian minimal); nft arka uç denetimi aşama 1'e ertelendi"
 }
 
-# DD-208: Podman tabanın parçasıdır (uygulama konteynerlerinin çalışma ortamı). Daemon yok: Debian'ın
-# podman.socket, podman.service ve podman-auto-update.timer birimleri kapalı gelir, kurulum açmaz.
-# Aşama 1 kurar ve burada zorunlu denetler; aşama 7 yeniden denetler.
+# DD-208: Podman tabanın parçasıdır (uygulama konteynerlerinin çalışma ortamı). Sürekli çalışan daemon yok:
+# podman-auto-update.timer kapalı kalır (DD-214). DD-294: podman.socket açılır; hizmeti yalnız bir istemci
+# bağlıyken çalışır. Aşama 1 kurar ve burada zorunlu denetler; aşama 7 yeniden denetler.
 check_podman() {
     local out
     out="$(podman info --format '{{.Version.Version}} {{.Host.OCIRuntime.Name}}' 2>&1)" ||
         die "Podman çalışmıyor: ${out##*$'\n'}"
     [[ "$out" =~ ^[0-9]+\.[0-9]+ ]] || die "Podman sürümü okunamadı: $out"
     PODMAN_VERSION="${out%% *}"
+}
+
+# DD-294: Podman'ın API soketi. Konsol'un arka ucu Podman'ın olaylarını buradan izler; soket yalnız root'a açıktır
+# ve hiçbir site onu dışarı vermez. Hizmet bağlantıyla başlar, boşta kendiliğinden kapanır.
+ensure_podman_api() {
+    systemctl enable --now podman.socket >/dev/null 2>&1 || die "Podman API soketi açılamadı (podman.socket)"
+    local _try
+    for _try in 1 2 3 4 5; do
+        curl -fsS --max-time 10 --unix-socket "$PODMAN_SOCKET" "http://d${PODMAN_API}/_ping" >/dev/null 2>&1 && return 0
+        sleep 1
+    done
+    die "Podman API soketi yanıt vermiyor ($PODMAN_SOCKET)"
 }
 
 # DD-271 (S3): bu nesil yalnız temiz bir işletim sistemine kurulur; göç kodu yoktur. STATE_DIR varsa
@@ -590,6 +604,7 @@ stage_1() {
     retry "apt-podman" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
         podman netavark aardvark-dns catatonit
     check_podman
+    ensure_podman_api
     # DD-271: WireGuard yerleşiktir; araçları önerileri olmadan (DKMS ve derleyiciler gelmez, modül
     # çekirdeğindir). Ağ kurulmaz; aşama 4 birim ekini ve çekirdek modülünü hazırlar.
     retry "apt-wireguard" 2 "$APT_LOCK_TIMEOUT" -- apt-get "${APT_OPTS[@]}" install -y --no-install-recommends \
@@ -833,7 +848,7 @@ stage_4() {
     # DD-259: Konsol'un rota tablosu, Erişim okuma modeli ve canlı olaylar; DD-271: WireGuard ve denetçi
     # (YAML okuyucu, Compose ve Kubernetes okuyucuları; arka uç yükler).
     local panel_module
-    for panel_module in master_api master_compose master_erisim master_inspector master_kube master_olaylar master_wireguard master_yaml; do
+    for panel_module in master_api master_compose master_erisim master_inspector master_kube master_olaylar master_podman_api master_wireguard master_yaml; do
         atomic_write "$SBIN_DIR/$panel_module.py" 0755 <"$V2_ROOT/panel/$panel_module.py"
         [[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1
     done
@@ -1388,6 +1403,7 @@ stage_7() {
     wireguard_networks_up
     "$SBIN_DIR/master-firewall" --check
     check_podman
+    ensure_podman_api
     # DD-181: the timer sleeps while nothing is pending; it must stay enabled for boot and apply.
     systemctl is-enabled --quiet master-settings-guard.timer || die "Konsol ayar geri alma zamanlayıcısı etkin değil"
     python3 "$SBIN_DIR/master_settings.py" status >/dev/null || die "Konsol ayar durumu okunamadı"

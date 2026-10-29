@@ -366,6 +366,9 @@ Netavark keeps its own NAT; no foreign table is touched.
   container-originated connections pass; a container's new connection out of its bridge is dropped over
   IPv6, toward `tailscale0` and toward any `VPN_BLOCK_DEST4` range, so it reaches the internet only;
   traffic within one application's bridge passes (Netavark isolates bridges from each other).
+- **Every published port (DD-294):** before any other forward rule, a connection in on the WAN interface that
+  was DNAT'd to anything but a Konsol bridge is dropped: a container Obhut did not install cannot open a port to
+  the internet by publishing it; from Tailscale it stays reachable. A missing WAN interface fails the guard closed.
 - **Ingress:** an open raw port (§5.3) is let in only as the DNAT Podman made for it: into that
   application's bridge, from `tailscale0` or the WAN interface, IPv4, its protocol, exactly that original
   address and host port, to that container port (**DD-217**'s rule). A permit is written only while the
@@ -494,7 +497,9 @@ tests are in [folder-shares.md](folder-shares.md); the contract in short:
 ### 3.11 Podman
 
 - `podman`, `netavark`, `aardvark-dns` and `catatonit` without recommends; `podman info` must work in
-  stages 1 and 7 (**DD-208**). No Podman daemon, socket or auto-update timer is enabled.
+  stages 1 and 7 (**DD-208**). Its API socket (`podman.socket`, `PODMAN_SOCKET`, root only) is enabled and must
+  answer `PODMAN_API/_ping` in stages 1 and 7 (**DD-294**); its service runs only while something is connected. No
+  site forwards the socket. The auto-update timer stays off.
 - Applications' Quadlet files live in `KONTEYNER_BIRIM_DIR`; systemd's generator turns them into
   services at each `daemon-reload`. Images and layers live in `/var/lib/containers/storage`.
 - Ubuntu 24.04 ships Podman 4.9; the two features that need Podman 5 are refused there before any write
@@ -706,10 +711,20 @@ There is no timer and no automatic update.
 
 ### 4.11 Podman's cleanup (K8, DD-289)
 
-Konsol's Podman section is read-only except one job: removing images, networks and volumes nothing uses and
+Beside every container's own actions (§4.12), Konsol's Podman section has one cleanup job: removing images, networks and volumes nothing uses and
 the data folders of removed applications, each ticked in its own list (at most 200 items; Podman's default
-network is never offered). Each item is checked again right before it goes. Containers Obhut does not manage
-are listed read-only. Gelişmiş has no write.
+network is never offered). Each item is checked again right before it goes. Gelişmiş has no write.
+
+### 4.12 Every container (DD-294)
+
+Konsol manages every container on the server, whoever installed it, and follows Podman's event stream while a
+page is open. Who runs a container decides how: an application's on the application's page; a systemd unit's
+through that unit (its removal stops the unit, then deletes its Quadlet file in `KONTEYNER_BIRIM_DIR` unless the
+operator unticks it, or disables a unit file); a Compose project's, a pod's and a plain one through Podman. Start,
+stop, restart and remove are jobs; a removal needs the container's name typed and may take its anonymous
+volumes. A container's page shows a whitelist of its inspect (never its environment, command line or create
+command) and its log from where its driver writes it. A container Obhut did not install never becomes an
+application (**DD-290**).
 
 ---
 
@@ -928,7 +943,7 @@ its countdown and Onayla/Geri al.
 | Genel Bakış | Uygulamalar; the resources (CPU, memory, disk) and the server's facts (system, uptime, addresses, version) are the sidebar's two cards at its foot (**DD-286**, **DD-287**); each application's network rate and what passed through its bridge are its row in Uygulamalar |
 | Uyarılar | Behind the top bar's count (`#/uyarilar`, **DD-285**): every problem, most serious first, each with its place (Sistem → Sağlık, an access row, an application); news (a newer image) listed, not counted; or "Her şey yolunda" |
 | Uygulamalar | The list (state, each access row as server → container, resources, live rate; **DD-284**); "Uygulama ekle" (a full-window page of its own, `#/uygulama-ekle`: Kaynak, Denetçi with the file beside the questions, Plan, Kurulum with the job's log; leaving with something entered asks, **DD-279**); an application's page with Özet (actions, update card, what each running service's processes run as and a /srv warning settled or not by it, **DD-282**), Erişim (its rows, read-only, linking to Adresler), Depolama (folders with sizes), Tanım (the file and answers, the difference as a plan) and Günlük (its units' journal, 100–1000 lines, unfiltered, **DD-251**) |
-| Podman | Four summaries (the runtime, the containers, their CPU and memory, what each kind takes on disk as `podman system df` counts it); every container read-only (state, image, resources, uptime, ports; an application's leads to its page, one Obhut does not manage says who runs it); images (one row per ID), volumes, networks and removed applications' folders, what nothing uses ticked and removed with the typed word (§4.11, **DD-289**) |
+| Podman | Four summaries (the runtime, the containers, their CPU and memory, what each kind takes on disk as `podman system df` counts it); every container with who runs it and its actions (state, image, resources, uptime, ports; an application's leads to its page; §4.12, **DD-294**), each with its own page (`#/podman/konteyner/<ad>`: facts, ports, mounts, networks, labels, log); images (one row per ID), volumes, networks and removed applications' folders, what nothing uses ticked and removed with the typed word (§4.11, **DD-289**). Read again on each Podman event |
 | Erişim | Genel (Tailscale's card leads to its admin console), Adresler (Konsol, Paylaşımlar, every application row; "Adres aç"), Yerel adlar (the managed names read-only, records, forwarding, the local domain), Güvenlik duvarı (the operator's rules and the locked application rows); no Tailscale tab (**DD-288**), no WireGuard tab (**DD-291**) |
 | WireGuard | A section of its own (`#/wireguard`, **DD-291**; under Erişim in the sidebar, in the phone's "Daha fazla"): off after install ("Aç" creates the first network) or turned off as a whole; the networks as tabs (`?ag=`) with "Ağ ekle" and "WireGuard'ı kapat"; the chosen network's card (state, switch, port, addresses, DNS, "Ağ ayarları") and its devices (on/off, state, address, last seen, traffic, QR, profile, edit, delete) (§3.10) |
 | Dosyalar | Depolama (the disk, who uses which folder, Uygulama verileri with a bounded cached walk), Sunucu klasörleri, Çöp kutusu, Paylaşımlar, Sistem dosyaları (tailnet only) |
@@ -983,7 +998,7 @@ copy that differs fails the tests. By area:
 | Area | Routes (under `/api/konsol/`) |
 |---|---|
 | Overview and live state | `kaynaklar`, `saglik`, `etkinlik`, `bekleyen`, `olaylar` (§6.6) |
-| Applications | `uygulamalar` (list), `uygulamalar/{app}` (detail), `…/{app}/gunluk`, `POST uygulamalar/denetle` (dry run), `…/kaynak` (drafts), `…/kur` (install or its plan, 202), `…/{app}/islem` (start, stop, restart, update; 202), `…/{app}/tanim` (plan or apply), `…/{app}/yenile`, `…/{app}/kaldir` (202); `konteynerler/liste`, `konteynerler/islem` (a job's record) |
+| Applications | `uygulamalar` (list), `uygulamalar/{app}` (detail), `…/{app}/gunluk`, `POST uygulamalar/denetle` (dry run), `…/kaynak` (drafts), `…/kur` (install or its plan, 202), `…/{app}/islem` (start, stop, restart, update; 202), `…/{app}/tanim` (plan or apply), `…/{app}/yenile`, `…/{app}/kaldir` (202); `konteynerler/liste`, `konteynerler/islem` (a job's record), `konteynerler/ayrinti`, `konteynerler/gunluk`, `POST konteynerler/eylem` (202, **DD-294**) |
 | Access | `erisim`, `guvenlik-duvari`, `adlar`, `POST ayarlar/plan`, `ayarlar/uygula`, `ayarlar/onayla`, `ayarlar/geri-al`, `ayarlar/birak` |
 | WireGuard | `wireguard/state`; per network `nets/{iface}/ayarlar`, `nets/{iface}/peers`; per device `…/peers/{name}/remove`, `dns`, `keepalive`, `durum`, `profile` (download), `qr.png` |
 | Files | `paylasim`, `POST paylasim/kaydet`, `paylasim/kaldir`, `depolama` |
@@ -1034,6 +1049,7 @@ run at a time, never beside an update, an application job or the cleanup. Its 21
   meant to run, SSH, the clock sync, DNS (`panel.<domain>`), Konsol and the Files backend on the side that
   does not answer, the modes of its private records, disk space below the upload reserve (apt's cache and
   the journal to 200 MB, never the trash or user files), `dpkg --configure -a` when apt is idle.
+- **Podman's API socket** (**DD-294**) is enabled and started again when it is off.
 - **Reports only:** a changed WAN address, an invalid Caddyfile, Podman or the container guard missing,
   WireGuard peers that never connected, a read-only root, OOM kills, a pending reboot, a half-finished
   update or settings change, other failed units (applications included).

@@ -20,14 +20,17 @@ import uuid
 import master_applications as apps
 import master_settings as settings
 import master_container_config as config
-from master_containers import NAME_RE, Containers, ContainerError, epoch, listening, process_users, update_status
+from master_containers import (CONTAINER_ACTIONS, NAME_RE, Containers, ContainerError, clean_line, control, epoch, file_tail,
+                               listening, log_source, process_users, update_status)
 
 APP_ACTIONS = frozenset(('uygulama-kur', 'uygulama-baslat', 'uygulama-durdur', 'uygulama-yeniden-baslat', 'uygulama-guncelle',
                          'uygulama-tanim', 'uygulama-kaldir', 'uygulama-taslak'))
 # Podman's cleanup (K8); its job names no application (no application name has a capital letter).
 CLEANUP_ACTION = 'temizlik'
 CLEANUP_TARGET = 'Podman'
-ACTIONS = APP_ACTIONS | {CLEANUP_ACTION}
+# DD-294: one container's start, stop, restart or removal, whoever installed it.
+CONTAINER_ACTION = 'konteyner'
+ACTIONS = APP_ACTIONS | {CLEANUP_ACTION, CONTAINER_ACTION}
 JOB_RE = re.compile(r'[0-9a-f]{32}\Z')
 # A whole file of up to 256 KiB arrives JSON-escaped in an application's request: at most about 2 MiB.
 STDIN_LIMIT = 65536
@@ -148,6 +151,29 @@ class Inventory(Containers):
         except config.ContainerConfigError as err:
             raise app_error(err) from err
 
+    def unit_props(self, unit):
+        """A unit's ControlGroup and SourcePath from systemd (once per view) with the Quadlet folder: what checks a
+        container's PODMAN_SYSTEMD_UNIT label (master_containers.unit_runs)."""
+        key = ('unit', unit)
+        if key not in self.cache:
+            rc, out, _ = self.run(['systemctl', 'show', '--no-pager', '--property=ControlGroup,SourcePath', unit], 20)
+            props = dict(line.split('=', 1) for line in out.splitlines() if '=' in line) if rc == 0 else {}
+            self.cache[key] = dict(props, folder=self.env.get('KONTEYNER_BIRIM_DIR', ''))
+        return self.cache[key]
+
+    def app_exists(self, app):
+        """Whether an application has a record (its folder), read once per view."""
+        if 'records' not in self.cache:
+            try:
+                self.cache['records'] = self.records()
+            except ContainerError:
+                self.cache['records'] = None
+        records = self.cache['records']
+        try:
+            return bool(records is not None and apps.APP_NAME_RE.fullmatch(app) and records.exists(app))
+        except config.ContainerConfigError:
+            return False
+
     def usage(self, name, raw):
         """DD-263: (cpu_percent, memory_bytes) of a running container from its cgroup; None where unknown.
         Memory is memory.current less the inactive file cache, as `docker stats` counts it; CPU is the
@@ -169,8 +195,8 @@ class Inventory(Containers):
         return cpu, memory
 
     def decorate(self, row):
-        """A Podman row as Gelişmiş shows it: who manages it, its resource use, the sockets of a host-network
-        container (DD-215). No action: an application is managed on its own page."""
+        """A Podman row as its section shows it: who manages it and what Konsol may do to it (DD-294), its resource
+        use, the sockets of a host-network container (DD-215)."""
         name = row['name']
         row.update(live=bool(row.get('id')), source='external', uygulama=None, cpu_percent=None, memory_bytes=None,
                    busy=None, health=row.get('health', ''), listening=None)
@@ -180,6 +206,9 @@ class Inventory(Containers):
             if config.ownership(raw) == apps.MANAGED:
                 app = ((raw.get('Config') or {}).get('Labels') or {}).get(apps.APP_LABEL)
                 row.update(source=apps.MANAGED, uygulama=app, busy=self.service.busy(app))
+            # DD-294: who runs it and what Konsol may do; a job on it holds the actions back.
+            row['yonetim'] = control(raw, row.get('pod', ''), self.app_exists, self.unit_props)
+            row['busy'] = row['busy'] or self.service.busy(name)
         running = row.get('state') == 'running'
         # DD-215: no port mappings on the host network; show the sockets the container listens on.
         if raw and running and (raw.get('HostConfig') or {}).get('NetworkMode') == 'host':
@@ -197,7 +226,7 @@ class Inventory(Containers):
         """What the application records use (apps.resource_uses; a stopped application still uses it)."""
         records = self.records()
         if records is None:
-            return {'image': {}, 'network': {}, 'container': {}}
+            return {'image': {}, 'network': {}}
         try:
             return apps.resource_uses(records)
         except config.ContainerConfigError as err:
@@ -281,6 +310,76 @@ class Inventory(Containers):
                                internal=bool(r.get('Internal') or r.get('internal')))
                 answer[kind].append(row)
         return answer
+
+    # -- one container (DD-294)
+    def detail(self, name):
+        """GET …/konteynerler/ayrinti: one container as its page shows it. Facts from a whitelist of its inspect:
+        never its environment, command line or create command (they may hold passwords)."""
+        if not isinstance(name, str) or not NAME_RE.fullmatch(name):
+            raise ContainerError(400, 'Konteyner adı geçersiz.')
+        runtime = self.runtime()
+        if not runtime['ok']:
+            raise ContainerError(503, runtime['error'])
+        ok, rows, message = self.ps()
+        if not ok:
+            raise ContainerError(502, 'Konteynerler okunamadı: %s' % message)
+        row = next((r for r in rows if r['name'] == name), None)
+        raw = self.inspect(name) if row else None
+        if not row or not raw:
+            raise ContainerError(404, 'Konteyner bulunamadı.')
+        row = self.decorate(row)
+        state, host, conf = raw.get('State') or {}, raw.get('HostConfig') or {}, raw.get('Config') or {}
+        manager = row.get('yonetim') or control(raw, row.get('pod', ''), self.app_exists, self.unit_props)
+        text = lambda v: v if isinstance(v, str) else ''
+        mounts = []
+        for m in raw.get('Mounts') or []:
+            if isinstance(m, dict):
+                mounts.append({'tur': text(m.get('Type')), 'kaynak': text(m.get('Source')), 'hedef': text(m.get('Destination')),
+                               'ad': text(m.get('Name')), 'salt_okunur': m.get('RW') is False})
+        networks = []
+        for net, info in sorted(((raw.get('NetworkSettings') or {}).get('Networks') or {}).items()):
+            info = info if isinstance(info, dict) else {}
+            networks.append({'ad': text(net), 'ipv4': text(info.get('IPAddress')), 'ipv6': text(info.get('GlobalIPv6Address'))})
+        labels = conf.get('Labels') or {}
+        source, _target = log_source(raw)
+        restart = host.get('RestartPolicy') or {}
+        return {
+            'read_at': int(time.time()), 'ad': name, 'id': text(raw.get('Id'))[:12], 'imaj': text(conf.get('Image') or raw.get('ImageName')),
+            'imaj_id': text(raw.get('Image')).removeprefix('sha256:')[:12], 'durum': text(state.get('Status')) or row.get('state', ''),
+            'saglik': row.get('health', ''), 'cikis_kodu': state.get('ExitCode') if isinstance(state.get('ExitCode'), int) else 0,
+            'hata': text(state.get('Error'))[:500], 'olusturuldu': epoch(raw.get('Created')), 'basladi': epoch(state.get('StartedAt')),
+            'yeniden_baslama': raw.get('RestartCount') if isinstance(raw.get('RestartCount'), int) else 0,
+            'politika': text(restart.get('Name')), 'ag_kipi': text(host.get('NetworkMode')), 'pod': row.get('pod', ''),
+            'portlar': row.get('ports') or [], 'baglamalar': mounts, 'aglar': networks,
+            'etiketler': [{'ad': str(k), 'deger': str(v)[:500]} for k, v in sorted(labels.items()) if isinstance(k, str)],
+            'cpu': row.get('cpu_percent'), 'bellek': row.get('memory_bytes'), 'gunluk_kaynagi': source,
+            'yonetim': manager, 'is': row.get('busy') or None, 'uygulama': row.get('uygulama'),
+        }
+
+    def logs(self, name, lines):
+        """GET …/konteynerler/gunluk: a container's last lines, from where its log driver writes them."""
+        if not isinstance(name, str) or not NAME_RE.fullmatch(name):
+            raise ContainerError(400, 'Konteyner adı geçersiz.')
+        tail = int(lines) if str(lines).isdigit() and int(lines) in apps.TAILS else 200
+        raw = self.inspect(name)
+        if not raw:
+            raise ContainerError(404, 'Konteyner bulunamadı.')
+        source, target = log_source(raw)
+        if source == 'yok':
+            return {'satirlar': [], 'kesik': False, 'kaynak': source}
+        if source == 'dosya':
+            try:
+                rows = file_tail(target, tail)
+            except OSError as err:
+                raise ContainerError(502, 'Konteynerin günlük dosyası okunamadı.') from err
+        else:
+            match = ['-u', target] if source == 'birim' else ['CONTAINER_ID_FULL=' + target]
+            rc, text, _ = self.run(['journalctl', *match, '-n', str(tail), '--no-pager', '-o', 'short-iso'], 30)
+            if rc:
+                raise ContainerError(502, 'Konteyner günlüğü okunamadı.')
+            rows = [line for line in text.splitlines() if line.strip() and not line.startswith('-- ')]
+        rows = [clean_line(r) for r in rows[-tail:]]
+        return {'satirlar': rows, 'kesik': len(rows) >= tail, 'kaynak': source}
 
     def reach(self):
         """DD-259: Erişim's view of the containers: whose each is, whether it runs and the scope of each
@@ -477,12 +576,11 @@ class Inventory(Containers):
         """GET /api/konsol/gelismis/temizlik: what nothing uses, read-only. Images no container (in any state) comes
         from and no application record names; networks no container is on (never Podman's default network, never an
         application's); volumes no container mounts; the data folders under UYGULAMA_VERI_DIR whose application has no
-        record and inside which no container mounts anything (with their sizes; fresh measures again); and the
-        containers no application owns. Only what is proven unused is offered: a source that cannot be read leaves
+        record and inside which no container mounts anything (with their sizes; fresh measures again). Only what is
+        proven unused is offered: a source that cannot be read leaves
         what depends on it empty and adds an error line. The cleanup job checks every item again."""
         errors = []
-        answer = {'read_at': int(time.time()), 'imajlar': [], 'aglar': [], 'birimler': [], 'klasorler': [],
-                  'konteynerler': [], 'hatalar': errors}
+        answer = {'read_at': int(time.time()), 'imajlar': [], 'aglar': [], 'birimler': [], 'klasorler': [], 'hatalar': errors}
         try:
             uses = self.app_uses()
         except ContainerError as err:
@@ -517,12 +615,6 @@ class Inventory(Containers):
                     volumes.add(mount['Name'])
                 if isinstance(mount.get('Source'), str) and mount['Source'].startswith('/'):
                     sources.add(os.path.realpath(mount['Source']))
-            if name not in uses['container']:
-                owner = config.ownership(raw)
-                answer['konteynerler'].append({'ad': name, 'imaj': str(row.get('Image') or raw.get('ImageName') or ''),
-                                               'durum': str(row.get('State') or ''),
-                                               'yonetici': {'standalone': 'podman', apps.MANAGED: 'kayitsiz'}.get(owner, 'baska')})
-        answer['konteynerler'].sort(key=lambda c: c['ad'])
         ok, images, message = self.podman('images', '--format', 'json')
         if ok and isinstance(images, list):
             seen = set()
@@ -705,6 +797,25 @@ class Service:
         if value:
             return value
         raise ContainerError(404, 'İşlem bulunamadı; konteyner durumunu yenileyin.')
+
+    def submit_container(self, data):
+        """DD-294: one container's action as a job: start, stop or restart; a removal needs the container's name typed
+        (onay) and says whether its Quadlet file (birim_dosyasi) and anonymous volumes (birimler) go with it."""
+        if not isinstance(data, dict):
+            raise ContainerError(400, 'İstek nesne olmalı.')
+        name, action = data.get('ad'), data.get('eylem')
+        if not isinstance(name, str) or not NAME_RE.fullmatch(name):
+            raise ContainerError(400, 'Konteyner adı geçersiz.')
+        if action not in CONTAINER_ACTIONS:
+            raise ContainerError(400, 'Konteyner işlemi geçersiz.')
+        for key in ('birim_dosyasi', 'birimler'):
+            if key in data and not isinstance(data[key], bool):
+                raise ContainerError(400, 'İstek geçersiz.')
+        if action == 'kaldir' and str(data.get('onay', '')).strip().lower() != name.lower():
+            raise ContainerError(400, 'Kaldırmak için konteynerin adını yazın.')
+        request = {'name': name, 'eylem': action, 'birim_dosyasi': data.get('birim_dosyasi', True) is True,
+                   'birimler': data.get('birimler') is True}
+        return self.launch(CONTAINER_ACTION, name, request)
 
     def submit_cleanup(self, data):
         """Podman's cleanup job (K8): the selected items (apps.cleanup_items) on the worker's standard input."""

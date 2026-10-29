@@ -141,7 +141,7 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix="container-network-") as root:
             env = dict(KONTEYNER_STATE_DIR=root, RUNTIME_DIR=root, UYGULAMA_STATE_DIR=root + "/uygulamalar",
-                       KONTEYNER_BRIDGE_PREFIX="ksl", KONTEYNER_NFT_TABLE="master_containers", TAILSCALE_IF="tailscale0",
+                       KONTEYNER_BRIDGE_PREFIX="ksl", KONTEYNER_NFT_TABLE="master_containers", TAILSCALE_IF="tailscale0", WAN_INTERFACE="eth0",
                        TAILSCALE_IPV4="100.64.0.1", WAN_IPV4="192.0.2.1",
                        VPN_BLOCK_DEST4=net.env_read(DATA / "config/defaults.env")["VPN_BLOCK_DEST4"])
             import master_applications

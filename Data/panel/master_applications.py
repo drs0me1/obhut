@@ -600,11 +600,11 @@ def record_images(record):
 
 def resource_uses(records):
     """What the application records use, whether their applications run or not (Podman's cleanup and the
-    inventory): {"image": {reference: {apps}}, "network": {name: {apps}}, "container": {name: app}}. An image is
-    named by its pinned digest and by the reference its file gives; the containers are every service's and a pod's
-    infra container. A folder without yerler.json is an install that has not written its record yet and is left out
+    inventory): {"image": {reference: {apps}}, "network": {name: {apps}}}. An image is named by its pinned digest and
+    by the reference its file gives. A folder without yerler.json is an install that has not written its record yet
+    and is left out
     (the cleanup job holds the install lock and checks again); any other record that cannot be read raises."""
-    uses = {"image": {}, "network": {}, "container": {}}
+    uses = {"image": {}, "network": {}}
     for app in records.names():
         if not os.path.lexists(records.dir(app) / "yerler.json"):
             continue
@@ -613,10 +613,6 @@ def resource_uses(records):
         for image in record_images(record):
             uses["image"].setdefault(image, set()).add(app)
         uses["network"].setdefault(objects["network"], set()).add(app)
-        for container in objects["containers"].values():
-            uses["container"][container] = app
-        if objects["pod"]:
-            uses["container"][_names(generator.pod_infra_name, app)] = app
     return uses
 
 

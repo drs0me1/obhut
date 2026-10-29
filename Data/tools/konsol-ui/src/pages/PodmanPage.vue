@@ -1,10 +1,11 @@
-<!-- Podman (DD-289; DD-211, K8): the base's container runtime on one page, read-only but for its one write, the
+<!-- Podman (DD-289, DD-294; DD-211, K8): the base's container runtime on one page, with every container's actions and the
      removal of what nothing uses. Four summaries: the runtime, the containers (how many run, how many are
      unhealthy, whose they are), their CPU and memory against the server's, and what each kind takes on disk as
      `podman system df` counts it. Then every container (GET /api/konsol/konteynerler/liste) with its state, image,
-     resources, uptime and published ports, filtered in the address (?suzgec=): an application's leads to its page,
-     one Obhut does not manage says who does (Podman alone, an application's labels without a record, another
-     manager). Then the images (one row per ID with every name), volumes, networks and the folders removed
+     resources, uptime and published ports, filtered in the address (?suzgec=); each says who runs it and leads to
+     its own page, and has its actions (DD-294: Konsol manages every container; an application's on the
+     application's page). The list is read again when Podman's state changes (the live "podman" topic) and every
+     10 s while shown, for the resources. Then the images (one row per ID with every name), volumes, networks and the folders removed
      applications left, in tabs (?kaynak=): what nothing uses (GET …/gelismis/temizlik) carries "Kullanılmayan" and
      a tick; "Seçilenleri kaldır…" names every chosen item and asks for the typed word, then POST
      …/gelismis/temizlik starts one job, followed here and in İşlemler: its end says what went, or what stayed and
@@ -21,11 +22,12 @@ import StatusPill from "../components/ui/StatusPill.vue";
 import Tabs from "../components/ui/Tabs.vue";
 import UsageBar from "../components/ui/UsageBar.vue";
 import type { Tone } from "../components/ui/types";
-import { readCleanup, readResources, startCleanup, type Container, type Resources, type StorageKind } from "../api/podman";
+import { managerText, readCleanup, readResources, startCleanup, type Container, type Resources, type StorageKind } from "../api/podman";
+import ContainerActions from "./podman/ContainerActions.vue";
 import { readJob } from "../api/konsol";
 import { watchJob } from "./app/jobs";
 import { apps, live, runningJobs, serverNow } from "../live";
-import { appRoute } from "../router";
+import { appRoute, containerRoute } from "../router";
 import { useQueryParam } from "../query";
 import { openSurface } from "../ui";
 import { UNKNOWN, bytes, clock, date, percent, uptime } from "../format";
@@ -148,13 +150,6 @@ const TESTS: Record<Filter, (c: Container) => boolean> = {
 const filter = useQueryParam<Filter>("suzgec", FILTERS.map((f) => f.id), "tumu");
 const filterCount = (f: Filter) => containers.value.filter(TESTS[f]).length;
 
-const MANAGER: Record<Temizlik["konteynerler"][number]["yonetici"], { pill: string; tone: Tone; text: string }> = {
-  podman: { pill: "Obhut dışı", tone: "neutral", text: "Yalnız Podman çalıştırıyor" },
-  kayitsiz: { pill: "Kaydı yok", tone: "warning", text: "Bir uygulamanın etiketini taşıyor ama kaydı yok" },
-  baska: { pill: "Obhut dışı", tone: "neutral", text: "Başka bir yönetici çalıştırıyor" },
-};
-const managers = computed(() => new Map((cleanup.value?.konteynerler ?? []).map((c) => [c.ad, MANAGER[c.yonetici]])));
-
 function stateOf(c: Container): { tone: Tone; text: string; dot: boolean; note: string } {
   const restarts = c.restarts ? `${c.restarts} kez yeniden başladı` : "";
   if (c.state === "running") {
@@ -184,7 +179,7 @@ const rows = computed(() =>
       const service = c.app && c.name.startsWith(c.app + "_") ? c.name.slice(c.app.length + 1) : "";
       const on = c.state === "running";
       return {
-        c, service, state: stateOf(c), manager: c.app ? null : managers.value.get(c.name) ?? null,
+        c, service, state: stateOf(c), manager: c.app ? "" : managerText(c.manager),
         uptime: on && c.started ? uptime(serverNow() - c.started) : UNKNOWN,
         bar: on && c.memory !== null && maxMemory.value ? (c.memory / maxMemory.value) * 100 : null,
       };
@@ -353,11 +348,20 @@ async function confirm(): Promise<void> {
   }
 }
 
+// DD-294: Podman's state changed (the live topic): the list again; a container's resources every 10 s while shown.
+watch(() => live.podmanSurumu, () => void load());
+let timer: number | undefined;
 onMounted(() => {
   void load();
   void loadCleanup();
+  timer = window.setInterval(() => {
+    if (!document.hidden && !loading.value) void load();
+  }, 10000);
 });
-onBeforeUnmount(() => stopWatch?.());
+onBeforeUnmount(() => {
+  stopWatch?.();
+  clearInterval(timer);
+});
 </script>
 
 <template>
@@ -463,16 +467,15 @@ onBeforeUnmount(() => stopWatch?.());
         <div v-if="rows.length" class="table-wrap">
           <table class="data-table resource-table container-table">
             <thead>
-              <tr><th scope="col">Konteyner</th><th scope="col">Durum</th><th scope="col" class="col-image">İmaj</th><th scope="col">İşlemci</th><th scope="col">Bellek</th><th scope="col">Çalışma</th><th scope="col">Portlar</th></tr>
+              <tr><th scope="col">Konteyner</th><th scope="col">Durum</th><th scope="col" class="col-image">İmaj</th><th scope="col">İşlemci</th><th scope="col">Bellek</th><th scope="col">Çalışma</th><th scope="col">Portlar</th><th scope="col"><span class="sr-only">Eylemler</span></th></tr>
             </thead>
             <tbody>
               <tr v-for="r in rows" :key="r.c.name" :data-konteyner="r.c.name">
                 <th scope="row" class="col-main">
                   <span class="cell-stack">
-                    <strong class="mono wrap">{{ r.c.name }}</strong>
+                    <RouterLink :to="containerRoute(r.c.name)" class="mono wrap container-link" data-testid="container-link"><strong>{{ r.c.name }}</strong></RouterLink>
                     <span v-if="r.c.app" class="cell-note"><RouterLink :to="appRoute(r.c.app)">{{ r.c.app }}</RouterLink><template v-if="r.service"> · servis {{ r.service }}</template></span>
-                    <StatusPill v-if="!r.c.app" :tone="r.manager?.tone ?? 'neutral'">{{ r.manager?.pill ?? "Obhut dışı" }}</StatusPill>
-                    <span v-if="r.manager" class="cell-note">{{ r.manager.text }}</span>
+                    <span v-else class="cell-note" data-testid="container-manager">{{ r.manager }}</span>
                   </span>
                 </th>
                 <td data-label="Durum" class="col-state">
@@ -490,6 +493,9 @@ onBeforeUnmount(() => stopWatch?.());
                   <template v-if="r.c.ports.length"><span v-for="(p, i) in r.c.ports" :key="i" class="port-line">{{ portText(p) }}</span></template>
                   <span v-else class="muted">yok</span>
                 </td>
+                <td class="col-act">
+                  <ContainerActions v-if="r.c.manager" :name="r.c.name" :state="r.c.state" :manager="r.c.manager" :busy="r.c.busy" compact @done="load" />
+                </td>
               </tr>
             </tbody>
           </table>
@@ -499,8 +505,8 @@ onBeforeUnmount(() => stopWatch?.());
       </template>
       <p v-else-if="!listError" class="meter-note" role="status">Okunuyor…</p>
       <p class="meter-note">
-        Salt okunur. Bir uygulamanın konteynerleri kendi sayfasında başlatılır ve durdurulur (<RouterLink to="/uygulamalar">Uygulamalar</RouterLink>); Obhut dışı
-        konteynerleri Obhut başlatmaz, durdurmaz, kaldırmaz.
+        Bir uygulamanın konteynerleri uygulamanın sayfasından yönetilir (<RouterLink to="/uygulamalar">Uygulamalar</RouterLink>). Diğerleri, kim kurmuş olursa olsun,
+        buradan başlatılır, durdurulur ve kaldırılır; bir systemd biriminin konteyneri o birim üzerinden.
       </p>
     </section>
 

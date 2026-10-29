@@ -6,6 +6,8 @@
 // 60 s in both modes, and again whenever a job starts or ends. Hidden pages do not poll. Erişim's whole read
 // model is kept (its page and the warnings everywhere); `ayarSurumu` rises whenever the saved settings may
 // have changed (a change committed, confirmed or rolled back), so pages that show them read them again.
+// DD-294: the stream's "podman" topic says Podman's state changed (its own event stream, followed on the
+// server); `podmanSurumu` rises then, the application list is read again and Podman's pages read theirs.
 import { computed, reactive } from "vue";
 import {
   YOLLAR,
@@ -47,6 +49,10 @@ export const live = reactive({
   erisim: null as Erisim | null,
   /** Rises when the saved settings may have changed; pages that show settings read them again. */
   ayarSurumu: 0,
+  /** Rises when Podman's state changed (DD-294); Podman's pages read their containers again. */
+  podmanSurumu: 0,
+  /** Whether the server follows Podman's events now (otherwise its mark changes every 10 s). */
+  podmanCanli: false,
   connection: "baslangic" as Connection,
 });
 
@@ -224,6 +230,18 @@ function stopPolling(): void {
 }
 
 const STREAM_KEYS = new Set<string>(["kaynaklar", "saglik", "islemler", "bekleyen"]);
+let podmanMark: string | null = null;
+
+/** The "podman" topic (DD-294): a changed mark means Podman's state changed. */
+function podmanChanged(data: unknown): void {
+  if (!isObject(data) || !isText(data.surum)) return;
+  live.podmanCanli = data.canli === true;
+  if (podmanMark !== null && data.surum !== podmanMark) {
+    live.podmanSurumu += 1;
+    void refresh("uygulamalar", true);
+  }
+  podmanMark = data.surum;
+}
 // Consecutive stream failures after which the page polls while the stream keeps retrying.
 const FAILURES_BEFORE_POLLING = 3;
 
@@ -245,6 +263,7 @@ export function startLive(): void {
       if (!polling) live.connection = "canli";
     },
     event(name, data) {
+      if (name === "podman") return podmanChanged(data);
       if (!STREAM_KEYS.has(name)) return;
       const key = name as Key;
       generation[key] += 1;

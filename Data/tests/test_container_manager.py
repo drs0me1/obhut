@@ -451,8 +451,7 @@ class CleanupViewTests(unittest.TestCase):
         [folder] = answer['klasorler']
         self.assertEqual((folder['ad'], folder['yol'], folder['neden']), ('eskiuygulama', str(Path(self.env['UYGULAMA_VERI_DIR']) / 'eskiuygulama'), ''))
         self.assertGreaterEqual(folder['boyut'], 10000)
-        self.assertEqual(answer['konteynerler'], [{'ad': 'bagli', 'imaj': 'registry.example/eski:1', 'durum': 'exited', 'yonetici': 'baska'},
-                                                  {'ad': 'eski', 'imaj': 'registry.example/eski:1', 'durum': 'exited', 'yonetici': 'podman'}])
+        self.assertNotIn('konteynerler', answer, "who runs each container is the list's (DD-294)")
         import master_api
         master_api.check(master_api.ref('Temizlik'), answer)
         self.assertFalse([c for c in self.calls if c[:2] in (['podman', 'rm'], ['podman', 'image'], ['podman', 'volume'])
@@ -466,7 +465,7 @@ class CleanupViewTests(unittest.TestCase):
         self.assertTrue(answer['hatalar'][0].startswith('Konteyner okunamadı: eski'))
         self.fail.add(('podman', 'ps', '-a'))
         answer = self.s.view().cleanup()
-        self.assertEqual([answer[k] for k in ('imajlar', 'aglar', 'birimler', 'klasorler', 'konteynerler')], [[]] * 5)
+        self.assertEqual([answer[k] for k in ('imajlar', 'aglar', 'birimler', 'klasorler')], [[]] * 4)
         self.fail = {('podman', 'images')}
         self.inspected['b' * 64] = {'Name': 'eski', 'Image': self.B, 'Config': {'Labels': {}}, 'Mounts': []}
         answer = self.s.view().cleanup()
@@ -515,6 +514,8 @@ class ResourceTests(unittest.TestCase):
         if argv[:2] == ['podman','stats']:  # what the sandboxed backend gets (nrm, 2026-10-13)
             return 125,'','Error: error switching to ns /run/netns/netns-0: operation not permitted'
         if argv[:2] in (['podman','images'],['podman','system'],['podman','volume'],['podman','network']): return 0,'[]',''
+        if argv[:2] == ['systemctl', 'show']:  # DD-294: the unit a Quadlet container's cgroup names is checked with systemd
+            return 0, 'ControlGroup=/system.slice/web.service\nSourcePath=\n', ''
         raise AssertionError(argv)
 
     def listing(self):

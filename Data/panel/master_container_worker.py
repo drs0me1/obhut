@@ -44,9 +44,13 @@ import master_container_config as cfg
 import master_settings as settings
 
 CLEANUP_ACTION = 'temizlik'
+# DD-294: one container's start, stop, restart or removal, whoever installed it (master_containers.control).
+CONTAINER_ACTION = 'konteyner'
 APP_ACTIONS = ('uygulama-kur', 'uygulama-baslat', 'uygulama-durdur', 'uygulama-yeniden-baslat', 'uygulama-guncelle',
                'uygulama-tanim', 'uygulama-kaldir', 'uygulama-taslak')
-ACTIONS = APP_ACTIONS + (CLEANUP_ACTION,)
+ACTIONS = APP_ACTIONS + (CLEANUP_ACTION, CONTAINER_ACTION)
+# A container asked to stop has this many seconds before Podman kills it.
+STOP_SECONDS = 10
 # DD-266: the share guard (every 30 s) and the settings worker hold install.lock for a moment;
 # a container job waits for them (5 s) instead of failing at once.
 LOCK_WAIT = 5.0
@@ -306,6 +310,8 @@ class Manager:
     def dispatch(self, action, request):
         if action == CLEANUP_ACTION:
             return self.cleanup(request)
+        if action == CONTAINER_ACTION:
+            return self.container_action(request)
         return {'uygulama-kur': self.app_install, 'uygulama-baslat': self.app_start, 'uygulama-durdur': self.app_stop,
                 'uygulama-yeniden-baslat': self.app_restart, 'uygulama-guncelle': self.app_update,
                 'uygulama-tanim': self.app_define, 'uygulama-kaldir': self.app_remove,
@@ -345,6 +351,67 @@ class Manager:
         p = self.call(['podman', kind, 'exists', name], check=False)
         cfg.require(p.returncode in (0, 1), 'Podman envanteri okunamadı.', 502)
         return p.returncode == 0
+
+    # -- one container (DD-294): Konsol manages every container; how depends on who runs it
+    def container_action(self, request):
+        """Start, stop, restart or remove one container. An application's is refused (its page does it, so its record
+        stays true); a systemd unit's goes through that unit (systemd would undo a direct action), and its removal
+        stops the unit, then removes its Quadlet file (when asked; otherwise the next boot brings it back) or disables
+        a unit file; any other goes through Podman."""
+        import master_containers as mc
+        name, action = request.get('name'), request.get('eylem')
+        cfg.require(isinstance(name, str) and mc.NAME_RE.fullmatch(name), 'Konteyner adı geçersiz.')
+        cfg.require(action in mc.CONTAINER_ACTIONS, 'Konteyner işlemi geçersiz.')
+        raw = self.inspect(name)
+        cfg.require(raw is not None, 'Konteyner artık yok.', 404)
+
+        def unit_props(unit):
+            out = self.call(['systemctl', 'show', '--no-pager', '--property=ControlGroup,SourcePath', unit], check=False).stdout or ''
+            return dict((line.split('=', 1) for line in out.splitlines() if '=' in line), folder=self.env.get('KONTEYNER_BIRIM_DIR', ''))
+        # The label is the container's own word: the unit counts only when systemd agrees (unit_runs).
+        who = mc.control(raw, str(raw.get('PodName') or raw.get('Pod') or ''), lambda app: self.records.exists(app), unit_props)
+        cfg.require(who['tur'] != 'uygulama', '%s, %s uygulamasının konteyneri; uygulamanın sayfasından yönetilir.' % (name, who['ad']), 409)
+        notes = []
+        if who['tur'] == 'birim':
+            unit = who['ad']
+            verb = {'baslat': 'start', 'durdur': 'stop', 'yeniden-baslat': 'restart', 'kaldir': 'stop'}[action]
+            self.step({'baslat': 'Başlatılıyor', 'durdur': 'Durduruluyor', 'yeniden-baslat': 'Yeniden başlatılıyor',
+                       'kaldir': 'Birim durduruluyor'}[action] + ': ' + unit)
+            self.call(['systemctl', verb, unit], timeout=180)
+            if action == 'kaldir':
+                quadlet = who['dosya']
+                if quadlet and request.get('birim_dosyasi', True):
+                    self.step('Quadlet dosyası siliniyor')
+                    os.unlink(quadlet)
+                    self.call(['systemctl', 'daemon-reload'], timeout=120)
+                    notes.append('%s silindi; konteyner açılışta geri gelmez.' % quadlet)
+                elif quadlet:
+                    notes.append('%s yerinde kaldı; konteyner bir sonraki açılışta yeniden kurulur.' % quadlet)
+                else:
+                    disabled = self.call(['systemctl', 'disable', unit], timeout=60, check=False)
+                    notes.append('%s kapatıldı.' % unit if disabled.returncode == 0 else '%s kapatılamadı (birim dosyası olmayabilir).' % unit)
+        else:
+            self.step({'baslat': 'Başlatılıyor', 'durdur': 'Durduruluyor', 'yeniden-baslat': 'Yeniden başlatılıyor',
+                       'kaldir': 'Kaldırılıyor'}[action] + ': ' + name)
+        if action == 'kaldir':
+            if self.exists('container', name):
+                self.call(['podman', 'rm', '--force', '--time', str(STOP_SECONDS), *(['--volumes'] if request.get('birimler') else []), name],
+                          timeout=STOP_SECONDS + 120)
+            cfg.require(not self.exists('container', name), 'Konteyner kaldırılamadı.', 502)
+            if who['tur'] == 'birim':
+                # A stopped container's process may have ended with an error; the unit that is gone should not stay
+                # "failed" in systemd (Sağlık would report it).
+                self.call(['systemctl', 'reset-failed', who['ad']], timeout=30, check=False)
+        elif who['tur'] != 'birim':
+            argv = {'baslat': ['podman', 'start', name], 'durdur': ['podman', 'stop', '--time', str(STOP_SECONDS), name],
+                    'yeniden-baslat': ['podman', 'restart', '--time', str(STOP_SECONDS), name]}[action]
+            self.call(argv, timeout=STOP_SECONDS + 120)
+        if action in ('baslat', 'yeniden-baslat'):
+            info = self.inspect(name)
+            cfg.require(bool(((info or {}).get('State') or {}).get('Running')), 'Konteyner başlatıldı ama çalışmıyor; günlüğüne bakın.', 502)
+        for text in notes:
+            self.note(text)
+        return {'ok': True, 'ad': name, 'eylem': action, 'notlar': notes}
 
     # -- Podman's cleanup (K8): unused images, networks, volumes and the data folders of removed applications
     def resource_users(self, kind, target):

@@ -24,6 +24,63 @@ Konsol's single-container definitions and adoption, Yayınla and the manual
 phase 6; live entries that still mention them end with a note naming what no
 longer applies and which entry replaced it.
 
+### DD-294: Podman, live and fully managed; every published port behind the guard (v2-282, 2.2.0)
+
+- **Why:** the operator found Konsol blind to Podman: it knew only what it installed, did not notice changes made
+  in Podman itself and could not act on a container installed another way. They asked for a Podman dashboard in
+  the spirit of Portainer and Podman Desktop, and decided on 2026-10-29 that Obhut has full authority: it manages
+  and removes every container on the server (plan: `docs/podman-live-plan.md`, step 1 of that direction). The
+  test host showed, before this build, that a `podman run -p 18080:80` on Podman's default network answered from
+  the internet: the guard covered only Konsol's bridges and Netavark's DNAT passes the host's input rules.
+- **The socket (amends DD-208):** stages 1 and 7 enable `podman.socket` (`PODMAN_SOCKET`, root only) and check
+  `PODMAN_API/_ping`; `podman.service` stays socket-activated and leaves when idle, `podman-auto-update.timer`
+  stays off (DD-214). No site forwards the socket; only the root backend talks to it (`master_podman_api.py`,
+  stdlib HTTP over the Unix socket). `PODMAN_API` is `/v4.0.0/libpod`, which Ubuntu 24.04's 4.9 and Debian 13's
+  5.4 both answer (checked on the test host). The repair's Podman step reopens a closed socket.
+- **Live:** `Watch` follows `/events` (container, pod, image, volume and network events) in its own thread, started
+  and stopped with the live-events producer (DD-259), so nothing follows Podman while no tab is open and Podman's
+  service can leave. Each event nudges the new `podman` topic, read on the producer's next tick: a mark that
+  changes (`{surum, canli}`); while the stream is down it changes every 10 s. Health-check, exec and attach events
+  count only when a container's health result changed. The shell raises `podmanSurumu`,
+  reads the applications again, and Podman's pages read their lists (and again every 10 s while shown, for the
+  resources). A watch's every start has its own stop, and the producer starts and stops it under its lock, so a tab
+  closed and another opened at once never leave the stream unfollowed. Reads themselves stay on the `podman`
+  command (they already saw every container; moving them would have changed nothing the operator sees). The
+  stream is decoded by hand (chunked HTTP on a raw socket with a short timeout) so a quiet stream never blocks a
+  stop.
+- **Full authority (amends DD-290):** `master_containers.control` says who runs a container and so how Konsol
+  acts on it. An application's (its labels and a record) is managed on the application's page, so its record,
+  access rows and data stay true. A systemd unit's (`PODMAN_SYSTEMD_UNIT`, else the service in its cgroup path)
+  is started, stopped and restarted through that unit, since systemd would undo a direct action; its removal stops
+  the unit, then deletes its Quadlet file (`SourcePath` directly in `KONTEYNER_BIRIM_DIR`, ticked by default:
+  otherwise it comes back at the next boot) and reloads systemd, or disables a unit file, then removes the
+  container. A Compose project's, a pod's and a plain one go through Podman. Every action is a job of the root
+  worker (`konteyner`; one per container at a time), an audit line `konteyner-<verb>`, and a removal needs the
+  container's name typed. DD-290's rule that a container Obhut did not install never becomes an application
+  stands. The label is the container's own word (an image can carry it), so it counts only when systemd agrees
+  (`unit_runs`): the unit was generated from a Quadlet file in `KONTEYNER_BIRIM_DIR`, or its cgroup holds the
+  container's conmon or the container; the installer's and the system's units (`master-*`, `tailscaled`, `caddy`,
+  `dnsmasq`, `ssh`, `wg-quick@*`, `systemd-*` …) never count. Otherwise the container is Podman's alone and only it
+  is acted on. An application's pod infra container (`<app>__infra`) is the application's.
+- **A container's page:** `GET …/konteynerler/ayrinti` returns a whitelist of its inspect (state, image, restart
+  policy, ports, mounts, networks, labels, resources, owner); never its environment, command line or create
+  command. `GET …/konteynerler/gunluk` reads its log where its driver writes it: journald by its full ID, its
+  unit's journal for Quadlet's passthrough, a k8s-file or json-file log's tail; `podman logs` is not used (the
+  backend's sandbox and the passthrough driver). The cleanup's read model lost its container list (the list says
+  who runs each now).
+- **Every published port behind the guard (amends DD-224, DD-217):** the guard's forward chain starts with one
+  rule: in on `WAN_INTERFACE`, DNAT'd, out to anything but a `ksl*` bridge: dropped. Konsol's raw rows keep their
+  permits; the exit node and WireGuard are never DNAT'd; from Tailscale such a port stays reachable. A missing or
+  invalid WAN interface fails the guard closed. Erişim shows such a public publication as the internet cell's
+  closed address, open on Tailscale when it is published on every address, and no longer warns about it. Opening
+  one to the internet on purpose is a later step (the plan's step 3).
+- **Tests:** a fake libpod server (JSON, Podman's own error, the event stream split anywhere, stop while quiet),
+  the watch reopening, the producer starting and stopping its watchers and the nudge, the owner rules, the log
+  sources, the inspect whitelist, the job's argv for each owner with the Quadlet file, an application's container
+  refused, the guard's first rule and its fail-closed WAN interface, Erişim's closed cell; in Konsol the actions
+  by owner and state with their bodies, the removal dialog, a Podman event reading the list again, the container
+  page and its log.
+
 ### DD-293: Sistem → Sağlık shows only what needs attention (v2-281, 2.1.0)
 
 - **Why:** the operator found the tab a long list going down and asked for only the notices that need to be
@@ -113,6 +170,8 @@ longer applies and which entry replaced it.
 - **Amends:** K2 (DD-274, DD-276) and DD-289.
 - **Tests:** a request and a draft naming `konteyner` refused; the list carries no sources; the add page's three
   sources; the Podman summary, filters and owner text.
+- **Note (DD-294):** Obhut now starts, stops and removes such containers (the operator's decision of 2026-10-29);
+  they still never become applications.
 
 ### DD-289: Podman is a section of its own; what nothing uses is removed from its list (v2-276)
 
@@ -139,6 +198,8 @@ longer applies and which entry replaced it.
   and the exact body, the job's end, nothing to remove, a failed read; the backend's kinds; no Podman tab in
   Gelişmiş and the sidebar's seven sections.
 - **Note (DD-290):** the "Obhut dışı" filter and summary row are removed; such containers stay in the list.
+- **Note (DD-294):** the containers are no longer read-only: each has its actions and its own page, and says who
+  runs it from the list itself (the cleanup's `konteynerler`/`yonetici` are gone).
 
 ### DD-288: Erişim has no Tailscale tab; its facts in Sistem → Sunucu, its key warning in Uyarılar (v2-276)
 
@@ -2013,6 +2074,8 @@ longer applies and which entry replaced it.
   all. Internet exfiltration of mounted data stays possible for containers that need the internet;
   qBittorrent does.
 - **Not done:** per-network egress modes (no workload needs them yet) and a TCP 25 block.
+- **Note (DD-294):** the forward chain begins with the WAN guard for every published port (a WAN connection
+  DNAT'd to anything but a Konsol bridge is dropped); a missing WAN interface fails the guard closed.
 
 ### DD-223: Container units wait for the checked guard, without Requires= (v2-201)
 
@@ -2097,6 +2160,8 @@ longer applies and which entry replaced it.
 - **Partly retired by the rebuild (DD-272, DD-275):** qBittorrent and the package publications are gone. Its
   guard rules hold for applications: each runs on its own bridge (`ksl-<app>`, DD-274), and a raw port's
   Tailscale or WAN publication is let in only as the DNAT Podman made for it (DD-275).
+- **Note (DD-294):** the guard now also drops, before any other forward rule, a WAN connection DNAT'd to anything
+  but a Konsol bridge: a port published by a container Obhut did not install is closed to the internet.
 
 ### DD-215: The Podman page shows the ports a host-network container listens on (v2-194)
 
@@ -2293,6 +2358,8 @@ longer applies and which entry replaced it.
   address opens the container's application page.
 - **Amended by DD-272 (v2-255, the rebuild):** there is no App Store; Podman runs the applications (DD-271),
   and its resources are read-only in Gelişmiş → Podman apart from the cleanup (DD-276).
+- **Note (DD-294):** Podman's API socket is enabled now (socket-activated; no daemon runs while nothing is
+  connected) and Konsol manages every container; the auto-update timer stays off.
 
 ### DD-207: A package's backend write paths exist before the backend starts (v2-184)
 

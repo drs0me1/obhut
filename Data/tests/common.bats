@@ -3262,20 +3262,28 @@ PY
     [ "$(grep -n 'check_nft_iptables required' <<<"$s1" | cut -d: -f1)" -lt "$(grep -n 'check_podman$' <<<"$s1" | cut -d: -f1)" ]
     grep -qx '    check_podman' <<<"$s7"
     grep -qF "podman info --format '{{.Version.Version}} {{.Host.OCIRuntime.Name}}'" "$V2_ROOT/install.sh"
-    # No daemon: the installer never enables Podman's socket, service or auto-update timer.
-    [ "$(cat "$V2_ROOT/install.sh" | grep -vE '^[[:space:]]*#' | grep -cE 'podman\.socket|podman-auto-update|systemctl (enable|start)[^#]*podman')" -eq 0 ]
+    # DD-294: the API socket is enabled (socket activation: no daemon while nothing is connected) and answers in
+    # stages 1 and 7; the service itself and the auto-update timer are never enabled.
+    grep -qx '    ensure_podman_api' <<<"$s1"
+    grep -qx '    ensure_podman_api' <<<"$s7"
+    grep -qF 'systemctl enable --now podman.socket' "$V2_ROOT/install.sh"
+    grep -qF 'curl -fsS --max-time 10 --unix-socket "$PODMAN_SOCKET" "http://d${PODMAN_API}/_ping"' "$V2_ROOT/install.sh"
+    [ "$(cat "$V2_ROOT/install.sh" | grep -vE '^[[:space:]]*#' | grep -cE 'podman-auto-update|podman\.service|systemctl (enable|start)[^#]*podman[^.]')" -eq 0 ]
+    grep -qx 'PODMAN_SOCKET="/run/podman/podman.sock"' "$V2_ROOT/config/defaults.env"
+    grep -qx 'PODMAN_API="/v4.0.0/libpod"' "$V2_ROOT/config/defaults.env"
     # The base read mapper stays read-only; manager writes have one gated route and an external worker.
     grep -qF 'atomic_write "$SBIN_DIR/master_containers.py" 0755 <"$V2_ROOT/panel/master_containers.py"' "$V2_ROOT/install.sh"
     # DD-266: the reads are table routes too, on the same view; no Podman path is matched by hand. DD-271
-    # (phase 3): image updates are read per application (GET /api/konsol/uygulamalar). No screen read a
-    # container's detail; that route is gone.
-    for read in liste islem; do
+    # (phase 3): image updates are read per application (GET /api/konsol/uygulamalar). DD-294: a container's
+    # page reads its detail and log, and its actions are one route's jobs.
+    for read in liste islem ayrinti gunluk; do
         grep -qF "Route(\"GET\", \"/api/konsol/konteynerler/$read\"," "$V2_ROOT/panel/master_api.py"
     done
-    run ! grep -qE '/api/konsol/konteynerler/(guncellemeler|ayrinti)' "$V2_ROOT/panel/master_api.py"
+    grep -qF 'Route("POST", "/api/konsol/konteynerler/eylem",' "$V2_ROOT/panel/master_api.py"
+    run ! grep -qE '/api/konsol/konteynerler/guncellemeler' "$V2_ROOT/panel/master_api.py"
     grep -qF 'return self.panel.containers.view()' "$V2_ROOT/panel/master-panel"
     [ "$(grep -c '/api/konsol/konteynerler/' "$V2_ROOT/panel/master-panel")" -eq 0 ]
-    # K8: Podman's only write, the cleanup, is declared in the route table and goes to the same broker as every
+    # K8: Podman's cleanup is declared in the route table and goes to the same broker as every
     # application job (DD-271): one transient unit per job, the request on its standard input. The Podman resource
     # actions (pull, create, remove) and their route are gone.
     grep -qF 'Route("POST", "/api/konsol/gelismis/temizlik", "temizle",' "$V2_ROOT/panel/master_api.py"
@@ -4769,7 +4777,7 @@ PY
     case "$seen" in *" master_yaml "*) ;; *) echo "master_yaml not reached"; return 1 ;; esac
     case "$seen" in *" master_kube "*) ;; *) echo "master_kube not reached"; return 1 ;; esac
     stage="$(awk '/^stage_4\(\) \{/,/^}$/' "$install")"
-    grep -qF 'for panel_module in master_api master_compose master_erisim master_inspector master_kube master_olaylar master_wireguard master_yaml; do' <<<"$stage"
+    grep -qF 'for panel_module in master_api master_compose master_erisim master_inspector master_kube master_olaylar master_podman_api master_wireguard master_yaml; do' <<<"$stage"
     # DD-271 (phase 3): the application engine is installed with the container helpers (the guard reads its records).
     grep -qF 'for container_helper in master_applications master_container_config master_container_network master_container_worker master_container_manager master_generator; do' <<<"$stage"
     grep -qF '[[ "${V2_LAST_ATOMIC_CHANGED:-0}" -eq 0 ]] || PANEL_HELPERS_CHANGED=1' <<<"$(grep -A3 'for panel_module in' <<<"$stage")"

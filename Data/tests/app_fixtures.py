@@ -81,7 +81,7 @@ def env(root):
             "UYGULAMA_VERI_DIR": str(root / "veri"), "KONTEYNER_BIRIM_DIR": str(root / "quadlet"),
             "KONTEYNER_LOCK": str(root / "run/containers.lock"), "RUNTIME_DIR": str(root / "run"),
             "KONTEYNER_BAGLAMA_DIR": str(root / "run/konteyner-baglama"), "KONTEYNER_BRIDGE_PREFIX": "ksl",
-            "KONTEYNER_NFT_TABLE": "master_containers", "TAILSCALE_IF": "tailscale0", "SBIN_DIR": str(root / "sbin"),
+            "KONTEYNER_NFT_TABLE": "master_containers", "TAILSCALE_IF": "tailscale0", "WAN_INTERFACE": "eth0", "SBIN_DIR": str(root / "sbin"),
             "SERVER_ROOT": "/srv", "FILES_PANEL_TRASH": ".cop", "STATE_FILE": str(root / "state.env"), "DOWNLOADS_UID": "1000", "DOWNLOADS_GID": "1000",
             "UYGULAMA_PORT_ILK": "62100", "UYGULAMA_PORT_SON": "62109", "FILES_PANEL_PORT": "61009", "SHARE_PORT": "61010",
             "LOCAL_DOMAIN": "ev", "TAILSCALE_IPV4": "100.64.0.2", "WAN_IPV4": "203.0.113.10",

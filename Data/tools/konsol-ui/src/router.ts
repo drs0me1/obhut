@@ -1,6 +1,6 @@
 // Hash routes (#/genel …), so Caddy needs no rewrite. The eight sections with their tabs in the query
 // (#/erisim?sekme=adresler, #/dosyalar?sekme=paylasimlar), an application's page by its name
-// (#/uygulamalar/notlar), Uyarılar (#/uyarilar, the page the top bar's count opens, under Genel Bakış) and
+// (#/uygulamalar/notlar), a container's page by its name (#/podman/konteyner/web, DD-294), Uyarılar (#/uyarilar, the page the top bar's count opens, under Genel Bakış) and
 // Uygulama ekle, a full-window page of its own (#/uygulama-ekle: under #/uygulamalar/ it would be an application
 // named "ekle"). Any other address opens Genel Bakış.
 import type { Component } from "vue";
@@ -10,6 +10,7 @@ import ProblemsPage from "./pages/ProblemsPage.vue";
 import AppsPage from "./pages/AppsPage.vue";
 import PodmanPage from "./pages/PodmanPage.vue";
 import AppPage from "./pages/AppPage.vue";
+import ContainerPage from "./pages/ContainerPage.vue";
 import AddAppPage from "./pages/AddAppPage.vue";
 import AccessPage from "./pages/AccessPage.vue";
 import WireGuardPage from "./pages/WireGuardPage.vue";
@@ -44,6 +45,8 @@ export const router = createRouter({
     { path: "/", redirect: "/genel" },
     ...SECTIONS.map((s) => ({ path: "/" + s.id, name: s.id, component: PAGES[s.id], meta: { section: s.id } })),
     { path: "/uygulamalar/:ad", name: "uygulama", component: AppPage, meta: { section: "uygulamalar" } },
+    // DD-294: one container's page, whoever installed it.
+    { path: "/podman/konteyner/:ad", name: "konteyner", component: ContainerPage, meta: { section: "podman" } },
     { path: "/uyarilar", name: "uyarilar", component: ProblemsPage, meta: { section: "genel" } },
     { path: "/uygulama-ekle", name: "uygulama-ekle", component: AddAppPage, meta: { section: "uygulamalar", full: true } },
     { path: "/:rest(.*)*", redirect: "/genel" },
@@ -54,5 +57,7 @@ export const router = createRouter({
 
 /** The address of an application's page. */
 export const appRoute = (ad: string) => ({ name: "uygulama", params: { ad } }) as const;
+/** The address of one container's page (DD-294). */
+export const containerRoute = (ad: string) => ({ name: "konteyner", params: { ad } }) as const;
 export const ADD_APP = "/uygulama-ekle";
 export const PROBLEMS = "/uyarilar";

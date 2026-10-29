@@ -92,7 +92,8 @@ class NetworkTests(unittest.TestCase):
         bridges = sorted(r["interface"] for r in rows)
         self.assertEqual(rules[-3:], [[m("iifname", b), m("oifname", b), {"return": None}] for b in bridges] + [[{"drop": None}]])
         text = json.dumps(policy)
-        for value in ("62100", "62101", "62102", '"dnat"', '"ip6"', '"accept": null'):
+        self.assertEqual(text.count('"dnat"'), 1, "only DD-294's WAN guard names a DNAT: no permit")
+        for value in ("62100", "62101", "62102", '"ip6"', '"accept": null'):
             self.assertNotIn(value, text, "the host reaches 127.0.0.1 through OUTPUT DNAT; nothing else is opened")
 
     def test_the_guard_reads_the_application_records(self):
@@ -157,7 +158,24 @@ class NetworkTests(unittest.TestCase):
             network.applications(self.env)
 
     def permits(self, policy):
-        return [r for r in self.egress_rules(policy) if any(e.get("match", {}).get("right") == "dnat" for e in r)]
+        return [r for r in self.egress_rules(policy) if r[-1] == {"return": None} and any(e.get("match", {}).get("right") == "dnat" for e in r)]
+
+    WAN_GUARD = [{"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "eth0"}},
+                 {"match": {"op": "!=", "left": {"meta": {"key": "oifname"}}, "right": "ksl*"}},
+                 {"match": {"op": "==", "left": {"ct": {"key": "direction"}}, "right": "original"}},
+                 {"match": {"op": "in", "left": {"ct": {"key": "status"}}, "right": "dnat"}}, {"drop": None}]
+
+    def test_a_port_published_outside_konsols_bridges_is_closed_to_the_internet(self):
+        # DD-294: a container Obhut did not install publishes on any address; Netavark's DNAT passes the host's input
+        # rules. Before anything else: in on the WAN, DNAT'd, not to a Konsol bridge: dropped. Tailscale passes.
+        rules = self.egress_rules(network.policy(self.env, []))
+        self.assertEqual(rules[0], self.WAN_GUARD)
+        self.assertNotIn("tailscale0", json.dumps(rules[0]))
+        for bad in ("", "eth0;", "a" * 20):
+            with self.assertRaises(network.NetworkError, msg=bad):
+                network.policy(dict(self.env, WAN_INTERFACE=bad), [])
+        expected = network.policy(self.env, [])
+        self.assertTrue(network.same_policy(expected, {"nftables": copy.deepcopy(expected)}))
 
     def test_a_raw_publication_is_let_in_only_as_its_own_dnat(self):
         # DD-217's rule: out to the bridge, in from the scope's interface, IPv4, the protocol, a DNAT of exactly the
@@ -261,7 +279,7 @@ class NetworkTests(unittest.TestCase):
     def test_container_egress_rules_come_after_the_hot_path_and_replies(self):
         # DD-224: exit-node/WireGuard traffic leaves after one rule; replies pass before any egress drop;
         # then IPv6, tailscale0 and every block-list prefix, in list order.
-        rules = self.egress_rules(network.policy(self.env, []))
+        rules = self.egress_rules(network.policy(self.env, []))[1:]  # after DD-294's WAN guard
         m = lambda key, right, op="==": {"match": {"op": op, "left": {"meta": {"key": key}}, "right": right}}
         self.assertEqual(rules[0], [m("iifname", "ksl*", "!="), m("oifname", "ksl*", "!="), {"return": None}])
         self.assertEqual([r[-1] for r in rules[1:3]], [{"return": None}] * 2)
@@ -283,7 +301,7 @@ class NetworkTests(unittest.TestCase):
         source = (DATA / "panel/master_container_network.py").read_text(encoding="utf-8")
         for literal in ("169.254", "172.16", "192.168"):
             self.assertNotIn(literal, source)
-        single = self.egress_rules(network.policy(dict(self.env, VPN_BLOCK_DEST4="203.0.113.9/32 10.0.0.0/8"), []))
+        single = self.egress_rules(network.policy(dict(self.env, VPN_BLOCK_DEST4="203.0.113.9/32 10.0.0.0/8"), []))[1:]
         self.assertEqual([r[2]["match"]["right"] for r in single[5:7]],
                          ["203.0.113.9", {"prefix": {"addr": "10.0.0.0", "len": 8}}])
 

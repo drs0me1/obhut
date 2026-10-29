@@ -44,6 +44,8 @@ class IntegrationEdges(unittest.TestCase):
             return 0, json.dumps(self.networks), ""
         if argv[:2] in (["podman", "images"], ["podman", "system"], ["podman", "stats"], ["podman", "volume"]):
             return 0, "[]", ""
+        if argv[:2] == ["systemctl", "show"]:  # DD-294: no unit here runs a container (systemd does not agree)
+            return 0, "ControlGroup=\nSourcePath=\n", ""
         raise AssertionError(argv)
 
     def container(self, name="outside", status="running", labels=None):
@@ -67,6 +69,7 @@ class IntegrationEdges(unittest.TestCase):
         self.assertEqual((rows["notlar_web"]["source"], rows["notlar_web"]["uygulama"]), ("uygulama", "notlar"))
         self.assertEqual((rows["notlar_db"]["source"], rows["notlar_db"]["uygulama"]), ("external", None),
                          "labels alone never make a container an application's")
+        self.assertEqual(rows["notlar_db"]["yonetim"]["tur"], "podman", "and a unit label systemd does not back is ignored (DD-294)")
 
     def test_list_health_uses_already_collected_native_inspection(self):
         self.container()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The project's independent forwarding guard for Konsol's container bridges.
+"""The project's independent forwarding guard for Konsol's container bridges, and (DD-294) for every published port.
 
 Netavark owns DNAT/SNAT. We own only one nft inet table with a forward and an input
 chain at priority -10; an ACCEPT in Netavark/Tailscale's filter chains cannot bypass
@@ -19,6 +19,11 @@ gets none, so nothing reaches it (DD-217's lesson: refusing such a mismatch stop
 the address refresh (master_container_worker --adres-yenile) moves the unit. Any other publication
 (another scope, an address that is not an IPv4 address, a pool port off loopback) fails the whole guard
 closed. IPv6 ingress to managed bridges is denied.
+
+DD-294: Konsol manages every container now, also one it did not install, and such a container may publish a
+port on any address; Netavark's DNAT then takes the connection past the host's input rules. A connection that
+came in on the WAN interface and was DNAT'd to anything but Konsol's own bridges is dropped (from Tailscale it
+passes); a missing or invalid WAN interface fails the guard closed like any other missing value.
 
   apply(env, run=runner); check(env, run=runner)
 runner(argv, timeout=20) returns CompletedProcess or (rc, stdout, stderr).
@@ -245,6 +250,11 @@ def policy(env, apps, run=None):
                    _match({"payload": {"protocol": protocol, "field": "dport"}}, 53),
                    _match({"fib": {"result": "type", "flags": ["daddr", "iif"]}}, "local"), {"return": None})
     input_rule({"drop": None})
+    # DD-294: a port published by a container Obhut did not install is not reachable from the internet: a connection
+    # in on the WAN interface, DNAT'd to anything but Konsol's bridges, is dropped before any other rule. Konsol's own
+    # raw rows reach their bridges through the permits below; the exit node and WireGuard are never DNAT'd.
+    rule(_match(meta("iifname"), _iface(env.get("WAN_INTERFACE", ""))), _match(meta("oifname"), prefix + "*", "!="),
+         _match(ct("direction"), "original"), _match(ct("status"), "dnat", "in"), {"drop": None})
     # DD-181/DD-224: traffic that neither leaves nor enters a bridge (exit node, WireGuard) passes after one rule.
     rule(_match(meta("iifname"), prefix + "*", "!="), _match(meta("oifname"), prefix + "*", "!="), {"return": None})
     # Only replies to container-originated traffic bypass publication checks. Original-direction

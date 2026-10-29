@@ -118,7 +118,8 @@ class ContainerViewTests(unittest.TestCase):
 
 
 class ContainerRouteTests(unittest.TestCase):
-    """The real handler: shared Konsol gates, GET answers, no write route (POST → 404), no podman write verb."""
+    """The real handler: shared Konsol gates, GET answers, no write on the read routes (POST → 404), no podman write
+    verb; a container's actions are the one write route's jobs (DD-294, test_container_manager)."""
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -141,7 +142,8 @@ class ContainerRouteTests(unittest.TestCase):
             self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/liste", {"X-Konsol": "1", "Host": "evil.test"})[0], 403)
             status, _h, body = unix_get(sock, "/api/konsol/konteynerler/liste", {"X-Konsol": "1"})
             self.assertEqual((status, [c["name"] for c in json.loads(body)["containers"]]), (200, ["deneme-medya", "web"]))
-            self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/ayrinti?ad=deneme-medya", {"X-Konsol": "1"})[0], 404)
+            self.assertIsNotNone(panel.master_api.find("GET", "/api/konsol/konteynerler/ayrinti"), "a container's page (DD-294)")
+            self.assertIsNotNone(panel.master_api.find("POST", "/api/konsol/konteynerler/eylem"), "its actions, as jobs")
             self.assertEqual(unix_get(sock, "/api/konsol/konteynerler/baslat", {"X-Konsol": "1"})[0], 404)
             for path in ("/api/konsol/konteynerler/liste", "/api/konsol/konteynerler/durdur"):
                 self.assertEqual(unix_get(sock, path, {"X-Konsol": "1", "Content-Type": "application/json"}, "POST", b"{}")[0], 404)
